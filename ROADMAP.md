@@ -38,8 +38,9 @@ benchmark measures them.
 - [x] Head-to-head overhead benchmark against LeanProfiler, single- and
   multi-threaded ([bench/](bench/README.md)).
 - [ ] Same against samply, and accuracy on known workloads.
-- [ ] Overhead calibration: measure the cost of a scope at startup and
-  subtract it from self time.
+- [x] Overhead calibration: measure the cost of a scope (warm-up, fastest of
+  many batches, at startup and exit) and subtract it from every enclosing
+  scope's times.
 - [ ] CPU time next to wall time per scope.
 
 ## M3: no setup

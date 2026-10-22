@@ -33,7 +33,7 @@ nothing.
 | Source positions | ✅ scopes (line), copies (declaration) | – | C lines with debug info | – |
 | **Copies of shared values, per function** | ✅ count, bytes, time, share of scope | – | – | – |
 | **Copy assertions in tests** (`expectNoCopies`) | ✅ | – | – | – |
-| Overhead per event, recording | **~11 ns**, flat; 4 threads ~12 ns | 4.6 µs at 1k events, 88 µs at 16k (grows with events) | sampling, very low | – |
+| Overhead per event, recording | **~11 ns**, flat; 4 threads ~12 ns; measured and subtracted from reported times | 4.6 µs at 1k events, 88 µs at 16k (grows with events) | sampling, very low | – |
 | Overhead, recording off | compiles away | ~23 ns; 4 threads ~370 ns | – | – |
 | No annotations needed | – (planned) | – | ✅ | – |
 | Timeline (Perfetto) | – (planned) | ✅ | ✅ (Firefox Profiler) | – |
@@ -134,9 +134,9 @@ It forwards to the system `cc` (override with `LEANPROF_REAL_CC`), since
 Leanprof.expectNoCopies x
 ```
 
-`Leanprof.copies`, `Leanprof.calls "name"`, `Leanprof.depth` and
-`Leanprof.whereIs "decl"` expose the counters and positions while the program
-runs.
+`Leanprof.copies`, `Leanprof.calls "name"`, `Leanprof.totalNs "name"`,
+`Leanprof.overheadNs`, `Leanprof.depth` and `Leanprof.whereIs "decl"` expose
+the counters and positions while the program runs.
 
 ## Caveats
 
@@ -156,7 +156,12 @@ runs.
 
 Overhead: about 11 ns per profiled `IO` action and 15 ns per pure
 `profile!` scope (which allocates a closure) on an Apple M5 Max; see
-[`bench/`](bench/README.md).
+[`bench/`](bench/README.md). leanprof measures its own cost at startup and
+again at exit (fastest of many batches, after a warm-up) and subtracts it
+from every enclosing scope, so the report shows the program's time, not the
+profiler's: in `lake build overhead && .lake/build/bin/overhead`, a 24 ms
+loop of 10 million tiny steps runs in 190 ms with profiling and is reported
+as 28–31 ms. Set `LEANPROF_NO_CALIBRATION=1` to see raw times.
 
 ## Development
 

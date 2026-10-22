@@ -87,6 +87,10 @@ def tests : StateT Nat IO Unit := do
   let v := fib n20
   let after ← calls "test.fib"
   check "pure scope counts every call" (v == 6765 && after - before == 10945) s!"calls={after - before}"
+  let ov ← overheadNs
+  check "calibrated overhead is plausible" (ov > 0.5 && ov < 1000) s!"overhead={ov}"
+  let tot ← totalNs "test.fib"
+  check "scope total is reported" (tot > 0) s!"total={tot}"
   let _ := plain 3
   check "disabled profile! records nothing" ((← calls "test.disabled") == 0)
   let d ← depth

@@ -40,6 +40,16 @@ opaque copies : BaseIO Nat
 @[extern "leanprof_calls"]
 opaque calls (site : @& String) : BaseIO Nat
 
+/-- Total time in scopes named `site` (outermost calls, with leanprof's own
+overhead removed), in nanoseconds, on all threads. -/
+@[extern "leanprof_total_ns"]
+opaque totalNs (site : @& String) : BaseIO Float
+
+/-- Measured cost of one scope's bookkeeping, in nanoseconds; this is what the
+report subtracts per nested scope. -/
+@[extern "leanprof_overhead_ns"]
+opaque overheadNs : BaseIO Float
+
 /-- Scopes currently open on this thread. -/
 @[extern "leanprof_depth"]
 opaque depth : BaseIO Nat
