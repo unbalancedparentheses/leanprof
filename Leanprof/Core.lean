@@ -57,3 +57,12 @@ def expectNoCopies (x : IO α) : IO α := do
   return r
 
 end Leanprof
+
+namespace Leanprof
+
+/-- `file:line` of a declaration as the report shows it, from the `.ilean`
+files under `LEANPROF_ILEAN_DIR` (default `.lake/build/lib/lean`), or `""`. -/
+@[extern "leanprof_where"]
+opaque whereIs (decl : @& String) : BaseIO String
+
+end Leanprof

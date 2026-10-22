@@ -15,8 +15,8 @@ fib                           10945  206.2 µs  206.2 µs   0.5%     230 ns     
 build                             1   15.5 µs   15.5 µs   0.0%   15.5 µs   15.3 µs   15.3 µs  Examples/CopyBug.lean:23
 
 copies of non-exclusive values (each one copied the whole value)
-function                                 kind           copies       bytes       time  %scope  why             in scope
-buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3 MiB     2.8 ms   99.0%  shared+persistent buildWithHistory
+function                                 kind           copies       bytes       time  %scope  why             in scope             where (declaration)
+buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3 MiB     2.3 ms   98.5%  shared+persistent buildWithHistory     Examples/CopyBug.lean:15
 ```
 
 That is [`Examples/CopyBug.lean`](Examples/CopyBug.lean): `buildWithHistory`
@@ -30,7 +30,7 @@ nothing.
 | | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | samply / perf | [LeanBench](https://github.com/alok/LeanBench) |
 |---|---|---|---|---|
 | Time per annotated scope, p50/p99, self time | ✅ | ✅ (p95) | – | per benchmark |
-| Source position of each scope | ✅ | – | with debug info | – |
+| Source positions | ✅ scopes (line), copies (declaration) | – | C lines with debug info | – |
 | **Copies of shared values, per function** | ✅ count, bytes, time, share of scope | – | – | – |
 | **Copy assertions in tests** (`expectNoCopies`) | ✅ | – | – | – |
 | Overhead per event | ~15 ns (measured here) | not published; takes a mutex | sampling, very low | – |
@@ -75,6 +75,7 @@ The report goes to stderr when the program exits.
 | `LEANPROF_JSON=path` | also write the report as JSON |
 | `LEANPROF_QUIET=1` | no table on stderr |
 | `LEANPROF_ALL=1` | include copies of compile-time constants (hidden by default) |
+| `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for copy positions (default `.lake/build/lib/lean`) |
 
 To turn the annotations off without removing them, set
 `leanprof.enabled` to `false` (for example in `leanOptions`): `profile!` then
@@ -103,7 +104,9 @@ lean_exe myapp where
 
 Each copy is attributed to the compiled function that made it and to the
 innermost `profile!` scope, with the time the copying call took, its share of
-that scope, and the reason the value was not exclusive:
+that scope, the declaration's file:line (read from the `.ilean` files Lake
+writes under `.lake/build/lib/lean`; set `LEANPROF_ILEAN_DIR` to point
+elsewhere), and the reason the value was not exclusive:
 `shared` (another reference is alive), `multi-threaded` (the value was shared
 with another task, so Lean never mutates it in place) or `persistent` (a
 compile-time constant).
@@ -115,8 +118,9 @@ compile-time constant).
 Leanprof.expectNoCopies x
 ```
 
-`Leanprof.copies`, `Leanprof.calls "label"` and `Leanprof.depth` expose the
-counters while the program runs.
+`Leanprof.copies`, `Leanprof.calls "name"`, `Leanprof.depth` and
+`Leanprof.whereIs "decl"` expose the counters and positions while the program
+runs.
 
 ## Caveats
 

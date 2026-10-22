@@ -95,6 +95,11 @@ def tests : StateT Nat IO Unit := do
     ((r matches .error _) && (← depth) == d && (← calls "test.throws") == 1)
   let x ← profile! "test.io" (pure 41 : IO Nat)
   check "monadic scope returns the value" (x == 41 && (← calls "test.io") == 1)
+  -- positions
+  check "copy sites resolve to their declaration" ((← whereIs "withHistory") == "Tests/Main.lean:13")
+  check "specializations resolve to the caller"
+    ((← whereIs "withHistory (in Std.Legacy.Range.forIn'.loop)") == "Tests/Main.lean:13")
+  check "unknown names have no position" ((← whereIs "No.Such.decl") == "")
   -- names
   for (sym, want) in demangleCases do
     let got := demangle sym

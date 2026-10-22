@@ -7,6 +7,7 @@
 #define _GNU_SOURCE /* dladdr on glibc */
 #include <lean/lean.h>
 
+#include <dirent.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -498,6 +499,128 @@ static void lp_symbol_name(void *pc, char *out, size_t cap) {
     lp_demangle(info.dli_sname, out, cap);
 }
 
+/* ---------- declaration positions ----------
+ * Lake writes a `.ilean` file per module with each declaration's range:
+ * `"decls":{"Name":[l0,c0,l1,c1,selL0,selC0,selL1,selC1],...}` (0-based).
+ * At report time we read the ones under LEANPROF_ILEAN_DIR (default
+ * `.lake/build/lib/lean`) to give copy sites a file:line.
+ */
+
+typedef struct {
+    char *name, *file;
+    unsigned line;
+} lp_decl;
+
+static lp_decl *lp_decls;
+static size_t lp_ndecls, lp_capdecls;
+static int lp_indexed;
+
+static void lp_add_decl(const char *name, const char *module, unsigned line) {
+    if (lp_ndecls == lp_capdecls) {
+        size_t cap = lp_capdecls ? lp_capdecls * 2 : 256;
+        lp_decl *d = realloc(lp_decls, cap * sizeof(lp_decl));
+        if (d == NULL) return;
+        lp_decls = d;
+        lp_capdecls = cap;
+    }
+    size_t n = strlen(module);
+    char *file = malloc(n + 6);
+    char *nm = strdup(name);
+    if (file == NULL || nm == NULL) { free(file); free(nm); return; }
+    for (size_t i = 0; i < n; i++) file[i] = module[i] == '.' ? '/' : module[i];
+    memcpy(file + n, ".lean", 6);
+    lp_strip(nm);
+    lp_decls[lp_ndecls++] = (lp_decl){nm, file, line};
+}
+
+/* Read a JSON string at `p` (just after the opening quote) into out. */
+static const char *lp_json_read_str(const char *p, char *out, size_t cap) {
+    size_t n = 0;
+    while (*p && *p != '"') {
+        if (*p == '\\' && p[1]) p++;
+        if (n + 1 < cap) out[n++] = *p;
+        p++;
+    }
+    out[n] = 0;
+    return *p == '"' ? p + 1 : p;
+}
+
+static void lp_index_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = size > 0 ? malloc((size_t)size + 1) : NULL;
+    if (buf == NULL || fread(buf, 1, (size_t)size, f) != (size_t)size) { free(buf); fclose(f); return; }
+    buf[size] = 0;
+    fclose(f);
+    char module[512] = "";
+    const char *m = strstr(buf, "\"module\":\"");
+    if (m != NULL) lp_json_read_str(m + 10, module, sizeof module);
+    const char *p = strstr(buf, "\"decls\":{");
+    if (module[0] == 0 || p == NULL) { free(buf); return; }
+    p += 9;
+    while (*p == '"') {
+        char name[512];
+        p = lp_json_read_str(p + 1, name, sizeof name);
+        if (*p != ':' || p[1] != '[') break;
+        p += 2;
+        unsigned v[8] = {0}, k = 0;
+        while (*p && *p != ']') {
+            if (*p >= '0' && *p <= '9') {
+                unsigned x = 0;
+                while (*p >= '0' && *p <= '9') x = x * 10 + (unsigned)(*p++ - '0');
+                if (k < 8) v[k++] = x;
+            } else {
+                p++;
+            }
+        }
+        if (*p == ']') p++;
+        /* the name's own line (selection range) when present */
+        lp_add_decl(name, module, (k >= 5 ? v[4] : v[0]) + 1);
+        if (*p == ',') p++;
+    }
+    free(buf);
+}
+
+static void lp_index_dir(const char *dir, int depth) {
+    if (depth > 32) return;
+    DIR *d = opendir(dir);
+    if (d == NULL) return;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        char path[4096];
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        size_t n = strlen(e->d_name);
+        if (n > 6 && strcmp(e->d_name + n - 6, ".ilean") == 0) lp_index_file(path);
+        else lp_index_dir(path, depth + 1); /* opendir fails quietly on files */
+    }
+    closedir(d);
+}
+
+/* file:line of a reported function name, or "" when unknown. */
+static const char *lp_where(const char *fn, char *out, size_t cap) {
+    if (!lp_indexed) {
+        lp_indexed = 1;
+        const char *dir = getenv("LEANPROF_ILEAN_DIR");
+        lp_index_dir(dir && dir[0] ? dir : ".lake/build/lib/lean", 0);
+    }
+    char name[256];
+    snprintf(name, sizeof name, "%s", fn);
+    char *in = strstr(name, " (in ");
+    if (in != NULL) *in = 0;
+    out[0] = 0;
+    for (size_t i = 0; i < lp_ndecls; i++) {
+        if (strcmp(lp_decls[i].name, name) == 0) {
+            snprintf(out, cap, "%s:%u", lp_decls[i].file, lp_decls[i].line);
+            break;
+        }
+    }
+    return out;
+}
+
 /* ---------- queries, for tests and assertions ---------- */
 
 /* Copies of non-constant values recorded so far, on all threads. */
@@ -533,6 +656,12 @@ LEAN_EXPORT lean_obj_res leanprof_depth(void) {
     return lean_box(t == NULL ? 0 : t->depth);
 }
 
+LEAN_EXPORT lean_obj_res leanprof_where(b_lean_obj_arg fn) {
+    char out[512];
+    lp_where(lean_string_cstr(fn), out, sizeof out);
+    return lean_mk_string(out);
+}
+
 LEAN_EXPORT lean_obj_res leanprof_demangle(b_lean_obj_arg sym) {
     char out[512];
     lp_demangle(lean_string_cstr(sym), out, sizeof out);
@@ -566,7 +695,7 @@ typedef struct {
 } lp_scope_sum;
 
 typedef struct {
-    char fn[256], sym[256], scope[128];
+    char fn[256], sym[256], scope[128], where[512];
     const char *label;
     uint8_t kind;
     uint64_t count[LP_REASONS], bytes, total, ticks;
@@ -649,8 +778,8 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
     }
     if (shown > 0) {
         fprintf(f, "\ncopies of non-exclusive values (each one copied the whole value)\n");
-        fprintf(f, "%-40s %-12s %8s %11s %10s %7s  %-15s %s\n", "function", "kind", "copies", "bytes", "time",
-                "%scope", "why", "in scope");
+        fprintf(f, "%-40s %-12s %8s %11s %10s %7s  %-15s %-20s %s\n", "function", "kind", "copies", "bytes",
+                "time", "%scope", "why", "in scope", "where (declaration)");
         for (size_t k = 0; k < nc; k++) {
             if (!show_all && !lp_interesting(&C[k])) continue;
             char bt[32], tt[32], share[16] = "-", why[64] = "";
@@ -664,8 +793,8 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
                 if (why[0]) strncat(why, "+", sizeof why - strlen(why) - 1);
                 strncat(why, lp_reason_name[r], sizeof why - strlen(why) - 1);
             }
-            fprintf(f, "%-40s %-12s %8llu %11s %10s %7s  %-15s %s\n", C[k].fn, lp_kind_name[C[k].kind],
-                    (unsigned long long)C[k].total, bt, tt, share, why, C[k].scope);
+            fprintf(f, "%-40s %-12s %8llu %11s %10s %7s  %-15s %-20s %s\n", C[k].fn, lp_kind_name[C[k].kind],
+                    (unsigned long long)C[k].total, bt, tt, share, why, C[k].scope, C[k].where);
         }
     }
     if (hidden > 0)
@@ -697,6 +826,8 @@ static void lp_write_json(FILE *f, const lp_scope_sum *S, size_t ns, const lp_co
         lp_json_str(f, C[k].sym);
         fprintf(f, ",\"scope\":");
         lp_json_str(f, C[k].scope);
+        fprintf(f, ",\"where\":");
+        lp_json_str(f, C[k].where);
         fprintf(f, ",\"kind\":\"%s\",\"copies\":%llu,\"bytes\":%llu,\"copy_ns\":%.0f,\"shared\":%llu,"
                    "\"multi_threaded\":%llu,\"persistent\":%llu}",
                 lp_kind_name[C[k].kind], (unsigned long long)C[k].total, (unsigned long long)C[k].bytes,
@@ -764,6 +895,7 @@ static void lp_report(void) {
                 memset(&C[k], 0, sizeof(lp_copy_sum));
                 snprintf(C[k].fn, sizeof C[k].fn, "%s", fn);
                 lp_symbol_raw(c->pc, C[k].sym, sizeof C[k].sym);
+                lp_where(fn, C[k].where, sizeof C[k].where);
                 C[k].label = label;
                 if (label) lp_label_name(label, C[k].scope, sizeof C[k].scope);
                 else snprintf(C[k].scope, sizeof C[k].scope, "-");

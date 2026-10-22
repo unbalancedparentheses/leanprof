@@ -33,8 +33,8 @@ benchmark measures them.
 
 - [x] Time spent copying, per copy site, and its share of the enclosing scope.
 - [x] Source positions for `profile!` scopes (file:line).
-- [ ] Copy sites resolve to their declaration's file:line through Lake's
-  `.ilean` files (`leanprof show`).
+- [x] Copy sites resolve to their declaration's file:line through Lake's
+  `.ilean` files, read by the runtime at exit.
 - [ ] Head-to-head benchmark against LeanProfiler and samply: overhead per
   event, single- and multi-threaded, and accuracy on known workloads.
 - [ ] Overhead calibration: measure the cost of a scope at startup and
