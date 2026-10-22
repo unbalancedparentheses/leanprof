@@ -29,6 +29,14 @@ jobs:
           cat report.json
           grep -q '"shared":1999' report.json
           grep -q '"pos":"Examples/CopyBug.lean:15"' report.json
+      - name: Tasks
+        run: |
+          lake build tasks
+          LEANPROF_JSON=tasks.json .lake/build/bin/tasks
+          cat tasks.json
+          grep -q '"spawned_by":"pureTasks","tasks":16' tasks.json
+          grep -q '"spawned_by":"ioTasks","tasks":16' tasks.json
+          grep -q '"waits":16' tasks.json
       - name: Timeline trace
         run: |
           LEANPROF_QUIET=1 LEANPROF_TRACE=trace.json .lake/build/bin/copybug 300

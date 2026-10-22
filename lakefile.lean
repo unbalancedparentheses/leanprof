@@ -4,12 +4,14 @@ open Lake DSL System
 package leanprof where
   version := v!"0.1.0"
 
-/-- Flags that route the runtime's copy paths through leanprof's shims.
-Add them to `moreLeancArgs` of any executable whose copies you want counted. -/
+/-- Flags that route the runtime's copy, task-spawn and blocking-wait paths
+through leanprof's shims. Add them to `moreLeancArgs` of any executable whose
+copies and tasks you want observed. -/
 def copyFlags : Array String :=
   #["copy_expand_array_nonlinear", "copy_sarray_nonlinear", "copy_string_nonlinear",
     "array_push", "byte_array_push", "float_array_push",
-    "string_push", "string_append", "string_utf8_set"].map
+    "string_push", "string_append", "string_utf8_set",
+    "task_spawn_core", "io_as_task", "io_wait", "task_get"].map
     fun f => s!"-Dlean_{f}=leanprof_{f}"
 
 /-- Link flags so the report can name the functions that copied. -/
@@ -44,3 +46,8 @@ lean_exe overhead where
 lean_exe leanprof where
   root := `LeanprofCli
   supportInterpreter := false
+
+lean_exe tasks where
+  root := `Examples.Tasks
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags

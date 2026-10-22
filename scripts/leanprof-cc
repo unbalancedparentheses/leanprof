@@ -1,6 +1,6 @@
 #!/bin/sh
 # C compiler wrapper for Lake: set LEAN_CC to this script and every package's
-# C code (dependencies too) is compiled with leanprof's copy shims.
+# C code (dependencies too) is compiled with leanprof's copy and task shims.
 # It forwards to the system compiler (LEANPROF_REAL_CC overrides): with
 # LEAN_CC set, leanc no longer passes its bundled clang's sysroot.
 # clang is preferred (GCC lacks -finstrument-functions-after-inlining), but
@@ -27,6 +27,10 @@ set -- \
   -Dlean_string_push=leanprof_string_push \
   -Dlean_string_append=leanprof_string_append \
   -Dlean_string_utf8_set=leanprof_string_utf8_set \
+  -Dlean_task_spawn_core=leanprof_task_spawn_core \
+  -Dlean_io_as_task=leanprof_io_as_task \
+  -Dlean_io_wait=leanprof_io_wait \
+  -Dlean_task_get=leanprof_task_get \
   "$@"
 # LEANPROF_AUTO=1 also times every function of this package (no `profile!`
 # needed); LEANPROF_AUTO=all includes dependencies.

@@ -23,16 +23,18 @@
 #define LP_SUB 16          /* histogram sub-buckets per power of two */
 #define LP_BUCKETS (64 * LP_SUB)
 
-enum { LP_ARRAY, LP_SCALAR_ARRAY, LP_STRING, LP_KINDS };
+enum { LP_ARRAY, LP_SCALAR_ARRAY, LP_STRING, LP_KINDS, LP_WAIT = LP_KINDS };
 enum { LP_SHARED, LP_MULTI_THREADED, LP_PERSISTENT, LP_REASONS };
 
-static const char *lp_kind_name[LP_KINDS] = {"Array", "ScalarArray", "String"};
+static const char *lp_kind_name[LP_KINDS + 1] = {"Array", "ScalarArray", "String", "wait"};
 static const char *lp_reason_name[LP_REASONS] = {"shared", "multi-threaded", "persistent"};
 
 /* A scope is keyed by a `profile!` label (a static string literal) or, in
  * automatic mode, by a function's address. Times are stored with leanprof's
  * own overhead already subtracted (see calibration). */
-enum { LP_LABEL, LP_FN, LP_INTERNAL };
+/* LP_TASK: a task's run, keyed by the scope that spawned it (its kind in
+ * `parent_kind`; key NULL when spawned outside any scope). */
+enum { LP_LABEL, LP_FN, LP_INTERNAL, LP_TASK };
 
 typedef struct {
     const void *key;
@@ -43,6 +45,8 @@ typedef struct {
      * over outermost calls, `outer` outermost calls. */
     uint64_t calls, total, self, sum, min, max;
     uint64_t kids, desc_sum, desc_total, outer;
+    uint64_t wait, wait_max;   /* LP_TASK: time from spawn to start */
+    uint8_t parent_kind;       /* LP_TASK: kind of the spawning scope */
     uint32_t active;           /* recursion depth, so totals count the outermost call */
     uint32_t hist[LP_BUCKETS]; /* per call, overhead removed */
 } lp_scope;
@@ -188,10 +192,10 @@ static inline size_t lp_hash(const void *a, const void *b) {
 }
 
 static lp_scope *lp_scope_get(lp_thread *t, const void *key, uint8_t kind) {
-    size_t i = lp_hash(key, NULL);
+    size_t i = lp_hash(key, (const void *)(uintptr_t)(kind == LP_TASK));
     for (size_t n = 0; n < LP_TABLE; n++, i = (i + 1) & (LP_TABLE - 1)) {
         lp_scope *s = t->scopes[i];
-        if (LEAN_LIKELY(s != NULL && s->key == key)) return s;
+        if (LEAN_LIKELY(s != NULL && s->key == key && (s->kind == LP_TASK) == (kind == LP_TASK))) return s;
         if (s == NULL) {
             s = calloc(1, sizeof(lp_scope));
             if (s == NULL) abort();
@@ -460,6 +464,109 @@ LEAN_EXPORT lean_obj_res leanprof_string_append(lean_obj_arg s1, b_lean_obj_arg 
 
 LEAN_EXPORT lean_obj_res leanprof_string_utf8_set(lean_obj_arg s, b_lean_obj_arg i, uint32_t c) {
     LP_MAYBE_COPY(LP_STRING, s, lean_string_size(s), lean_string_utf8_set(s, i, c));
+}
+
+/* ---------- tasks ----------
+ * Spawns are redirected here (see the -D flags): the task's closure is
+ * wrapped so that, when a worker runs it, we record how long it waited and
+ * time it as "task <- spawning scope". Blocking waits are timed per call site.
+ */
+
+/* The innermost open scope on this thread, for attributing tasks and waits. */
+static void lp_current(lp_thread *t, const void **key, uint8_t *kind) {
+    *key = NULL;
+    *kind = LP_LABEL;
+    for (uint32_t k = t->depth < LP_DEPTH ? t->depth : LP_DEPTH; k > 0; k--) {
+        lp_scope *sc = t->stack[k - 1].scope;
+        if (sc == NULL || sc->kind == LP_INTERNAL) continue;
+        if (sc->kind == LP_TASK) {
+            *key = sc->key;
+            *kind = sc->parent_kind;
+        } else {
+            *key = sc->key;
+            *kind = sc->kind;
+        }
+        return;
+    }
+}
+
+/* Called by the runtime in place of the task's closure: (ctx, arg). */
+static lean_obj_res lp_task_run(lean_obj_arg ctx, lean_obj_arg arg) {
+    uint64_t now = lp_now();
+    lean_object *orig = lean_ctor_get(ctx, 0);
+    lean_inc(orig);
+    const void *parent = (const void *)(uintptr_t)lean_ctor_get_uint64(ctx, sizeof(void *));
+    uint64_t spawned = lean_ctor_get_uint64(ctx, sizeof(void *) + 8);
+    uint8_t parent_kind = lean_ctor_get_uint8(ctx, sizeof(void *) + 16);
+    lean_dec(ctx);
+    lp_thread *t = lp_thread_get();
+    lp_enter(parent, LP_TASK);
+    uint32_t d = t->depth;
+    if (d > 0 && d <= LP_DEPTH && t->stack[d - 1].scope != NULL) {
+        lp_scope *s = t->stack[d - 1].scope;
+        s->parent_kind = parent_kind;
+        if (t->stack[d - 1].traced) t->events[t->nevents - 1].kind = (uint8_t)(LP_TASK | (parent_kind << 4));
+        uint64_t w = now > spawned ? now - spawned : 0;
+        s->wait += w;
+        if (w > s->wait_max) s->wait_max = w;
+    }
+    lean_object *r = lean_apply_1(orig, arg);
+    lp_exit();
+    return r;
+}
+
+/* Wrap closure `c` so lp_task_run sees the spawning scope. */
+static lean_obj_res lp_task_wrap(lean_obj_arg c) {
+    lp_thread *t = lp_thread_get();
+    const void *key;
+    uint8_t kind;
+    lp_current(t, &key, &kind);
+    lean_object *ctx = lean_alloc_ctor(0, 1, 17);
+    lean_ctor_set(ctx, 0, c);
+    lean_ctor_set_uint64(ctx, sizeof(void *), (uint64_t)(uintptr_t)key);
+    lean_ctor_set_uint64(ctx, sizeof(void *) + 8, lp_now());
+    lean_ctor_set_uint8(ctx, sizeof(void *) + 16, kind);
+    lean_object *w = lean_alloc_closure((void *)lp_task_run, 2, 1);
+    lean_closure_set(w, 0, ctx);
+    return w;
+}
+
+LEAN_EXPORT lean_obj_res leanprof_task_spawn_core(lean_obj_arg c, unsigned prio, bool keep_alive) {
+    return lean_task_spawn_core(lp_task_wrap(c), prio, keep_alive);
+}
+
+LEAN_EXPORT lean_object *lean_io_as_task(lean_object *act, lean_object *prio);
+LEAN_EXPORT lean_object *lean_io_wait(lean_object *t);
+
+LEAN_EXPORT lean_object *leanprof_io_as_task(lean_object *act, lean_object *prio) {
+    return lean_io_as_task(lp_task_wrap(act), prio);
+}
+
+static void lp_record_wait(void *pc, uint64_t start) {
+    uint64_t elapsed = lp_now() - start;
+    lp_thread *t = lp_thread_get();
+    const void *key;
+    uint8_t kind;
+    lp_current(t, &key, &kind);
+    const lean_object *site = kind == LP_LABEL ? (const lean_object *)key : NULL;
+    lp_copy *c = lp_copy_get(t, pc, site, LP_WAIT);
+    if (c == NULL) return;
+    c->count[0]++;
+    c->ticks += elapsed;
+}
+
+LEAN_EXPORT lean_object *leanprof_io_wait(lean_object *task) {
+    uint64_t start = lp_now();
+    lean_object *r = lean_io_wait(task);
+    lp_record_wait(LP_PC, start);
+    return r;
+}
+
+LEAN_EXPORT b_lean_obj_res leanprof_task_get(b_lean_obj_arg task) {
+    uint64_t start = lp_now();
+    lean_object *r = lean_task_get(task);
+    lp_record_wait(LP_PC, start);
+    return r;
 }
 
 /* ---------- symbol names ----------
@@ -862,6 +969,15 @@ static const char *lp_where(const char *fn, char *out, size_t cap) {
     return out;
 }
 
+/* "task <- parent": what spawned a task, by the spawning scope's kind. */
+static void lp_task_name(const void *parent, uint8_t parent_kind, char *out, size_t cap) {
+    char p[256];
+    if (parent == NULL) snprintf(p, sizeof p, "top level");
+    else if (parent_kind == LP_FN) lp_symbol_name((void *)parent, p, sizeof p);
+    else lp_label_name(lean_string_cstr((lean_object *)parent), p, sizeof p);
+    snprintf(out, cap, "task <- %s", p);
+}
+
 /* ---------- queries, for tests and assertions ---------- */
 
 /* Copies of non-constant values recorded so far, on all threads. */
@@ -950,7 +1066,8 @@ static const char *lp_label_pos(const char *label) {
 typedef struct {
     const char *label;         /* merge key: the label, or "\x01" + function name */
     char name[256], where[512];
-    uint8_t is_fn;
+    uint8_t is_fn, is_task;
+    uint64_t wait, wait_max;   /* tasks: spawn to start */
     uint64_t calls, total, self, sum, min, max;
     uint32_t hist[LP_BUCKETS];
 } lp_scope_sum;
@@ -1000,7 +1117,7 @@ static void lp_json_str(FILE *f, const char *s) {
 }
 
 static int lp_interesting(const lp_copy_sum *c) {
-    return c->count[LP_SHARED] + c->count[LP_MULTI_THREADED] > 0;
+    return c->kind != LP_WAIT && c->count[LP_SHARED] + c->count[LP_MULTI_THREADED] > 0;
 }
 
 static const lp_scope_sum *lp_find_scope(const lp_scope_sum *S, size_t ns, const char *label) {
@@ -1016,11 +1133,17 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
     fprintf(f, "\nleanprof: %zu scopes, wall %s, %.1f ns overhead per scope subtracted\n", ns, w,
             (double)lp_pair_fp / 1024.0 * tick);
     int any_fn = 0;
-    for (size_t k = 0; k < ns; k++) any_fn |= S[k].is_fn;
+    size_t ntasks = 0, nwaits = 0;
+    for (size_t k = 0; k < ns; k++) {
+        any_fn |= S[k].is_fn;
+        ntasks += S[k].is_task;
+    }
+    for (size_t k = 0; k < nc; k++) nwaits += C[k].kind == LP_WAIT;
     if (ns > 0) {
         fprintf(f, "\n%-24s %10s %10s %10s %6s %10s %10s %10s  %s\n", "scope", "calls", "total", "self", "%wall",
                 "mean", "p50", "p99", "where");
         for (size_t k = 0; k < ns; k++) {
+            if (S[k].is_task) continue;
             char tt[32], st[32], mt[32], p50[32], p99[32];
             lp_fmt_time((double)S[k].total * tick, tt, sizeof tt);
             lp_fmt_time((double)S[k].self * tick, st, sizeof st);
@@ -1040,6 +1163,7 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
     int show_all = all != NULL && strcmp(all, "1") == 0;
     size_t shown = 0, hidden = 0;
     for (size_t k = 0; k < nc; k++) {
+        if (C[k].kind == LP_WAIT) continue;
         if (show_all || lp_interesting(&C[k])) shown++;
         else hidden++;
     }
@@ -1048,7 +1172,7 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
         fprintf(f, "%-40s %-12s %8s %11s %10s %7s  %-15s %-20s %s\n", "function", "kind", "copies", "bytes",
                 "time", "%scope", "why", "in scope", "where (declaration)");
         for (size_t k = 0; k < nc; k++) {
-            if (!show_all && !lp_interesting(&C[k])) continue;
+            if (C[k].kind == LP_WAIT || (!show_all && !lp_interesting(&C[k]))) continue;
             char bt[32], tt[32], share[16] = "-", why[64] = "";
             lp_fmt_bytes((double)C[k].bytes, bt, sizeof bt);
             lp_fmt_time((double)C[k].ticks * tick, tt, sizeof tt);
@@ -1064,6 +1188,34 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
                     (unsigned long long)C[k].total, bt, tt, share, why, C[k].scope, C[k].where);
         }
     }
+    if (ntasks > 0) {
+        fprintf(f, "\ntasks (run on worker threads; wait is spawn to start)\n");
+        fprintf(f, "%-40s %8s %10s %10s %10s %10s\n", "spawned by", "tasks", "run total", "run mean", "wait mean",
+                "wait max");
+        for (size_t k = 0; k < ns; k++) {
+            if (!S[k].is_task) continue;
+            char rt[32], rm[32], wm[32], wx[32];
+            lp_fmt_time((double)S[k].total * tick, rt, sizeof rt);
+            lp_fmt_time((double)S[k].sum * tick / (double)S[k].calls, rm, sizeof rm);
+            lp_fmt_time((double)S[k].wait * tick / (double)S[k].calls, wm, sizeof wm);
+            lp_fmt_time((double)S[k].wait_max * tick, wx, sizeof wx);
+            fprintf(f, "%-40s %8llu %10s %10s %10s %10s\n", S[k].name + 8 /* drop "task <- " */,
+                    (unsigned long long)S[k].calls, rt, rm, wm, wx);
+        }
+    }
+    if (nwaits > 0) {
+        fprintf(f, "\nblocking waits (IO.wait, Task.get)\n");
+        fprintf(f, "%-40s %8s %10s %10s  %-20s %s\n", "function", "waits", "blocked", "mean", "in scope",
+                "where (declaration)");
+        for (size_t k = 0; k < nc; k++) {
+            if (C[k].kind != LP_WAIT) continue;
+            char bt[32], mt[32];
+            lp_fmt_time((double)C[k].ticks * tick, bt, sizeof bt);
+            lp_fmt_time((double)C[k].ticks * tick / (double)(C[k].total ? C[k].total : 1), mt, sizeof mt);
+            fprintf(f, "%-40s %8llu %10s %10s  %-20s %s\n", C[k].fn, (unsigned long long)C[k].total, bt, mt,
+                    C[k].scope, C[k].where);
+        }
+    }
     if (hidden > 0)
         fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (LEANPROF_ALL=1 shows them)\n", hidden);
     if (dropped > 0) fprintf(f, "\nleanprof: %llu events dropped (table full)\n", (unsigned long long)dropped);
@@ -1074,8 +1226,11 @@ static void lp_write_json(FILE *f, const lp_scope_sum *S, size_t ns, const lp_co
                           double wall, uint64_t dropped) {
     fprintf(f, "{\"version\":3,\"wall_ns\":%.0f,\"overhead_ns\":%.1f,\"dropped\":%llu,\"scopes\":[", wall,
             (double)lp_pair_fp / 1024.0 * tick, (unsigned long long)dropped);
+    int first = 1;
     for (size_t k = 0; k < ns; k++) {
-        fprintf(f, "%s{\"name\":", k ? "," : "");
+        if (S[k].is_task) continue;
+        fprintf(f, "%s{\"name\":", first ? "" : ",");
+        first = 0;
         lp_json_str(f, S[k].name);
         fprintf(f, ",\"pos\":");
         lp_json_str(f, S[k].where);
@@ -1087,9 +1242,37 @@ static void lp_write_json(FILE *f, const lp_scope_sum *S, size_t ns, const lp_co
                 (double)lp_percentile(S[k].hist, S[k].calls, 0.50) * tick,
                 (double)lp_percentile(S[k].hist, S[k].calls, 0.99) * tick);
     }
-    fprintf(f, "],\"copies\":[");
+    fprintf(f, "],\"tasks\":[");
+    first = 1;
+    for (size_t k = 0; k < ns; k++) {
+        if (!S[k].is_task) continue;
+        fprintf(f, "%s{\"spawned_by\":", first ? "" : ",");
+        first = 0;
+        lp_json_str(f, S[k].name + 8);
+        fprintf(f, ",\"tasks\":%llu,\"run_total_ns\":%.0f,\"run_sum_ns\":%.0f,\"wait_ns\":%.0f,\"wait_max_ns\":%.0f}",
+                (unsigned long long)S[k].calls, (double)S[k].total * tick, (double)S[k].sum * tick,
+                (double)S[k].wait * tick, (double)S[k].wait_max * tick);
+    }
+    fprintf(f, "],\"waits\":[");
+    first = 1;
     for (size_t k = 0; k < nc; k++) {
-        fprintf(f, "%s{\"function\":", k ? "," : "");
+        if (C[k].kind != LP_WAIT) continue;
+        fprintf(f, "%s{\"function\":", first ? "" : ",");
+        first = 0;
+        lp_json_str(f, C[k].fn);
+        fprintf(f, ",\"scope\":");
+        lp_json_str(f, C[k].scope);
+        fprintf(f, ",\"where\":");
+        lp_json_str(f, C[k].where);
+        fprintf(f, ",\"waits\":%llu,\"blocked_ns\":%.0f}", (unsigned long long)C[k].total,
+                (double)C[k].ticks * tick);
+    }
+    fprintf(f, "],\"copies\":[");
+    first = 1;
+    for (size_t k = 0; k < nc; k++) {
+        if (C[k].kind == LP_WAIT) continue;
+        fprintf(f, "%s{\"function\":", first ? "" : ",");
+        first = 0;
         lp_json_str(f, C[k].fn);
         fprintf(f, ",\"symbol\":");
         lp_json_str(f, C[k].sym);
@@ -1138,6 +1321,7 @@ static void lp_write_trace(const char *path, double tick) {
     /* names, cached per key: small open-addressing table */
     enum { NCACHE = 1 << 14 };
     const void **ckey = calloc(NCACHE, sizeof(void *));
+    uint8_t *ckind = calloc(NCACHE, 1);
     char **cname = calloc(NCACHE, sizeof(char *));
     for (lp_thread *t = lp_threads; t != NULL; t = t->next) {
         dropped += t->events_dropped;
@@ -1153,25 +1337,29 @@ static void lp_write_trace(const char *path, double tick) {
                 continue;
             }
             const char *nm = NULL;
-            size_t h = lp_hash(e->key, (const void *)(uintptr_t)(e->ph == 'C' ? 1 + e->kind : 0)) & (NCACHE - 1);
-            if (ckey != NULL && cname != NULL) {
+            uint8_t ck = (uint8_t)(e->ph == 'C' ? 0x80 | e->kind : e->kind);
+            size_t h = lp_hash(e->key, (const void *)(uintptr_t)ck) & (NCACHE - 1);
+            if (ckey != NULL && cname != NULL && ckind != NULL) {
                 for (size_t n = 0; n < NCACHE; n++, h = (h + 1) & (NCACHE - 1)) {
                     if (ckey[h] == NULL) break;
-                    if (ckey[h] == e->key && cname[h] != NULL) { nm = cname[h]; break; }
+                    if (ckey[h] == e->key && ckind[h] == ck && cname[h] != NULL) { nm = cname[h]; break; }
                 }
             }
             if (nm == NULL) {
                 if (e->ph == 'C') {
                     lp_symbol_name((void *)e->key, buf, sizeof buf);
                     snprintf(name, sizeof name, "copy %s in %s", lp_kind_name[e->kind], buf);
+                } else if ((e->kind & 15) == LP_TASK) {
+                    lp_task_name(e->key, (uint8_t)(e->kind >> 4), name, sizeof name);
                 } else if (e->kind == LP_FN) {
                     lp_symbol_name((void *)e->key, name, sizeof name);
                 } else {
                     lp_label_name(lean_string_cstr((lean_object *)e->key), name, sizeof name);
                 }
                 nm = name;
-                if (ckey != NULL && cname != NULL && ckey[h] == NULL) {
+                if (ckey != NULL && cname != NULL && ckind != NULL && ckey[h] == NULL && e->key != NULL) {
                     ckey[h] = e->key;
+                    ckind[h] = ck;
                     cname[h] = strdup(name);
                 }
             }
@@ -1182,7 +1370,7 @@ static void lp_write_trace(const char *path, double tick) {
                 fprintf(f, ",\"args\":{\"bytes\":%llu}}", (unsigned long long)e->bytes);
             } else {
                 fprintf(f, ",{\"ph\":\"B\",\"cat\":\"%s\",\"pid\":1,\"tid\":%u,\"ts\":%.3f,\"name\":",
-                        e->kind == LP_FN ? "function" : "scope", t->id, us);
+                        e->kind == LP_FN ? "function" : (e->kind & 15) == LP_TASK ? "task" : "scope", t->id, us);
                 lp_json_str(f, nm);
                 fputc('}', f);
             }
@@ -1194,6 +1382,7 @@ static void lp_write_trace(const char *path, double tick) {
         for (size_t i = 0; i < NCACHE; i++) free(cname[i]);
     free(cname);
     free(ckey);
+    free(ckind);
     if (dropped > 0)
         fprintf(stderr, "leanprof: trace kept the first %zu events per thread; %llu dropped (LEANPROF_TRACE_MAX)\n",
                 lp_trace_max, (unsigned long long)dropped);
@@ -1218,7 +1407,11 @@ static void lp_report(void) {
             if (s == NULL || s->calls == 0 || s->kind == LP_INTERNAL) continue;
             char fn[256] = "", fnkey[260];
             const char *label;
-            if (s->kind == LP_FN) {
+            if (s->kind == LP_TASK) {
+                lp_task_name(s->key, s->parent_kind, fn, sizeof fn);
+                snprintf(fnkey, sizeof fnkey, "\x02%s", fn);
+                label = fnkey;
+            } else if (s->kind == LP_FN) {
                 /* only Lean declarations: not module initializers, closed-term
                  * initializers or C runtime glue, unless LEANPROF_ALL=1 */
                 char raw[256];
@@ -1246,7 +1439,11 @@ static void lp_report(void) {
                 }
                 memset(&S[k], 0, sizeof(lp_scope_sum));
                 S[k].is_fn = s->kind == LP_FN;
-                if (S[k].is_fn) {
+                S[k].is_task = s->kind == LP_TASK;
+                if (S[k].is_task) {
+                    S[k].label = strdup(fnkey);
+                    snprintf(S[k].name, sizeof S[k].name, "%s", fn);
+                } else if (S[k].is_fn) {
                     S[k].label = strdup(fnkey);
                     snprintf(S[k].name, sizeof S[k].name, "%s", fn);
                     lp_where(fn, S[k].where, sizeof S[k].where);
@@ -1265,6 +1462,8 @@ static void lp_report(void) {
             S[k].total += lp_clamp((double)s->total - (double)s->outer * inner - (double)s->desc_total * pair);
             S[k].self += lp_clamp((double)s->self - (double)s->calls * inner - (double)s->kids * (pair - inner));
             S[k].sum += lp_clamp((double)s->sum - (double)s->calls * inner - (double)s->desc_sum * pair);
+            S[k].wait += s->wait;
+            if (s->wait_max > S[k].wait_max) S[k].wait_max = s->wait_max;
             if (s->min < S[k].min) S[k].min = s->min;
             if (s->max > S[k].max) S[k].max = s->max;
             for (size_t b = 0; b < LP_BUCKETS; b++) S[k].hist[b] += s->hist[b];
@@ -1325,7 +1524,7 @@ static void lp_report(void) {
         }
     }
     for (size_t k = 0; k < ns; k++)
-        if (S[k].is_fn) free((void *)S[k].label);
+        if (S[k].is_fn || S[k].is_task) free((void *)S[k].label);
     free(S);
     free(C);
 }

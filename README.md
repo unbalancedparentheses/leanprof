@@ -38,7 +38,7 @@ nothing.
 | No annotations needed | ✅ `LEANPROF_AUTO=1`, exact call counts | – | ✅ sampled | – |
 | Timeline | ✅ Perfetto, with copies as markers | ✅ Perfetto | ✅ Firefox Profiler | – |
 | Regression comparison | ✅ exact for copies and calls; thresholded for time | ✅ thresholded | – | ✅ thresholded |
-| Task-aware | – (planned) | ✅ | – | – |
+| Task-aware | ✅ run time and queue wait per spawning scope; blocking waits per call site | ✅ parent links | – | – |
 | Lean-readable names | ✅ | ✅ (you name spans) | mangled | ✅ |
 
 Elaboration (compile-time) profiling is out of scope: use `trace.profiler` or
@@ -89,8 +89,10 @@ elaborates to the bare term.
 
 ### Counting copies
 
-Copy detection needs your executable's C code compiled with these flags, which
-route the runtime's copy paths through leanprof:
+Copy and task tracking need your executable's C code compiled with these
+flags, which route the runtime's copy, task-spawn and blocking-wait paths
+through leanprof (or use `lake exe leanprof run`, which needs no lakefile
+changes):
 
 ```lean
 lean_exe myapp where
@@ -104,7 +106,11 @@ lean_exe myapp where
     "-Dlean_float_array_push=leanprof_float_array_push",
     "-Dlean_string_push=leanprof_string_push",
     "-Dlean_string_append=leanprof_string_append",
-    "-Dlean_string_utf8_set=leanprof_string_utf8_set"]
+    "-Dlean_string_utf8_set=leanprof_string_utf8_set",
+    "-Dlean_task_spawn_core=leanprof_task_spawn_core",
+    "-Dlean_io_as_task=leanprof_io_as_task",
+    "-Dlean_io_wait=leanprof_io_wait",
+    "-Dlean_task_get=leanprof_task_get"]
   moreLinkArgs := #["-rdynamic"]  -- so the report can name functions
 ```
 
@@ -169,6 +175,21 @@ It forwards to the system `clang` (or `cc`; override with
 `LEANPROF_REAL_CC`), since `leanc` stops passing its bundled clang's sysroot
 once `LEAN_CC` is set.
 
+### Tasks
+
+With the same flags (or the wrapper), every `Task.spawn` and `IO.asTask` is
+linked to the scope that spawned it: the report lists, per spawning scope,
+how many tasks ran, their run time, and how long they waited between spawn
+and start. `IO.wait` and `Task.get` are timed per call site as blocking
+waits. In the timeline, each task appears on its worker thread as
+`task <- <scope>`. `Task.map`, `Task.bind`, `IO.mapTask` and `IO.bindTask`
+are not tracked yet.
+
+A task that finishes in microseconds while its spawning scope takes
+milliseconds usually means the work ran before the spawn:
+`IO.asTask (pure (work x))` computes `work x` in the parent; use
+`IO.lazyPure fun _ => work x` (see [`Examples/Tasks.lean`](Examples/Tasks.lean)).
+
 ### In tests
 
 ```lean
@@ -193,8 +214,9 @@ the counters and positions while the program runs.
 - **Timer resolution.** On Apple Silicon the clock ticks every 41.7 ns, so
   percentiles of very short scopes are coarse. Means and totals over many
   calls are fine.
-- **Threads, not tasks.** Scopes are kept per OS thread. Work in a `Task` is
-  timed on the thread that runs it, with no link to the scope that spawned it.
+- **Task combinators.** Tasks from `Task.spawn` and `IO.asTask` are linked to
+  their spawning scope; `Task.map`/`bind` and `IO.mapTask`/`bindTask` are not
+  yet.
 
 Overhead: about 11 ns per profiled `IO` action and 15 ns per pure
 `profile!` scope (which allocates a closure) on an Apple M5 Max; see

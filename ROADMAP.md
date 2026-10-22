@@ -90,8 +90,10 @@ benchmark measures them.
 - [x] Timeline export (`LEANPROF_TRACE`): Chrome trace format for Perfetto,
   per thread, with copies as instant markers; bounded per-thread buffers.
 - [ ] Export LeanProfiler's summary format.
-- [ ] Attribute `Task` work to the spawning scope; measure queue wait
-  (spawned to started) and `IO.wait` time; `Std.Channel` throughput.
+- [x] Attribute `Task.spawn`/`IO.asTask` work to the spawning scope; queue
+  wait (spawn to start); blocking `IO.wait`/`Task.get` per call site; tasks
+  on their worker threads in the timeline.
+- [ ] `Task.map`/`bind`, `IO.mapTask`/`bindTask`; `Std.Channel` throughput.
 - [ ] One Firefox Profiler file merging samply's sampled stacks, exact scope
   timings and copies as markers.
 - [ ] Live terminal view and an MCP server so agents can query a running
