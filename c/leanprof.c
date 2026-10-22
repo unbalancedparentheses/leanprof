@@ -695,7 +695,16 @@ static void lp_find_root_pkg(void) {
     if (f == NULL) return;
     while (fgets(line, sizeof line, f)) {
         if (strncmp(line, "package ", 8) == 0) {
-            sscanf(line + 8, "%255[A-Za-z0-9_'-]", lp_root_pkg);
+            /* not sscanf: newer glibc renames it, and Lean links an older one */
+            size_t n = 0;
+            for (const char *q = line + 8; n + 1 < sizeof lp_root_pkg; q++) {
+                char c = *q;
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+                      c == '\'' || c == '-'))
+                    break;
+                lp_root_pkg[n++] = c;
+            }
+            lp_root_pkg[n] = 0;
             break;
         }
     }
