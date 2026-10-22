@@ -1,4 +1,6 @@
-import Leanprof
+module
+
+public import Leanprof
 
 /-! Tasks: pure `Task.spawn` and `IO.asTask` work, spawned from scopes and
 waited on, so the report shows run time, queue wait and blocking waits. -/
@@ -24,7 +26,7 @@ def ioTasks (k n : Nat) : IO Nat := profile! "ioTasks" do
     | .error e => throw e
   return acc
 
-def main (args : List String) : IO Unit := do
+public def main (args : List String) : IO Unit := do
   let n := (args.head? >>= String.toNat?).getD 200000
   let n := n + (← IO.monoMsNow) * 0
   let a ← IO.lazyPure fun _ => pureTasks 16 n

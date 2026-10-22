@@ -1,4 +1,6 @@
-import Leanprof
+module
+
+public import Leanprof
 
 /-!
 A program with a classic hidden copy. `buildWithHistory` keeps every
@@ -26,7 +28,7 @@ def build (n : Nat) : Array Nat := profile! "build" Id.run do
     acc := acc.push i
   return acc
 
-def main (args : List String) : IO Unit := do
+public def main (args : List String) : IO Unit := do
   let n := (args.head? >>= String.toNat?).getD 2000
   let (a, h) := buildWithHistory n
   let b := build n

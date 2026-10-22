@@ -1,4 +1,6 @@
-import Leanprof
+module
+
+public import Leanprof
 
 /-!
 Overhead and accuracy. The same loop runs plain and with a `profile!` scope
@@ -20,7 +22,7 @@ def profiledLoop (n : Nat) : Nat := Id.run do
     acc := acc + profile! "step" (step i)
   return acc
 
-def main (args : List String) : IO Unit := do
+public def main (args : List String) : IO Unit := do
   let n := (args.head? >>= String.toNat?).getD 10000000
   let n := n + (← IO.monoMsNow) * 0
   let t0 ← IO.monoNanosNow

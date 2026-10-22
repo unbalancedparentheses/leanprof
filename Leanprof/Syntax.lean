@@ -1,5 +1,7 @@
-import Lean.Elab.Term
-import Leanprof.Core
+module
+
+public import Leanprof.Core
+public meta import Lean.Elab.Term
 
 /-!
 # `profile!`
@@ -12,6 +14,7 @@ With `set_option leanprof.enabled false` it elaborates to plain `e`, so
 annotations cost nothing in builds without profiling.
 -/
 
+public meta section
 namespace Leanprof
 open Lean Elab Term Meta
 
@@ -21,7 +24,7 @@ register_option leanprof.enabled : Bool := {
 }
 
 /-- Is `type` an application `m α` for a monad `scopeM` supports? -/
-private def monadicHead? (type : Expr) : TermElabM (Option Expr) := do
+def monadicHead? (type : Expr) : TermElabM (Option Expr) := do
   let type ← whnfR type
   let .app m _ := type | return none
   let ok (cls : Name) (args : Array Expr) : TermElabM Bool := do
@@ -37,7 +40,7 @@ syntax (name := profileTerm) "profile! " str ppSpace term : term
 
 /-- The runtime label: the name, then `\x1f` and the source position, which the
 report shows in its `where` column. -/
-private def labelWithPos (name : String) (stx : Syntax) : TermElabM String := do
+def labelWithPos (name : String) (stx : Syntax) : TermElabM String := do
   let file := (← getMainModule).toString.replace "." "/" ++ ".lean"
   let some pos := stx.getPos? | return name
   let line := (← getFileMap).toPosition pos |>.line

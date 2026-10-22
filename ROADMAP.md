@@ -37,7 +37,10 @@ benchmark measures them.
   `.ilean` files, read by the runtime at exit.
 - [x] Head-to-head overhead benchmark against LeanProfiler, single- and
   multi-threaded ([bench/](bench/README.md)).
-- [ ] Same against samply, and accuracy on known workloads.
+- [x] Accuracy on a known workload (`Examples/Overhead.lean`).
+- [x] `leanprof sample`: samply underneath, Lean names, file:line, merged
+  specializations, runtime breakdown, Lean-named flame graph.
+- [ ] Overhead comparison table against samply on the same workloads.
 - [x] Overhead calibration: measure the cost of a scope (warm-up, fastest of
   many batches, at startup and exit) and subtract it from every enclosing
   scope's times.
@@ -55,6 +58,8 @@ benchmark measures them.
   every package, dependencies included.
 - [x] `lake exe leanprof run <exe>`: builds with the copy flags (and
   optionally every function timed), runs, and cleans up instrumented objects.
+- [x] Library as Lean modules: `profile!` does not link Lean's front end into
+  module programs; calibration only runs when profiling is used.
 - [ ] Set frame-pointer and debug-info flags automatically for sampling.
 
 ## M4: comparisons that do not flake

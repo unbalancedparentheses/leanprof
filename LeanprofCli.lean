@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import Leanprof.Core
 
 /-!
 # `lake exe leanprof`
@@ -6,6 +7,9 @@ import Lean.Data.Json
 * `run`: build an executable with leanprof's compiler wrapper (copy shims
   everywhere, optionally every function timed), run it, and remove the
   instrumented objects again so a later plain `lake build` does not reuse them.
+* `sample`: build normally and run under samply (no instrumentation), then
+  report CPU time per Lean declaration with source positions, and rewrite
+  samply's symbols so `samply load` shows Lean names.
 * `compare`: compare two JSON reports. Copies and call counts are exact, so
   any increase is a regression; times use a relative threshold.
 -/
@@ -14,6 +18,7 @@ open Lean System
 
 def usage : String := "usage:
   lake exe leanprof run [--auto | --auto-all] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]
+  lake exe leanprof sample [--rate HZ] [--out FILE] [--top N] EXE [-- ARGS...]
   lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json"
 
 /-- leanprof's package directory: this executable is `<root>/.lake/build/bin/leanprof`. -/
@@ -165,11 +170,197 @@ def compare (argv : List String) : IO UInt32 := do
   IO.println s!"{regressions} regressions"
   return 1
 
+/-! ## sample -/
+
+structure SampleOpts where
+  rate : Nat := 4000
+  out : Option String := none
+  top : Nat := 25
+  exe : Option String := none
+  args : Array String := #[]
+
+partial def parseSample (o : SampleOpts) : List String → Except String SampleOpts
+  | [] => .ok o
+  | "--rate" :: v :: rest => parseSample { o with rate := v.toNat! } rest
+  | "--out" :: f :: rest => parseSample { o with out := some f } rest
+  | "--top" :: v :: rest => parseSample { o with top := v.toNat! } rest
+  | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
+  | a :: rest =>
+    if a.startsWith "--" then .error s!"unknown option {a}"
+    else if o.exe.isNone then parseSample { o with exe := some a } rest
+    else parseSample { o with args := o.args.push a } rest
+
+def getArr (j : Json) (k : String) : Array Json := (j.getObjVal? k >>= Json.getArr?).toOption.getD #[]
+def getNatAt (a : Array Json) (i : Nat) : Option Nat := (a[i]? >>= fun x => x.getNat?.toOption)
+
+/-- Symbols defined in `bin`, as `nm` lists them (Mach-O's leading `_` removed). -/
+def binarySymbols (bin : FilePath) : IO (Array String) := do
+  let out ← IO.Process.output { cmd := "nm", args := #[bin.toString] }
+  let mut syms := #[]
+  for line in out.stdout.splitOn "\n" do
+    match (line.splitOn " ").filter (· != "") with
+    | [_, _, name] | [_, name] =>
+      syms := syms.push (if System.Platform.isOSX && name.startsWith "_" then (name.drop 1).toString else name)
+    | _ => pure ()
+  return syms
+
+/-- One library's symbols from samply's sidecar: sorted (start, end, name). -/
+def libSymbols (lib : Json) (strings : Array String) : Array (Nat × Nat × String) := Id.run do
+  let mut v := #[]
+  for e in getArr lib "symbol_table" do
+    let rva := (e.getObjVal? "rva" >>= Json.getNat?).toOption.getD 0
+    let size := (e.getObjVal? "size" >>= Json.getNat?).toOption.getD 0
+    let sym := (e.getObjVal? "symbol" >>= Json.getNat?).toOption.getD 0
+    v := v.push (rva, rva + size, strings[sym]?.getD "?")
+  return v.qsort (·.1 < ·.1)
+
+def lookupSym (tbl : Array (Nat × Nat × String)) (addr : Nat) : Option String := Id.run do
+  let mut lo := 0
+  let mut hi := tbl.size
+  while lo < hi do
+    let mid := (lo + hi) / 2
+    if tbl[mid]!.1 ≤ addr then lo := mid + 1 else hi := mid
+  if lo == 0 then return none
+  let (s, e, n) := tbl[lo - 1]!
+  if s ≤ addr && addr < e then some n else none
+
+/-- What a runtime (non-Lean) function is spending time on, for the
+breakdown; `none` for code that is neither the Lean runtime nor leanprof. -/
+def runtimeCategory (raw : String) : Option String :=
+  let r := if raw.startsWith "_" then (raw.drop 1).toString else raw
+  let has (p : String) := (r.splitOn p).length > 1
+  if r.startsWith "leanprof_" || r.startsWith "lpf_" || r.startsWith "__cyg_profile" then some "leanprof itself"
+  else if has "lean_copy_" then some "copying non-exclusive values"
+  else if has "lean_mark_mt" || has "lean_mark_persistent" then some "marking objects multi-threaded/persistent"
+  else if has "lean_dec_ref" || has "lean_del_core" || has "lean_free" || has "del_core" then some "freeing objects (reference counts reaching zero)"
+  else if has "lean_alloc" || r.startsWith "mi_" || has "malloc" || has "mi_page" then some "allocation"
+  else if has "lean_apply" then some "applying closures"
+  else if has "gmpz" || has "lean_nat_big" || has "mpz" then some "big-number arithmetic"
+  else if r.startsWith "lean_" || has "lean::" then some "other Lean runtime"
+  else none
+
+def sample (argv : List String) : IO UInt32 := do
+  let o ← IO.ofExcept (parseSample {} argv)
+  let some exe := o.exe | throw <| IO.userError usage
+  let rc ← spawnWait "lake" #["build", exe] #[]
+  if rc != 0 then return rc
+  let bin : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
+  let out : FilePath := o.out.getD s!".lake/leanprof/{exe}.json"
+  if let some dir := out.parent then IO.FS.createDirAll dir
+  let rc ← spawnWait "samply" (#["record", "--save-only", "--unstable-presymbolicate", "--rate", toString o.rate,
+    "-o", out.toString, bin.toString] ++ o.args) #[("LEANPROF_QUIET", some "1")]
+  if rc != 0 then
+    IO.eprintln s!"leanprof: samply exited with {rc} (is it installed? brew install samply / cargo install samply)"
+    return rc
+  let symsPath : FilePath := out.withExtension "syms.json"
+  let profile ← IO.ofExcept (Json.parse (← IO.FS.readFile out))
+  let syms ← IO.ofExcept (Json.parse (← IO.FS.readFile symsPath))
+  let strings := (getArr syms "string_table").map fun j => j.getStr?.toOption.getD "?"
+  Leanprof.setSymbols (← binarySymbols bin)
+  -- per library: symbol table, and whether it is the profiled binary
+  let libsMeta := getArr profile "libs"
+  let symData := getArr syms "data"
+  let mut libTables : Array (Array (Nat × Nat × String)) := #[]
+  let mut libIsMain : Array Bool := #[]
+  for l in libsMeta do
+    let dn := str l "debugName"
+    let entry := symData.find? fun e => str e "debug_name" == dn
+    libTables := libTables.push (entry.map (libSymbols · strings) |>.getD #[])
+    libIsMain := libIsMain.push (dn == exe)
+  -- CPU time per display name: self (leaf) and inclusive (anywhere in the stack)
+  let mut selfT : Std.HashMap String Float := {}
+  let mut inclT : Std.HashMap String Float := {}
+  let mut total : Float := 0
+  let mut names : Std.HashMap String String := {}  -- raw symbol ↦ display name
+  let mut leanDecls : Std.HashSet String := {}       -- display names that are Lean declarations
+  let mut categories : Std.HashMap String String := {} -- display name ↦ runtime category
+  let mut catT : Std.HashMap String Float := {}
+  for t in getArr profile "threads" do
+    let samples ← IO.ofExcept (t.getObjVal? "samples")
+    let stacks := getArr samples "stack"
+    let deltas := getArr samples "threadCPUDelta"
+    let st ← IO.ofExcept (t.getObjVal? "stackTable")
+    let parents := getArr st "prefix"
+    let frameOf := getArr st "frame"
+    let ft ← IO.ofExcept (t.getObjVal? "frameTable")
+    let addrs := getArr ft "address"
+    let funcOf := getArr ft "func"
+    let fu ← IO.ofExcept (t.getObjVal? "funcTable")
+    let resOf := getArr fu "resource"
+    let rt ← IO.ofExcept (t.getObjVal? "resourceTable")
+    let libOf := getArr rt "lib"
+    -- display name of each frame, computed once
+    let mut frameName : Array String := #[]
+    for i in [0:addrs.size] do
+      let addr := getNatAt addrs i |>.getD 0
+      let lib := (getNatAt funcOf i >>= getNatAt resOf >>= getNatAt libOf).getD 0
+      let raw := (libTables[lib]? >>= (lookupSym · addr)).getD s!"0x{String.ofList (Nat.toDigits 16 addr)}"
+      let isMain := libIsMain[lib]?.getD false
+      let disp ← match names.get? raw with
+        | some d => pure d
+        | none => do
+          let d := if isMain then Leanprof.demangle raw else s!"[{(str (libsMeta[lib]?.getD Json.null) "name")}] {raw}"
+          names := names.insert raw d
+          let r := if raw.startsWith "_" then (raw.drop 1).toString else raw
+          if isMain && (r.startsWith "l_" || r.startsWith "lp_" || r == "_lean_main" || r == "lean_main") then
+            leanDecls := leanDecls.insert d
+          if isMain then
+            if let some c := runtimeCategory raw then categories := categories.insert d c
+          pure d
+      frameName := frameName.push disp
+    for i in [0:stacks.size] do
+      let some s0 := getNatAt stacks i | continue
+      let w : Float := match deltas[i]? with
+        | some (.num n) => n.toFloat
+        | _ => 1000
+      if w == 0 then continue
+      total := total + w
+      let mut seen : Std.HashSet String := {}
+      let mut s? := some s0
+      let mut leaf := true
+      while true do
+        let some s := s? | break
+        let f := getNatAt frameOf s |>.getD 0
+        let n := frameName[f]?.getD "?"
+        if leaf then
+          selfT := selfT.insert n (selfT.getD n 0 + w)
+          if let some c := categories.get? n then catT := catT.insert c (catT.getD c 0 + w)
+          leaf := false
+        unless seen.contains n do
+          inclT := inclT.insert n (inclT.getD n 0 + w)
+          seen := seen.insert n
+        s? := getNatAt parents s
+  -- report
+  let fmtCpu (us : Float) : String := s!"{fmt2 (us / 1000)} ms"
+  let pct (us : Float) : String := s!"{fmt2 (if total > 0 then us / total * 100 else 0)}%"
+  IO.println s!"\nleanprof sample: {exe}, {fmtCpu total} CPU sampled at {o.rate} Hz (samply, no instrumentation)"
+  let pad (s : String) (n : Nat) := s.pushn ' ' (n - s.length)
+  IO.println "\n  where the Lean runtime's time went (self time)"
+  for (c, w) in (catT.toArray.qsort (fun a b => a.2 > b.2)).toList do
+    IO.println s!"  {pad (fmtCpu w) 12} {pad (pct w) 8} {c}"
+  IO.println s!"\n  top {o.top} functions by self CPU time"
+  let bySelf := selfT.toArray.qsort (fun a b => a.2 > b.2)
+  for (n, w) in bySelf.toList.take o.top do
+    let wh ← Leanprof.whereIs n
+    IO.println s!"  {(fmtCpu w).pushn ' ' (12 - (fmtCpu w).length)} {(pct w).pushn ' ' (8 - (pct w).length)} {n}{if wh.isEmpty then "" else s!"  ({wh})"}"
+  IO.println s!"\n  top {o.top} Lean declarations by inclusive CPU time"
+  let leanIncl := (inclT.toArray.filter fun (n, _) => leanDecls.contains n && !n.startsWith "initialize_").qsort (fun a b => a.2 > b.2)
+  for (n, w) in leanIncl.toList.take o.top do
+    let wh ← Leanprof.whereIs n
+    IO.println s!"  {(fmtCpu w).pushn ' ' (12 - (fmtCpu w).length)} {(pct w).pushn ' ' (8 - (pct w).length)} {n}{if wh.isEmpty then "" else s!"  ({wh})"}"
+  -- Lean names for Firefox Profiler: rewrite the sidecar's strings
+  let renamed := strings.map fun r => names.getD r r
+  let syms' := syms.setObjVal! "string_table" (Json.arr (renamed.map Json.str))
+  IO.FS.writeFile symsPath syms'.compress
+  IO.println s!"\nflamegraph with Lean names: samply load {out}"
+  return 0
+
 def main (argv : List String) : IO UInt32 := do
   try
     match argv with
     | "run" :: rest => run rest
     | "compare" :: rest => compare rest
+    | "sample" :: rest => sample rest
     | _ =>
       IO.eprintln usage
       return 2

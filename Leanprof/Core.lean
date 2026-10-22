@@ -1,3 +1,5 @@
+module
+
 /-!
 # Runtime entry points
 
@@ -5,6 +7,7 @@ Thin bindings to `c/leanprof.c`. The reference bodies keep the definitions
 meaningful in proofs and in the interpreter; compiled code calls the C side.
 -/
 
+public section
 namespace Leanprof
 
 /-- Time `f ()` under the label `site`. `site` must be a string literal: the
@@ -74,5 +77,14 @@ namespace Leanprof
 files under `LEANPROF_ILEAN_DIR` (default `.lake/build/lib/lean`), or `""`. -/
 @[extern "leanprof_where"]
 opaque whereIs (decl : @& String) : BaseIO String
+
+end Leanprof
+
+namespace Leanprof
+
+/-- Resolve `whereIs` against another binary's symbols (its module
+initializers say which modules it links), instead of this process's. -/
+@[extern "leanprof_set_symbols"]
+opaque setSymbols (names : @& Array String) : BaseIO Unit
 
 end Leanprof

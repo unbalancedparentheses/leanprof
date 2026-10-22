@@ -51,3 +51,6 @@ lean_exe tasks where
   root := `Examples.Tasks
   moreLeancArgs := copyFlags
   moreLinkArgs := linkFlags
+
+lean_exe minimal where
+  root := `Examples.Minimal

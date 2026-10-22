@@ -6,17 +6,18 @@ Lean code slow: every time an `Array`, `ByteArray` or `String` is updated while
 another reference to it is alive, Lean copies the whole value.
 
 ```
-leanprof: 4 scopes, wall 42.6 ms
+
+leanprof: 4 scopes, wall 14.9 ms, 14.8 ns overhead per scope subtracted
 
 scope                         calls      total       self  %wall       mean        p50        p99  where
-buildWithHistory                  1     2.8 ms     2.8 ms   6.6%     2.8 ms     2.7 ms     2.7 ms  Examples/CopyBug.lean:15
-report                            1  241.5 µs   35.2 µs   0.6%  241.5 µs  234.7 µs  234.7 µs  Examples/CopyBug.lean:33
-fib                           10945  206.2 µs  206.2 µs   0.5%     230 ns      42 ns    2.7 µs  Examples/CopyBug.lean:13
-build                             1   15.5 µs   15.5 µs   0.0%   15.5 µs   15.3 µs   15.3 µs  Examples/CopyBug.lean:23
+buildWithHistory                  1     2.5 ms     2.5 ms  16.8%     2.5 ms     2.5 ms     2.5 ms  Examples/CopyBug.lean:17
+report                            1   76.0 µs   20.7 µs   0.5%   76.0 µs   74.7 µs   74.7 µs  Examples/CopyBug.lean:35
+fib                           10945   55.4 µs   55.4 µs   0.4%      61 ns      42 ns     708 ns  Examples/CopyBug.lean:15
+build                             1    7.3 µs    7.3 µs   0.0%    7.3 µs    7.0 µs    7.0 µs  Examples/CopyBug.lean:25
 
 copies of non-exclusive values (each one copied the whole value)
 function                                 kind           copies       bytes       time  %scope  why             in scope             where (declaration)
-buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3 MiB     2.3 ms   98.5%  shared+persistent buildWithHistory     Examples/CopyBug.lean:15
+buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3 MiB     2.5 ms   98.5%  shared+persistent buildWithHistory     Examples/CopyBug.lean:17
 ```
 
 That is [`Examples/CopyBug.lean`](Examples/CopyBug.lean): `buildWithHistory`
@@ -35,7 +36,10 @@ nothing.
 | **Copy assertions in tests** (`expectNoCopies`) | ✅ | – | – | – |
 | Overhead per event, recording | **~11 ns**, flat; 4 threads ~12 ns; measured and subtracted from reported times | 4.6 µs at 1k events, 88 µs at 16k (grows with events) | sampling, very low | – |
 | Overhead, recording off | compiles away | ~23 ns; 4 threads ~370 ns | – | – |
-| No annotations needed | ✅ `LEANPROF_AUTO=1`, exact call counts | – | ✅ sampled | – |
+| No annotations needed | ✅ sampled (`leanprof sample`) or exact (`--auto`) | – | ✅ sampled | – |
+| No rebuild, near-zero overhead | ✅ `leanprof sample` (samply underneath) | – | ✅ | – |
+| Lean names and file:line in sampled profiles | ✅ incl. specializations merged; runtime breakdown | – | mangled C names | – |
+| Startup cost when linked but unused | none (lazy calibration); modules don't link Lean's front end | small | none | – |
 | Timeline | ✅ Perfetto, with copies as markers | ✅ Perfetto | ✅ Firefox Profiler | – |
 | Regression comparison | ✅ exact for copies and calls; thresholded for time | ✅ thresholded | – | ✅ thresholded |
 | Task-aware | ✅ run time and queue wait per spawning scope; blocking waits per call site | ✅ parent links | – | – |
@@ -57,6 +61,13 @@ Add the dependency to your `lakefile.lean`:
 ```lean
 require leanprof from git "https://github.com/unbalancedparentheses/leanprof" @ "main"
 ```
+
+Make your files modules (`module` at the top, `public import Leanprof`):
+`profile!`'s elaborator is then only used while compiling, so programs do
+not link or initialize Lean's front end (a minimal program is 1 MB and starts
+in 10 ms, against 177 MB and ~30 ms of initialization from a plain
+`import`). Without the module system, `import Leanprof.Core` gives the same
+runtime API (`Leanprof.scope`, `scopeM`, ...) without `profile!`.
 
 Mark the code to time with `profile!`. It works on pure terms and on monadic
 actions (any monad with `MonadFinally` and a `BaseIO` lift, such as `IO` or
@@ -111,7 +122,7 @@ lean_exe myapp where
     "-Dlean_io_as_task=leanprof_io_as_task",
     "-Dlean_io_wait=leanprof_io_wait",
     "-Dlean_task_get=leanprof_task_get"]
-  moreLinkArgs := #["-rdynamic"]  -- so the report can name functions
+  moreLinkArgs := #["-rdynamic"]  -- so the report can name functions (larger binary)
 ```
 
 Each copy is attributed to the compiled function that made it and to the
@@ -140,6 +151,41 @@ lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
 compares two `--json` reports and exits 1 on a regression: any increase in
 copies or change in call counts (both exact, so no noise), or a scope slower
 by more than `PCT` percent (default 10) and `MS` milliseconds (default 1).
+
+### Sampling: no rebuild, near-zero overhead
+
+```
+lake exe leanprof sample [--rate HZ] [--top N] EXE [-- ARGS]
+```
+
+builds `EXE` normally and runs it under [samply](https://github.com/mstange/samply)
+(`brew install samply` or `cargo install samply`), then reports CPU time per
+Lean declaration with file:line, merging lambdas and specializations into
+the function that owns them, plus where the Lean runtime's own time went:
+
+```
+  where the Lean runtime's time went (self time)
+  63.92 ms     43.70%   copying non-exclusive values
+  51.96 ms     35.53%   freeing objects (reference counts reaching zero)
+  10.76 ms     7.36%    allocation
+  0.49 ms      0.33%    leanprof itself
+  0.40 ms      0.28%    marking objects multi-threaded/persistent
+
+  top 3 functions by self CPU time
+  63.92 ms     43.70%   lean_copy_expand_array
+  51.96 ms     35.53%   lean::lean_del_core_other(lean_object*, unsigned char, lean_object*)
+  10.30 ms     7.04%    mi_page_free_list_extend(mi_page_s*, unsigned long, unsigned long)
+
+  top 3 Lean declarations by inclusive CPU time
+  134.09 ms    91.67%   main  (Examples/CopyBug.lean:31)
+  75.92 ms     51.90%   buildWithHistory (in Std.Legacy.Range.forIn'.loop)  (Examples/CopyBug.lean:17)
+  75.92 ms     51.90%   buildWithHistory  (Examples/CopyBug.lean:17)
+```
+
+It also rewrites samply's symbol file, so `samply load .lake/leanprof/EXE.json`
+opens the flame graph in Firefox Profiler with Lean names instead of
+mangled ones. Use sampling to find where to look; use `profile!`, `--auto`
+and copy detection for exact counts and causes.
 
 ### Every function, no annotations
 
