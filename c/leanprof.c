@@ -4,6 +4,7 @@
  * Each thread records into its own tables, so the hot path takes no lock.
  * Tables are registered once in a global list and merged at exit.
  */
+#define _GNU_SOURCE /* dladdr on glibc */
 #include <lean/lean.h>
 
 #include <dlfcn.h>
