@@ -53,16 +53,17 @@ benchmark measures them.
 - [ ] `@[profile]` attribute on definitions.
 - [x] `scripts/leanprof-cc`: `LEAN_CC` wrapper that adds the copy flags to
   every package, dependencies included.
-- [ ] `lake exe leanprof run <exe>`: builds with the copy flags and
-  instrumentation, runs, and shows the report, with no lakefile edits.
+- [x] `lake exe leanprof run <exe>`: builds with the copy flags (and
+  optionally every function timed), runs, and cleans up instrumented objects.
 - [ ] Set frame-pointer and debug-info flags automatically for sampling.
 
 ## M4: comparisons that do not flake
 
 - [ ] `leanprof compare`: paired, interleaved runs of baseline and candidate
   in one session, with confidence intervals on time.
-- [ ] Exact metrics (copies, allocations, calls) compared without statistics;
-  fail CI on any increase.
+- [x] `leanprof compare`: copies and calls compared exactly, time with a
+  threshold; exits 1 on regressions.
+- [ ] Allocations in the exact comparison (after M5).
 - [ ] Benchmarks report copies and allocations next to time; LeanBench
   integration.
 

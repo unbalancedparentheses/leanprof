@@ -42,3 +42,9 @@ jobs:
           grep -q '"name":"buildWithHistory","pos":"Examples/CopyBug.lean:15","auto":true' auto.json
           grep -q '"name":"fib","pos":"Examples/CopyBug.lean:10","auto":true' auto.json
           grep -q '"shared":1999' auto.json
+      - name: leanprof run and compare
+        run: |
+          LEANPROF_QUIET=1 lake exe leanprof run --json small.json copybug -- 1000
+          LEANPROF_QUIET=1 lake exe leanprof run --json large.json copybug -- 2000
+          lake exe leanprof compare small.json small.json
+          if lake exe leanprof compare small.json large.json; then echo "expected a regression"; exit 1; fi

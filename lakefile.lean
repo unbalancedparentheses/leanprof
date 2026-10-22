@@ -39,3 +39,8 @@ extern_lib leanprof_c pkg := do
 
 lean_exe overhead where
   root := `Examples.Overhead
+
+/-- `lake exe leanprof run|compare`. -/
+lean_exe leanprof where
+  root := `LeanprofCli
+  supportInterpreter := false

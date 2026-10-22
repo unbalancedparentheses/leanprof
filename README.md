@@ -37,7 +37,7 @@ nothing.
 | Overhead, recording off | compiles away | ~23 ns; 4 threads ~370 ns | – | – |
 | No annotations needed | ✅ `LEANPROF_AUTO=1`, exact call counts | – | ✅ sampled | – |
 | Timeline | ✅ Perfetto, with copies as markers | ✅ Perfetto | ✅ Firefox Profiler | – |
-| Regression comparison | – (planned) | ✅ | – | ✅ |
+| Regression comparison | ✅ exact for copies and calls; thresholded for time | ✅ thresholded | – | ✅ thresholded |
 | Task-aware | – (planned) | ✅ | – | – |
 | Lean-readable names | ✅ | ✅ (you name spans) | mangled | ✅ |
 
@@ -116,6 +116,24 @@ elsewhere), and the reason the value was not exclusive:
 `shared` (another reference is alive), `multi-threaded` (the value was shared
 with another task, so Lean never mutates it in place) or `persistent` (a
 compile-time constant).
+
+### One command
+
+```
+lake exe leanprof run [--auto | --auto-all] [--trace FILE] [--json FILE] EXE [-- ARGS]
+```
+
+builds `EXE` with copy detection in every package (and, with `--auto`,
+every function timed), runs it, and removes the instrumented objects again
+so a later plain `lake build` does not reuse them.
+
+```
+lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
+```
+
+compares two `--json` reports and exits 1 on a regression: any increase in
+copies or change in call counts (both exact, so no noise), or a scope slower
+by more than `PCT` percent (default 10) and `MS` milliseconds (default 1).
 
 ### Every function, no annotations
 

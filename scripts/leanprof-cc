@@ -3,8 +3,20 @@
 # C code (dependencies too) is compiled with leanprof's copy shims.
 # It forwards to the system compiler (LEANPROF_REAL_CC overrides): with
 # LEAN_CC set, leanc no longer passes its bundled clang's sysroot.
-# clang is preferred: GCC lacks -finstrument-functions-after-inlining.
-real="${LEANPROF_REAL_CC:-$(command -v clang || echo cc)}"
+# clang is preferred (GCC lacks -finstrument-functions-after-inlining), but
+# not the toolchain's own, which Lake puts first on PATH and which has no
+# system headers.
+prefix="$(lean --print-prefix)"
+real="${LEANPROF_REAL_CC:-}"
+if [ -z "$real" ]; then
+  real=cc
+  old_ifs=$IFS; IFS=:
+  for d in $PATH; do
+    [ "$d" = "$prefix/bin" ] && continue
+    if [ -x "$d/clang" ]; then real="$d/clang"; break; fi
+  done
+  IFS=$old_ifs
+fi
 set -- \
   -Dlean_copy_expand_array_nonlinear=leanprof_copy_expand_array_nonlinear \
   -Dlean_copy_sarray_nonlinear=leanprof_copy_sarray_nonlinear \
@@ -30,6 +42,6 @@ esac
 # and find the toolchain's static libraries (gmp, libuv, ...)
 case " $* " in
   *" -c "*) ;;
-  *) set -- -rdynamic "-L$(lean --print-prefix)/lib" "$@" ;;
+  *) set -- -rdynamic "-L$prefix/lib" "$@" ;;
 esac
 exec "$real" "$@"
