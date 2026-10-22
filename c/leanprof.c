@@ -57,10 +57,18 @@ typedef struct {
 
 typedef struct {
     lp_scope *scope;
+    uint8_t traced;            /* its begin event was recorded */
     uint64_t start;
     uint64_t child;            /* raw time in direct children */
     uint64_t kids, desc;       /* direct children and all descendants that completed */
 } lp_frame;
+
+/* Timeline events, recorded only with LEANPROF_TRACE. */
+typedef struct {
+    const void *key;           /* scope key, or the copying pc */
+    uint64_t ts, bytes;
+    uint8_t ph, kind;          /* ph: 'B' begin, 'E' end, 'C' copy; kind: scope or copy kind */
+} lp_event;
 
 typedef struct lp_thread {
     lp_scope *scopes[LP_TABLE];
@@ -68,11 +76,18 @@ typedef struct lp_thread {
     lp_frame stack[LP_DEPTH];
     uint32_t depth;
     uint64_t dropped;
+    lp_event *events;
+    size_t nevents, capevents;
+    uint64_t events_dropped;
+    uint32_t id;               /* registration order, the trace's tid */
     struct lp_thread *next;
 } lp_thread;
 
 static _Thread_local lp_thread *lp_self;
 static lp_thread *lp_threads;
+static uint32_t lp_nthreads;
+static int lp_tracing;                /* LEANPROF_TRACE is set */
+static size_t lp_trace_max = 1u << 20; /* events per thread, LEANPROF_TRACE_MAX */
 static pthread_mutex_t lp_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t lp_start;
 
@@ -136,11 +151,32 @@ static lp_thread *lp_thread_get(void) {
     t = calloc(1, sizeof(lp_thread));
     if (t == NULL) abort();
     pthread_mutex_lock(&lp_lock);
+    t->id = lp_nthreads++;
     t->next = lp_threads;
     lp_threads = t;
     pthread_mutex_unlock(&lp_lock);
     lp_self = t;
     return t;
+}
+
+/* Append a timeline event. Begin events stop a frame short of the limit, so
+ * every recorded begin can still get its end. */
+static int lp_trace(lp_thread *t, uint8_t ph, const void *key, uint8_t kind, uint64_t ts, uint64_t bytes) {
+    size_t limit = ph == 'E' ? lp_trace_max : lp_trace_max - LP_DEPTH;
+    if (t->nevents >= limit) {
+        t->events_dropped++;
+        return 0;
+    }
+    if (t->nevents == t->capevents) {
+        size_t cap = t->capevents ? t->capevents * 2 : 4096;
+        if (cap > lp_trace_max) cap = lp_trace_max;
+        lp_event *e = realloc(t->events, cap * sizeof(lp_event));
+        if (e == NULL) { t->events_dropped++; return 0; }
+        t->events = e;
+        t->capevents = cap;
+    }
+    t->events[t->nevents++] = (lp_event){key, ts, bytes, ph, kind};
+    return 1;
 }
 
 static inline size_t lp_hash(const void *a, const void *b) {
@@ -201,6 +237,7 @@ __attribute__((no_instrument_function)) static inline void lp_enter(const void *
     f->scope = s;
     f->child = f->kids = f->desc = 0;
     f->start = lp_now();
+    f->traced = LEAN_UNLIKELY(lp_tracing) && kind != LP_INTERNAL && lp_trace(t, 'B', key, kind, f->start, 0);
 }
 
 static inline uint64_t lp_sub(uint64_t a, uint64_t b) { return a > b ? a - b : 0; }
@@ -212,6 +249,7 @@ __attribute__((no_instrument_function)) static inline void lp_exit(void) {
     uint32_t d = --t->depth;
     if (LEAN_UNLIKELY(d >= LP_DEPTH)) return;
     lp_frame *f = &t->stack[d];
+    if (LEAN_UNLIKELY(f->traced)) lp_trace(t, 'E', f->scope ? f->scope->key : NULL, 0, now, 0);
     uint64_t raw = now - f->start;
     if (d > 0) {
         lp_frame *p = &t->stack[d - 1];
@@ -358,6 +396,7 @@ static inline void lp_end(const lp_pending *p) {
         lp_scope *sc = t->stack[k - 1].scope;
         if (sc != NULL && sc->kind == LP_LABEL) { site = (const lean_object *)sc->key; break; }
     }
+    if (LEAN_UNLIKELY(lp_tracing)) lp_trace(t, 'C', p->pc, p->kind, p->start, p->bytes);
     lp_copy *c = lp_copy_get(t, p->pc, site, p->kind);
     if (c == NULL) return;
     c->count[p->reason]++;
@@ -1085,6 +1124,81 @@ static int lp_show_all(void) {
 
 static uint64_t lp_clamp(double v) { return v > 0 ? (uint64_t)(v + 0.5) : 0; }
 
+/* Chrome trace format, for ui.perfetto.dev or chrome://tracing. */
+static void lp_write_trace(const char *path, double tick) {
+    FILE *f = fopen(path, "w");
+    if (f == NULL) {
+        fprintf(stderr, "leanprof: cannot write %s\n", path);
+        return;
+    }
+    fprintf(f, "{\"displayTimeUnit\":\"ns\",\"traceEvents\":[");
+    int first = 1;
+    uint64_t dropped = 0;
+    char name[300], buf[300];
+    /* names, cached per key: small open-addressing table */
+    enum { NCACHE = 1 << 14 };
+    const void **ckey = calloc(NCACHE, sizeof(void *));
+    char **cname = calloc(NCACHE, sizeof(char *));
+    for (lp_thread *t = lp_threads; t != NULL; t = t->next) {
+        dropped += t->events_dropped;
+        if (t->nevents == 0) continue;
+        fprintf(f, "%s{\"ph\":\"M\",\"name\":\"thread_name\",\"pid\":1,\"tid\":%u,\"args\":{\"name\":\"%s %u\"}}",
+                first ? "" : ",", t->id, t->id == 0 ? "startup" : "thread", t->id);
+        first = 0;
+        for (size_t i = 0; i < t->nevents; i++) {
+            lp_event *e = &t->events[i];
+            double us = (double)(e->ts - lp_start) * tick / 1000.0;
+            if (e->ph == 'E') {
+                fprintf(f, ",{\"ph\":\"E\",\"pid\":1,\"tid\":%u,\"ts\":%.3f}", t->id, us);
+                continue;
+            }
+            const char *nm = NULL;
+            size_t h = lp_hash(e->key, (const void *)(uintptr_t)(e->ph == 'C' ? 1 + e->kind : 0)) & (NCACHE - 1);
+            if (ckey != NULL && cname != NULL) {
+                for (size_t n = 0; n < NCACHE; n++, h = (h + 1) & (NCACHE - 1)) {
+                    if (ckey[h] == NULL) break;
+                    if (ckey[h] == e->key && cname[h] != NULL) { nm = cname[h]; break; }
+                }
+            }
+            if (nm == NULL) {
+                if (e->ph == 'C') {
+                    lp_symbol_name((void *)e->key, buf, sizeof buf);
+                    snprintf(name, sizeof name, "copy %s in %s", lp_kind_name[e->kind], buf);
+                } else if (e->kind == LP_FN) {
+                    lp_symbol_name((void *)e->key, name, sizeof name);
+                } else {
+                    lp_label_name(lean_string_cstr((lean_object *)e->key), name, sizeof name);
+                }
+                nm = name;
+                if (ckey != NULL && cname != NULL && ckey[h] == NULL) {
+                    ckey[h] = e->key;
+                    cname[h] = strdup(name);
+                }
+            }
+            if (e->ph == 'C') {
+                fprintf(f, ",{\"ph\":\"i\",\"s\":\"t\",\"cat\":\"copy\",\"pid\":1,\"tid\":%u,\"ts\":%.3f,\"name\":",
+                        t->id, us);
+                lp_json_str(f, nm);
+                fprintf(f, ",\"args\":{\"bytes\":%llu}}", (unsigned long long)e->bytes);
+            } else {
+                fprintf(f, ",{\"ph\":\"B\",\"cat\":\"%s\",\"pid\":1,\"tid\":%u,\"ts\":%.3f,\"name\":",
+                        e->kind == LP_FN ? "function" : "scope", t->id, us);
+                lp_json_str(f, nm);
+                fputc('}', f);
+            }
+        }
+    }
+    fprintf(f, "]}\n");
+    fclose(f);
+    if (cname != NULL)
+        for (size_t i = 0; i < NCACHE; i++) free(cname[i]);
+    free(cname);
+    free(ckey);
+    if (dropped > 0)
+        fprintf(stderr, "leanprof: trace kept the first %zu events per thread; %llu dropped (LEANPROF_TRACE_MAX)\n",
+                lp_trace_max, (unsigned long long)dropped);
+}
+
 static void lp_report(void) {
     if (lp_threads == NULL || (lp_threads->next == NULL && lp_only_calibrated())) return; /* linked but unused */
     lp_calibrate(); /* the CPU is warm now; keeps the lower estimate */
@@ -1197,6 +1311,9 @@ static void lp_report(void) {
     const char *quiet = getenv("LEANPROF_QUIET");
     if (quiet == NULL || strcmp(quiet, "1") != 0) lp_print(stderr, S, ns, C, nc, tick, wall, dropped);
 
+    const char *trace = getenv("LEANPROF_TRACE");
+    if (trace != NULL && trace[0] != 0) lp_write_trace(trace, tick);
+
     const char *path = getenv("LEANPROF_JSON");
     if (path != NULL && path[0] != 0) {
         FILE *f = fopen(path, "w");
@@ -1215,6 +1332,14 @@ static void lp_report(void) {
 
 __attribute__((constructor)) static void lp_init(void) {
     lp_calibrate();
+    const char *trace = getenv("LEANPROF_TRACE");
+    lp_tracing = trace != NULL && trace[0] != 0;
+    const char *max = getenv("LEANPROF_TRACE_MAX");
+    if (max != NULL) {
+        size_t n = 0;
+        for (const char *q = max; *q >= '0' && *q <= '9'; q++) n = n * 10 + (size_t)(*q - '0');
+        if (n > 2 * LP_DEPTH) lp_trace_max = n;
+    }
     lp_start = lp_now();
     atexit(lp_report);
 }

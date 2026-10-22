@@ -86,7 +86,9 @@ benchmark measures them.
 
 - [ ] Shared-memory ring buffer (as in flux-profiler) read by a separate
   process, for live traces at near-zero cost to the program.
-- [ ] Export Perfetto traces and LeanProfiler's summary format.
+- [x] Timeline export (`LEANPROF_TRACE`): Chrome trace format for Perfetto,
+  per thread, with copies as instant markers; bounded per-thread buffers.
+- [ ] Export LeanProfiler's summary format.
 - [ ] Attribute `Task` work to the spawning scope; measure queue wait
   (spawned to started) and `IO.wait` time; `Std.Channel` throughput.
 - [ ] One Firefox Profiler file merging samply's sampled stacks, exact scope

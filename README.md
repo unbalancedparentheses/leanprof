@@ -36,7 +36,7 @@ nothing.
 | Overhead per event, recording | **~11 ns**, flat; 4 threads ~12 ns; measured and subtracted from reported times | 4.6 µs at 1k events, 88 µs at 16k (grows with events) | sampling, very low | – |
 | Overhead, recording off | compiles away | ~23 ns; 4 threads ~370 ns | – | – |
 | No annotations needed | ✅ `LEANPROF_AUTO=1`, exact call counts | – | ✅ sampled | – |
-| Timeline (Perfetto) | – (planned) | ✅ | ✅ (Firefox Profiler) | – |
+| Timeline | ✅ Perfetto, with copies as markers | ✅ Perfetto | ✅ Firefox Profiler | – |
 | Regression comparison | – (planned) | ✅ | – | ✅ |
 | Task-aware | – (planned) | ✅ | – | – |
 | Lean-readable names | ✅ | ✅ (you name spans) | mangled | ✅ |
@@ -78,6 +78,9 @@ The report goes to stderr when the program exits.
 | `LEANPROF_JSON=path` | also write the report as JSON |
 | `LEANPROF_QUIET=1` | no table on stderr |
 | `LEANPROF_ALL=1` | include copies of compile-time constants (hidden by default) |
+| `LEANPROF_TRACE=path` | also write a timeline (Chrome trace format: open in [ui.perfetto.dev](https://ui.perfetto.dev)), with copies as markers |
+| `LEANPROF_TRACE_MAX=n` | keep at most `n` timeline events per thread (default 1,048,576) |
+| `LEANPROF_NO_CALIBRATION=1` | report raw times, without subtracting leanprof's own cost |
 | `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for copy positions (default `.lake/build/lib/lean`) |
 
 To turn the annotations off without removing them, set

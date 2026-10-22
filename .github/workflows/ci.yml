@@ -29,6 +29,10 @@ jobs:
           cat report.json
           grep -q '"shared":1999' report.json
           grep -q '"pos":"Examples/CopyBug.lean:15"' report.json
+      - name: Timeline trace
+        run: |
+          LEANPROF_QUIET=1 LEANPROF_TRACE=trace.json .lake/build/bin/copybug 300
+          python3 -c "import json,sys; d=json.load(open('trace.json'))['traceEvents']; b=sum(e['ph']=='B' for e in d); e=sum(e['ph']=='E' for e in d); c=sum(e['ph']=='i' for e in d); print(b,e,c); sys.exit(0 if b==e and b>10000 and c>=299 else 1)"
       - name: Automatic mode and dependency-wide copy detection
         run: |
           find .lake -name '*.c.o*' -delete
