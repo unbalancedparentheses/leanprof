@@ -26,4 +26,6 @@ jobs:
         run: |
           lake build copybug
           LEANPROF_JSON=report.json .lake/build/bin/copybug 2000
+          cat report.json
           grep -q '"shared":1999' report.json
+          grep -q '"pos":"Examples/CopyBug.lean:15"' report.json

@@ -40,7 +40,7 @@ typedef struct {
     const lean_object *site;   /* innermost scope at the time, or NULL */
     uint8_t kind;
     uint64_t count[LP_REASONS];
-    uint64_t bytes;
+    uint64_t bytes, ticks;     /* ticks: time spent in the copying call */
 } lp_copy;
 
 typedef struct {
@@ -61,6 +61,8 @@ static _Thread_local lp_thread *lp_self;
 static lp_thread *lp_threads;
 static pthread_mutex_t lp_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t lp_start;
+
+static void lp_label_name(const char *label, char *out, size_t cap);
 
 /* ---------- clock ---------- */
 
@@ -222,7 +224,7 @@ LEAN_EXPORT lean_obj_res leanprof_exit(lean_obj_arg unit) {
 /* ---------- copies ----------
  * Programs built with leanprof's copy flags call these instead of the runtime
  * functions (see `-D` flags in the README). Each shim records why the value
- * was not exclusive, then forwards to the real function.
+ * was not exclusive and how long the copying call took.
  */
 
 static inline int lp_reason(lean_object *o) {
@@ -232,15 +234,31 @@ static inline int lp_reason(lean_object *o) {
     return LP_SHARED;
 }
 
-static inline void lp_record(void *pc, lean_object *o, uint8_t kind, size_t bytes) {
+/* What we know about a value before the runtime call consumes it. */
+typedef struct {
+    void *pc;
+    uint8_t kind, reason;
+    size_t bytes;
+    uint64_t start;
+} lp_pending;
+
+static inline lp_pending lp_begin(void *pc, lean_object *o, uint8_t kind, size_t bytes) {
+    lp_pending p = {pc, kind, (uint8_t)lp_reason(o), bytes, 0};
+    p.start = lp_now();
+    return p;
+}
+
+static inline void lp_end(const lp_pending *p) {
+    uint64_t elapsed = lp_now() - p->start;
     lp_thread *t = lp_thread_get();
     const lean_object *site = NULL;
     uint32_t d = t->depth;
     if (d > 0 && d <= LP_DEPTH && t->stack[d - 1].scope != NULL) site = t->stack[d - 1].scope->site;
-    lp_copy *c = lp_copy_get(t, pc, site, kind);
+    lp_copy *c = lp_copy_get(t, p->pc, site, p->kind);
     if (c == NULL) return;
-    c->count[lp_reason(o)]++;
-    c->bytes += bytes;
+    c->count[p->reason]++;
+    c->bytes += p->bytes;
+    c->ticks += elapsed;
 }
 
 static inline size_t lp_sarray_bytes(lean_object *a) {
@@ -249,49 +267,56 @@ static inline size_t lp_sarray_bytes(lean_object *a) {
 
 #define LP_PC __builtin_return_address(0)
 
+/* Called only when the value is not exclusive: always a copy. */
+#define LP_COPY(kind, obj, bytes, call)                       \
+    do {                                                      \
+        lp_pending p_ = lp_begin(LP_PC, (obj), (kind), (bytes)); \
+        lean_object *r_ = (call);                             \
+        lp_end(&p_);                                          \
+        return r_;                                            \
+    } while (0)
+
+/* Copies only when the value is not exclusive. */
+#define LP_MAYBE_COPY(kind, obj, bytes, call)                 \
+    do {                                                      \
+        if (LEAN_LIKELY(lean_is_exclusive(obj))) return (call); \
+        LP_COPY(kind, obj, bytes, call);                      \
+    } while (0)
+
 LEAN_EXPORT lean_obj_res leanprof_copy_expand_array_nonlinear(lean_obj_arg a, bool expand) {
-    lp_record(LP_PC, a, LP_ARRAY, lean_array_size(a) * sizeof(void *));
-    return lean_copy_expand_array_nonlinear(a, expand);
+    LP_COPY(LP_ARRAY, a, lean_array_size(a) * sizeof(void *), lean_copy_expand_array_nonlinear(a, expand));
 }
 
 LEAN_EXPORT lean_obj_res leanprof_copy_sarray_nonlinear(lean_obj_arg a, size_t cap) {
-    lp_record(LP_PC, a, LP_SCALAR_ARRAY, lp_sarray_bytes(a));
-    return lean_copy_sarray_nonlinear(a, cap);
+    LP_COPY(LP_SCALAR_ARRAY, a, lp_sarray_bytes(a), lean_copy_sarray_nonlinear(a, cap));
 }
 
 LEAN_EXPORT lean_obj_res leanprof_copy_string_nonlinear(lean_obj_arg s, size_t cap) {
-    lp_record(LP_PC, s, LP_STRING, lean_string_size(s));
-    return lean_copy_string_nonlinear(s, cap);
+    LP_COPY(LP_STRING, s, lean_string_size(s), lean_copy_string_nonlinear(s, cap));
 }
 
 LEAN_EXPORT lean_object *leanprof_array_push(lean_obj_arg a, lean_obj_arg v) {
-    if (!lean_is_exclusive(a)) lp_record(LP_PC, a, LP_ARRAY, lean_array_size(a) * sizeof(void *));
-    return lean_array_push(a, v);
+    LP_MAYBE_COPY(LP_ARRAY, a, lean_array_size(a) * sizeof(void *), lean_array_push(a, v));
 }
 
 LEAN_EXPORT lean_obj_res leanprof_byte_array_push(lean_obj_arg a, uint8_t b) {
-    if (!lean_is_exclusive(a)) lp_record(LP_PC, a, LP_SCALAR_ARRAY, lp_sarray_bytes(a));
-    return lean_byte_array_push(a, b);
+    LP_MAYBE_COPY(LP_SCALAR_ARRAY, a, lp_sarray_bytes(a), lean_byte_array_push(a, b));
 }
 
 LEAN_EXPORT lean_obj_res leanprof_float_array_push(lean_obj_arg a, double d) {
-    if (!lean_is_exclusive(a)) lp_record(LP_PC, a, LP_SCALAR_ARRAY, lp_sarray_bytes(a));
-    return lean_float_array_push(a, d);
+    LP_MAYBE_COPY(LP_SCALAR_ARRAY, a, lp_sarray_bytes(a), lean_float_array_push(a, d));
 }
 
 LEAN_EXPORT lean_obj_res leanprof_string_push(lean_obj_arg s, uint32_t c) {
-    if (!lean_is_exclusive(s)) lp_record(LP_PC, s, LP_STRING, lean_string_size(s));
-    return lean_string_push(s, c);
+    LP_MAYBE_COPY(LP_STRING, s, lean_string_size(s), lean_string_push(s, c));
 }
 
 LEAN_EXPORT lean_obj_res leanprof_string_append(lean_obj_arg s1, b_lean_obj_arg s2) {
-    if (!lean_is_exclusive(s1)) lp_record(LP_PC, s1, LP_STRING, lean_string_size(s1));
-    return lean_string_append(s1, s2);
+    LP_MAYBE_COPY(LP_STRING, s1, lean_string_size(s1), lean_string_append(s1, s2));
 }
 
 LEAN_EXPORT lean_obj_res leanprof_string_utf8_set(lean_obj_arg s, b_lean_obj_arg i, uint32_t c) {
-    if (!lean_is_exclusive(s)) lp_record(LP_PC, s, LP_STRING, lean_string_size(s));
-    return lean_string_utf8_set(s, i, c);
+    LP_MAYBE_COPY(LP_STRING, s, lean_string_size(s), lean_string_utf8_set(s, i, c));
 }
 
 /* ---------- symbol names ----------
@@ -458,6 +483,12 @@ static void lp_demangle(const char *s, char *out, size_t cap) {
     lp_clean(out, cap);
 }
 
+static void lp_symbol_raw(void *pc, char *out, size_t cap) {
+    Dl_info info;
+    if (!dladdr(pc, &info) || info.dli_sname == NULL) snprintf(out, cap, "%p", pc);
+    else snprintf(out, cap, "%s", info.dli_sname);
+}
+
 static void lp_symbol_name(void *pc, char *out, size_t cap) {
     Dl_info info;
     if (!dladdr(pc, &info) || info.dli_sname == NULL) {
@@ -480,15 +511,18 @@ LEAN_EXPORT lean_obj_res leanprof_copies(void) {
     return lean_uint64_to_nat(n);
 }
 
-/* Completed calls of scopes labelled `site`, on all threads. */
+/* Completed calls of scopes named `site` (positions ignored), on all threads. */
 LEAN_EXPORT lean_obj_res leanprof_calls(b_lean_obj_arg site) {
-    const char *label = lean_string_cstr(site);
+    const char *want = lean_string_cstr(site);
+    char name[128];
     uint64_t n = 0;
     pthread_mutex_lock(&lp_lock);
     for (lp_thread *t = lp_threads; t != NULL; t = t->next)
-        for (size_t i = 0; i < LP_TABLE; i++)
-            if (t->scopes[i] != NULL && strcmp(lean_string_cstr((lean_object *)t->scopes[i]->site), label) == 0)
-                n += t->scopes[i]->calls;
+        for (size_t i = 0; i < LP_TABLE; i++) {
+            if (t->scopes[i] == NULL) continue;
+            lp_label_name(lean_string_cstr((lean_object *)t->scopes[i]->site), name, sizeof name);
+            if (strcmp(name, want) == 0) n += t->scopes[i]->calls;
+        }
     pthread_mutex_unlock(&lp_lock);
     return lean_uint64_to_nat(n);
 }
@@ -507,17 +541,35 @@ LEAN_EXPORT lean_obj_res leanprof_demangle(b_lean_obj_arg sym) {
 
 /* ---------- report ---------- */
 
+/* `profile!` labels are "name\x1fFile.lean:line"; older or hand-written ones
+ * have no position. */
+#define LP_POS_SEP '\x1f'
+
+static void lp_label_name(const char *label, char *out, size_t cap) {
+    const char *sep = strchr(label, LP_POS_SEP);
+    size_t n = sep ? (size_t)(sep - label) : strlen(label);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, label, n);
+    out[n] = 0;
+}
+
+static const char *lp_label_pos(const char *label) {
+    const char *sep = strchr(label, LP_POS_SEP);
+    return sep ? sep + 1 : "";
+}
+
 typedef struct {
     const char *label;
+    char name[128];
     uint64_t calls, total, self, sum, min, max;
     uint32_t hist[LP_BUCKETS];
 } lp_scope_sum;
 
 typedef struct {
-    char fn[256];
+    char fn[256], sym[256], scope[128];
     const char *label;
     uint8_t kind;
-    uint64_t count[LP_REASONS], bytes, total;
+    uint64_t count[LP_REASONS], bytes, total, ticks;
 } lp_copy_sum;
 
 static int lp_by_total(const void *a, const void *b) {
@@ -525,8 +577,10 @@ static int lp_by_total(const void *a, const void *b) {
     return x->total < y->total ? 1 : x->total > y->total ? -1 : 0;
 }
 
-static int lp_by_bytes(const void *a, const void *b) {
+/* Costliest first; bytes break ties when the clock is too coarse. */
+static int lp_by_cost(const void *a, const void *b) {
     const lp_copy_sum *x = a, *y = b;
+    if (x->ticks != y->ticks) return x->ticks < y->ticks ? 1 : -1;
     if (x->bytes != y->bytes) return x->bytes < y->bytes ? 1 : -1;
     return x->total < y->total ? 1 : x->total > y->total ? -1 : 0;
 }
@@ -553,6 +607,103 @@ static void lp_json_str(FILE *f, const char *s) {
         else fputc(*s, f);
     }
     fputc('"', f);
+}
+
+static int lp_interesting(const lp_copy_sum *c) {
+    return c->count[LP_SHARED] + c->count[LP_MULTI_THREADED] > 0;
+}
+
+static const lp_scope_sum *lp_find_scope(const lp_scope_sum *S, size_t ns, const char *label) {
+    for (size_t k = 0; k < ns; k++)
+        if (strcmp(S[k].label, label) == 0) return &S[k];
+    return NULL;
+}
+
+static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_sum *C, size_t nc, double tick,
+                     double wall, uint64_t dropped) {
+    char w[32];
+    lp_fmt_time(wall, w, sizeof w);
+    fprintf(f, "\nleanprof: %zu scopes, wall %s\n", ns, w);
+    if (ns > 0) {
+        fprintf(f, "\n%-24s %10s %10s %10s %6s %10s %10s %10s  %s\n", "scope", "calls", "total", "self", "%wall",
+                "mean", "p50", "p99", "where");
+        for (size_t k = 0; k < ns; k++) {
+            char tt[32], st[32], mt[32], p50[32], p99[32];
+            lp_fmt_time((double)S[k].total * tick, tt, sizeof tt);
+            lp_fmt_time((double)S[k].self * tick, st, sizeof st);
+            lp_fmt_time((double)S[k].sum * tick / (double)S[k].calls, mt, sizeof mt);
+            lp_fmt_time((double)lp_percentile(S[k].hist, S[k].calls, 0.50) * tick, p50, sizeof p50);
+            lp_fmt_time((double)lp_percentile(S[k].hist, S[k].calls, 0.99) * tick, p99, sizeof p99);
+            fprintf(f, "%-24s %10llu %10s %10s %5.1f%% %10s %10s %10s  %s\n", S[k].name,
+                    (unsigned long long)S[k].calls, tt, st,
+                    wall > 0 ? 100.0 * (double)S[k].total * tick / wall : 0.0, mt, p50, p99,
+                    lp_label_pos(S[k].label));
+        }
+    }
+    const char *all = getenv("LEANPROF_ALL");
+    int show_all = all != NULL && strcmp(all, "1") == 0;
+    size_t shown = 0, hidden = 0;
+    for (size_t k = 0; k < nc; k++) {
+        if (show_all || lp_interesting(&C[k])) shown++;
+        else hidden++;
+    }
+    if (shown > 0) {
+        fprintf(f, "\ncopies of non-exclusive values (each one copied the whole value)\n");
+        fprintf(f, "%-40s %-12s %8s %11s %10s %7s  %-15s %s\n", "function", "kind", "copies", "bytes", "time",
+                "%scope", "why", "in scope");
+        for (size_t k = 0; k < nc; k++) {
+            if (!show_all && !lp_interesting(&C[k])) continue;
+            char bt[32], tt[32], share[16] = "-", why[64] = "";
+            lp_fmt_bytes((double)C[k].bytes, bt, sizeof bt);
+            lp_fmt_time((double)C[k].ticks * tick, tt, sizeof tt);
+            const lp_scope_sum *sc = C[k].label ? lp_find_scope(S, ns, C[k].label) : NULL;
+            if (sc != NULL && sc->total > 0)
+                snprintf(share, sizeof share, "%.1f%%", 100.0 * (double)C[k].ticks / (double)sc->total);
+            for (int r = 0; r < LP_REASONS; r++) {
+                if (C[k].count[r] == 0) continue;
+                if (why[0]) strncat(why, "+", sizeof why - strlen(why) - 1);
+                strncat(why, lp_reason_name[r], sizeof why - strlen(why) - 1);
+            }
+            fprintf(f, "%-40s %-12s %8llu %11s %10s %7s  %-15s %s\n", C[k].fn, lp_kind_name[C[k].kind],
+                    (unsigned long long)C[k].total, bt, tt, share, why, C[k].scope);
+        }
+    }
+    if (hidden > 0)
+        fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (LEANPROF_ALL=1 shows them)\n", hidden);
+    if (dropped > 0) fprintf(f, "\nleanprof: %llu events dropped (table full)\n", (unsigned long long)dropped);
+    fprintf(f, "\n");
+}
+
+static void lp_write_json(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_sum *C, size_t nc, double tick,
+                          double wall, uint64_t dropped) {
+    fprintf(f, "{\"version\":2,\"wall_ns\":%.0f,\"dropped\":%llu,\"scopes\":[", wall, (unsigned long long)dropped);
+    for (size_t k = 0; k < ns; k++) {
+        fprintf(f, "%s{\"name\":", k ? "," : "");
+        lp_json_str(f, S[k].name);
+        fprintf(f, ",\"pos\":");
+        lp_json_str(f, lp_label_pos(S[k].label));
+        fprintf(f, ",\"calls\":%llu,\"total_ns\":%.0f,\"self_ns\":%.0f,\"min_ns\":%.0f,\"max_ns\":%.0f,"
+                   "\"mean_ns\":%.0f,\"p50_ns\":%.0f,\"p99_ns\":%.0f}",
+                (unsigned long long)S[k].calls, (double)S[k].total * tick, (double)S[k].self * tick,
+                (double)S[k].min * tick, (double)S[k].max * tick, (double)S[k].sum * tick / (double)S[k].calls,
+                (double)lp_percentile(S[k].hist, S[k].calls, 0.50) * tick,
+                (double)lp_percentile(S[k].hist, S[k].calls, 0.99) * tick);
+    }
+    fprintf(f, "],\"copies\":[");
+    for (size_t k = 0; k < nc; k++) {
+        fprintf(f, "%s{\"function\":", k ? "," : "");
+        lp_json_str(f, C[k].fn);
+        fprintf(f, ",\"symbol\":");
+        lp_json_str(f, C[k].sym);
+        fprintf(f, ",\"scope\":");
+        lp_json_str(f, C[k].scope);
+        fprintf(f, ",\"kind\":\"%s\",\"copies\":%llu,\"bytes\":%llu,\"copy_ns\":%.0f,\"shared\":%llu,"
+                   "\"multi_threaded\":%llu,\"persistent\":%llu}",
+                lp_kind_name[C[k].kind], (unsigned long long)C[k].total, (unsigned long long)C[k].bytes,
+                (double)C[k].ticks * tick, (unsigned long long)C[k].count[LP_SHARED],
+                (unsigned long long)C[k].count[LP_MULTI_THREADED], (unsigned long long)C[k].count[LP_PERSISTENT]);
+    }
+    fprintf(f, "]}\n");
 }
 
 static void lp_report(void) {
@@ -582,6 +733,7 @@ static void lp_report(void) {
                 }
                 memset(&S[k], 0, sizeof(lp_scope_sum));
                 S[k].label = label;
+                lp_label_name(label, S[k].name, sizeof S[k].name);
                 S[k].min = UINT64_MAX;
                 ns++;
             }
@@ -598,9 +750,11 @@ static void lp_report(void) {
             if (c == NULL) continue;
             char fn[256];
             lp_symbol_name(c->pc, fn, sizeof fn);
-            const char *label = c->site ? lean_string_cstr((lean_object *)c->site) : "-";
+            const char *label = c->site ? lean_string_cstr((lean_object *)c->site) : NULL;
             size_t k = 0;
-            while (k < nc && !(C[k].kind == c->kind && strcmp(C[k].fn, fn) == 0 && strcmp(C[k].label, label) == 0)) k++;
+            while (k < nc && !(C[k].kind == c->kind && strcmp(C[k].fn, fn) == 0 &&
+                               (C[k].label == label || (C[k].label && label && strcmp(C[k].label, label) == 0))))
+                k++;
             if (k == nc) {
                 if (nc == cap_c) {
                     cap_c *= 2;
@@ -609,7 +763,10 @@ static void lp_report(void) {
                 }
                 memset(&C[k], 0, sizeof(lp_copy_sum));
                 snprintf(C[k].fn, sizeof C[k].fn, "%s", fn);
+                lp_symbol_raw(c->pc, C[k].sym, sizeof C[k].sym);
                 C[k].label = label;
+                if (label) lp_label_name(label, C[k].scope, sizeof C[k].scope);
+                else snprintf(C[k].scope, sizeof C[k].scope, "-");
                 C[k].kind = c->kind;
                 nc++;
             }
@@ -618,63 +775,16 @@ static void lp_report(void) {
                 C[k].total += c->count[r];
             }
             C[k].bytes += c->bytes;
+            C[k].ticks += c->ticks;
         }
     }
     pthread_mutex_unlock(&lp_lock);
 
     qsort(S, ns, sizeof(lp_scope_sum), lp_by_total);
-    qsort(C, nc, sizeof(lp_copy_sum), lp_by_bytes);
+    qsort(C, nc, sizeof(lp_copy_sum), lp_by_cost);
 
     const char *quiet = getenv("LEANPROF_QUIET");
-    if (quiet == NULL || strcmp(quiet, "1") != 0) {
-        FILE *f = stderr;
-        char w[32];
-        lp_fmt_time(wall, w, sizeof w);
-        fprintf(f, "\nleanprof: %zu scopes, wall %s\n", ns, w);
-        if (ns > 0) {
-            fprintf(f, "\n%-28s %10s %10s %10s %6s %10s %10s %10s\n",
-                    "scope", "calls", "total", "self", "%wall", "mean", "p50", "p99");
-            for (size_t k = 0; k < ns; k++) {
-                char tt[32], st[32], mt[32], p50[32], p99[32];
-                lp_fmt_time((double)S[k].total * tick, tt, sizeof tt);
-                lp_fmt_time((double)S[k].self * tick, st, sizeof st);
-                lp_fmt_time((double)S[k].sum * tick / (double)S[k].calls, mt, sizeof mt);
-                lp_fmt_time((double)lp_percentile(S[k].hist, S[k].calls, 0.50) * tick, p50, sizeof p50);
-                lp_fmt_time((double)lp_percentile(S[k].hist, S[k].calls, 0.99) * tick, p99, sizeof p99);
-                fprintf(f, "%-28s %10llu %10s %10s %5.1f%% %10s %10s %10s\n", S[k].label,
-                        (unsigned long long)S[k].calls, tt, st,
-                        wall > 0 ? 100.0 * (double)S[k].total * tick / wall : 0.0, mt, p50, p99);
-            }
-        }
-        const char *all = getenv("LEANPROF_ALL");
-        int show_all = all != NULL && strcmp(all, "1") == 0;
-        size_t shown = 0, hidden = 0;
-        for (size_t k = 0; k < nc; k++) {
-            if (show_all || C[k].count[LP_SHARED] + C[k].count[LP_MULTI_THREADED] > 0) shown++;
-            else hidden++;
-        }
-        if (shown > 0) {
-            fprintf(f, "\ncopies of non-exclusive values (each one copied the whole value)\n");
-            fprintf(f, "%-44s %-12s %10s %12s  %-14s %s\n", "function", "kind", "copies", "bytes", "why", "in scope");
-            for (size_t k = 0; k < nc; k++) {
-                if (!show_all && C[k].count[LP_SHARED] + C[k].count[LP_MULTI_THREADED] == 0) continue;
-                char bt[32], why[64] = "";
-                lp_fmt_bytes((double)C[k].bytes, bt, sizeof bt);
-                for (int r = 0; r < LP_REASONS; r++) {
-                    if (C[k].count[r] == 0) continue;
-                    if (why[0]) strncat(why, "+", sizeof why - strlen(why) - 1);
-                    strncat(why, lp_reason_name[r], sizeof why - strlen(why) - 1);
-                }
-                fprintf(f, "%-44s %-12s %10llu %12s  %-14s %s\n", C[k].fn, lp_kind_name[C[k].kind],
-                        (unsigned long long)C[k].total, bt, why, C[k].label);
-            }
-        }
-        if (hidden > 0)
-            fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (LEANPROF_ALL=1 shows them)\n",
-                    hidden);
-        if (dropped > 0) fprintf(f, "\nleanprof: %llu events dropped (table full)\n", (unsigned long long)dropped);
-        fprintf(f, "\n");
-    }
+    if (quiet == NULL || strcmp(quiet, "1") != 0) lp_print(stderr, S, ns, C, nc, tick, wall, dropped);
 
     const char *path = getenv("LEANPROF_JSON");
     if (path != NULL && path[0] != 0) {
@@ -682,33 +792,7 @@ static void lp_report(void) {
         if (f == NULL) {
             fprintf(stderr, "leanprof: cannot write %s\n", path);
         } else {
-            fprintf(f, "{\"version\":1,\"wall_ns\":%.0f,\"dropped\":%llu,\"scopes\":[", wall,
-                    (unsigned long long)dropped);
-            for (size_t k = 0; k < ns; k++) {
-                fprintf(f, "%s{\"name\":", k ? "," : "");
-                lp_json_str(f, S[k].label);
-                fprintf(f, ",\"calls\":%llu,\"total_ns\":%.0f,\"self_ns\":%.0f,\"min_ns\":%.0f,\"max_ns\":%.0f,"
-                           "\"mean_ns\":%.0f,\"p50_ns\":%.0f,\"p99_ns\":%.0f}",
-                        (unsigned long long)S[k].calls, (double)S[k].total * tick, (double)S[k].self * tick,
-                        (double)S[k].min * tick, (double)S[k].max * tick,
-                        (double)S[k].sum * tick / (double)S[k].calls,
-                        (double)lp_percentile(S[k].hist, S[k].calls, 0.50) * tick,
-                        (double)lp_percentile(S[k].hist, S[k].calls, 0.99) * tick);
-            }
-            fprintf(f, "],\"copies\":[");
-            for (size_t k = 0; k < nc; k++) {
-                fprintf(f, "%s{\"function\":", k ? "," : "");
-                lp_json_str(f, C[k].fn);
-                fprintf(f, ",\"scope\":");
-                lp_json_str(f, C[k].label);
-                fprintf(f, ",\"kind\":\"%s\",\"copies\":%llu,\"bytes\":%llu,\"shared\":%llu,"
-                           "\"multi_threaded\":%llu,\"persistent\":%llu}",
-                        lp_kind_name[C[k].kind], (unsigned long long)C[k].total, (unsigned long long)C[k].bytes,
-                        (unsigned long long)C[k].count[LP_SHARED],
-                        (unsigned long long)C[k].count[LP_MULTI_THREADED],
-                        (unsigned long long)C[k].count[LP_PERSISTENT]);
-            }
-            fprintf(f, "]}\n");
+            lp_write_json(f, S, ns, C, nc, tick, wall, dropped);
             fclose(f);
         }
     }

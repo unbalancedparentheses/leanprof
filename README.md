@@ -6,23 +6,43 @@ Lean code slow: every time an `Array`, `ByteArray` or `String` is updated while
 another reference to it is alive, Lean copies the whole value.
 
 ```
-leanprof: 4 scopes, wall 43.4 ms
+leanprof: 4 scopes, wall 42.6 ms
 
-scope                             calls      total       self  %wall       mean        p50        p99
-buildWithHistory                      1     2.7 ms     2.7 ms   6.2%     2.7 ms     2.6 ms     2.6 ms
-report                                1  244.0 µs   33.5 µs   0.6%  244.0 µs  234.7 µs  234.7 µs
-fib                               10945  210.8 µs  210.8 µs   0.5%     235 ns      42 ns    2.7 µs
-build                                 1    8.0 µs    8.0 µs   0.0%    8.0 µs    8.0 µs    8.0 µs
+scope                         calls      total       self  %wall       mean        p50        p99  where
+buildWithHistory                  1     2.8 ms     2.8 ms   6.6%     2.8 ms     2.7 ms     2.7 ms  Examples/CopyBug.lean:15
+report                            1  241.5 µs   35.2 µs   0.6%  241.5 µs  234.7 µs  234.7 µs  Examples/CopyBug.lean:33
+fib                           10945  206.2 µs  206.2 µs   0.5%     230 ns      42 ns    2.7 µs  Examples/CopyBug.lean:13
+build                             1   15.5 µs   15.5 µs   0.0%   15.5 µs   15.3 µs   15.3 µs  Examples/CopyBug.lean:23
 
 copies of non-exclusive values (each one copied the whole value)
-function                                     kind             copies        bytes  why            in scope
-buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array              2001     15.3 MiB  shared+persistent buildWithHistory
+function                                 kind           copies       bytes       time  %scope  why             in scope
+buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3 MiB     2.8 ms   99.0%  shared+persistent buildWithHistory
 ```
 
 That is [`Examples/CopyBug.lean`](Examples/CopyBug.lean): `buildWithHistory`
 keeps each intermediate array alive, so every `push` copies (quadratic work in
-a loop that looks linear). `build`, the same loop without the extra reference,
-copies nothing.
+a loop that looks linear). The report says those copies are 99% of the
+function's time. `build`, the same loop without the extra reference, copies
+nothing.
+
+## How it compares
+
+| | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | samply / perf | [LeanBench](https://github.com/alok/LeanBench) |
+|---|---|---|---|---|
+| Time per annotated scope, p50/p99, self time | ✅ | ✅ (p95) | – | per benchmark |
+| Source position of each scope | ✅ | – | with debug info | – |
+| **Copies of shared values, per function** | ✅ count, bytes, time, share of scope | – | – | – |
+| **Copy assertions in tests** (`expectNoCopies`) | ✅ | – | – | – |
+| Overhead per event | ~15 ns (measured here) | not published; takes a mutex | sampling, very low | – |
+| No annotations needed | – (planned) | – | ✅ | – |
+| Timeline (Perfetto) | – (planned) | ✅ | ✅ (Firefox Profiler) | – |
+| Regression comparison | – (planned) | ✅ | – | ✅ |
+| Task-aware | – (planned) | ✅ | – | – |
+| Lean-readable names | ✅ | ✅ (you name spans) | mangled | ✅ |
+
+Elaboration (compile-time) profiling is out of scope: use `trace.profiler` or
+[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler).
+The overhead comparison will be measured head to head; see the roadmap.
 
 Status: early. Tested with Lean 4.35.0 on macOS arm64; CI also runs Linux.
 See [ROADMAP.md](ROADMAP.md).
@@ -82,7 +102,8 @@ lean_exe myapp where
 ```
 
 Each copy is attributed to the compiled function that made it and to the
-innermost `profile!` scope, with the reason the value was not exclusive:
+innermost `profile!` scope, with the time the copying call took, its share of
+that scope, and the reason the value was not exclusive:
 `shared` (another reference is alive), `multi-threaded` (the value was shared
 with another task, so Lean never mutates it in place) or `persistent` (a
 compile-time constant).

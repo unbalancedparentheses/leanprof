@@ -4,7 +4,7 @@ import Leanprof.Core
 /-!
 # `profile!`
 
-`profile! "label" e` times `e`. For a monadic `e` (any monad with
+`profile! "name" e` times `e`, and records where the annotation is. For a monadic `e` (any monad with
 `MonadFinally` and a `BaseIO` lift, such as `IO` or `StateT σ IO`) it times
 running the action; otherwise it times evaluating the pure value.
 
@@ -35,10 +35,19 @@ private def monadicHead? (type : Expr) : TermElabM (Option Expr) := do
 
 syntax (name := profileTerm) "profile! " str ppSpace term : term
 
+/-- The runtime label: the name, then `\x1f` and the source position, which the
+report shows in its `where` column. -/
+private def labelWithPos (name : String) (stx : Syntax) : TermElabM String := do
+  let file := (← getMainModule).toString.replace "." "/" ++ ".lean"
+  let some pos := stx.getPos? | return name
+  let line := (← getFileMap).toPosition pos |>.line
+  return s!"{name}\x1f{file}:{line}"
+
 @[term_elab profileTerm] def elabProfile : TermElab := fun stx expected? => do
-  let `(profile! $label:str $body) := stx | throwUnsupportedSyntax
+  let `(profile! $name:str $body) := stx | throwUnsupportedSyntax
   unless leanprof.enabled.get (← getOptions) do
     return ← elabTerm body expected?
+  let label := Syntax.mkStrLit (← labelWithPos name.getString stx)
   let e ← elabTerm body expected?
   let type ← instantiateMVars (← inferType e)
   if (← monadicHead? type).isSome then
