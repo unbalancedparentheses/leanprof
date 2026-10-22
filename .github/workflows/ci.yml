@@ -29,3 +29,12 @@ jobs:
           cat report.json
           grep -q '"shared":1999' report.json
           grep -q '"pos":"Examples/CopyBug.lean:15"' report.json
+      - name: Automatic mode and dependency-wide copy detection
+        run: |
+          find .lake -name '*.c.o*' -delete
+          LEANPROF_AUTO=1 LEAN_CC=$PWD/scripts/leanprof-cc lake build copybug
+          LEANPROF_JSON=auto.json .lake/build/bin/copybug 2000
+          cat auto.json
+          grep -q '"name":"buildWithHistory","pos":"Examples/CopyBug.lean:15","auto":true' auto.json
+          grep -q '"name":"fib","pos":"Examples/CopyBug.lean:10","auto":true' auto.json
+          grep -q '"shared":1999' auto.json

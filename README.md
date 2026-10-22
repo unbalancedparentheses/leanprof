@@ -35,7 +35,7 @@ nothing.
 | **Copy assertions in tests** (`expectNoCopies`) | ✅ | – | – | – |
 | Overhead per event, recording | **~11 ns**, flat; 4 threads ~12 ns; measured and subtracted from reported times | 4.6 µs at 1k events, 88 µs at 16k (grows with events) | sampling, very low | – |
 | Overhead, recording off | compiles away | ~23 ns; 4 threads ~370 ns | – | – |
-| No annotations needed | – (planned) | – | ✅ | – |
+| No annotations needed | ✅ `LEANPROF_AUTO=1`, exact call counts | – | ✅ sampled | – |
 | Timeline (Perfetto) | – (planned) | ✅ | ✅ (Firefox Profiler) | – |
 | Regression comparison | – (planned) | ✅ | – | ✅ |
 | Task-aware | – (planned) | ✅ | – | – |
@@ -114,6 +114,26 @@ elsewhere), and the reason the value was not exclusive:
 with another task, so Lean never mutates it in place) or `persistent` (a
 compile-time constant).
 
+### Every function, no annotations
+
+Set `LEANPROF_AUTO=1` when building through the compiler wrapper (below) and
+every function compiled from your package is timed, with its declaration's
+file:line; `LEANPROF_AUTO=all` includes dependencies. It uses clang's
+`-finstrument-functions-after-inlining`, so calls are counted exactly
+(unlike sampling) and functions inlined away cost nothing. Specializations
+are reported under the function that caused them
+(`build (in Std.Legacy.Range.forIn'.loop)`), and `profile!` labels are shown
+in quotes next to them.
+
+```
+find .lake -name '*.c.o*' -delete
+LEANPROF_AUTO=1 LEAN_CC=$PWD/.lake/packages/leanprof/scripts/leanprof-cc lake build
+```
+
+Every function call then pays the ~14 ns bookkeeping cost (subtracted in the
+report, but the program runs slower), so prefer `profile!` for hot loops once
+you know where to look.
+
 ### Without editing the lakefile
 
 [`scripts/leanprof-cc`](scripts/leanprof-cc) is a C compiler wrapper that adds
@@ -124,8 +144,9 @@ find .lake -name '*.c.o*' -delete    # Lake does not notice a new LEAN_CC
 LEAN_CC=$PWD/.lake/packages/leanprof/scripts/leanprof-cc lake build
 ```
 
-It forwards to the system `cc` (override with `LEANPROF_REAL_CC`), since
-`leanc` stops passing its bundled clang's sysroot once `LEAN_CC` is set.
+It forwards to the system `clang` (or `cc`; override with
+`LEANPROF_REAL_CC`), since `leanc` stops passing its bundled clang's sysroot
+once `LEAN_CC` is set.
 
 ### In tests
 

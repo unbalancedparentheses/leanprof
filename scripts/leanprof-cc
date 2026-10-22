@@ -3,7 +3,8 @@
 # C code (dependencies too) is compiled with leanprof's copy shims.
 # It forwards to the system compiler (LEANPROF_REAL_CC overrides): with
 # LEAN_CC set, leanc no longer passes its bundled clang's sysroot.
-real="${LEANPROF_REAL_CC:-cc}"
+# clang is preferred: GCC lacks -finstrument-functions-after-inlining.
+real="${LEANPROF_REAL_CC:-$(command -v clang || echo cc)}"
 set -- \
   -Dlean_copy_expand_array_nonlinear=leanprof_copy_expand_array_nonlinear \
   -Dlean_copy_sarray_nonlinear=leanprof_copy_sarray_nonlinear \
@@ -15,6 +16,16 @@ set -- \
   -Dlean_string_append=leanprof_string_append \
   -Dlean_string_utf8_set=leanprof_string_utf8_set \
   "$@"
+# LEANPROF_AUTO=1 also times every function of this package (no `profile!`
+# needed); LEANPROF_AUTO=all includes dependencies.
+case " $* " in
+  *" -c "*)
+    case "${LEANPROF_AUTO:-}:$*" in
+      all:*) set -- -finstrument-functions-after-inlining "$@" ;;
+      1:*/.lake/packages/*) ;;
+      1:*) set -- -finstrument-functions-after-inlining "$@" ;;
+    esac ;;
+esac
 # When linking, export symbols so the report can name functions,
 # and find the toolchain's static libraries (gmp, libuv, ...)
 case " $* " in

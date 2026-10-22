@@ -45,8 +45,11 @@ benchmark measures them.
 
 ## M3: no setup
 
-- [ ] Module-wide automatic instrumentation from the elaborator
-  (`set_option leanprof.auto true`), skipping instances and generated code.
+- [x] Automatic instrumentation of every function through the compiler
+  (`LEANPROF_AUTO=1` with `scripts/leanprof-cc`), only Lean declarations
+  reported, positions from the linked modules' `.ilean` files.
+- [ ] Elaborator-level variant (`set_option leanprof.auto true`) for finer
+  control without the compiler wrapper.
 - [ ] `@[profile]` attribute on definitions.
 - [x] `scripts/leanprof-cc`: `LEAN_CC` wrapper that adds the copy flags to
   every package, dependencies included.

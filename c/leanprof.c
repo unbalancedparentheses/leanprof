@@ -650,7 +650,79 @@ static const char *lp_json_read_str(const char *p, char *out, size_t cap) {
     return *p == '"' ? p + 1 : p;
 }
 
-static void lp_index_file(const char *path, const char *prefix) {
+/* Name.mangle for module names: escape each component, join with '_' (or
+ * '_00' where the mangler disambiguates). Enough for module names. */
+static void lp_mangle_module(const char *m, char *out, size_t cap) {
+    size_t n = 0;
+    int start = 1;
+    char prev = 0;
+    for (const char *p = m; *p && n + 12 < cap; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '.') { start = 1; continue; }
+        if (start && n > 0) {
+            int digit = c >= '0' && c <= '9';
+            if (prev == '_' || digit || c == '_') { memcpy(out + n, "_00", 3); n += 3; }
+            else out[n++] = '_';
+        }
+        start = 0;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) out[n++] = (char)c;
+        else if (c == '_') { out[n++] = '_'; out[n++] = '_'; }
+        else n += (size_t)snprintf(out + n, cap - n, "_x%02x", c);
+        prev = (char)c;
+    }
+    out[n] = 0;
+}
+
+/* Package names whose modules may be linked into this program: the root
+ * package (from its lakefile) and each checked-out dependency. */
+static char lp_root_pkg[256];
+
+static void lp_find_root_pkg(void) {
+    FILE *f = fopen("lakefile.toml", "r");
+    char line[512];
+    if (f != NULL) {
+        while (fgets(line, sizeof line, f)) {
+            char *q;
+            if (strncmp(line, "name", 4) == 0 && (q = strchr(line, '"')) != NULL) {
+                lp_json_read_str(q + 1, lp_root_pkg, sizeof lp_root_pkg);
+                break;
+            }
+        }
+        fclose(f);
+        return;
+    }
+    f = fopen("lakefile.lean", "r");
+    if (f == NULL) return;
+    while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "package ", 8) == 0) {
+            sscanf(line + 8, "%255[A-Za-z0-9_'-]", lp_root_pkg);
+            break;
+        }
+    }
+    fclose(f);
+}
+
+/* Is `module` part of this program? Its initializer symbol tells us; this
+ * keeps a test executable's `main` from matching an example's. Without
+ * exported symbols (no -rdynamic) every module counts. */
+static int lp_module_linked(const char *module, const char *pkg) {
+    static int symbols_visible = -1;
+    if (symbols_visible < 0) symbols_visible = dlsym(RTLD_DEFAULT, "lean_main") != NULL ||
+                                               dlsym(RTLD_DEFAULT, "_lean_main") != NULL;
+    if (!symbols_visible || pkg == NULL) return 1;
+    char mm[512], mp[256], sym[1024];
+    lp_mangle_module(module, mm, sizeof mm);
+    snprintf(sym, sizeof sym, "initialize_%s", mm);
+    if (dlsym(RTLD_DEFAULT, sym) != NULL) return 1;
+    if (pkg != NULL && pkg[0]) {
+        lp_mangle_module(pkg, mp, sizeof mp);
+        snprintf(sym, sizeof sym, "initialize_%s_%s", mp, mm);
+        if (dlsym(RTLD_DEFAULT, sym) != NULL) return 1;
+    }
+    return 0;
+}
+
+static void lp_index_file(const char *path, const char *prefix, const char *pkg) {
     FILE *f = fopen(path, "rb");
     if (f == NULL) return;
     fseek(f, 0, SEEK_END);
@@ -664,7 +736,7 @@ static void lp_index_file(const char *path, const char *prefix) {
     const char *m = strstr(buf, "\"module\":\"");
     if (m != NULL) lp_json_read_str(m + 10, module, sizeof module);
     const char *p = strstr(buf, "\"decls\":{");
-    if (module[0] == 0 || p == NULL) { free(buf); return; }
+    if (module[0] == 0 || p == NULL || !lp_module_linked(module, pkg)) { free(buf); return; }
     p += 9;
     while (*p == '"') {
         char name[512];
@@ -689,7 +761,7 @@ static void lp_index_file(const char *path, const char *prefix) {
     free(buf);
 }
 
-static void lp_index_dir(const char *dir, const char *prefix, int depth) {
+static void lp_index_dir(const char *dir, const char *prefix, const char *pkg, int depth) {
     if (depth > 32) return;
     DIR *d = opendir(dir);
     if (d == NULL) return;
@@ -699,8 +771,8 @@ static void lp_index_dir(const char *dir, const char *prefix, int depth) {
         char path[4096];
         snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
         size_t n = strlen(e->d_name);
-        if (n > 6 && strcmp(e->d_name + n - 6, ".ilean") == 0) lp_index_file(path, prefix);
-        else lp_index_dir(path, prefix, depth + 1); /* opendir fails quietly on files */
+        if (n > 6 && strcmp(e->d_name + n - 6, ".ilean") == 0) lp_index_file(path, prefix, pkg);
+        else lp_index_dir(path, prefix, pkg, depth + 1); /* opendir fails quietly on files */
     }
     closedir(d);
 }
@@ -711,10 +783,11 @@ static const char *lp_where(const char *fn, char *out, size_t cap) {
         lp_indexed = 1;
         const char *dir = getenv("LEANPROF_ILEAN_DIR");
         if (dir && dir[0]) {
-            lp_index_dir(dir, "", 0);
+            lp_index_dir(dir, "", NULL, 0);
         } else {
             /* this package, then each dependency Lake checked out */
-            lp_index_dir(".lake/build/lib/lean", "", 0);
+            lp_find_root_pkg();
+            lp_index_dir(".lake/build/lib/lean", "", lp_root_pkg, 0);
             DIR *d = opendir(".lake/packages");
             struct dirent *e;
             while (d != NULL && (e = readdir(d)) != NULL) {
@@ -722,7 +795,7 @@ static const char *lp_where(const char *fn, char *out, size_t cap) {
                 char path[1024], prefix[1024];
                 snprintf(path, sizeof path, ".lake/packages/%s/.lake/build/lib/lean", e->d_name);
                 snprintf(prefix, sizeof prefix, ".lake/packages/%s/", e->d_name);
-                lp_index_dir(path, prefix, 0);
+                lp_index_dir(path, prefix, e->d_name, 0);
             }
             if (d != NULL) closedir(d);
         }
@@ -894,6 +967,8 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
     lp_fmt_time(wall, w, sizeof w);
     fprintf(f, "\nleanprof: %zu scopes, wall %s, %.1f ns overhead per scope subtracted\n", ns, w,
             (double)lp_pair_fp / 1024.0 * tick);
+    int any_fn = 0;
+    for (size_t k = 0; k < ns; k++) any_fn |= S[k].is_fn;
     if (ns > 0) {
         fprintf(f, "\n%-24s %10s %10s %10s %6s %10s %10s %10s  %s\n", "scope", "calls", "total", "self", "%wall",
                 "mean", "p50", "p99", "where");
@@ -904,7 +979,10 @@ static void lp_print(FILE *f, const lp_scope_sum *S, size_t ns, const lp_copy_su
             lp_fmt_time((double)S[k].sum * tick / (double)S[k].calls, mt, sizeof mt);
             lp_fmt_time((double)lp_percentile(S[k].hist, S[k].calls, 0.50) * tick, p50, sizeof p50);
             lp_fmt_time((double)lp_percentile(S[k].hist, S[k].calls, 0.99) * tick, p99, sizeof p99);
-            fprintf(f, "%-24s %10llu %10s %10s %5.1f%% %10s %10s %10s  %s\n", S[k].name,
+            char shown[300];
+            if (any_fn && !S[k].is_fn) snprintf(shown, sizeof shown, "\"%s\"", S[k].name); /* a profile! label */
+            else snprintf(shown, sizeof shown, "%s", S[k].name);
+            fprintf(f, "%-24s %10llu %10s %10s %5.1f%% %10s %10s %10s  %s\n", shown,
                     (unsigned long long)S[k].calls, tt, st,
                     wall > 0 ? 100.0 * (double)S[k].total * tick / wall : 0.0, mt, p50, p99,
                     S[k].where);
@@ -991,6 +1069,11 @@ static int lp_only_calibrated(void) {
     return 1;
 }
 
+static int lp_show_all(void) {
+    const char *all = getenv("LEANPROF_ALL");
+    return all != NULL && strcmp(all, "1") == 0;
+}
+
 static uint64_t lp_clamp(double v) { return v > 0 ? (uint64_t)(v + 0.5) : 0; }
 
 static void lp_report(void) {
@@ -1013,6 +1096,17 @@ static void lp_report(void) {
             char fn[256] = "", fnkey[260];
             const char *label;
             if (s->kind == LP_FN) {
+                /* only Lean declarations: not module initializers, closed-term
+                 * initializers or C runtime glue, unless LEANPROF_ALL=1 */
+                char raw[256];
+                lp_symbol_raw((void *)s->key, raw, sizeof raw);
+                const char *r = raw;
+#ifdef __APPLE__
+                if (r[0] == '_') r++;
+#endif
+                int lean_decl = strncmp(r, "l_", 2) == 0 || strncmp(r, "lp_", 3) == 0 ||
+                                strcmp(r, "_lean_main") == 0 || strcmp(r, "lean_main") == 0;
+                if (!lean_decl && !lp_show_all()) continue;
                 lp_symbol_name((void *)s->key, fn, sizeof fn);
                 snprintf(fnkey, sizeof fnkey, "\x01%s", fn);
                 label = fnkey;
