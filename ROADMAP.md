@@ -106,8 +106,10 @@ benchmark measures them.
 
 ## M8: editor
 
-- [ ] Infoview widget: hot scopes and copy sites next to the source, with
-  their share of time.
+- [x] `#leanprof`: inlay hints with time per scope/function and copies per
+  declaration, from the last report; tooltips with details; checked against
+  the language server in CI.
+- [ ] Infoview widget with a flame graph of the run.
 
 ## Upstream
 

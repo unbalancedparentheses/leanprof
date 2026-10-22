@@ -56,6 +56,14 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof run --json large.json copybug -- 2000
           lake exe leanprof compare small.json small.json
           if lake exe leanprof compare small.json large.json; then echo "expected a regression"; exit 1; fi
+      - name: Inlay hints through the language server
+        run: |
+          LEANPROF_QUIET=1 lake exe leanprof run copybug -- 2000
+          echo '#leanprof' >> Examples/CopyBug.lean
+          python3 scripts/lsp-hints.py "$PWD" Examples/CopyBug.lean | tee hints.txt
+          git checkout Examples/CopyBug.lean
+          grep -q "line 17: ⏱" hints.txt
+          grep -q "line 17: ⚠ 1999 copies" hints.txt
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |

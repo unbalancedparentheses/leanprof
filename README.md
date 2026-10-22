@@ -44,9 +44,12 @@ nothing.
 | Regression comparison | ✅ exact for copies and calls; thresholded for time | ✅ thresholded | – | ✅ thresholded |
 | Task-aware | ✅ run time and queue wait per spawning scope; blocking waits per call site | ✅ parent links | – | – |
 | Lean-readable names | ✅ | ✅ (you name spans) | mangled | ✅ |
+| Results inline in the editor (running program) | ✅ `#leanprof` inlay hints | – | – | – |
 
-Elaboration (compile-time) profiling is out of scope: use `trace.profiler` or
-[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler).
+Elaboration (compile-time) profiling is covered by `trace.profiler` and
+[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
+(which also shows compile times in VS Code); `#leanprof` does the same for
+run time.
 Overhead numbers are from [`bench/`](bench/README.md) (Apple M5 Max). The
 same page shows leanprof finding the cause of LeanProfiler's growing cost:
 its event array is copied on every span.
@@ -151,6 +154,28 @@ lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
 compares two `--json` reports and exits 1 on a regression: any increase in
 copies or change in call counts (both exact, so no noise), or a scope slower
 by more than `PCT` percent (default 10) and `MS` milliseconds (default 1).
+
+### In the editor
+
+Add `#leanprof` anywhere in a file (it needs `import Leanprof`):
+
+```lean
+#leanprof                         -- reads .lake/leanprof/report.json
+#leanprof "reports/before.json"   -- or any report
+```
+
+Each line the last run mentions gets an inlay hint at its end, for the
+running program, not for compilation:
+
+```
+def buildWithHistory (n : Nat) ... := profile! "buildWithHistory" Id.run do   ⏱ 2.7 ms · 13.7% · 1×   ⚠ 1999 copies · 15.3 MiB · 2.7 ms
+  | n + 2 => profile! "fib" (fib n + fib (n + 1))                              ⏱ 132.9 µs · 0.7% · 10945×
+```
+
+Hover a hint for self time, mean, p50/p99, or why the copy happened. Both
+`lake exe leanprof run` and `lake exe leanprof sample` write that default
+report (sampled reports show `≈ CPU` instead). The hints describe the code
+as it was when the program ran, so rerun after edits.
 
 ### Sampling: no rebuild, near-zero overhead
 

@@ -88,7 +88,10 @@ def run (argv : List String) : IO UInt32 := do
   if rc != 0 then
     discard <| removeWorkspaceObjects
     return rc
-  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", opts.json)]
+  -- the report `#leanprof` reads, unless another path was asked for
+  IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
+  let json := opts.json.getD ".lake/leanprof/report.json"
+  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)]
   let rc ← spawnWait ((".lake" : FilePath) / "build" / "bin" / exe).toString opts.args runEnv
   unless opts.keep do
     discard <| removeWorkspaceObjects
@@ -352,7 +355,18 @@ def sample (argv : List String) : IO UInt32 := do
   let renamed := strings.map fun r => names.getD r r
   let syms' := syms.setObjVal! "string_table" (Json.arr (renamed.map Json.str))
   IO.FS.writeFile symsPath syms'.compress
+  -- a report `#leanprof` can show in the editor: sampled CPU per declaration
+  let mut scopes : Array Json := #[]
+  for (n, w) in leanIncl.toList do
+    let wh ← Leanprof.whereIs n
+    if wh.isEmpty then continue
+    scopes := scopes.push <| Json.mkObj [("name", Json.str n), ("pos", Json.str wh), ("auto", Json.bool true),
+      ("total_ns", toJson (w * 1000)), ("self_ns", toJson (selfT.getD n 0 * 1000)), ("calls", toJson (0 : Nat))]
+  let report := Json.mkObj [("version", toJson (3 : Nat)), ("sampled", Json.bool true),
+    ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[])]
+  IO.FS.writeFile ".lake/leanprof/report.json" report.compress
   IO.println s!"\nflamegraph with Lean names: samply load {out}"
+  IO.println "in the editor: add `#leanprof` to a file to see these numbers next to its code"
   return 0
 
 def main (argv : List String) : IO UInt32 := do
