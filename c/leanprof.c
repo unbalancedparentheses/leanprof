@@ -502,8 +502,9 @@ static void lp_symbol_name(void *pc, char *out, size_t cap) {
 /* ---------- declaration positions ----------
  * Lake writes a `.ilean` file per module with each declaration's range:
  * `"decls":{"Name":[l0,c0,l1,c1,selL0,selC0,selL1,selC1],...}` (0-based).
- * At report time we read the ones under LEANPROF_ILEAN_DIR (default
- * `.lake/build/lib/lean`) to give copy sites a file:line.
+ * At report time we read the ones under LEANPROF_ILEAN_DIR (default: this
+ * package's `.lake/build/lib/lean` and each dependency's) to give copy sites a
+ * file:line.
  */
 
 typedef struct {
@@ -515,7 +516,7 @@ static lp_decl *lp_decls;
 static size_t lp_ndecls, lp_capdecls;
 static int lp_indexed;
 
-static void lp_add_decl(const char *name, const char *module, unsigned line) {
+static void lp_add_decl(const char *name, const char *prefix, const char *module, unsigned line) {
     if (lp_ndecls == lp_capdecls) {
         size_t cap = lp_capdecls ? lp_capdecls * 2 : 256;
         lp_decl *d = realloc(lp_decls, cap * sizeof(lp_decl));
@@ -523,12 +524,13 @@ static void lp_add_decl(const char *name, const char *module, unsigned line) {
         lp_decls = d;
         lp_capdecls = cap;
     }
-    size_t n = strlen(module);
-    char *file = malloc(n + 6);
+    size_t np = strlen(prefix), n = strlen(module);
+    char *file = malloc(np + n + 6);
     char *nm = strdup(name);
     if (file == NULL || nm == NULL) { free(file); free(nm); return; }
-    for (size_t i = 0; i < n; i++) file[i] = module[i] == '.' ? '/' : module[i];
-    memcpy(file + n, ".lean", 6);
+    memcpy(file, prefix, np);
+    for (size_t i = 0; i < n; i++) file[np + i] = module[i] == '.' ? '/' : module[i];
+    memcpy(file + np + n, ".lean", 6);
     lp_strip(nm);
     lp_decls[lp_ndecls++] = (lp_decl){nm, file, line};
 }
@@ -545,7 +547,7 @@ static const char *lp_json_read_str(const char *p, char *out, size_t cap) {
     return *p == '"' ? p + 1 : p;
 }
 
-static void lp_index_file(const char *path) {
+static void lp_index_file(const char *path, const char *prefix) {
     FILE *f = fopen(path, "rb");
     if (f == NULL) return;
     fseek(f, 0, SEEK_END);
@@ -578,13 +580,13 @@ static void lp_index_file(const char *path) {
         }
         if (*p == ']') p++;
         /* the name's own line (selection range) when present */
-        lp_add_decl(name, module, (k >= 5 ? v[4] : v[0]) + 1);
+        lp_add_decl(name, prefix, module, (k >= 5 ? v[4] : v[0]) + 1);
         if (*p == ',') p++;
     }
     free(buf);
 }
 
-static void lp_index_dir(const char *dir, int depth) {
+static void lp_index_dir(const char *dir, const char *prefix, int depth) {
     if (depth > 32) return;
     DIR *d = opendir(dir);
     if (d == NULL) return;
@@ -594,8 +596,8 @@ static void lp_index_dir(const char *dir, int depth) {
         char path[4096];
         snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
         size_t n = strlen(e->d_name);
-        if (n > 6 && strcmp(e->d_name + n - 6, ".ilean") == 0) lp_index_file(path);
-        else lp_index_dir(path, depth + 1); /* opendir fails quietly on files */
+        if (n > 6 && strcmp(e->d_name + n - 6, ".ilean") == 0) lp_index_file(path, prefix);
+        else lp_index_dir(path, prefix, depth + 1); /* opendir fails quietly on files */
     }
     closedir(d);
 }
@@ -605,7 +607,22 @@ static const char *lp_where(const char *fn, char *out, size_t cap) {
     if (!lp_indexed) {
         lp_indexed = 1;
         const char *dir = getenv("LEANPROF_ILEAN_DIR");
-        lp_index_dir(dir && dir[0] ? dir : ".lake/build/lib/lean", 0);
+        if (dir && dir[0]) {
+            lp_index_dir(dir, "", 0);
+        } else {
+            /* this package, then each dependency Lake checked out */
+            lp_index_dir(".lake/build/lib/lean", "", 0);
+            DIR *d = opendir(".lake/packages");
+            struct dirent *e;
+            while (d != NULL && (e = readdir(d)) != NULL) {
+                if (e->d_name[0] == '.') continue;
+                char path[1024], prefix[1024];
+                snprintf(path, sizeof path, ".lake/packages/%s/.lake/build/lib/lean", e->d_name);
+                snprintf(prefix, sizeof prefix, ".lake/packages/%s/", e->d_name);
+                lp_index_dir(path, prefix, 0);
+            }
+            if (d != NULL) closedir(d);
+        }
     }
     char name[256];
     snprintf(name, sizeof name, "%s", fn);

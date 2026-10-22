@@ -1,0 +1,16 @@
+# Head-to-head overhead benchmark. Kept out of the main package so users of
+# leanprof do not download LeanProfiler.
+name = "leanprof_bench"
+
+[[require]]
+name = "leanprof"
+path = ".."
+
+[[require]]
+name = "LeanProfiler"
+git = "https://github.com/lean-dojo/LeanProfiler"
+rev = "35e1899e78c75ceb975180cbd43e5ea68ad07fff"
+
+[[lean_exe]]
+name = "bench"
+root = "Main"

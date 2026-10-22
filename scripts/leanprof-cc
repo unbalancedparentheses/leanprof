@@ -1,0 +1,24 @@
+#!/bin/sh
+# C compiler wrapper for Lake: set LEAN_CC to this script and every package's
+# C code (dependencies too) is compiled with leanprof's copy shims.
+# It forwards to the system compiler (LEANPROF_REAL_CC overrides): with
+# LEAN_CC set, leanc no longer passes its bundled clang's sysroot.
+real="${LEANPROF_REAL_CC:-cc}"
+set -- \
+  -Dlean_copy_expand_array_nonlinear=leanprof_copy_expand_array_nonlinear \
+  -Dlean_copy_sarray_nonlinear=leanprof_copy_sarray_nonlinear \
+  -Dlean_copy_string_nonlinear=leanprof_copy_string_nonlinear \
+  -Dlean_array_push=leanprof_array_push \
+  -Dlean_byte_array_push=leanprof_byte_array_push \
+  -Dlean_float_array_push=leanprof_float_array_push \
+  -Dlean_string_push=leanprof_string_push \
+  -Dlean_string_append=leanprof_string_append \
+  -Dlean_string_utf8_set=leanprof_string_utf8_set \
+  "$@"
+# When linking, export symbols so the report can name functions,
+# and find the toolchain's static libraries (gmp, libuv, ...)
+case " $* " in
+  *" -c "*) ;;
+  *) set -- -rdynamic "-L$(lean --print-prefix)/lib" "$@" ;;
+esac
+exec "$real" "$@"

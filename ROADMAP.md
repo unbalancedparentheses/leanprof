@@ -35,8 +35,9 @@ benchmark measures them.
 - [x] Source positions for `profile!` scopes (file:line).
 - [x] Copy sites resolve to their declaration's file:line through Lake's
   `.ilean` files, read by the runtime at exit.
-- [ ] Head-to-head benchmark against LeanProfiler and samply: overhead per
-  event, single- and multi-threaded, and accuracy on known workloads.
+- [x] Head-to-head overhead benchmark against LeanProfiler, single- and
+  multi-threaded ([bench/](bench/README.md)).
+- [ ] Same against samply, and accuracy on known workloads.
 - [ ] Overhead calibration: measure the cost of a scope at startup and
   subtract it from self time.
 - [ ] CPU time next to wall time per scope.
@@ -46,6 +47,8 @@ benchmark measures them.
 - [ ] Module-wide automatic instrumentation from the elaborator
   (`set_option leanprof.auto true`), skipping instances and generated code.
 - [ ] `@[profile]` attribute on definitions.
+- [x] `scripts/leanprof-cc`: `LEAN_CC` wrapper that adds the copy flags to
+  every package, dependencies included.
 - [ ] `lake exe leanprof run <exe>`: builds with the copy flags and
   instrumentation, runs, and shows the report, with no lakefile edits.
 - [ ] Set frame-pointer and debug-info flags automatically for sampling.

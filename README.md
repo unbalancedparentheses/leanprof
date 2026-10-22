@@ -33,7 +33,8 @@ nothing.
 | Source positions | ✅ scopes (line), copies (declaration) | – | C lines with debug info | – |
 | **Copies of shared values, per function** | ✅ count, bytes, time, share of scope | – | – | – |
 | **Copy assertions in tests** (`expectNoCopies`) | ✅ | – | – | – |
-| Overhead per event | ~15 ns (measured here) | not published; takes a mutex | sampling, very low | – |
+| Overhead per event, recording | **~11 ns**, flat; 4 threads ~12 ns | 4.6 µs at 1k events, 88 µs at 16k (grows with events) | sampling, very low | – |
+| Overhead, recording off | compiles away | ~23 ns; 4 threads ~370 ns | – | – |
 | No annotations needed | – (planned) | – | ✅ | – |
 | Timeline (Perfetto) | – (planned) | ✅ | ✅ (Firefox Profiler) | – |
 | Regression comparison | – (planned) | ✅ | – | ✅ |
@@ -42,7 +43,9 @@ nothing.
 
 Elaboration (compile-time) profiling is out of scope: use `trace.profiler` or
 [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler).
-The overhead comparison will be measured head to head; see the roadmap.
+Overhead numbers are from [`bench/`](bench/README.md) (Apple M5 Max). The
+same page shows leanprof finding the cause of LeanProfiler's growing cost:
+its event array is copied on every span.
 
 Status: early. Tested with Lean 4.35.0 on macOS arm64; CI also runs Linux.
 See [ROADMAP.md](ROADMAP.md).
@@ -111,6 +114,19 @@ elsewhere), and the reason the value was not exclusive:
 with another task, so Lean never mutates it in place) or `persistent` (a
 compile-time constant).
 
+### Without editing the lakefile
+
+[`scripts/leanprof-cc`](scripts/leanprof-cc) is a C compiler wrapper that adds
+the copy flags to every package, dependencies included:
+
+```
+find .lake -name '*.c.o*' -delete    # Lake does not notice a new LEAN_CC
+LEAN_CC=$PWD/.lake/packages/leanprof/scripts/leanprof-cc lake build
+```
+
+It forwards to the system `cc` (override with `LEANPROF_REAL_CC`), since
+`leanc` stops passing its bundled clang's sysroot once `LEAN_CC` is set.
+
 ### In tests
 
 ```lean
@@ -138,9 +154,9 @@ runs.
 - **Threads, not tasks.** Scopes are kept per OS thread. Work in a `Task` is
   timed on the thread that runs it, with no link to the scope that spawned it.
 
-Overhead: about 15 ns per `profile!` scope on an Apple M-series machine,
-including the closure it allocates (`lake build overhead &&
-.lake/build/bin/overhead`).
+Overhead: about 11 ns per profiled `IO` action and 15 ns per pure
+`profile!` scope (which allocates a closure) on an Apple M5 Max; see
+[`bench/`](bench/README.md).
 
 ## Development
 
