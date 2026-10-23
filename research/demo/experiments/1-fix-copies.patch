@@ -1,0 +1,30 @@
+--- a/Main.lean
++++ b/Main.lean
+@@ -8,19 +8,16 @@
+ sum of each prefix, which `experiments/1-fix-copies.patch` keeps as it goes.
+ -/
+ 
+-def buildWithHistory (n : Nat) : Array Nat × Array (Array Nat) := Id.run do
+-  let mut acc : Array Nat := Array.mkEmpty 0
+-  let mut history : Array (Array Nat) := #[]
++/-- The sum of the sums of every prefix of the data (the empty one included),
++keeping only the running sum instead of every prefix. -/
++def prefixTotal (n : Nat) : Nat := Id.run do
++  let mut running := 0
++  let mut total := 0
+   for i in [0:n] do
+-    history := history.push acc
+-    acc := acc.push (i * i % 7)
+-  return (acc, history)
++    total := total + running
++    running := running + i * i % 7
++  return total
+ 
+-/-- The sum of the sums of every prefix of the data (the empty one included). -/
+-def prefixTotal (n : Nat) : Nat :=
+-  let (_, history) := buildWithHistory n
+-  history.foldl (fun s p => s + p.foldl (· + ·) 0) 0
+-
+ def main (args : List String) : IO Unit := do
+   let n := (args.head? >>= String.toNat?).getD 3000
+   IO.println s!"prefix total {prefixTotal n}"

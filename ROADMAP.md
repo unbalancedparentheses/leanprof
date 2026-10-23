@@ -72,6 +72,25 @@ benchmark measures them.
 - [ ] Benchmarks report copies and allocations next to time; LeanBench
   integration.
 
+## M4b: autoresearch
+
+leanprof as the measurement and verdict of an agent loop that edits code and
+keeps only improvements ([research/program.md](research/program.md)).
+
+- [x] `leanprof measure`: N runs with copy detection; time spread, copies,
+  calls, compile heartbeats, exit code and output hash in one summary.
+- [x] `leanprof judge`: KEEP/DISCARD from two summaries; exact metrics
+  first, time only when the runs do not overlap.
+- [x] `research/program.md` for agents, and a scripted demo
+  (`research/demo/run.sh`) run in CI.
+- [ ] Interleave base and candidate runs (needs two builds side by side) so
+  time verdicts survive machine-load drift during long sessions.
+- [ ] Allocations in the verdict (after M5).
+- [ ] Hints in the summary: the top copy sites and sampled hotspots, so the
+  agent's next experiment starts from the measurement.
+- [ ] Run against real projects (Mathlib-free programs, compilers,
+  parsers) and publish what the loop found.
+
 ## M5: allocations
 
 - [ ] Allocations and bytes per scope, via the same symbol redirection on the

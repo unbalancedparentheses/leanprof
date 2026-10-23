@@ -1,0 +1,13 @@
+--- a/Main.lean
++++ b/Main.lean
+@@ -14,8 +14,9 @@
+   let mut running := 0
+   let mut total := 0
+   for i in [0:n] do
+-    total := total + running
++    -- "simplification" that is off by one: counts the full data, not the empty prefix
+     running := running + i * i % 7
++    total := total + running
+   return total
+ 
+ def main (args : List String) : IO Unit := do

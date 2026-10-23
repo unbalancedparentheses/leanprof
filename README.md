@@ -162,6 +162,44 @@ compares two `--json` reports and exits 1 on a regression: any increase in
 copies or change in call counts (both exact, so no noise), or a scope slower
 by more than `PCT` percent (default 10) and `MS` milliseconds (default 1).
 
+### Autoresearch
+
+leanprof can be the measurement and the verdict of an
+[autoresearch](https://github.com/karpathy/autoresearch)-style loop, where an
+AI agent repeatedly edits the code, measures, and keeps a change only if it
+is better:
+
+```
+lake exe leanprof measure [--runs N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS]
+lake exe leanprof judge BASE.json NEW.json
+```
+
+`measure` builds `EXE` with copy detection (like `run`), runs it `N` times
+(default 5, after one warm-up run) and writes one summary: median, min and
+max wall time, copies and calls per scope, compile heartbeats per
+declaration of the given files, the exit code, and a hash of stdout (or of
+`FILE`). `judge` prints KEEP or DISCARD with reasons and exits 0 or 1: it
+discards a change that alters the exit code or output, adds copies or
+compile heartbeats (more than 1% and 1,000), or is slower in every run, and
+keeps one that removes copies or heartbeats or is faster in every run than
+the base was in any (new max below base min).
+
+[`research/program.md`](research/program.md) is the loop for the agent
+(Claude Code, Codex, ...) to follow: baseline, one focused change at a
+time, build, test, measure, judge, commit or `git reset --hard`, and a
+`results.tsv` log. [`research/demo/run.sh`](research/demo/run.sh) runs it
+with scripted experiments on a project with a hidden copy:
+
+```
+KEEP
+  + copies: 2999 -> 0
+  + compile heartbeats: 667.00 kHB -> 422.93 kHB
+  + time: median 29.02 ms -> 12.33 ms (every new run faster than every base run)
+
+DISCARD
+  - output changed (stdout): fnv1a64:c87964b7295693c6 -> fnv1a64:7385830f7dd13aef
+```
+
 ### In the editor
 
 Add `#leanprof` anywhere in a file (it needs `import Leanprof`):
