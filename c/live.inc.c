@@ -21,7 +21,9 @@
  * visible); at exit, when the report reads the same tables, every record is
  * read. Counters are read with relaxed atomic loads: a snapshot may be a few
  * events behind, never torn. Scope stacks are shown only through records that
- * passed the same check.
+ * passed the same check. (Their owners publish slots with release stores and
+ * write counters with relaxed atomic stores, so ThreadSanitizer finds no race;
+ * see LP_PUBLISH in leanprof.c.)
  *
  * Flight recorder (LEANPROF_FLIGHT=dir, 1 for the current directory, or
  * LEANPROF_SLOW_MS=ms): the timeline is recorded into a fixed buffer per
@@ -79,7 +81,10 @@ static double lpf_flight_secs = 10;
 static uint64_t lpf_slow_ticks;         /* LEANPROF_SLOW_MS in ticks, 0 when off */
 static char lpf_slow_only[256];         /* LEANPROF_SLOW_SCOPE: only scopes with this name */
 static unsigned lpf_slow_max = 10, lpf_slow_dumps, lpf_dumps;
-static volatile sig_atomic_t lpf_dump_signal;
+/* Set by the SIGUSR1 handler, taken by the background thread: a lock-free
+ * atomic (async-signal-safe), exchanged so a signal between test and clear
+ * is not lost. */
+static int lpf_dump_signal;
 /* A slow scope waiting to be dumped: 0 none, 2 being filled in, 1 ready. */
 static int lpf_slow_pending;
 static const void *lpf_slow_key;
@@ -104,6 +109,25 @@ typedef struct lpf_flight_thread {
 static _Thread_local lpf_flight_thread *lpf_flight_self;
 static lpf_flight_thread *lpf_flight_threads; /* prepended under lpf_lock, read with acquire */
 
+/* Events the background thread may be copying are written field by field
+ * with relaxed atomics: a copy torn by a compaction is caught by the sequence
+ * count and retried, and a plain memcpy on either side was a data race. */
+static inline void lpf_event_put(lpf_event *d, const lpf_event *s) {
+    LP_ST(d->key, s->key);
+    LP_ST(d->ts, s->ts);
+    LP_ST(d->bytes, s->bytes);
+    LP_ST(d->ph, s->ph);
+    LP_ST(d->kind, s->kind);
+}
+
+static inline void lpf_event_get(lpf_event *d, const lpf_event *s) {
+    d->key = LP_LD(s->key);
+    d->ts = LP_LD(s->ts);
+    d->bytes = LP_LD(s->bytes);
+    d->ph = LP_LD(s->ph);
+    d->kind = LP_LD(s->kind);
+}
+
 /* Drop the older half of a full buffer, keeping the begins still open there. */
 static void lpf_flight_compact(lpf_thread *t, lpf_flight_thread *ft) {
     size_t n = t->nevents, cut = n / 2, open[LP_DEPTH], no = 0, deeper = 0;
@@ -120,8 +144,8 @@ static void lpf_flight_compact(lpf_thread *t, lpf_flight_thread *ft) {
     for (size_t k = 0; k < no; k++) ft->keep[k] = t->events[open[k]];
     __atomic_store_n(&ft->seq, ft->seq + 1, __ATOMIC_RELAXED);
     __atomic_thread_fence(__ATOMIC_RELEASE);
-    memcpy(t->events, ft->keep, no * sizeof(lpf_event));
-    memmove(t->events + no, t->events + cut, (n - cut) * sizeof(lpf_event));
+    for (size_t k = 0; k < no; k++) lpf_event_put(&t->events[k], &ft->keep[k]);
+    for (size_t k = 0; k < n - cut; k++) lpf_event_put(&t->events[no + k], &t->events[cut + k]); /* no <= cut */
     __atomic_store_n(&t->nevents, no + (n - cut), __ATOMIC_RELAXED);
     __atomic_store_n(&ft->seq, ft->seq + 1, __ATOMIC_RELEASE);
 }
@@ -130,6 +154,8 @@ static void lpf_slow_hit(lpf_thread *t, lpf_frame *f, uint64_t now);
 
 static int lpf_flight_trace(lpf_thread *t, uint8_t ph, const void *key, uint8_t kind, uint64_t ts, uint64_t bytes) {
     lpf_flight_thread *ft = lpf_flight_self;
+    if (LEAN_UNLIKELY(ft == NULL && t->flight != NULL)) /* an exited thread's buffer, with its record */
+        lpf_flight_self = ft = t->flight;
     if (LEAN_UNLIKELY(ft == NULL)) {
         ft = calloc(1, sizeof(lpf_flight_thread));
         if (ft == NULL) abort();
@@ -139,13 +165,14 @@ static int lpf_flight_trace(lpf_thread *t, uint8_t ph, const void *key, uint8_t 
         pthread_mutex_lock(&lpf_lock);
         if (ev != NULL) {
             free(t->events);
-            t->events = ev;
             t->capevents = lpf_trace_max;
             t->nevents = 0;
+            LP_PUBLISH(t->events, ev);
         }
         ft->next = lpf_flight_threads;
         __atomic_store_n(&lpf_flight_threads, ft, __ATOMIC_RELEASE);
         pthread_mutex_unlock(&lpf_lock);
+        t->flight = ft;
         lpf_flight_self = ft;
     }
     if (LEAN_UNLIKELY(t->events == NULL || t->capevents != lpf_trace_max)) {
@@ -153,7 +180,8 @@ static int lpf_flight_trace(lpf_thread *t, uint8_t ph, const void *key, uint8_t 
         return 0;
     }
     if (LEAN_UNLIKELY(t->nevents >= t->capevents)) lpf_flight_compact(t, ft);
-    t->events[t->nevents] = (lpf_event){key, ts, bytes, ph, kind};
+    lpf_event e = {key, ts, bytes, ph, kind};
+    lpf_event_put(&t->events[t->nevents], &e);
     __atomic_store_n(&t->nevents, t->nevents + 1, __ATOMIC_RELEASE);
     /* lpf_exit has popped the frame: it is the one just above the depth */
     if (ph == 'E' && lpf_slow_ticks != 0) {
@@ -195,7 +223,7 @@ static void lpf_slow_hit(lpf_thread *t, lpf_frame *f, uint64_t now) {
 
 static void lpf_on_sigusr1(int sig) {
     (void)sig;
-    lpf_dump_signal = 1;
+    __atomic_store_n(&lpf_dump_signal, 1, __ATOMIC_RELAXED);
 }
 
 /* ---- flight recorder: dumps (on the background thread) ---- */
@@ -262,7 +290,7 @@ static const char *lpf_event_name(const lpf_event *e) {
 static lpf_event *lpf_flight_copy(lpf_flight_thread *ft, size_t *out_n) {
     lpf_thread *t = ft->t;
     size_t cap = lpf_trace_max;
-    if (__atomic_load_n(&t->events, __ATOMIC_ACQUIRE) == NULL) return NULL;
+    if (LP_GET(t->events) == NULL) return NULL;
     lpf_event *buf = malloc(cap * sizeof(lpf_event));
     if (buf == NULL) return NULL;
     for (int tries = 0; tries < 1000; tries++) {
@@ -273,7 +301,7 @@ static lpf_event *lpf_flight_copy(lpf_flight_thread *ft, size_t *out_n) {
         }
         size_t n = __atomic_load_n(&t->nevents, __ATOMIC_ACQUIRE);
         if (n > cap) n = cap;
-        memcpy(buf, t->events, n * sizeof(lpf_event));
+        for (size_t k = 0; k < n; k++) lpf_event_get(&buf[k], &t->events[k]);
         __atomic_thread_fence(__ATOMIC_ACQUIRE);
         if (__atomic_load_n(&ft->seq, __ATOMIC_RELAXED) == s1) {
             *out_n = n;
@@ -299,8 +327,9 @@ static void lpf_write_marker(void) {
     FILE *f = fopen(tmp, "w");
     if (f == NULL) return;
     fprintf(f, "dir %s\ndumps %u\nlast %s\nsecs %g\n", lpf_flight_dir, lpf_dumps, lpf_flight_last, lpf_flight_secs);
-    fclose(f);
-    rename(tmp, lpf_flight_marker);
+    int bad = ferror(f);
+    if (fclose(f) != 0 || bad) unlink(tmp); /* keep the last whole marker */
+    else rename(tmp, lpf_flight_marker);
 }
 
 /* Write the last LEANPROF_FLIGHT_SECS seconds of every thread's timeline. */
@@ -329,9 +358,6 @@ static void lpf_flight_dump(const char *why) {
             free(ev);
             continue;
         }
-        /* a task's begin gets its spawning scope's kind just after it is
-         * appended (lpf_task_run): until then it is the newest event */
-        if (ev[n - 1].ph == 'B' && ev[n - 1].kind == LP_TASK) n--;
         uint32_t tid = ft->t->id;
         fprintf(f, ",{\"ph\":\"M\",\"name\":\"thread_name\",\"pid\":1,\"tid\":%u,\"args\":{\"name\":\"%s %u\"}}", tid,
                 tid == 0 ? "startup" : "thread", tid);
@@ -413,8 +439,8 @@ typedef struct {
     uint8_t cls, is_fn, kind;
     uint64_t calls, total, self, max, wait, wait_max, allocs, bytes, ticks, persistent;
     uint64_t metric, prev;              /* what rows are ordered by, now and at the last snapshot */
-    uint32_t *hist;                     /* scopes only */
-    uint32_t *base_old, *base_new;      /* hist at the last two window turns, for recent percentiles */
+    uint64_t *hist;                     /* scopes only */
+    uint64_t *base_old, *base_new;      /* hist at the last two window turns, for recent percentiles */
 } lpf_lv;
 
 static lpf_lv *lpf_lv_rows;
@@ -433,7 +459,7 @@ static size_t lpf_recs_cap, lpf_recs_n;
 static uint32_t lpf_lv_scan;
 static unsigned lpf_lv_seq;
 static uint64_t lpf_lv_window, lpf_lv_turned; /* LEANPROF_LIVE_WINDOW_MS in ticks; last window turn */
-static uint32_t *lpf_lv_diff;
+static uint64_t *lpf_lv_diff;
 
 static size_t lpf_str_hash(const char *s) {
     uint64_t h = 1469598103934665603ull;
@@ -503,7 +529,7 @@ static int32_t lpf_lv_row(const char *key, uint8_t cls, int *created) {
     memset(r, 0, sizeof *r);
     r->key = strdup(key);
     r->cls = cls;
-    if (cls == LV_SCOPE) r->hist = calloc(LP_BUCKETS, sizeof(uint32_t));
+    if (cls == LV_SCOPE) r->hist = calloc(LP_BUCKETS, sizeof(uint64_t));
     if (r->key == NULL || (cls == LV_SCOPE && r->hist == NULL)) {
         free(r->key);
         free(r->hist);
@@ -591,8 +617,6 @@ static int32_t lpf_lv_copy_row(lpf_copy *c, int final) {
     return row;
 }
 
-#define LP_LD(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
-
 /* Merge every thread's records into the rows. */
 static void lpf_lv_collect(int final) {
     lpf_lv_scan++;
@@ -600,13 +624,13 @@ static void lpf_lv_collect(int final) {
         lpf_lv *rw = &lpf_lv_rows[r];
         rw->calls = rw->total = rw->self = rw->max = rw->wait = rw->wait_max = 0;
         rw->allocs = rw->bytes = rw->ticks = rw->persistent = 0;
-        if (rw->hist) memset(rw->hist, 0, LP_BUCKETS * sizeof(uint32_t));
+        if (rw->hist) memset(rw->hist, 0, LP_BUCKETS * sizeof(uint64_t));
     }
     double pair = lpf_unit_ticks(); /* leanprof's own cost, removed as the exit report does */
     pthread_mutex_lock(&lpf_lock);
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next) {
         for (size_t i = 0; i < LP_TABLE; i++) {
-            lpf_scope *s = __atomic_load_n(&t->scopes[i], __ATOMIC_ACQUIRE);
+            lpf_scope *s = LP_GET(t->scopes[i]);
             if (s == NULL) continue;
             int32_t row = lpf_lv_scope_row(s, final);
             if (row < 0) continue;
@@ -633,7 +657,7 @@ static void lpf_lv_collect(int final) {
             for (size_t b = 0; b < LP_BUCKETS; b++) rw->hist[b] += LP_LD(s->hist[b]);
         }
         for (size_t i = 0; i < LP_TABLE; i++) {
-            lpf_copy *c = __atomic_load_n(&t->copies[i], __ATOMIC_ACQUIRE);
+            lpf_copy *c = LP_GET(t->copies[i]);
             if (c == NULL) continue;
             int32_t row = lpf_lv_copy_row(c, final);
             if (row < 0) continue;
@@ -713,7 +737,12 @@ static void lpf_live_write(int final) {
         fprintf(f, "\"flight\":null,");
     }
     size_t *idx = malloc((lpf_lv_n ? lpf_lv_n : 1) * sizeof(size_t));
-    for (int cls = 0; cls < LV_CLASSES && idx != NULL; cls++) {
+    if (idx == NULL) { /* no sections: keep the last whole snapshot rather than publish broken JSON */
+        fclose(f);
+        unlink(tmp);
+        return;
+    }
+    for (int cls = 0; cls < LV_CLASSES; cls++) {
         size_t m = 0;
         for (size_t r = 0; r < lpf_lv_n; r++) {
             const lpf_lv *rw = &lpf_lv_rows[r];
@@ -733,10 +762,10 @@ static void lpf_live_write(int final) {
             case LV_SCOPE: {
                 /* calls since the older window turn: the last one to two windows */
                 uint64_t rc = 0;
-                if (lpf_lv_diff == NULL) lpf_lv_diff = calloc(LP_BUCKETS, sizeof(uint32_t));
+                if (lpf_lv_diff == NULL) lpf_lv_diff = calloc(LP_BUCKETS, sizeof(uint64_t));
                 if (lpf_lv_diff != NULL) {
                     for (size_t b = 0; b < LP_BUCKETS; b++) {
-                        uint32_t o = rw->base_old ? rw->base_old[b] : 0;
+                        uint64_t o = rw->base_old ? rw->base_old[b] : 0;
                         lpf_lv_diff[b] = rw->hist[b] > o ? rw->hist[b] - o : 0;
                         rc += lpf_lv_diff[b];
                     }
@@ -786,21 +815,21 @@ static void lpf_live_write(int final) {
         for (size_t r = 0; r < lpf_lv_n; r++) {
             lpf_lv *rw = &lpf_lv_rows[r];
             if (rw->hist == NULL) continue;
-            uint32_t *t = rw->base_old;
+            uint64_t *t = rw->base_old;
             rw->base_old = rw->base_new;
-            if (t == NULL) t = malloc(LP_BUCKETS * sizeof(uint32_t));
-            if (t != NULL) memcpy(t, rw->hist, LP_BUCKETS * sizeof(uint32_t));
+            if (t == NULL) t = malloc(LP_BUCKETS * sizeof(uint64_t));
+            if (t != NULL) memcpy(t, rw->hist, LP_BUCKETS * sizeof(uint64_t));
             rw->base_new = t;
         }
     }
     /* what each thread is inside now, outermost first */
     fprintf(f, "],\"stacks\":[");
     int first = 1;
-    for (lpf_thread *t = __atomic_load_n(&lpf_threads, __ATOMIC_ACQUIRE); t != NULL && !final; t = t->next) {
+    for (lpf_thread *t = LP_GET(lpf_threads); t != NULL && !final; t = t->next) {
         uint32_t d = LP_LD(t->depth);
         if (d > LP_DEPTH) d = LP_DEPTH; /* every stack buffer holds at least LP_DEPTH frames */
         /* one load: the owner may grow its stack meanwhile (old buffers stay valid) */
-        lpf_frame *stack = __atomic_load_n(&t->stack, __ATOMIC_ACQUIRE);
+        lpf_frame *stack = LP_GET(t->stack);
         int any = 0;
         for (uint32_t k = 0; k < d && k < 64; k++) {
             lpf_scope *s = LP_LD(stack[k].scope);
@@ -829,9 +858,6 @@ static void *lpf_live_main(void *arg) {
     uint64_t live_every = (uint64_t)((double)lpf_live_ms * 1e6 / tick);
     uint64_t next = lpf_now() + live_every;
     uint64_t poll_ms = lpf_live_path[0] && !lpf_flight ? lpf_live_ms : lpf_live_ms < 50 ? lpf_live_ms : 50;
-    pthread_mutex_lock(&lpf_lock);
-    lpf_skip_package("x_y"); /* read the project's package names once, before dumps need them */
-    pthread_mutex_unlock(&lpf_lock);
     pthread_mutex_lock(&lpf_live_mu);
     while (!lpf_live_quit) {
         struct timespec ts;
@@ -850,10 +876,7 @@ static void *lpf_live_main(void *arg) {
             lpf_live_mem[j].ts = now;
             lpf_live_mem[j].commit = commit;
             lpf_live_mem[j].rss = rss;
-            if (lpf_dump_signal) {
-                lpf_dump_signal = 0;
-                lpf_flight_dump("SIGUSR1");
-            }
+            if (__atomic_exchange_n(&lpf_dump_signal, 0, __ATOMIC_RELAXED)) lpf_flight_dump("SIGUSR1");
             if (__atomic_load_n(&lpf_slow_pending, __ATOMIC_ACQUIRE) == 1) {
                 char name[300], why[400];
                 lpf_live_key_name(lpf_slow_key, lpf_slow_kind, lpf_slow_parent, name, sizeof name);
@@ -876,6 +899,8 @@ static void *lpf_live_main(void *arg) {
         pthread_mutex_lock(&lpf_live_mu);
     }
     pthread_mutex_unlock(&lpf_live_mu);
+    /* a dump asked for just before the program ended is still written */
+    if (lpf_flight && __atomic_exchange_n(&lpf_dump_signal, 0, __ATOMIC_RELAXED)) lpf_flight_dump("SIGUSR1");
     return NULL;
 }
 
@@ -913,12 +938,17 @@ static void lpf_live_init(void) {
     int want_live = live != NULL && live[0] != 0 && strcmp(live, "0") != 0;
     int want_flight = (flight != NULL && flight[0] != 0 && strcmp(flight, "0") != 0) || slow_ms > 0;
     if (!want_live && !want_flight) return;
+    struct sigaction old_sa;
     /* `leanprof top` runs the program through `leanprof run`, which links
      * this runtime too: only its child, the program, takes part */
     const char *skip = getenv("LEANPROF_LIVE_SKIP_CHILD_OF");
     if (skip != NULL && lpf_parse_num(skip) == (double)getppid()) return;
     char tmpdir[900];
     lpf_tmpdir(tmpdir, sizeof tmpdir);
+    /* the project's package names, read once here, before any other thread
+     * runs: this thread and LEANPROF_SLOW_SCOPE's checks name scopes (it was
+     * read on the background thread, while a program thread could too) */
+    lpf_skip_package("x_y");
     if (want_live) {
         if (strcmp(live, "1") == 0)
             snprintf(lpf_live_path, sizeof lpf_live_path, "%s/leanprof-%d.live.json", tmpdir, (int)getpid());
@@ -945,7 +975,7 @@ static void lpf_live_init(void) {
         sa.sa_handler = lpf_on_sigusr1;
         sa.sa_flags = SA_RESTART;
         sigemptyset(&sa.sa_mask);
-        sigaction(SIGUSR1, &sa, NULL);
+        sigaction(SIGUSR1, &sa, &old_sa);
         lpf_write_marker();
     }
     /* the thread takes no signals: SIGUSR1 and the program's own go elsewhere */
@@ -954,6 +984,21 @@ static void lpf_live_init(void) {
     pthread_sigmask(SIG_SETMASK, &all, &old);
     lpf_live_running = pthread_create(&lpf_live_tid, NULL, lpf_live_main, NULL) == 0;
     pthread_sigmask(SIG_SETMASK, &old, NULL);
-    if (lpf_live_running) atexit(lpf_live_stop);
-    else fprintf(stderr, "leanprof: cannot start the live thread\n");
+    if (lpf_live_running) {
+        atexit(lpf_live_stop);
+        return;
+    }
+    /* Nothing would write snapshots or dumps: turn them off rather than fill
+     * a flight buffer per thread and claim (marker, SIGUSR1) to dump them. */
+    fprintf(stderr, "leanprof: cannot start the live thread: no live snapshots or flight dumps\n");
+    lpf_live_path[0] = 0;
+    if (want_flight) {
+        sigaction(SIGUSR1, &old_sa, NULL);
+        unlink(lpf_flight_marker);
+        lpf_flight_marker[0] = 0;
+        lpf_slow_ticks = 0;
+        lpf_flight = 0;
+        const char *trace = getenv("LEANPROF_TRACE");
+        lpf_tracing = trace != NULL && trace[0] != 0;
+    }
 }

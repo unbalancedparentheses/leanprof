@@ -67,6 +67,18 @@ if [ "${LEANPROF_WHY:-}" = 1 ]; then
 fi
 # LEANPROF_AUTO=1 also times every function of this package (no `profile!`
 # needed); LEANPROF_AUTO=all includes dependencies.
+# LEANPROF_SANITIZE=address,undefined (or thread) builds with sanitizers, for
+# leanprof's CI (the lakefile compiles leanprof's runtime with the same ones).
+# Lean's own runtime and libraries are precompiled and stay uninstrumented.
+# For `thread`, the emitted C is not instrumented either, only linked with
+# TSan: its threads synchronize through the runtime's atomics, which TSan
+# cannot see, so it would only report false races between Lean objects.
+if [ -n "${LEANPROF_SANITIZE:-}" ]; then
+  case "$LEANPROF_SANITIZE: $* " in
+    *thread*" -c "*) ;;
+    *) set -- "-fsanitize=$LEANPROF_SANITIZE" -fno-omit-frame-pointer -g "$@" ;;
+  esac
+fi
 case " $* " in
   *" -c "*)
     case "${LEANPROF_AUTO:-}:$*" in

@@ -113,7 +113,11 @@ static void lpf_mem_take(uint64_t now, int force) {
         __atomic_store_n(&lpf_mem_n, n + 1, __ATOMIC_RELEASE);
         __atomic_store_n(&lpf_mem_last, now, __ATOMIC_RELEASE);
     }
-    __atomic_store_n(&lpf_mem_next, now + lpf_mem_interval, __ATOMIC_RELAXED);
+    /* About every 1 ms for the first minute, then spread over the run so far
+     * (1/65536 of it): about 540,000 samples (13 MB) in a day instead of a
+     * sample (24 bytes) every millisecond for as long as a server runs. */
+    uint64_t every = (now - lpf_start) >> 16;
+    __atomic_store_n(&lpf_mem_next, now + (every > lpf_mem_interval ? every : lpf_mem_interval), __ATOMIC_RELAXED);
     pthread_mutex_unlock(&lpf_mem_lock);
 }
 
@@ -161,7 +165,7 @@ typedef struct {
     const void *scope;
     uint8_t scope_kind;
     uint64_t cascades, objects, ticks, max, mt_decs;
-    uint32_t hist[LP_BUCKETS];
+    uint64_t hist[LP_BUCKETS];
 } lpf_free_site;
 
 typedef struct {
@@ -202,13 +206,18 @@ static uint64_t lpf_free_slow_ticks; /* frees at least this long go to the timel
 static lpf_mem_thread *lpf_mem_thread_get(void) {
     lpf_mem_thread *m = lpf_mem_self;
     if (LEAN_LIKELY(m != NULL)) return m;
-    m = calloc(1, sizeof(lpf_mem_thread));
-    if (m == NULL) abort();
-    m->lt = lpf_thread_get();
-    pthread_mutex_lock(&lpf_lock);
-    m->next = lpf_mem_threads;
-    lpf_mem_threads = m;
-    pthread_mutex_unlock(&lpf_lock);
+    lpf_thread *lt = lpf_thread_get(); /* an exited thread's tables come with its record */
+    m = lt->mem;
+    if (m == NULL) {
+        m = calloc(1, sizeof(lpf_mem_thread));
+        if (m == NULL) abort();
+        m->lt = lt;
+        pthread_mutex_lock(&lpf_lock);
+        m->next = lpf_mem_threads;
+        lpf_mem_threads = m;
+        pthread_mutex_unlock(&lpf_lock);
+        lt->mem = m;
+    }
     lpf_mem_self = m;
     return m;
 }
@@ -355,12 +364,13 @@ static lpf_free_site *lpf_free_site_get(lpf_mem_thread *m, void *pc) {
         if (s != NULL && s->pc == pc && s->scope == key && s->scope_kind == kind) return m->last_site = s;
         if (s == NULL) {
             if (m->nsites >= LP_TABLE_LIMIT) break;
-            s = m->sites[i] = calloc(1, sizeof(lpf_free_site));
+            s = calloc(1, sizeof(lpf_free_site));
             if (s == NULL) return NULL;
             m->nsites++;
             s->pc = pc;
             s->scope = key;
             s->scope_kind = kind;
+            LP_PUBLISH(m->sites[i], s); /* leanprof_frees reads it from another thread */
             return m->last_site = s;
         }
     }
@@ -376,7 +386,7 @@ LEAN_EXPORT void leanprof_dec_ref_cold(lean_object *o) {
         lean_dec_ref_cold(o);
         return;
     }
-    if (LEAN_UNLIKELY(!lpf_frees_seen)) lpf_frees_seen = 1; /* no store to a shared line on every free */
+    if (LEAN_UNLIKELY(!LP_LD(lpf_frees_seen))) LP_ST(lpf_frees_seen, 1); /* not a store per free: one cache line for all threads */
     if (rc < -1) { /* an atomic decrement that does not free */
         lean_dec_ref_cold(o);
         lpf_free_site *s = lpf_free_site_get(m, pc);
@@ -394,7 +404,7 @@ LEAN_EXPORT void leanprof_dec_ref_cold(lean_object *o) {
     if (s != NULL) {
         s->mt_decs += rc < 0;
         s->cascades++;
-        s->objects += objects;
+        LP_ADD(s->objects, objects);
         s->ticks += d;
         if (d > s->max) s->max = d;
         s->hist[lpf_bucket(d)]++;
@@ -456,15 +466,20 @@ LEAN_EXPORT lean_obj_res leanprof_frees(void) {
     uint64_t n = 0;
     pthread_mutex_lock(&lpf_lock);
     for (lpf_mem_thread *m = lpf_mem_threads; m != NULL; m = m->next)
-        for (size_t i = 0; i < LP_TABLE; i++)
-            if (m->sites[i] != NULL) n += m->sites[i]->objects;
+        for (size_t i = 0; i < LP_TABLE; i++) {
+            lpf_free_site *s = LP_GET(m->sites[i]);
+            if (s != NULL) n += LP_LD(s->objects);
+        }
     pthread_mutex_unlock(&lpf_lock);
     return lean_uint64_to_nat(n);
 }
 
 LEAN_EXPORT lean_obj_res leanprof_peak_memory(void) {
     lpf_mem_take(lpf_now(), 1);
-    return lean_uint64_to_nat(lpf_mem_peak_commit);
+    pthread_mutex_lock(&lpf_mem_lock); /* another thread's sample may raise it meanwhile */
+    uint64_t peak = lpf_mem_peak_commit;
+    pthread_mutex_unlock(&lpf_mem_lock);
+    return lean_uint64_to_nat(peak);
 }
 
 /* ---- report ---- */
@@ -472,7 +487,7 @@ LEAN_EXPORT lean_obj_res leanprof_peak_memory(void) {
 typedef struct {
     char name[300], where[512];
     uint64_t cascades, objects, ticks, max, mt_decs;
-    uint32_t hist[LP_BUCKETS];
+    uint64_t hist[LP_BUCKETS];
 } lpf_free_sum;
 
 typedef struct {

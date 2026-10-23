@@ -31,6 +31,7 @@ typedef struct {
 
 typedef struct lpf_ctr_thread {
     lpf_ctr *slots[LPC_TABLE];
+    size_t n;                  /* keys in the table: new ones stop at 7/8 full, like the others */
     uint64_t dropped;
     struct lpf_ctr_thread *next;
 } lpf_ctr_thread;
@@ -41,12 +42,17 @@ static lpf_ctr_thread *lpf_ctr_threads;
 static lpf_ctr *lpf_ctr_get(void *pc, void *fun, uint8_t kind) {
     lpf_ctr_thread *t = lpf_ctr_self;
     if (LEAN_UNLIKELY(t == NULL)) {
-        t = calloc(1, sizeof(lpf_ctr_thread));
-        if (t == NULL) abort();
-        pthread_mutex_lock(&lpf_lock);
-        t->next = lpf_ctr_threads;
-        lpf_ctr_threads = t;
-        pthread_mutex_unlock(&lpf_lock);
+        lpf_thread *lt = lpf_thread_get(); /* an exited thread's table comes with its record */
+        t = lt->ctr;
+        if (t == NULL) {
+            t = calloc(1, sizeof(lpf_ctr_thread));
+            if (t == NULL) abort();
+            pthread_mutex_lock(&lpf_lock);
+            t->next = lpf_ctr_threads;
+            lpf_ctr_threads = t;
+            pthread_mutex_unlock(&lpf_lock);
+            lt->ctr = t;
+        }
         lpf_ctr_self = t;
     }
     size_t i = lpf_hash(pc, fun) & (LPC_TABLE - 1);
@@ -54,12 +60,15 @@ static lpf_ctr *lpf_ctr_get(void *pc, void *fun, uint8_t kind) {
         lpf_ctr *c = t->slots[i];
         if (LEAN_LIKELY(c != NULL && c->pc == pc && c->fun == fun && c->kind == kind)) return c;
         if (c == NULL) {
+            /* a full table used to cost a scan of every slot per call */
+            if (t->n >= LPC_TABLE / 8 * 7) break;
             c = calloc(1, sizeof(lpf_ctr));
             if (c == NULL) abort();
             c->pc = pc;
             c->fun = fun;
             c->kind = kind;
-            t->slots[i] = c;
+            LP_PUBLISH(t->slots[i], c); /* the queries read it from other threads */
+            t->n++;
             return c;
         }
     }
@@ -72,9 +81,9 @@ LEAN_EXPORT bool leanprof_is_exclusive(lean_object *o) {
     bool ok = lean_is_st(o) && lean_internal_get_rc(o) == 1;
     lpf_ctr *c = lpf_ctr_get(LP_PC, NULL, LPC_REUSE);
     if (c != NULL) {
-        c->checks++;
+        LP_ADD(c->checks, 1);
         if (!ok) {
-            c->n[lpf_reason(o)]++;
+            LP_ADD(c->n[lpf_reason(o)], 1);
             if (lean_ptr_tag(o) <= LeanMaxCtorTag) c->fields += lean_ctor_num_objs(o);
         }
     }
@@ -85,7 +94,7 @@ static inline void lpf_count_apply(void *pc, lean_object *f, unsigned n) {
     if (lean_is_scalar(f) || lean_ptr_tag(f) != LeanClosure) return; /* erased value; nothing to run */
     unsigned rest = lean_closure_arity(f) - lean_closure_num_fixed(f);
     lpf_ctr *c = lpf_ctr_get(pc, lean_closure_fun(f), LPC_APPLY);
-    if (c != NULL) c->n[n == rest ? LPC_EXACT : n < rest ? LPC_PARTIAL : LPC_OVER]++;
+    if (c != NULL) LP_ADD(c->n[n == rest ? LPC_EXACT : n < rest ? LPC_PARTIAL : LPC_OVER], 1);
 }
 
 #define LPF_P1 lean_object *a1
@@ -145,11 +154,11 @@ static uint64_t lpf_ctr_total(uint8_t kind, int checks) {
     pthread_mutex_lock(&lpf_lock);
     for (lpf_ctr_thread *t = lpf_ctr_threads; t != NULL; t = t->next)
         for (size_t i = 0; i < LPC_TABLE; i++) {
-            lpf_ctr *c = t->slots[i];
+            lpf_ctr *c = LP_GET(t->slots[i]);
             if (c == NULL || c->kind != kind) continue;
-            if (checks) n += c->checks;
-            else if (kind == LPC_REUSE) n += c->n[LP_SHARED] + c->n[LP_MULTI_THREADED];
-            else n += c->n[LPC_EXACT] + c->n[LPC_PARTIAL] + c->n[LPC_OVER];
+            if (checks) n += LP_LD(c->checks);
+            else if (kind == LPC_REUSE) n += LP_LD(c->n[LP_SHARED]) + LP_LD(c->n[LP_MULTI_THREADED]);
+            else n += LP_LD(c->n[LPC_EXACT]) + LP_LD(c->n[LPC_PARTIAL]) + LP_LD(c->n[LPC_OVER]);
         }
     pthread_mutex_unlock(&lpf_lock);
     return n;
@@ -230,6 +239,9 @@ static void lpf_ctr_collect(void) {
                 if (e->kind == c->kind && strcmp(e->fn, fn) == 0 && strcmp(e->target, target) == 0) { s = e; break; }
             }
             if (s == NULL) {
+                /* a thread still running at exit may have added records
+                 * since they were counted: never past the array */
+                if (lpf_ctr_nsums == cap) continue;
                 s = &lpf_ctr_sums[lpf_ctr_nsums++];
                 index[h] = lpf_ctr_nsums;
                 s->kind = c->kind;
