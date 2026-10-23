@@ -445,6 +445,8 @@ static inline size_t lpf_sarray_bytes(lean_object *a) {
     return lean_sarray_size(a) * lean_sarray_elem_size(a);
 }
 
+#include "explain.inc.c"
+
 #define LP_PC __builtin_return_address(0)
 
 /* Called only when the value is not exclusive: always a copy. */

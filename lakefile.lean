@@ -57,13 +57,14 @@ target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  -- leanprof.c includes counters.inc.c, memory.inc.c and coverage.inc.c:
-  -- rebuild when any changes
+  -- leanprof.c includes counters.inc.c, memory.inc.c, coverage.inc.c and
+  -- explain.inc.c: rebuild when any changes
   let counters ← computeTrace (pkg.dir / "c" / "counters.inc.c")
   let memory ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "memory.inc.c"))
   let coverage ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "coverage.inc.c"))
+  let explain ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "explain.inc.c"))
   buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc"
-    (return (((← getLeanTrace).mix counters).mix memory).mix coverage)
+    (return ((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain)
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch

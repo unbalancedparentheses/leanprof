@@ -20,7 +20,21 @@ copies of non-exclusive values (each one copied the whole value)
 Lean updates an `Array` or `String` in place only when nothing else refers to
 it; otherwise every update copies the whole value. Here a loop kept one extra
 reference, so each `push` copied: 98% of the function's time, in a loop that
-looks linear. No other profiler shows this.
+looks linear. No other profiler shows this, and leanprof also says why, from
+the compiler's own output:
+
+```
+$ leanprof explain
+
+buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
+  Array copies: 1999 shared, 2 of a constant; 15.3 MiB, 3.13 ms copying
+  why: `acc` is stored in `history` at line 21 (`history := history.push acc`) and is updated
+       afterwards at line 22 (`acc := acc.push i`): both refer to the same Array, so the Array.push
+       copies it.
+  fix: Store the value after its last update, store something smaller (an index, a summary), or,
+       when every intermediate version is needed, keep them in a persistent structure (`List`,
+       `Lean.PersistentArray`) instead of copying the whole value at each step.
+```
 
 ## What it finds
 
@@ -29,6 +43,7 @@ looks linear. No other profiler shows this.
 | CPU time per Lean declaration, with no probes; flame graph with Lean names | `leanprof sample myapp` |
 | Exact time and calls per function or `profile!` scope, own overhead subtracted | `leanprof run [--auto] myapp` |
 | Copies of shared arrays and strings, with file:line and the reason | `leanprof run myapp` |
+| Why each copy happened (where the second reference comes from) and how to fix it | `leanprof explain [--why myapp]` |
 | Allocations per function; failed in-place reuse; closure calls | `leanprof run --allocs --counters myapp` |
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
@@ -73,8 +88,11 @@ The [getting started guide](docs/guide/getting-started.md) walks through it.
   11.9 million allocations needed to compile zlib, seven per input byte. The
   fix cut the whole run's allocations by 28% with byte-identical output. While
   writing that fix, leanprof caught a 6.8 GiB copy the first attempt had
-  introduced. Other findings: one function was a quarter of its compile cost,
-  and 76% of closure calls went through one non-specialized helper.
+  introduced. `leanprof explain` traced its 121,054 copies in `CFG.build` to
+  arrays pushed while still held by an outer array, and printed the fix
+  (`successors.modify i (·.push target)`). Other findings: one function was a
+  quarter of its compile cost, and 76% of closure calls went through one
+  non-specialized helper.
 - **[LeanProfiler](bench/README.md)**: leanprof found why its cost per span
   grows with the number of events (its event array is copied on every span).
 
@@ -87,6 +105,7 @@ The [getting started guide](docs/guide/getting-started.md) walks through it.
 | Works without changing the project | ✅ | – | ✅ | ✅ |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – |
+| Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – |
 | Peak memory per scope, freeing pauses | ✅ | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads |
 | Compile time | per line and operation, repeated work | – | deeper (unfolded definitions, all of Mathlib) | – |

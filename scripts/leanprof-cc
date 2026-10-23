@@ -57,6 +57,13 @@ fi
 if [ "${LEANPROF_FREES:-}" = 1 ]; then
   set -- -Dlean_dec_ref_cold=leanprof_dec_ref_cold "$@"
 fi
+# LEANPROF_WHY=1 also records where Arrays and Strings become shared, for
+# `leanprof explain` (c/leanprof_why.h wraps lean_inc after lean.h).
+if [ "${LEANPROF_WHY:-}" = 1 ]; then
+  case " $* " in
+    *" -c "*) set -- -include lean/lean.h -include "$(cd "$(dirname "$0")/.." && pwd)/c/leanprof_why.h" "$@" ;;
+  esac
+fi
 # LEANPROF_AUTO=1 also times every function of this package (no `profile!`
 # needed); LEANPROF_AUTO=all includes dependencies.
 case " $* " in
