@@ -23,6 +23,49 @@ def enter (site : @& String) : BaseIO Unit := pure ()
 @[extern "leanprof_exit"]
 def exit : BaseIO Unit := pure ()
 
+/-! What `profile!` compiles a pure term to:
+`let s := site; let t := enterPure s s; exitPure t e`. No closure is built
+and nothing is boxed (a pure `scope` allocates a closure, and boxes a scalar
+result such as a `UInt64`, inside the timed region). Scalar results pass
+through a variant that takes and returns them unboxed.
+
+The compiler must not move `enterPure` past the term. `never_extract` keeps
+it from merging two `enter`s of one label or hoisting them as constants, and
+the token makes `exit` depend on `enter`. But `floatLetIn` moves a `let` into
+the one branch that uses it, and `exit` sits after the term's last branch
+(even a structure projection is one): a plain token was moved there, so the
+term ran before its scope opened. It never moves a `let` that uses a variable
+already passed as an owned argument, so `enterPure` takes the label twice,
+first owned and then borrowed. The tests check that the work stays inside. -/
+
+/-- Open a scope for a pure term (see above); `site` and `key` are the same
+label. -/
+@[extern "leanprof_enter_pure", never_extract]
+def enterPure (site : String) (key : @& String) : UInt64 := let _ := site; let _ := key; 0
+
+/-- Close the scope `enterPure` opened, passing the term's value through. -/
+@[extern "leanprof_exit_pure", never_extract]
+def exitPure {α : Sort u} (_tok : UInt64) (a : α) : α := a
+
+@[extern "leanprof_exit_pure_u8", never_extract, inherit_doc exitPure]
+def exitPureUInt8 (_tok : UInt64) (a : UInt8) : UInt8 := a
+@[extern "leanprof_exit_pure_u8", never_extract, inherit_doc exitPure]
+def exitPureBool (_tok : UInt64) (a : Bool) : Bool := a
+@[extern "leanprof_exit_pure_u16", never_extract, inherit_doc exitPure]
+def exitPureUInt16 (_tok : UInt64) (a : UInt16) : UInt16 := a
+@[extern "leanprof_exit_pure_u32", never_extract, inherit_doc exitPure]
+def exitPureUInt32 (_tok : UInt64) (a : UInt32) : UInt32 := a
+@[extern "leanprof_exit_pure_u32", never_extract, inherit_doc exitPure]
+def exitPureChar (_tok : UInt64) (a : Char) : Char := a
+@[extern "leanprof_exit_pure_u64", never_extract, inherit_doc exitPure]
+def exitPureUInt64 (_tok : UInt64) (a : UInt64) : UInt64 := a
+@[extern "leanprof_exit_pure_usize", never_extract, inherit_doc exitPure]
+def exitPureUSize (_tok : UInt64) (a : USize) : USize := a
+@[extern "leanprof_exit_pure_f64", never_extract, inherit_doc exitPure]
+def exitPureFloat (_tok : UInt64) (a : Float) : Float := a
+@[extern "leanprof_exit_pure_f32", never_extract, inherit_doc exitPure]
+def exitPureFloat32 (_tok : UInt64) (a : Float32) : Float32 := a
+
 /-- Time a monadic action under `site`. The scope closes on exceptions too. -/
 @[inline] def scopeM {m : Type → Type v} {α : Type} [Monad m] [MonadFinally m] [MonadLiftT BaseIO m]
     (site : @& String) (x : m α) : m α := do

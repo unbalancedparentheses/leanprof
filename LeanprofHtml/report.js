@@ -66,6 +66,7 @@ const sources = D.sources || {};
 
 // ---------- hints, as the editor shows them ----------
 const hints = new Map(); // "file:line" -> [{label, tip, cls}]
+const NEAR_PROBE = "near the probe cost: use `leanprof sample` for this function's time";
 function addHint(pos, label, tip, cls) {
   if (!isPos(pos)) return;
   if (!hints.has(pos)) hints.set(pos, []);
@@ -77,10 +78,12 @@ if (run) {
   for (const s of arr(d, "scopes")) {
     if (!isPos(s.pos)) continue;
     const t = num(s, "total_ns"), pct = wall > 0 ? t / wall * 100 : 0;
-    const label = sampled ? "≈ " + fNs(t) + " CPU · " + fPct(pct) : "⏱ " + fNs(t) + " · " + fPct(pct) + " · " + fN(num(s, "calls")) + "×";
+    const near = !sampled && s.near_probe_cost === true;
+    const label = sampled ? "≈ " + fNs(t) + " CPU · " + fPct(pct) : "⏱ " + fNs(t) + (near ? "*" : "") + " · " + fPct(pct) + " · " + fN(num(s, "calls")) + "×";
     const tip = sampled ? s.name + ": " + fNs(t) + " CPU inclusive (sampled)"
       : s.name + ": " + fN(num(s, "calls")) + " calls, total " + fNs(t) + ", self " + fNs(num(s, "self_ns")) +
-        ", mean " + fNs(num(s, "mean_ns")) + ", p50 " + fNs(num(s, "p50_ns")) + ", p99 " + fNs(num(s, "p99_ns"));
+        ", mean " + fNs(num(s, "mean_ns")) + ", p50 " + fNs(num(s, "p50_ns")) + ", p99 " + fNs(num(s, "p99_ns")) +
+        (near ? "\n* " + NEAR_PROBE : "");
     const b = best.get(s.pos);
     if (!b || b.t < t) best.set(s.pos, { t, label, tip });
   }
@@ -507,9 +510,9 @@ if (run || elab) addTab("flame", run && (run.flame || sampled) ? "Flame graph" :
 if (run) {
   const d = run.data, wall = num(d, "wall_ns");
   if (arr(d, "scopes").length) addTab("scopes", sampled ? "Declarations" : "Scopes", arr(d, "scopes").length, () => panel(null,
-    sampled ? "Sampled CPU time per Lean declaration, inclusive of what it calls." : "Exact time and calls per scope (profile! labels and, with --auto, functions), leanprof's own cost subtracted.",
+    sampled ? "Sampled CPU time per Lean declaration, inclusive of what it calls." : "Exact time and calls per scope (profile! labels and, with --auto, functions), leanprof's own cost subtracted. * " + NEAR_PROBE + ".",
     table(arr(d, "scopes"), sampled ? [col("declaration", "name"), pcol("where", "pos"), ncol("CPU (incl.)", "total_ns", fNs, { bar: true }), { t: "% CPU", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }]
-      : [col("scope", "name"), pcol("where", "pos"), { t: "kind", v: (r) => (r.auto ? "function" : "profile!") }, ncol("calls", "calls"), ncol("total", "total_ns", fNs, { bar: true }), ncol("self", "self_ns", fNs),
+      : [col("scope", "name"), pcol("where", "pos"), { t: "kind", v: (r) => (r.auto ? "function" : "profile!") }, ncol("calls", "calls"), ncol("total", "total_ns", (v, r) => r && r.near_probe_cost === true ? h("span", { title: NEAR_PROBE }, fNs(v) + "*") : fNs(v), { bar: true }), ncol("self", "self_ns", fNs),
         { t: "% wall", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }, ncol("mean", "mean_ns", fNs), ncol("p50", "p50_ns", fNs), ncol("p99", "p99_ns", fNs), ncol("max", "max_ns", fNs),
         ncol("allocs", "allocs"), ncol("alloc bytes", "alloc_bytes", fBytes)], { what: "scopes" })));
   if (sampled && run.flame) addTab("self", "Self time", null, () => {

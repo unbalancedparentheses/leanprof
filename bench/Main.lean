@@ -45,6 +45,9 @@ def main (args : List String) : IO UInt32 := do
     | "leanprof" => (withLeanprof · n)
     | "leanprofiler" => (withLeanProfiler · n)
     | _ => (plain · n)
+  -- leanprof calibrates once, at the first scope (~10 ms): do it before the
+  -- timed loops, so that it is not counted as the cost of the first actions
+  if tool == "leanprof" then discard Leanprof.overheadNs
   let base ← timed threads (plain · n)
   let prof ← LeanProfiler.profileFromEnvironment "bench" (timed threads profiled)
   let per := (Float.ofNat prof - Float.ofNat base) / Float.ofNat n

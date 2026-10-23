@@ -91,6 +91,9 @@ def explanations : CommandElabM (Array Json) := do
   | .ok (.arr a) => return a
   | _ => return #[]
 
+/-- What a row marked `near_probe_cost` means. -/
+def nearProbeNote : String := "near the probe cost: use `leanprof sample` for this function's time"
+
 /-- Hints and summary lines for one report. -/
 def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Array String) := do
   let j ← match Json.parse (← (IO.FS.readFile path : IO String)) with
@@ -110,10 +113,11 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     let total := num s "total_ns"
     let calls := (num s "calls").toUInt64.toNat
     let pct := if wall > 0 then total / wall * 100 else 0
+    let near := (s.getObjVal? "near_probe_cost").toOption == some (.bool true)
     let label :=
       if compile then s!"⚙ {amount total} to compile"
       else if sampled then s!"≈ {fmtNs total} CPU · {fmt1 pct}%"
-      else s!"⏱ {fmtNs total} · {fmt1 pct}% · {calls}×"
+      else s!"⏱ {fmtNs total}{if near then "*" else ""} · {fmt1 pct}% · {calls}×"
     let tip :=
       if compile then
         let ops := (arr s "top").toList.map fun o => s!"\n  {amount (num o "amount")}  {str o "op"}"
@@ -130,7 +134,8 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
           (if defs.isEmpty then "" else "\ndefinitions behind it:" ++ String.join defs)
       else if sampled then s!"{str s "name"}: {fmtNs total} CPU inclusive, {fmtNs (num s "self_ns")} self (sampled)"
       else s!"{str s "name"}: {calls} calls, total {fmtNs total}, self {fmtNs (num s "self_ns")}, " ++
-        s!"mean {fmtNs (num s "mean_ns")}, p50 {fmtNs (num s "p50_ns")}, p99 {fmtNs (num s "p99_ns")}"
+        s!"mean {fmtNs (num s "mean_ns")}, p50 {fmtNs (num s "p50_ns")}, p99 {fmtNs (num s "p99_ns")}" ++
+        (if near then s!"\n* {nearProbeNote}" else "")
     if (best.get? line).all (·.1 < total) then best := best.insert line (total, label, tip)
     lines := lines.push s!"{file}:{line}  {label}  ({str s "name"})"
   -- tactic steps inside proofs (`elab`), on lines no declaration starts on
