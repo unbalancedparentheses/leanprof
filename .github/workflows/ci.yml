@@ -507,3 +507,37 @@ jobs:
           head -20 elab.txt
           python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 3
           grep -q "Regex/VM/Basic.lean:105  def eachStepChar" elab.txt
+
+  # The VS Code extension (editors/vscode): its commands run in a real VS Code
+  # against the leanprof command built here, then it is packaged as a .vsix
+  # (an artifact of the run; it is not published to the Marketplace).
+  vscode:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build leanprof and the examples the tests profile
+        run: lake build leanprof copybug server
+      - name: Extension tests (Run, Compile cost, Open report, Live view in VS Code)
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          command -v xvfb-run || { sudo apt-get update && sudo apt-get install -y xvfb; }
+          LEANPROF=$GITHUB_WORKSPACE/.lake/build/bin/leanprof xvfb-run -a npm test
+      - name: Package
+        working-directory: editors/vscode
+        run: npm run package -- -o "leanprof-$(node -p "require('./package.json').version").vsix"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leanprof-vscode
+          path: editors/vscode/leanprof-*.vsix
+          if-no-files-found: error

@@ -36,6 +36,19 @@ sys.exit(0 if ok else 1)
 PY
 python3 "$check" run.json --min-pos 2 --expect buildWithHistory=Main.lean --expect fib=Main.lean --expect strings=Main.lean
 
+echo "== leanprof run --allocs --counters --frees, explain --why"
+LEANPROF_QUIET=1 "$lp" run --allocs --counters --frees --json all.json smoke -- 2000 > all.out
+python3 - <<'PY'
+import json, sys
+d = json.load(open('all.json'))
+allocs = sum(a['allocs'] for a in d['allocations'])
+checks = sum(r['checks'] for r in d['reuse'])
+print('allocations', allocs, 'reuse checks', checks, 'freed', d['frees']['objects'])
+sys.exit(0 if allocs > 0 and checks > 0 and d['frees']['objects'] > 0 else 1)
+PY
+LEANPROF_QUIET=1 "$lp" explain --why smoke -- 2000 > why.txt
+grep -q "1999×" why.txt
+
 echo "== leanprof elab"
 "$lp" elab --heartbeats Main.lean > elab.txt
 head -12 elab.txt

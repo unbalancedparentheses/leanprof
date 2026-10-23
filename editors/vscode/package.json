@@ -1,0 +1,110 @@
+{
+  "name": "leanprof",
+  "displayName": "leanprof",
+  "description": "Profile Lean 4 programs and compile times with leanprof from VS Code: run, sample, compile cost of a file, the HTML report and a live view",
+  "version": "0.1.0",
+  "publisher": "unbalancedparentheses",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/unbalancedparentheses/leanprof",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://github.com/unbalancedparentheses/leanprof/blob/main/docs/guide/vscode.md",
+  "bugs": "https://github.com/unbalancedparentheses/leanprof/issues",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "lean",
+    "lean4",
+    "profiler",
+    "performance"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "leanprof.run",
+        "title": "Run…",
+        "category": "leanprof"
+      },
+      {
+        "command": "leanprof.sample",
+        "title": "Sample…",
+        "category": "leanprof"
+      },
+      {
+        "command": "leanprof.elabFile",
+        "title": "Compile cost of this file",
+        "category": "leanprof"
+      },
+      {
+        "command": "leanprof.openReport",
+        "title": "Open report",
+        "category": "leanprof"
+      },
+      {
+        "command": "leanprof.live",
+        "title": "Live view",
+        "category": "leanprof"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "leanprof.elabFile",
+          "when": "resourceExtname == .lean"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "leanprof.elabFile",
+          "when": "resourceExtname == .lean",
+          "group": "leanprof"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "leanprof",
+        "properties": {
+          "args": {
+            "type": "array",
+            "description": "Arguments of the leanprof command"
+          }
+        }
+      }
+    ],
+    "configuration": {
+      "title": "leanprof",
+      "properties": {
+        "leanprof.path": {
+          "type": "string",
+          "default": "leanprof",
+          "scope": "machine-overridable",
+          "markdownDescription": "The `leanprof` command: a name on `PATH` or a full path (for example `~/.local/bin/leanprof`, or `.lake/build/bin/leanprof` of a leanprof checkout)."
+        },
+        "leanprof.liveInterval": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "markdownDescription": "Milliseconds between frames of **leanprof: Live view** (`leanprof top --interval`)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package --no-dependencies --baseContentUrl https://github.com/unbalancedparentheses/leanprof/blob/HEAD/editors/vscode --baseImagesUrl https://github.com/unbalancedparentheses/leanprof/raw/HEAD/editors/vscode",
+    "test": "node test/run.js"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0"
+  }
+}
