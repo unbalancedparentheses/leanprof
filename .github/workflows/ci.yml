@@ -38,7 +38,13 @@ jobs:
           base = d['wall_ns'] - d['probe_ns']
           parts = t['buildWithHistory'] + t['build'] + t['report']
           print(d['wall_ns'], d['probe_ns'], parts, t)
-          sys.exit(0 if 0 <= d['probe_ns'] < d['wall_ns'] and parts <= base and t['buildWithHistory'] > t['build'] else 1)
+          # self time never exceeds total, also for the recursive `fib` (whose
+          # self and total are the same time, corrected two ways)
+          over = [s['name'] for s in d['scopes'] if s['self_ns'] > s['total_ns'] + 1]
+          fib = next(s for s in d['scopes'] if s['name'] == 'fib')
+          print(over, fib['self_ns'], fib['total_ns'])
+          sys.exit(0 if 0 <= d['probe_ns'] < d['wall_ns'] and parts <= base and t['buildWithHistory'] > t['build']
+                   and not over and abs(fib['self_ns'] - fib['total_ns']) <= 1 else 1)
           PY
       - name: Allocations
         run: |

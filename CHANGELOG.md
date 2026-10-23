@@ -78,6 +78,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   `buildWithHistory` at 100.0% and the column summed to more than 100%. CI
   now checks that scopes that do not overlap add up to at most the wall
   time without the probes.
+- A recursive scope's self time could exceed its total (`fib` in copybug:
+  self 38.0 µs, total 32.2 µs). Both subtract the same probes, counted two
+  ways (self: each call's inner part plus its children's outside parts;
+  total: one inner part plus every descendant's whole pair), but the inner
+  part came from the calibration at exit and the rest from the weights
+  fixed at the first one, rounded separately. All three now come from the
+  same weights, with inner + outside = pair exactly, and CI checks that
+  `fib`'s self equals its total.
 - `bench/Main.lean` (the comparison with LeanProfiler) calibrates before
   its timed loops: the one-time calibration (about 10 ms) was counted as
   the cost of the first 1,000 actions (10 µs each).

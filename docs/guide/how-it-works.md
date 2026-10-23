@@ -130,6 +130,6 @@ from its JSON messages.
   C output carries no line information.
 - **The compiler may move pure work**: closed terms run at startup, and pure
   work in `do` blocks can run before the action (use `IO.lazyPure`).
-- **Apple Silicon's clock ticks every 41.7 ns**, so percentiles of very short
-  scopes are coarse.
+- **Apple Silicon's counter** runs at 1 GHz on an M5 but ticks every 41.7 ns
+  on earlier chips, where percentiles of very short scopes are coarse.
 - Tested with Lean 4.34.1 and 4.35.0 on macOS arm64 and Linux x86-64.

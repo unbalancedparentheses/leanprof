@@ -147,6 +147,9 @@ static uint64_t lpf_inner_fp[LP_PATHS], lpf_pair_fp[LP_PATHS];
 /* (until the first calibration ends, which other threads may not wait for:
  * every pair counts as a direct one, half of it outside the child) */
 static uint64_t lpf_w_pair[LP_PATHS] = {1024, 1024, 1024, 1024, 1024}, lpf_w_kid[LP_PATHS] = {512, 512, 512, 512, 512};
+/* the part of a pair inside the scope's own time, in the same units (0 until
+ * the first calibration: before it nothing is subtracted) */
+static uint64_t lpf_w_inner[LP_PATHS];
 static int lpf_weighted; /* weights set by the first calibration */
 static int lpf_calibrated; /* first calibration started (atomic) */
 static void lpf_calibrate(void);
@@ -780,7 +783,8 @@ static void lpf_calibrate(void) {
         uint64_t base = lpf_pair_fp[LP_PATH_DIRECT];
         for (int p = 0; p < LP_PATHS; p++) {
             lpf_w_pair[p] = (lpf_pair_fp[p] << 10) / base;
-            lpf_w_kid[p] = ((lpf_pair_fp[p] - lpf_inner_fp[p]) << 10) / base;
+            lpf_w_inner[p] = (lpf_inner_fp[p] << 10) / base;
+            lpf_w_kid[p] = lpf_w_pair[p] - lpf_w_inner[p]; /* exactly: see lpf_inner_ticks */
         }
         lpf_weighted = 1;
     }
@@ -1899,7 +1903,15 @@ LEAN_EXPORT lean_obj_res leanprof_calls(b_lean_obj_arg site) {
 
 /* What a scope measures of its own bookkeeping per call, and what one unit
  * of the overhead weights in `kids`/`desc_*` is, in ticks. */
-static double lpf_inner_ticks(const lpf_scope *s) { return (double)lpf_inner_fp[s->path] / 1024.0; }
+/* In the weights' units, like `kids` and `desc_*`, not from the latest
+ * calibration: `self` subtracts (calls + fwd) inner parts plus the outside
+ * parts of the direct children (`kids`), `total` one inner part per
+ * outermost call plus every descendant's whole pair (`desc_total`). For a
+ * recursive scope these are the same pairs counted two ways, and only agree
+ * if inner + outside = pair in one set of units: with the inner part taken
+ * from the calibration at exit and the rest from the weights fixed at the
+ * first one, `fib` in copybug showed a self time larger than its total. */
+static double lpf_inner_ticks(const lpf_scope *s) { return (double)lpf_w_inner[s->path] * lpf_unit_ticks(); }
 static double lpf_unit_ticks(void) { return (double)lpf_pair_fp[LP_PATH_DIRECT] / (1024.0 * 1024.0); }
 
 /* Total time of scopes named `site` (outermost calls, overhead removed), in

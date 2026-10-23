@@ -53,8 +53,9 @@ buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3
 ```
 
 - **total** includes everything called inside; **self** excludes what was
-  timed by nested scopes. leanprof's own cost (about 15 ns per scope) has
-  already been subtracted.
+  timed by nested scopes. leanprof's own cost (about 8 ns per scope) has
+  already been subtracted; a `*` after a total means the scope's time is
+  near that cost (use `leanprof sample` for it).
 - **copies**: Lean updates an `Array`, `ByteArray` or `String` in place only
   when nothing else refers to it. Otherwise it copies the whole value first.
   The `why` column says whether another reference was alive (`shared`), the

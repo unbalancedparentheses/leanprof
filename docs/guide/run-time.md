@@ -7,8 +7,8 @@ see [memory](memory.md)):
 | | command | cost | gives |
 |---|---|---|---|
 | Sampling | `leanprof sample EXE` | near zero, no probes | CPU per Lean declaration, runtime breakdown, flame graph |
-| Every function | `leanprof run --auto EXE` | ~14 ns per call | exact calls and time of every function |
-| Marked scopes | `profile!` in your code | ~11–15 ns per scope | exact time, p50/p99 of what you mark |
+| Every function | `leanprof run --auto EXE` | ~8 ns per call | exact calls and time of every function |
+| Marked scopes | `profile!` in your code | ~8 ns per scope | exact time, p50/p99 of what you mark |
 | Timeline | `--trace FILE` / `LEANPROF_TRACE` | one event per scope | Perfetto timeline per thread, with copies as markers |
 
 Start with sampling to find where to look, then use exact counts.
@@ -75,7 +75,10 @@ and a lambda or `_redArg` called by its own declaration is not a new call.
 
 `profile! "name" e` times `e`. It works on pure terms and on monadic actions
 (any monad with `MonadFinally` and a `BaseIO` lift, such as `IO` or
-`StateT σ IO`); a monadic scope also closes when the action throws. The
+`StateT σ IO`); a monadic scope also closes when the action throws. On a
+pure term it compiles to a call before the term and one after it, with no
+closure, and a value of a scalar type (`UInt64`, `Float`, `Bool`, ...)
+passes through unboxed. The
 report shows each scope's file:line. With `set_option leanprof.enabled false`
 (for example in `leanOptions`), `profile!` elaborates to the bare term.
 
@@ -128,25 +131,36 @@ per thread (`LEANPROF_TRACE_MAX`).
 
 ## Overhead and accuracy
 
-Measured in [`bench/`](../../bench/RESULTS.md) on an Apple M5 Max:
+Measured in [`bench/`](../../bench/RESULTS.md) on an Apple M5 Max (shared
+with other jobs):
 
-- **Cost per scope:** 11 ns for a monadic `profile!`, 21 ns for a pure one
-  (it allocates and applies a closure), 15 ns per call with `--auto`.
+- **Cost per scope:** about 8 ns for `profile!` (pure or monadic) and per
+  call with `--auto` (`Leanprof.scope`, which builds a closure, 11 ns).
   leanprof measures each kind of entry when profiling starts and again at
   exit, and subtracts it from every enclosing scope; programs that never
-  profile pay nothing.
+  profile pay nothing. On lean-compiler-backend, `--auto` makes the whole
+  process 1.65 times slower, `--frees` 1.57 times.
 - **Counts are exact** in every mode, including deep recursion.
 - **Times match the uninstrumented program** when each scope does real work
-  (0.98–1.06× on the allocation, copy and mixed workloads). When a scope does
-  only a few nanoseconds of work, some cost stays in the report (mostly Lean
-  boxing values that pass through `profile!`'s closure): a 1 ns function
-  shows up 3–4× too slow, and `--auto` is off by ±1–2 ns per call. With many
-  threads running tiny scopes the reported time also grows (1.6× on 2
-  threads, 3.1× on 8).
-- **`leanprof sample`** slows programs down 1.0–1.3× and is within 0.1–1.7
+  (0.95–1.04× on the allocation, copy and mixed workloads). When a scope
+  does only a few nanoseconds of work, what the subtraction gets wrong (a
+  nanosecond or two per scope, depending on what surrounds the probes and
+  on how busy the machine is) is a large part of its time: loops of 1 ns
+  functions are reported 1.1–1.5 times too slow, and tiny scopes on 2 to 8
+  threads 1.2–1.5 times.
+- **Such rows are marked.** A row whose probes (its own and those of the
+  scopes inside it) cost at least 0.3 of the time left after subtracting
+  them gets a `*` after its total, `"near_probe_cost": true` in the JSON,
+  and the note "near the probe cost: use `leanprof sample` for this
+  function's time" in the HTML report and the editor. That is a function
+  of about three probe pairs per call (~25 ns) or less; in the benchmark,
+  unflagged rows were within 16% of the truth (median 4%), flagged ones
+  off by 15% in the median.
+- **`leanprof sample`** slows programs down 1.0–1.2× and is within 0.2–1.2
   percentage points of each function's true share of time, like samply.
 
 So: take counts, copies, allocations and causes from the exact modes, and
-the time of very small functions from `sample`. `LEANPROF_NO_CALIBRATION=1`
-shows raw times. On Apple Silicon the clock ticks every 41.7 ns, so
-percentiles of very short scopes are coarse.
+the time of starred rows from `sample`. `LEANPROF_NO_CALIBRATION=1` shows
+raw times. On Apple Silicon leanprof reads the CPU's counter directly: it
+runs at 1 GHz on an M5 and at 24 MHz (41.7 ns per tick) on earlier chips,
+where percentiles of very short scopes are coarse.
