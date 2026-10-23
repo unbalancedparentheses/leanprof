@@ -220,9 +220,14 @@ leanprof over the same event counts: 15.9–17.8, 8.9–17.0 and 10.0–11.6 ns
 ## Why LeanProfiler's cost grows
 
 The per-span cost grows with the number of events recorded, so total time is
-quadratic. Building the benchmark with leanprof's compiler wrapper
-(`LEAN_CC=../scripts/leanprof-cc`, after deleting `.lake/**/*.c.o*` so every
-package recompiles) shows why, without any annotations in LeanProfiler:
+quadratic. `leanprof run` shows why, without any annotations in LeanProfiler:
+it rebuilds the benchmark and its dependencies (LeanProfiler included) with
+the copy probes, runs it, and puts the normal build back:
+
+```
+cd bench
+LEAN_PROFILE=1 lake exe leanprof run bench -- leanprofiler 1 4000
+```
 
 ```
 function                                                     copies       bytes    time  why                        where (declaration)

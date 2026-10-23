@@ -8,6 +8,20 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Added
 
+- Self-check on every profiled run: a known copy of each kind
+  (`Array.push`, `Array.set!`, `String.push`, `String.append`,
+  `ByteArray.push`, `ByteArray.set!`) goes through `c/selfcheck.c`, compiled
+  with the copy flags like the program, and must reach a shim. If one does
+  not, the report, the JSON (`self_check`), `stat`, `measure` and `doctor`
+  warn that copies of that kind may be undercounted with this Lean version
+  (as String copies were with Lean 4.36 before the `lean_string_push_cold`
+  shim). Its copies are counted apart (no rows); it costs about 20 µs at
+  exit.
+- `run`, `stat`, `measure` and `top` take `--no-deps`: only the root
+  package is rebuilt with probes.
+- `scripts/smoke.py` also profiles `Tests/Smoke`, a project that does not
+  depend on leanprof, from a copy outside the repository with the command as
+  packaged for a release; `--add` adds new facts to the baseline.
 - A `sanitizers` job: tests, examples, the server with live snapshots and
   the flight recorder, `run --allocs --counters --frees`, `explain --why`
   and the stress test, built with ASan and UBSan and with TSan on Linux
@@ -41,6 +55,13 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Changed
 
+- Profiling no longer deletes the compiled objects of the project and its
+  dependencies: they are set aside (`.lake/leanprof/normal-objects`) while
+  every package is rebuilt with probes, path dependencies included, and put
+  back afterwards, so the next `lake build` recompiles nothing. Copies
+  inside dependencies need no manual rebuild.
+- An executable that had no normal build is removed after profiling instead
+  of being left instrumented.
 - **`profile!` on a pure term no longer builds a closure.** It compiles to
   `Leanprof.enterPure` before the term and `Leanprof.exitPure` after it,
   with a variant per scalar type, so nothing is allocated or boxed inside

@@ -12,6 +12,54 @@ untouched. The compiler wrapper `scripts/leanprof-cc` adds the flags to every
 package when set as `LEAN_CC`, and `leanprof run` compiles the shims against
 the project's own `lean.h`, so the project needs no dependency.
 
+## Dependencies are rebuilt, then put back
+
+Lake does not notice a new `LEAN_CC`, so `run`, `stat`, `measure` and `top`
+move the compiled objects (`*.c.o*` with Lake's trace files) of the root
+package and of every dependency in `lake-manifest.json` (git packages under
+`.lake/packages`, path packages where they are) to
+`<package>/.lake/leanprof/normal-objects/`. Lake then recompiles every
+package's C through the wrapper, so copies inside a dependency are seen
+with no setup. Afterwards the instrumented objects are deleted and the
+normal ones moved back, with the normal executable, so the next `lake build`
+recompiles nothing. A run that was interrupted (or used `--keep`) is undone
+at the start of the next one. `--no-deps` sets aside only the root
+package's objects: faster when the dependencies are large, but copies inside
+them are not counted (unless they were never built, in which case Lake
+builds them through the wrapper and leanprof leaves them so).
+
+## Self-check: is copy detection working?
+
+A Lean release can move a copy out of reach of the `-D` flags: Lean 4.36
+made `lean_string_push` a `static inline` function in `lean.h` whose slow
+path calls `lean_string_push_cold`, and String copies went silently
+uncounted until the wrapper also renamed `lean_string_push_cold`. So every
+profiled run checks itself. [`c/selfcheck.c`](../../c/selfcheck.c) is
+compiled with the copy flags exactly as the program's C is (`leanc` with
+`LEAN_CC` set to the wrapper for `leanprof run`, `copyFlags` in projects that
+depend on leanprof), and calls `lean_array_push`, `lean_array_set`,
+`lean_string_push`, `lean_string_append`, `lean_byte_array_push` and (4.35
+and later) `lean_byte_array_set` the way generated code does. At exit, the
+runtime runs each once on a shared one-element value: each must reach a shim
+as one copy. While it runs, the thread's copies go to separate counters, so
+the check adds no rows and changes no counts. It costs six copies of
+one-element values and a few allocations, about 20 µs once, after the wall
+time is taken.
+
+If a copy is not seen, the report ends with, and the JSON's `self_check`
+object carries, a warning such as
+
+```
+leanprof: warning: copies of String may be undercounted with Lean 4.36.0: a known copy through String.push (lean_string_push_cold) was not counted (...)
+```
+
+`stat` and `measure` print it too, and `leanprof doctor` builds and runs the
+same check (`copy detection works with Lean 4.35.0 (Array.push, ...)`). The
+check covers `lean.h` and the wrapper's flags for the installed Lean; it
+does not cover a Lean version whose compiler emits calls to different
+runtime functions, which the test suite and the Lean version matrix in CI
+catch instead.
+
 ## Lean's own libraries (`--core`)
 
 Lean's precompiled libraries (`libInit.a`, `libStd.a`, `libLean.a`, ...)

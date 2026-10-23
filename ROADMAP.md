@@ -31,10 +31,10 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
   cut in allocations there did not change wall time.
 - [ ] Copies of empty or tiny values (the first push into an empty slot)
   grouped or hidden; tables sorted by bytes and time.
-- [ ] Self-check on every run: one known copy must be detected, otherwise
+- [x] Self-check on every run: one known copy must be detected, otherwise
   warn that copies may be undercounted on this Lean version (Lean 4.36
   inlined `lean_string_push` and String copies silently went uncounted).
-- [ ] The smoke check profiles a project other than leanprof (the release
+- [x] The smoke check profiles a project other than leanprof (the release
   package once lacked runtime files and the check, run on leanprof itself,
   passed).
 - [ ] Times too small to measure are reported as such, never as 0.
@@ -80,7 +80,7 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
   swapping out an element held by an outer array, `alter` or erasing a
   value read from a hash map, keeping data out of a shared `IO.Ref` for
   multi-threaded copies; machine-readable ranked suggestions for agents.
-- [ ] Profiling dependencies rebuilds them with copy counting automatically
+- [x] Profiling dependencies rebuilds them with copy counting automatically
   (no deleting compiled files by hand).
 - [ ] `measure` and `judge` through the MCP server; the loop shipped as a
   Claude Code command; the results log used as memory of tried ideas.

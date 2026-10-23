@@ -8,19 +8,19 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries; `--cwd` runs EXE in DIR |
-| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
+| `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--no-deps] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--cwd` runs EXE in DIR |
+| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--cwd DIR] EXE [-- ARGS]` | sample with samply, report per Lean declaration; exits with the program's exit code |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
-| `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--out F] EXE [-- ARGS]` | repeated runs into one summary |
+| `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (with `self_check_warning`, empty unless copies may be undercounted) |
 | `judge BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
 | `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
 | `html [-o F] [--trace F] [--profile F] [REPORT.json…]` | one self-contained HTML page: summary, flame graph, tables, source, comparison of two reports ([HTML report](html-report.md)) |
 | `top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS] \| --attach F \| --pid PID` | live view of a running program, refreshed like `top` ([live](live.md)) |
 | `dump [--timeout S] PID` | Perfetto trace of a running program's last seconds (flight recorder) |
 | `mcp` | Model Context Protocol server on stdio for AI agents ([live](live.md#mcp-server)) |
-| `doctor` | check the tools and project setup leanprof needs |
+| `doctor` | check the tools and project setup leanprof needs, and that copy detection works with this Lean ([self-check](how-it-works.md#self-check-is-copy-detection-working)) |
 
 Reports go to `.lake/leanprof/`: `report.json` (run and sample),
 `elab.json`, `measure.json`, samply's profile `EXE.json`, and the page of
@@ -76,7 +76,11 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 cost in it, on the busiest thread), `overhead_ns` (per scope),
 `overhead_by_path_ns` (the calibrated cost of one scope entered each way:
 `direct`, `auto` (the `--auto` hooks), `pure` (`profile!` on a pure term),
-`closure` (`Leanprof.scope`), `monadic`) and arrays:
+`closure` (`Leanprof.scope`), `monadic`), `self_check` (`ok`, `lean` (the
+version), `checked` (the operations run), `warning`: empty, or which kinds of
+copies may be undercounted; see
+[self-check](how-it-works.md#self-check-is-copy-detection-working)) and
+arrays:
 
 - `scopes`: `name`, `pos`, `auto` (a function, not a `profile!` label),
   `calls`, `total_ns`, `self_ns`, `min_ns`, `max_ns`, `mean_ns`, `p50_ns`,

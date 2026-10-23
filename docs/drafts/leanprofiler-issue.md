@@ -134,22 +134,27 @@ https://github.com/unbalancedparentheses/leanprof/tree/main/bench.
 ```
 cd bench && lake build bench
 LEAN_PROFILE=1 .lake/build/bin/bench leanprofiler 1 4000
-# with copy counts: delete the compiled objects so LeanProfiler and the
-# benchmark are rebuilt through the wrapper
-find .lake -name '*.c.o*' -delete
-LEAN_CC=$(pwd)/../scripts/leanprof-cc lake build bench
-LEAN_PROFILE=1 .lake/build/bin/bench leanprofiler 1 4000
+# with copy counts: LeanProfiler and the benchmark are rebuilt with
+# leanprof's probes, run, and the normal build is put back
+LEAN_PROFILE=1 lake exe leanprof run bench -- leanprofiler 1 4000
 ```
 
-(The wrapper is a `LEAN_CC` script. It forwards to the system clang, adds
-`-D` flags that route the runtime's copy and task functions through counting
-shims, and links with `-rdynamic` so the report can name functions. The
-shims come from leanprof, which the benchmark package depends on.
-LeanProfiler's sources are not changed.)
+(`leanprof run` builds every package with a `LEAN_CC` wrapper that forwards
+to the system clang, adds `-D` flags that route the runtime's copy and task
+functions through counting shims, and links with `-rdynamic` so the report
+can name functions. The shims come from leanprof, which the benchmark
+package depends on. LeanProfiler's sources are not changed.)
 
 ---
 
 ## Notes for us (not part of the issue)
+
+- Reproduce steps simplified on 2026-10-23 (branch `runtime-checks`):
+  `leanprof run` now rebuilds dependencies with the probes and puts the
+  normal build back. Checked at 4,000 spans that it gives the same copy
+  counts and bytes as the old manual rebuild (`find .lake -name '*.c.o*'
+  -delete` and `LEAN_CC=../scripts/leanprof-cc lake build bench`): 12003
+  (123.0 MiB), 8002 (61.1 MiB), 4001 and 4001 (61.0 MiB each).
 
 - Changes from the earlier scratch draft: the measurements were re-run.
   The copy reason is now printed as `multi-threaded` (leanprof used to print
