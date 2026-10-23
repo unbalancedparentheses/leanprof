@@ -22,13 +22,55 @@ import Leanprof.Core
 
 open Lean System
 
-def usage : String := "usage:
-  lake exe leanprof run [--auto | --auto-all] [--allocs] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]
-  lake exe leanprof sample [--rate HZ] [--out FILE] [--top N] EXE [-- ARGS...]
-  lake exe leanprof elab [--heartbeats] [--top N] [--out FILE] FILE.lean...
-  lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
-  lake exe leanprof measure [--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS...]
-  lake exe leanprof judge BASE.json NEW.json"
+/-- One line per command, then its options and what it does. -/
+def commands : List (String × String × String) := [
+  ("run", "[--auto | --auto-all] [--allocs] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
+    "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
+    "time; --allocs: allocations), run it, print the report and save it to .lake/leanprof/report.json.\n" ++
+    "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
+    "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build."),
+  ("sample", "[--rate HZ] [--top N] [--out FILE] EXE [-- ARGS...]",
+    "Run EXE under samply (no probes) and report CPU time per Lean declaration with file:line,\n" ++
+    "plus where the Lean runtime's time went. `samply load` on the saved profile opens a flame\n" ++
+    "graph with Lean names. Needs samply (brew install samply / cargo install samply)."),
+  ("elab", "[--heartbeats] [--top N] [--out FILE] FILE.lean...",
+    "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
+    "operation, and repeated work. --heartbeats counts heartbeats, which are the same on every run."),
+  ("compare", "[--threshold PCT] [--min-ms MS] BASE.json NEW.json",
+    "Exit 1 on a regression: more copies, changed call counts, compile heartbeats up by more than\n" ++
+    "1% and 1,000, or a scope slower by more than PCT% (default 10) and MS ms (default 1)."),
+  ("measure", "[--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS...]",
+    "Run EXE N times (default 5) with probes and write one summary: time spread, copies, calls,\n" ++
+    "compile heartbeats, exit code and an output hash. For `judge` and autoresearch loops."),
+  ("judge", "BASE.json NEW.json",
+    "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
+    "output or exit code changed, or copies, heartbeats or time got worse."),
+  ("doctor", "",
+    "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
+  ("help", "[COMMAND]", "Show this overview, or one command's options.")]
+
+/-- What each command is for, in one line. -/
+def summary : String → String
+  | "run" => "profile a program exactly: copies, tasks, waits; --auto every function, --allocs allocations"
+  | "sample" => "sample a program with samply: CPU per Lean declaration, no probes"
+  | "elab" => "compile cost per line and declaration, repeated work, exact heartbeats"
+  | "compare" => "compare two reports, exit 1 on regressions (for CI)"
+  | "measure" => "run a program several times into one summary (for judge / autoresearch)"
+  | "judge" => "KEEP or DISCARD a change from two measure summaries"
+  | "doctor" => "check that leanprof's tools and the project are set up"
+  | "help" => "this overview, or one command's options"
+  | _ => ""
+
+def usage : String :=
+  "leanprof: profiler for Lean 4 programs (https://github.com/unbalancedparentheses/leanprof)\n\n" ++
+  "usage: leanprof COMMAND [OPTIONS]   (or `lake exe leanprof` in a project that depends on it)\n\n" ++
+  String.join (commands.map fun (c, _, _) => s!"  {c.pushn ' ' (9 - c.length)}{summary c}\n") ++
+  "\nleanprof help COMMAND shows a command's options. Docs: docs/guide/getting-started.md"
+
+def commandHelp (c : String) : Option String :=
+  (commands.find? (·.1 == c)).map fun (c, opts, d) => s!"usage: leanprof {c} {opts}\n\n{d}"
+
+def usageFor (c : String) : String := (commandHelp c).getD usage
 
 /-- leanprof's package directory: this executable is `<root>/.lake/build/bin/leanprof`. -/
 def packageRoot : IO FilePath := do
@@ -122,7 +164,7 @@ def exePath (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" 
 
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
-  let some exe := opts.exe | throw <| IO.userError usage
+  let some exe := opts.exe | throw <| IO.userError (usageFor "run")
   let rc ← buildWithShims exe opts.auto opts.allocs
   if rc != 0 then return rc
   -- the report `#leanprof` reads, unless another path was asked for
@@ -179,7 +221,7 @@ def compare (argv : List String) : IO UInt32 := do
     | "--min-ms" :: v :: rest => parse thr (v.toNat!.toFloat) files rest
     | a :: rest => parse thr minMs (a :: files) rest
   let (thr, minMs, files) ← IO.ofExcept (parse 10 1 [] argv)
-  let [basePath, newPath] := files | throw <| IO.userError usage
+  let [basePath, newPath] := files | throw <| IO.userError (usageFor "compare")
   let base ← loadReport basePath
   let new ← loadReport newPath
   let mut regressions := 0
@@ -288,7 +330,7 @@ def runtimeCategory (raw : String) : Option String :=
 
 def sample (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseSample {} argv)
-  let some exe := o.exe | throw <| IO.userError usage
+  let some exe := o.exe | throw <| IO.userError (usageFor "sample")
   let rc ← spawnWait "lake" #["build", exe] #[]
   if rc != 0 then return rc
   let bin : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
@@ -565,7 +607,7 @@ def elabCmd (argv : List String) : IO UInt32 := do
     | "--out" :: f :: rest => parse top hb f files rest
     | f :: rest => parse top hb out (f :: files) rest
   let (top, hb, outPath, files) := parse 15 false ".lake/leanprof/elab.json" [] argv
-  if files.isEmpty then throw <| IO.userError usage
+  if files.isEmpty then throw <| IO.userError (usageFor "elab")
   -- amounts: nanoseconds, or heartbeats (exact, the same on every run)
   let scale : Float := if hb then 1 else 1e9
   let fmtAmt (x : Float) : String := if hb then s!"{fmt2 (x / 1000)} kHB" else fmtMs x
@@ -719,7 +761,7 @@ def keyedArr (field : String) (xs : List (String × Json)) : Json :=
 
 def measureCmd (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseMeasure {} argv)
-  let some exe := o.exe | throw <| IO.userError usage
+  let some exe := o.exe | throw <| IO.userError (usageFor "measure")
   let rc ← buildWithShims exe none
   if rc != 0 then return rc
   let dir : FilePath := ".lake" / "leanprof"
@@ -842,7 +884,7 @@ than every base run. Otherwise KEEP when copies or heartbeats went down (by the 
 margins) or every new run was faster than every base run (new max below
 base min: with 5 runs each, chance alone does that 1 time in 252). -/
 def judgeCmd (argv : List String) : IO UInt32 := do
-  let [basePath, newPath] := argv | throw <| IO.userError usage
+  let [basePath, newPath] := argv | throw <| IO.userError (usageFor "judge")
   let b ← loadSummary basePath
   let n ← loadSummary newPath
   let mut worse : Array String := #[]
@@ -897,9 +939,67 @@ def judgeCmd (argv : List String) : IO UInt32 := do
   for r in notes do IO.println s!"    {r}"
   return if keep then 0 else 1
 
+/-! ## doctor -/
+
+def doctor : IO UInt32 := do
+  let mut problems := 0
+  let report (ok : Bool) (what fix : String) : IO Bool := do
+    IO.println s!"  {if ok then "ok " else "!! "} {what}{if ok || fix.isEmpty then "" else s!"\n       {fix}"}"
+    return ok
+  let tryCmd (cmd : String) (args : Array String) : IO (Option IO.Process.Output) := do
+    try return some (← IO.Process.output { cmd, args }) catch _ => return none
+  IO.println "leanprof doctor"
+  -- Lean
+  let lean ← tryCmd "lean" #["--version"]
+  let leanOk := lean.any (·.exitCode == 0)
+  unless ← report leanOk s!"Lean: {(lean.map (·.stdout.trimAscii.toString)).getD "not found"}"
+      "install Lean with elan: https://github.com/leanprover/elan" do problems := problems + 1
+  let lake ← tryCmd "lake" #["--version"]
+  unless ← report (lake.any (·.exitCode == 0)) "Lake" "comes with Lean; is elan's bin directory on PATH?" do
+    problems := problems + 1
+  -- project
+  let isProject := (← ("lakefile.toml" : FilePath).pathExists) || (← ("lakefile.lean" : FilePath).pathExists)
+  unless ← report isProject "inside a Lake project" "run leanprof from a project's root directory" do
+    problems := problems + 1
+  let dep ← (pure (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) <||>
+    (do return (← IO.FS.realPath (← packageRoot)) == (← IO.FS.realPath (← IO.currentDir))))
+  discard <| report true (if dep then "project depends on leanprof (profile!, #leanprof, test assertions available)"
+    else "project does not depend on leanprof (run/sample/elab still work; add it for profile! and #leanprof)") ""
+  -- leanprof's own files
+  let root ← packageRoot
+  unless ← report (← (root / "scripts" / "leanprof-cc").pathExists) s!"leanprof files at {root}"
+      "reinstall with scripts/install.sh" do problems := problems + 1
+  -- C compiler for probes
+  if leanOk then
+    let leanPrefix := ((← tryCmd "lean" #["--print-prefix"]).map (·.stdout.trimAscii.toString)).getD ""
+    let tmp := (← IO.FS.createTempFile).2
+    let out ← tryCmd "cc" #["-fsyntax-only", "-I", leanPrefix ++ "/include", (root / "c" / "leanprof.c").toString]
+    unless ← report (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean"
+        s!"{(out.map (·.stderr.take 300 |>.toString)).getD "cc not found"}" do problems := problems + 1
+    let probe := tmp.withExtension "c"
+    IO.FS.writeFile probe "int f(int x) { return x + 1; }\n"
+    let clang ← tryCmd "sh" #["-c", s!"LEANPROF_AUTO=1 {root / "scripts" / "leanprof-cc"} -c {probe} -o {tmp}.o"]
+    unless ← report (clang.any (·.exitCode == 0)) "clang with -finstrument-functions-after-inlining (for --auto)"
+        "install clang (Xcode command line tools, or your distribution's clang package)" do problems := problems + 1
+  -- samply
+  let samply ← tryCmd "samply" #["--version"]
+  discard <| report (samply.any (·.exitCode == 0))
+    s!"{(samply.map (·.stdout.trimAscii.toString)).getD "samply"} (for `leanprof sample`)"
+    "optional: brew install samply, or cargo install samply"
+  IO.println (if problems == 0 then "everything leanprof needs is here" else s!"{problems} problem(s)")
+  return if problems == 0 then 0 else 1
+
 def main (argv : List String) : IO UInt32 := do
   try
     match argv with
+    | [] | ["help"] | ["--help"] | ["-h"] =>
+      IO.println usage
+      return 0
+    | ["help", c] | [c, "--help"] | [c, "-h"] =>
+      match commandHelp c with
+      | some h => IO.println h; return 0
+      | none => IO.eprintln usage; return 2
+    | ["doctor"] => doctor
     | "run" :: rest => run rest
     | "measure" :: rest => measureCmd rest
     | "judge" :: rest => judgeCmd rest

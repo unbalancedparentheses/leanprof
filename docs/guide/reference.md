@@ -1,0 +1,62 @@
+# Reference
+
+## Commands
+
+Inside a project that depends on leanprof, use `lake exe leanprof …`;
+otherwise install the command (`sh scripts/install.sh`) and use
+`leanprof …`. `leanprof help COMMAND` prints a command's options.
+
+| command | does |
+|---|---|
+| `run [--auto \| --auto-all] [--allocs] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up |
+| `sample [--rate HZ] [--top N] [--out F] EXE [-- ARGS]` | sample with samply, report per Lean declaration |
+| `elab [--heartbeats] [--top N] [--out F] FILE.lean…` | compile cost per declaration and operation |
+| `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
+| `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--out F] EXE [-- ARGS]` | repeated runs into one summary |
+| `judge BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
+| `doctor` | check the tools and project setup leanprof needs |
+
+Reports go to `.lake/leanprof/`: `report.json` (run and sample),
+`elab.json`, `measure.json`, and samply's profile `EXE.json`.
+
+## Environment variables
+
+For programs that link leanprof:
+
+| variable | effect |
+|---|---|
+| `LEANPROF_JSON=path` | also write the report as JSON |
+| `LEANPROF_QUIET=1` | no table on stderr |
+| `LEANPROF_ALL=1` | include copies of compile-time constants and non-Lean functions |
+| `LEANPROF_TRACE=path` | also write a Perfetto timeline |
+| `LEANPROF_TRACE_MAX=n` | timeline events kept per thread (default 1,048,576) |
+| `LEANPROF_NO_CALIBRATION=1` | raw times, leanprof's own cost not subtracted |
+| `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for positions |
+
+For builds through the compiler wrapper `scripts/leanprof-cc` (set as
+`LEAN_CC`):
+
+| variable | effect |
+|---|---|
+| `LEANPROF_AUTO=1` / `all` | time every function of this package / of all packages |
+| `LEANPROF_ALLOCS=1` | count allocations |
+| `LEANPROF_RUNTIME=file.o` | link this leanprof runtime (set by `run` for projects without the dependency) |
+| `LEANPROF_REAL_CC=cc` | compiler to forward to (default: the first `clang` on `PATH` that is not Lean's own) |
+
+## JSON report
+
+`report.json` (version 3) has `wall_ns`, `overhead_ns` and arrays:
+
+- `scopes`: `name`, `pos`, `auto` (a function, not a `profile!` label),
+  `calls`, `total_ns`, `self_ns`, `min_ns`, `max_ns`, `mean_ns`, `p50_ns`,
+  `p99_ns`, `allocs`, `alloc_bytes`, `allocs_self`, `alloc_bytes_self`;
+- `copies`: `function`, `symbol`, `scope`, `where`, `kind`, `copies`,
+  `bytes`, `copy_ns`, `shared`, `multi_threaded`, `persistent`;
+- `allocations`: `function`, `scope`, `where`, `allocs`, `bytes`;
+- `tasks`: `spawned_by`, `tasks`, `run_total_ns`, `run_sum_ns`, `wait_ns`,
+  `wait_max_ns`;
+- `waits`: `function`, `scope`, `where`, `waits`, `blocked_ns`.
+
+Sampled reports add `"sampled": true`; compile reports from `elab` have
+`"elab": true`, `"unit": "ns"` or `"heartbeats"`, per-line `elab_ns`,
+`kernel_ns`, `compile_ns`, `lint_ns`, `top` operations, and `repeated`.

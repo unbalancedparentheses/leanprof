@@ -1289,10 +1289,9 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         nallocs += C[k].kind == LP_ALLOC;
     }
     if (ns > 0) {
-        fprintf(f, "\n%-24s %10s %10s %10s %6s %10s %10s %10s", "scope", "calls", "total", "self", "%wall", "mean",
-                "p50", "p99");
+        fprintf(f, "\n%10s %10s %10s %6s %10s %10s %10s", "calls", "total", "self", "%wall", "mean", "p50", "p99");
         if (nallocs > 0) fprintf(f, " %10s %11s", "allocs", "alloc bytes");
-        fprintf(f, "  %s\n", "where");
+        fprintf(f, "  %s\n", any_fn ? "function or \"scope\"  (where)" : "scope  (where)");
         for (size_t k = 0; k < ns; k++) {
             if (S[k].is_task) continue;
             char tt[32], st[32], mt[32], p50[32], p99[32];
@@ -1304,14 +1303,15 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
             char shown[300];
             if (any_fn && !S[k].is_fn) snprintf(shown, sizeof shown, "\"%s\"", S[k].name); /* a profile! label */
             else snprintf(shown, sizeof shown, "%s", S[k].name);
-            fprintf(f, "%-24s %10llu %10s %10s %5.1f%% %10s %10s %10s", shown, (unsigned long long)S[k].calls, tt,
-                    st, wall > 0 ? 100.0 * (double)S[k].total * tick / wall : 0.0, mt, p50, p99);
+            fprintf(f, "%10llu %10s %10s %5.1f%% %10s %10s %10s", (unsigned long long)S[k].calls, tt, st,
+                    wall > 0 ? 100.0 * (double)S[k].total * tick / wall : 0.0, mt, p50, p99);
             if (nallocs > 0) {
                 char ab[32];
                 lpf_fmt_bytes((double)S[k].bytes_total, ab, sizeof ab);
                 fprintf(f, " %10llu %11s", (unsigned long long)S[k].allocs_total, ab);
             }
-            fprintf(f, "  %s\n", S[k].where);
+            if (S[k].where[0]) fprintf(f, "  %s  (%s)\n", shown, S[k].where);
+            else fprintf(f, "  %s\n", shown);
         }
     }
     const char *all = getenv("LEANPROF_ALL");
@@ -1324,8 +1324,8 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
     }
     if (shown > 0) {
         fprintf(f, "\ncopies of non-exclusive values (each one copied the whole value)\n");
-        fprintf(f, "%-40s %-12s %8s %11s %10s %7s  %-15s %-20s %s\n", "function", "kind", "copies", "bytes",
-                "time", "%scope", "why", "in scope", "where (declaration)");
+        fprintf(f, "%8s %11s %10s %7s  %-11s %-14s %-18s %s\n", "copies", "bytes", "time", "%scope", "kind", "why",
+                "in scope", "function  (where)");
         for (size_t k = 0; k < nc; k++) {
             if (C[k].kind >= LP_KINDS || (!show_all && !lpf_interesting(&C[k]))) continue;
             char bt[32], tt[32], share[16] = "-", why[64] = "";
@@ -1336,17 +1336,21 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
                 snprintf(share, sizeof share, "%.1f%%", 100.0 * (double)C[k].ticks / (double)sc->total);
             for (int r = 0; r < LP_REASONS; r++) {
                 if (C[k].count[r] == 0) continue;
+                /* copies of constants are expected; name them only when they are all there is */
+                if (r == LP_PERSISTENT && lpf_interesting(&C[k])) continue;
                 if (why[0]) strncat(why, "+", sizeof why - strlen(why) - 1);
                 strncat(why, lpf_reason_name[r], sizeof why - strlen(why) - 1);
             }
-            fprintf(f, "%-40s %-12s %8llu %11s %10s %7s  %-15s %-20s %s\n", C[k].fn, lpf_kind_name[C[k].kind],
-                    (unsigned long long)C[k].total, bt, tt, share, why, C[k].scope, C[k].where);
+            fprintf(f, "%8llu %11s %10s %7s  %-11s %-14s %-18s %s", (unsigned long long)C[k].total, bt, tt, share,
+                    lpf_kind_name[C[k].kind], why, C[k].scope, C[k].fn);
+            if (C[k].where[0]) fprintf(f, "  (%s)", C[k].where);
+            fputc('\n', f);
         }
     }
     if (ntasks > 0) {
         fprintf(f, "\ntasks (run on worker threads; wait is spawn to start)\n");
-        fprintf(f, "%-40s %8s %10s %10s %10s %10s\n", "spawned by", "tasks", "run total", "run mean", "wait mean",
-                "wait max");
+        fprintf(f, "%8s %10s %10s %10s %10s  %s\n", "tasks", "run total", "run mean", "wait mean", "wait max",
+                "spawned by");
         for (size_t k = 0; k < ns; k++) {
             if (!S[k].is_task) continue;
             char rt[32], rm[32], wm[32], wx[32];
@@ -1354,8 +1358,8 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
             lpf_fmt_time((double)S[k].sum * tick / (double)S[k].calls, rm, sizeof rm);
             lpf_fmt_time((double)S[k].wait * tick / (double)S[k].calls, wm, sizeof wm);
             lpf_fmt_time((double)S[k].wait_max * tick, wx, sizeof wx);
-            fprintf(f, "%-40s %8llu %10s %10s %10s %10s\n", S[k].name + 8 /* drop "task <- " */,
-                    (unsigned long long)S[k].calls, rt, rm, wm, wx);
+            fprintf(f, "%8llu %10s %10s %10s %10s  %s\n", (unsigned long long)S[k].calls, rt, rm, wm, wx,
+                    S[k].name + 8 /* drop "task <- " */);
         }
     }
     if (nallocs > 0) {
@@ -1379,29 +1383,30 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         lpf_fmt_bytes((double)all_b, tb, sizeof tb);
         fprintf(f, "\nallocations: %llu, %s (from compiled Lean code; frees are not tracked)\n",
                 (unsigned long long)all_n, tb);
-        fprintf(f, "%-40s %10s %11s %8s  %-20s %s\n", "function", "allocs", "bytes", "share", "in scope",
-                "where (declaration)");
+        fprintf(f, "%10s %11s %7s  %-18s %s\n", "allocs", "bytes", "share", "in scope", "function  (where)");
         for (size_t a = 0; a < m && a < 20; a++) {
             const lpf_copy_sum *c = &C[idx[a]];
             char bb[32];
             lpf_fmt_bytes((double)c->bytes, bb, sizeof bb);
-            fprintf(f, "%-40s %10llu %11s %7.1f%%  %-20s %s\n", c->fn, (unsigned long long)c->total, bb,
-                    all_b ? 100.0 * (double)c->bytes / (double)all_b : 0.0, c->scope, c->where);
+            fprintf(f, "%10llu %11s %6.1f%%  %-18s %s", (unsigned long long)c->total, bb,
+                    all_b ? 100.0 * (double)c->bytes / (double)all_b : 0.0, c->scope, c->fn);
+            if (c->where[0]) fprintf(f, "  (%s)", c->where);
+            fputc('\n', f);
         }
         if (m > 20) fprintf(f, "(%zu more sites in the JSON report)\n", m - 20);
         free(idx);
     }
     if (nwaits > 0) {
         fprintf(f, "\nblocking waits (IO.wait, Task.get)\n");
-        fprintf(f, "%-40s %8s %10s %10s  %-20s %s\n", "function", "waits", "blocked", "mean", "in scope",
-                "where (declaration)");
+        fprintf(f, "%8s %10s %10s  %-18s %s\n", "waits", "blocked", "mean", "in scope", "function  (where)");
         for (size_t k = 0; k < nc; k++) {
             if (C[k].kind != LP_WAIT) continue;
             char bt[32], mt[32];
             lpf_fmt_time((double)C[k].ticks * tick, bt, sizeof bt);
             lpf_fmt_time((double)C[k].ticks * tick / (double)(C[k].total ? C[k].total : 1), mt, sizeof mt);
-            fprintf(f, "%-40s %8llu %10s %10s  %-20s %s\n", C[k].fn, (unsigned long long)C[k].total, bt, mt,
-                    C[k].scope, C[k].where);
+            fprintf(f, "%8llu %10s %10s  %-18s %s", (unsigned long long)C[k].total, bt, mt, C[k].scope, C[k].fn);
+            if (C[k].where[0]) fprintf(f, "  (%s)", C[k].where);
+            fputc('\n', f);
         }
     }
     if (hidden > 0)
