@@ -237,6 +237,54 @@
    1
   ]
  ],
+ "smoke.auto": [
+  [
+   "buildWithHistory",
+   "Main.lean:10",
+   1
+  ],
+  [
+   "fib",
+   "Main.lean:5",
+   242785
+  ],
+  [
+   "main",
+   "Main.lean:29",
+   1
+  ],
+  [
+   "strings",
+   "Main.lean:19",
+   1
+  ]
+ ],
+ "smoke.copies": [
+  [
+   "buildWithHistory (in Std.Legacy.Range.forIn'.loop)",
+   "Main.lean:10",
+   "Array",
+   1999,
+   0
+  ],
+  [
+   "strings (in Std.Legacy.Range.forIn'.loop)",
+   "Main.lean:19",
+   "String",
+   999,
+   0
+  ]
+ ],
+ "smoke.doctor": 0,
+ "smoke.measure.copies": 2998,
+ "smoke.restored": true,
+ "smoke.self_check": [
+  true,
+  ""
+ ],
+ "smoke.stat": [
+  "2,998"
+ ],
  "taskchains": [
   [
    "bound",

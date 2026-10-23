@@ -3,13 +3,14 @@
 
     python3 scripts/smoke.py --save    # write scripts/smoke-baseline.json
     python3 scripts/smoke.py --check   # compare with it, exit 1 on a difference
+    python3 scripts/smoke.py --add     # add facts the baseline lacks, keep the rest
 
 Only deterministic facts are recorded: names, positions, call and copy counts,
 which definitions and lines are blamed, exit codes. Times, sizes and heartbeat
 amounts are left out, so the check holds across machines and runs. Run from
 the repository root with Lean on PATH.
 """
-import json, os, subprocess, sys
+import json, os, shutil, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE = os.path.join(ROOT, "scripts", "smoke-baseline.json")
@@ -27,6 +28,51 @@ def sh(*args, check=True, env=ENV, cwd=ROOT):
 def load(path):
     with open(os.path.join(ROOT, path)) as f:
         return json.load(f)
+
+
+def other_project():
+    """Tests/Smoke, a project that does not depend on leanprof, profiled from a
+    copy outside this repository by the command as packaged for a release, so
+    a file missing from the package or a path relative to this checkout fails
+    here (the release package once lacked runtime files, and every check run
+    on leanprof itself passed)."""
+    out = {}
+    tag = "smoke-check"
+    sh("sh", "scripts/package-release.sh", tag, "local")
+    pkg = os.path.join(ROOT, "dist", f"leanprof-{tag}-local")
+    lp = os.path.join(pkg, "bin", "leanprof")
+    work = tempfile.mkdtemp(prefix="leanprof-smoke-")
+    try:
+        for f in ("lakefile.toml", "lake-manifest.json", "lean-toolchain", "Main.lean"):
+            shutil.copy(os.path.join(ROOT, "Tests", "Smoke", f), work)
+        def report(name):
+            with open(os.path.join(work, name)) as f:
+                return json.load(f)
+        sh("lake", "build", "smoke", cwd=work)  # the normal build, which profiling must leave in place
+        sh(lp, "run", "--json", "run.json", "smoke", "--", "2000", cwd=work)
+        r = report("run.json")
+        out["smoke.copies"] = sorted((c["function"], c["where"], c["kind"], c["shared"], c["multi_threaded"])
+                                     for c in r["copies"] if c["shared"] + c["multi_threaded"] > 0)
+        out["smoke.self_check"] = [r["self_check"]["ok"], r["self_check"]["warning"]]
+        sh(lp, "run", "--auto", "--json", "auto.json", "smoke", "--", "2000", cwd=work)
+        out["smoke.auto"] = sorted((s["name"], s["pos"], s["calls"]) for s in report("auto.json")["scopes"]
+                                   if s["name"] in ("main", "buildWithHistory", "strings", "fib"))
+        st = sh(lp, "stat", "--json", "stat.json", "smoke", "--", "2000", cwd=work)
+        out["smoke.stat"] = [l.split()[1] for l in st.stdout.splitlines() if l.strip().startswith("copies")]
+        sh(lp, "measure", "--runs", "1", "--warmup", "0", "--out", "measure.json", "smoke", "--", "2000", cwd=work)
+        out["smoke.measure.copies"] = report("measure.json")["copies_total"]
+        # the normal build is back: the program runs without writing a report
+        p = sh(os.path.join(work, ".lake", "build", "bin", "smoke"), "10", cwd=work,
+               env=dict(os.environ, LEANPROF_JSON=os.path.join(work, "plain.json")))
+        out["smoke.restored"] = not os.path.exists(os.path.join(work, "plain.json")) and p.stdout.split()[0] == "10"
+        out["smoke.doctor"] = sh(lp, "doctor", check=False, cwd=work).returncode
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(pkg, ignore_errors=True)
+        tarball = pkg + ".tar.gz"
+        if os.path.exists(tarball):
+            os.remove(tarball)
+    return out
 
 
 def facts():
@@ -87,6 +133,7 @@ def facts():
     out["doctor"] = sh(LP, "doctor", check=False).returncode
     out["help.commands"] = sorted(l.split()[0] for l in sh(LP, "help").stdout.splitlines()
                                   if l.startswith("  ") and l.strip())
+    out.update(other_project())
     return out
 
 
@@ -101,6 +148,14 @@ def main():
         return
     with open(BASELINE) as f:
         want = json.load(f)
+    if mode == "--add":
+        new = sorted(set(got) - set(want))
+        want.update({k: got[k] for k in new})
+        with open(BASELINE, "w") as f:
+            json.dump(want, f, indent=1, sort_keys=True)
+            f.write("\n")
+        print(f"added {', '.join(new) or 'nothing'} to {BASELINE}")
+        return
     bad = [k for k in sorted(set(want) | set(got)) if want.get(k) != got.get(k)]
     for k in bad:
         print(f"DIFFERENT {k}:\n  baseline: {want.get(k)}\n  now:      {got.get(k)}")
