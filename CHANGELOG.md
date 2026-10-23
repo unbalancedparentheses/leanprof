@@ -207,6 +207,40 @@ see [the review](docs/reviews/runtime-review.md)):
   program thread could read them too; they are read at startup.
 ||||||| parent of a9e2e63 (Docs: explain's recognised causes with fixes and measured copies, explain --json for agents (guide, research/program.md, CHANGELOG))
 
+Found on Mathlib ([case study](docs/case-studies/mathlib.md)):
+
+- `elab` ran modules without their setup when Lake had not written one,
+  which is every module fetched with `lake exe cache get`: Lean ran without
+  the package's `leanOptions` (Mathlib's `maxSynthPendingDepth 3`, its
+  linters), and 8 of Mathlib's 20 slowest files failed with errors. It now
+  asks `lake setup-file` for the setup (saved under `.lake/leanprof/setup`).
+- A command wrapped in `variable … in` or `set_option … in` was counted
+  twice: Lean traces the inner command at its own position and then the
+  wrapper, which includes it, over a range that contains it. Only commands
+  at the same position were matched; now any command whose source range
+  contains earlier ones counts only what it adds. On the 20 files, 23% of
+  all heartbeats were counted twice (11.85 G reported, 9.15 G real), and a
+  declaration under three `set_option … in` four times.
+- A file with errors was elaborated a second time without its setup, even
+  when the error was in a proof, which for a large file (Mathlib's
+  `Modules/Sheaf.lean` runs for minutes when profiled) doubles its time.
+  Now only for errors in the header, where a stale setup shows.
+- "files had errors" now prints each file's first error with its line (and
+  `first_error` in `elab.json`), and says when the error is a heartbeat
+  limit, which profiling can reach where the build does not.
+- Lines were named after the wrong command when several share one
+  (`variable (x) in` puts its inner `section` and `variable` where the
+  declaration starts) or when a declaration's doc comment was longer than
+  the text kept: the declaration became `section` or nameless, so `compare`
+  matched it by line. Commands that declare nothing (`variable … in`,
+  `attribute …`) are now matched by `compare` by their text and order in the
+  file instead of their line, so edits that move lines no longer show them
+  as gone and new.
+- `compare` printed heartbeats of new and removed scopes as milliseconds,
+  listed thousands of scopes in no order, and showed `calls 0 -> 0` for
+  compile-time reports. It now lists the largest changes first, uses the
+  report's unit, and ends compile-time comparisons with the total.
+
 ## [0.1.0] - 2026-10-23
 
 The first release: a profiler for Lean 4 programs and their compile times,

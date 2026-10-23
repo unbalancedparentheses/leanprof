@@ -56,6 +56,7 @@ NAV = [
         "docs/case-studies/lean-regex.md",
         "docs/case-studies/concrete.md",
         "docs/case-studies/batteries.md",
+        "docs/case-studies/mathlib.md",
         "docs/case-studies/compile-time-vs-lean-source-profiler.md",
     ]),
     ("Benchmarks", [

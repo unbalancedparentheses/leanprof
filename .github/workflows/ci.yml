@@ -274,7 +274,8 @@ jobs:
           lake exe leanprof elab --out broken.json Broken.lean 2> broken.txt || true
           rm Broken.lean
           cat broken.txt
-          grep -q "files had errors.*Broken.lean" broken.txt
+          grep -q "had errors" broken.txt
+          grep -q "^  Broken.lean:1: " broken.txt
           cp .lake/leanprof/elab.json base.json
           lake exe leanprof elab --heartbeats --threshold 0 Examples/ElabHeavy.lean
           lake exe leanprof compare base.json .lake/leanprof/elab.json

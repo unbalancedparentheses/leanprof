@@ -423,6 +423,8 @@ def run (argv : List String) : IO UInt32 := do
 
 structure Report where
   exact : Bool := false                            -- heartbeats: compare without a threshold
+  isElab : Bool := false
+  total : Float := 0                               -- elab reports: the whole report's amount
   scopes : Std.HashMap String (Float × Nat) := {}  -- name@pos ↦ (total ns or heartbeats, calls)
   copies : Std.HashMap String Nat := {}            -- function|kind|scope ↦ copies
   allocs : Std.HashMap String Nat := {}            -- function in scope ↦ allocations (empty: not counted)
@@ -440,7 +442,9 @@ def str (j : Json) (k : String) : String :=
 
 def loadReport (path : String) : IO Report := do
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
-  let mut r : Report := { exact := str j "unit" == "heartbeats" }
+  let exact := str j "unit" == "heartbeats"
+  let isElab := (j.getObjVal? "elab" >>= Json.getBool?).toOption.getD false
+  let mut r : Report := { exact, isElab, total := num j "wall_ns" }
   for s in (j.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[] do
     let key := if (str s "key").isEmpty then s!"{str s "name"} {str s "pos"}" else str s "key"
     -- a declaration's elaboration, kernel and compiler lines share its key
@@ -496,6 +500,10 @@ def compare (argv : List String) : IO UInt32 := do
   let mut regressions := 0
   IO.println s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
   let keys := (base.scopes.toList.map (·.1) ++ new.scopes.toList.map (·.1)).eraseDups
+  -- the largest changes first (a project report has thousands of scopes)
+  let change (k : String) : Float :=
+    ((new.scopes.get? k).map (·.1)).getD 0 - ((base.scopes.get? k).map (·.1)).getD 0
+  let keys := keys.toArray.qsort fun a b => (change a).abs > (change b).abs || ((change a).abs == (change b).abs && a < b)
   for k in keys do
     -- a total too small to measure is shown as such, never as 0
     let small (r : Report) := (r.tooSmall.getD k #[]).contains "total_ns"
@@ -513,10 +521,14 @@ def compare (argv : List String) : IO UInt32 := do
       let amt (r : Report) (x : Float) :=
         if base.exact then s!"{fmt2 (x / 1000)} kHB" else time r x
       let change := if (small base || small new) && !base.exact then "" else s!" ({fmt2 pct}%)"
-      IO.println s!"  {mark}  {k}: {amt base bt} -> {amt new nt}{change}, calls {bc} -> {nc}"
-    | none, some (nt, nc) => IO.println s!"  new  {k}: {time new nt}, calls {nc}"
-    | some (bt, _), none => IO.println s!"  gone {k}: was {time base bt}"
+      let calls := if base.isElab then "" else s!", calls {bc} -> {nc}"
+      IO.println s!"  {mark}  {k}: {amt base bt} -> {amt new nt}{change}{calls}"
+    | none, some (nt, nc) =>
+      IO.println s!"  new  {k}: {if base.exact then s!"{fmt2 (nt / 1000)} kHB" else time new nt}{if base.isElab then "" else s!", calls {nc}"}"
+    | some (bt, _), none => IO.println s!"  gone {k}: was {if base.exact then s!"{fmt2 (bt / 1000)} kHB" else time base bt}"
     | none, none => pure ()
+  if base.isElab && new.isElab && base.total > 0 then
+    IO.println s!"total: {amt base.total} -> {amt new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
   IO.println "copies of shared or multi-threaded values (any increase is a regression)"
   let ckeys := (base.copies.toList.map (·.1) ++ new.copies.toList.map (·.1)).eraseDups
   for k in ckeys do
