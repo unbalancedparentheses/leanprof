@@ -42,6 +42,15 @@ def fib : Nat → Nat
   | 1 => 1
   | n + 2 => profile! "test.fib" (fib n + fib (n + 1))
 
+/-- A pure scope around a loop whose result is taken apart (a structure
+projection is a branch the compiler could move `enterPure` into). -/
+def scopedHistory (n : Nat) : Array Nat × Array (Array Nat) := profile! "test.history" (withHistory n)
+
+/-- Scalar results pass through `profile!` unboxed. -/
+def scopedU64 (n : UInt64) : UInt64 := profile! "test.u64" (n * 3 + 1)
+def scopedFloat (x : Float) : Float := profile! "test.float" (x * 2.0)
+def scopedBool (n : Nat) : Bool := profile! "test.bool" (n % 2 == 0)
+
 def plain : Nat → Nat := fun n =>
   set_option leanprof.enabled false in profile! "test.disabled" (n + 1)
 
@@ -149,7 +158,23 @@ def tests : StateT Nat IO Unit := do
   let ov ← overheadNs
   check "calibrated overhead is plausible" (ov > 0.5 && ov < 1000) s!"overhead={ov}"
   let tot ← totalNs "test.fib"
-  check "scope total is reported" (tot > 0) s!"total={tot}"
+  -- fib's calls take a few ns each, about what their probes cost, so what is
+  -- left after subtracting them can be 0 on a busy machine (the report flags
+  -- such rows); never negative. A scope with real work is checked below.
+  check "scope total of tiny calls is never negative" (tot ≥ 0) s!"total={tot}"
+  let t0 ← IO.monoNanosNow
+  let (ha, hh) ← IO.lazyPure fun _ => scopedHistory (n500 * 4)
+  let wall := (← IO.monoNanosNow) - t0
+  let inside ← totalNs "test.history"
+  check "pure scope times the work inside it, not before it"
+    (ha.size == 2000 && hh.size == 2000 && inside > 0.5 * wall.toFloat && (← calls "test.history") == 1)
+    s!"inside={inside} wall={wall}"
+  let u ← IO.lazyPure fun _ => scopedU64 n20.toUInt64
+  let fl ← IO.lazyPure fun _ => scopedFloat n20.toFloat
+  let bo ← IO.lazyPure fun _ => scopedBool n20
+  check "pure scopes pass scalars through"
+    (u == 61 && fl == 40.0 && bo && (← calls "test.u64") == 1 && (← calls "test.float") == 1 &&
+      (← calls "test.bool") == 1)
   let _ := plain 3
   check "disabled profile! records nothing" ((← calls "test.disabled") == 0)
   let d ← depth

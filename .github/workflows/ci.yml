@@ -33,6 +33,23 @@ jobs:
           cat report.json
           grep -q '"shared":1999' report.json
           grep -q '"name":"buildWithHistory","pos":"Examples/CopyBug.lean:17"' report.json
+          # %wall: the probes' cost is less than the wall time, and scopes that
+          # do not overlap add up to at most the wall time without it
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('report.json'))
+          t = {s['name']: s['total_ns'] for s in d['scopes']}
+          base = d['wall_ns'] - d['probe_ns']
+          parts = t['buildWithHistory'] + t['build'] + t['report']
+          print(d['wall_ns'], d['probe_ns'], parts, t)
+          # self time never exceeds total, also for the recursive `fib` (whose
+          # self and total are the same time, corrected two ways)
+          over = [s['name'] for s in d['scopes'] if s['self_ns'] > s['total_ns'] + 1]
+          fib = next(s for s in d['scopes'] if s['name'] == 'fib')
+          print(over, fib['self_ns'], fib['total_ns'])
+          sys.exit(0 if 0 <= d['probe_ns'] < d['wall_ns'] and parts <= base and t['buildWithHistory'] > t['build']
+                   and not over and abs(fib['self_ns'] - fib['total_ns']) <= 1 else 1)
+          PY
       - name: Allocations
         run: |
           LEANPROF_QUIET=1 lake exe leanprof run --allocs --json allocs.json copybug -- 2000

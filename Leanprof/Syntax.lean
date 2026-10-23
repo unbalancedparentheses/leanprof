@@ -46,6 +46,21 @@ def labelWithPos (name : String) (stx : Syntax) : TermElabM String := do
   let line := (← getFileMap).toPosition pos |>.line
   return s!"{name}\x1f{file}:{line}"
 
+/-- The `exitPure` variant for a value of type `type`: scalars keep their
+unboxed representation. -/
+def exitPureFor (type : Expr) : Name :=
+  match type.constName? with
+  | some ``UInt8 => ``Leanprof.exitPureUInt8
+  | some ``Bool => ``Leanprof.exitPureBool
+  | some ``UInt16 => ``Leanprof.exitPureUInt16
+  | some ``UInt32 => ``Leanprof.exitPureUInt32
+  | some ``Char => ``Leanprof.exitPureChar
+  | some ``UInt64 => ``Leanprof.exitPureUInt64
+  | some ``USize => ``Leanprof.exitPureUSize
+  | some ``Float => ``Leanprof.exitPureFloat
+  | some ``Float32 => ``Leanprof.exitPureFloat32
+  | _ => ``Leanprof.exitPure
+
 @[term_elab profileTerm] def elabProfile : TermElab := fun stx expected? => do
   let `(profile! $name:str $body) := stx | throwUnsupportedSyntax
   unless leanprof.enabled.get (← getOptions) do
@@ -56,6 +71,12 @@ def labelWithPos (name : String) (stx : Syntax) : TermElabM String := do
   if (← monadicHead? type).isSome then
     elabTerm (← `(Leanprof.scopeM $label $(← exprToSyntax e))) expected?
   else
-    elabTerm (← `(Leanprof.scope $label fun _ => $(← exprToSyntax e))) expected?
+    -- no closure: `enterPure` before the term, `exitPure` after it (see Core)
+    let exit := mkIdent (exitPureFor (← whnfR type))
+    let fast ← `(let site := $label; let tok := Leanprof.enterPure site site; $exit tok $(← exprToSyntax e))
+    try
+      withoutErrToSorry <| elabTermEnsuringType fast type
+    catch _ =>
+      elabTerm (← `(Leanprof.scope $label fun _ => $(← exprToSyntax e))) expected?
 
 end Leanprof

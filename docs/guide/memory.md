@@ -163,8 +163,10 @@ What the numbers mean, and do not:
   first, so the effect is small.
 - The walk doubles the work of each free, and every free and thread-shared
   decrement is timed, so `--frees` slows programs that free a lot and
-  inflates the times of the scopes that free. Use it to find where frees go,
-  and plain runs for timing.
+  inflates the times of the scopes that free (lean-compiler-backend: 1.40
+  times slower than plain, 7.4 million cascades; the `copy` benchmark,
+  which frees arrays of shared arrays, 2.8 times). Use it to find where
+  frees go, and plain runs for timing.
 - Only compiled code of your executable is seen (as for copies): frees
   started inside the precompiled standard library, and atomic *increments*
   (inlined in `lean.h`), are not.

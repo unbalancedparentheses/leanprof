@@ -23,7 +23,7 @@ sysctl`).
 
 **Results: [RESULTS.md](RESULTS.md)** (the table at its top is the
 headline), raw numbers in [results.json](results.json), the same suite with
-the runtime before the fixes below in [results-before.json](results-before.json).
+the runtime before the first round of fixes below in [results-before.json](results-before.json); RESULTS.md ends with a before/after table against `main` before the second round.
 
 ### What it measures
 
@@ -73,44 +73,78 @@ inclusive time of its top declarations (there is no ground truth there).
 ### Findings (Apple M5 Max, shared with other jobs; see RESULTS.md)
 
 - **Call and copy counts are exact** in every leanprof mode on every
-  workload, after two fixes (below). Before them, recursion deeper than 512
-  scopes lost every deeper call (deepRec: 3.1M of 6.0M counted), and
-  `--auto` counted a call through a boxed wrapper twice (`taskWork2`: 4 of 2).
+  workload (see the first round of fixes below).
 - **Where scopes do real work, leanprof's totals match the plain program**:
-  `mix`, `alloc`, `copy` are reported at 0.98–1.06 of plain time, with share
-  errors of 0.2–0.7 pp for `profile!`, as good as samply (0.4–0.9 pp).
-- **Where scopes do a few nanoseconds of work, leanprof is less accurate
-  than samply**, and RESULTS.md lists where. A pure `profile!` scope costs
-  ~21 ns on this machine (the ~11 ns figure below is a monadic `IO` scope);
-  after subtracting its calibrated cost, 3–12 ns per scope stay in the
-  report, mostly the boxing of scalars that cross the closure `profile!`
-  builds (a `UInt64` argument or result is allocated), which depends on the
-  program. So a 1 ns function wrapped in `profile!` is reported 3–4× too
-  slow (`tiny`), and `fib` 5×. `--auto` costs ~15 ns per call and its
-  residual is ±1–2 ns per call, either way: tiny functions come out 1.5–2×
-  too slow, deep recursion of small functions 0.6× (the hook's cost overlaps
-  the function's own work, so subtracting the isolated cost removes too
-  much). `leanprof sample` is within 1 pp everywhere but `tasks` (1.7 pp), at 1.03–1.3× slowdown.
-  For functions under ~100 ns per call, use `sample` for time and
-  `run`/`--auto` for counts.
-- **Threads**: with a tiny `profile!` scope per step, the reported time of
-  the same work grows with the number of threads (1.6×, 2.5×, 3.1× of plain
-  on 2, 4, 8 threads), and the cost per scope measured from the program's own
-  timings grows the same way (23 to 31 ns). On this machine (6 + 12 cores of
-  two speeds, under load from other jobs) that could not be told apart from
-  contention and threads landing on the slower cores; a per-thread
-  calibration was tried and did not change it, so it was left out.
-- `--frees` is expensive where many objects die: 16× on lean-compiler-backend,
-  33× on `tiny`, and the time it adds is not subtracted. `--allocs` adds
-  ~4 ns per allocation (7 ns per `tiny` scope, which boxes twice), also not subtracted. Both are for counting, not
-  timing.
-- On lean-compiler-backend (0.37 s): `run` 1.3×, `--counters` 1.75×,
-  `--allocs` 2.1×, `--auto` 3.8×, `--frees` 16×; `sample` agrees with samply
-  within 0.7 pp on the top declarations, `--auto` within 4.4 pp. samply's own
-  start and finish take about a second, so its 3.9× there is not the
+  `mix`, `alloc`, `copy` are reported at 0.92–1.03 of plain time, with share
+  errors of 0.4–0.5 pp for `profile!`, as good as samply (0.5–1.0 pp).
+- **Where scopes do a few nanoseconds of work, the report says so.** A
+  scope costs about 8 ns (`profile!`, pure or monadic, and `--auto`). What
+  the subtraction gets wrong is now a nanosecond or two per scope, either
+  way: loops of 1 ns functions (`tiny`) come out at 0.5–1.4 of their time,
+  `fib` at 0.5–1.7, steps of a few ns on 2–8 threads at 1.2–1.5. Those rows
+  are flagged "near the probe cost" (`*`), and RESULTS.md's "Flag
+  calibration" line checks the threshold: unflagged component rows within
+  14% of the truth (median 3%), flagged ones off by 22% in the median.
+  `leanprof sample` is within 2 pp everywhere, at 1.0–1.3× slowdown.
+- **lean-compiler-backend** (0.39 s): `run` 1.10×, `--counters` 1.18×,
+  `--allocs` 1.23×, `--frees` 1.40×, `--auto` 1.52× (before this round:
+  1.21×, 1.72×, 2.12×, 2.27×, 3.69×). `sample` agrees with samply within
+  1.1 pp on the top declarations, `--auto` within 4.0 pp. samply's own
+  start and finish take about a second, so its 4× there is not the
   program's slowdown (on the workloads, 1.0–1.1×).
+- `--allocs` and `--frees` add time they do not subtract (an allocation or
+  a free is counted and timed): use them for counting.
 
-### Runtime fixes made from these measurements (`c/leanprof.c`)
+### Second round: accuracy and overhead (2026-10-23)
+
+What the first round left (pure `profile!` 21 ns and 3–12 ns per scope left
+in the report, `--auto` 3.8× and `--frees` 16× on lean-compiler-backend,
+time growing with threads) came from five places, found with samply on the
+instrumented programs:
+
+1. **Boxing through `profile!`'s closure.** A pure `profile!` applied a
+   closure, whose boxed wrapper allocated a `UInt64` result inside the
+   timed region (and freed it, which `--frees` then timed: 33× on `tiny`).
+   It now compiles to `enterPure` before the term and `exitPure` after it,
+   with a variant per scalar type; nothing is allocated. The compiler's
+   `floatLetIn` moved a plain token `let` past the term into the branch
+   that used it (even a structure projection is one), so the term ran
+   before the scope opened; `enterPure` takes the label twice, owned then
+   borrowed, which that pass never moves. A test checks the work stays
+   inside.
+2. **The clock.** `mach_absolute_time` reads `CNTVCTSS_EL0`, which waits
+   for every earlier instruction to finish: 4 ns in a loop, but 40% of an
+   `--auto` run of lean-compiler-backend in samply, two reads per scope.
+   leanprof reads `CNTVCT_EL0` directly; on the M5 it also runs at 1 GHz
+   instead of 24 MHz.
+3. **`dladdr`** scans all 450,000 symbols of a Lean executable on every
+   call (0.3 ms). `--auto` called it for each new function inside the
+   running scope (0.2 s of lean-compiler-backend's reported time) and the
+   report for every row (0.6 s). A sorted table of the executable's symbols
+   is read once instead. This was the "underestimate" of `--auto`'s cost on
+   large programs: calibration was right about the probes, but this time
+   was not probe time.
+4. **`probe_ns` counted the probes 1,024 times** (descendants are counted
+   in 1/1024 of a pair), which made the "wall without probes" and `%wall`
+   wrong.
+5. **`--frees`** wrote a flag shared by all threads on every free and looked
+   up the site table each time; the remaining cost is the counting walk.
+
+**Per-thread calibration does not work, and why.** Every 16,384 scopes a
+thread timed a batch of 16 empty pairs (after 4 to warm up) and the report
+scaled the thread's subtracted cost by the batch's mean over the
+calibration's. Under load the factor came out 1.4–4, and subtracting that
+much took `tiny` to 0.00 of its time, `rec`/`--auto` to 0.12 and
+`alloc`/`--auto` to 0.71. Empty pairs back to back cost more than pairs
+spread through real code, whose instructions overlap with the program's
+own; so a measured pair cost, per thread or not, is an upper bound on what
+the probes add, and the error left for tiny scopes is a nanosecond or two
+either way. That is what the near-probe-cost flag is for. The growth with
+threads the first round saw (1.6×, 2.5×, 3.1×) is gone without it
+(1.2–1.4×, the same on 2, 4 and 8 threads): it went with the boxed
+allocations (which contend between threads) and the synchronizing clock.
+
+### First round: runtime fixes (`c/leanprof.c`)
 
 1. **The scope stack grows** (it was fixed at 512 frames, and frames past it
    were not recorded): deep recursion now has exact counts, and its
@@ -124,10 +158,9 @@ inclusive time of its top declarations (there is no ground truth there).
    the program runs: the `--auto` hooks, `leanprof_enter`/`leanprof_exit`
    (monadic `profile!`), and a pure `profile!`'s closure (allocated, applied
    and freed). It used to measure only the inlined enter/exit pair.
-   (`overhead_by_path_ns` in the JSON report shows the four costs.)
+   (`overhead_by_path_ns` in the JSON report shows the costs.)
 
-The before/after table is at the end of RESULTS.md: counts went from wrong to
-exact; for tiny pure scopes the share error halved (`tiny`, `profile!` 4.6 →
+In that round's before/after table counts went from wrong to exact; for tiny pure scopes the share error halved (`tiny`, `profile!` 4.6 →
 2.1 pp; `run` 3.3 → 1.2 pp); recording every frame of deep recursion costs
 ~3 ns more per scope there, and other differences are within the noise.
 
@@ -148,7 +181,11 @@ the job lowers `kernel.perf_event_paranoid` to 1 for samply; if that fails,
 Extra cost of one profiled `IO` action (`IO.Ref.modify`), leanprof against
 [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) at commit `35e1899`.
 Each thread times its own loop of `n` actions, plain and profiled; the
-difference divided by `n` is the overhead.
+difference divided by `n` is the overhead. leanprof calibrates itself once,
+at its first scope (about 10 ms); the benchmark has it do that before the
+timed loops (`Leanprof.overheadNs`), since that is a cost per program, not
+per action. Before it did, the calibration landed in the first loop: about
+10 µs per action at n = 1,000.
 
 ```
 cd bench
@@ -160,14 +197,16 @@ LEAN_PROFILE=1 .lake/build/bin/bench leanprofiler 1 4000   # recording on
 
 ## Results
 
-Apple M5 Max, macOS, Lean 4.35.0, 2026-10-22. Three runs each; ranges shown.
+Apple M5 Max, macOS, Lean 4.35.0, 2026-10-23, shared with other jobs (load
+average 25). Three runs each; ranges shown.
 
 | | 1 thread, n=1M | 4 threads, n=1M each |
 |---|---|---|
-| leanprof (always recording) | 10.2–11.5 ns | 12.1–12.4 ns |
-| LeanProfiler, recording off | 22.6–26.0 ns | 363–391 ns |
+| leanprof (always recording) | 7.3–8.9 ns | 8.2–11.8 ns |
+| LeanProfiler, recording off | 24.7–26.8 ns | 419–495 ns |
 
-LeanProfiler with recording on (`LEAN_PROFILE=1`), one thread:
+LeanProfiler with recording on (`LEAN_PROFILE=1`), one thread
+(2026-10-22):
 
 | events | per span |
 |---|---|
@@ -175,7 +214,8 @@ LeanProfiler with recording on (`LEAN_PROFILE=1`), one thread:
 | 4,000 | 20.1 µs |
 | 16,000 | 88.5 µs |
 
-leanprof over the same event counts: 15.5, 12.2 and 11.5 ns.
+leanprof over the same event counts: 15.9–17.8, 8.9–17.0 and 10.0–11.6 ns
+(the first actions of a thread also pay for its tables).
 
 ## Why LeanProfiler's cost grows
 

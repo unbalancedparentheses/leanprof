@@ -41,19 +41,21 @@ static const char *lpf_reason_name[LP_REASONS] = {"shared", "multi-threaded", "p
  * `parent_kind`; key NULL when spawned outside any scope). */
 enum { LP_LABEL, LP_FN, LP_INTERNAL, LP_TASK };
 
-/* How a scope is entered. Each way costs differently (a pure `profile!`
+/* How a scope is entered. Each way costs differently (`Leanprof.scope`
  * allocates and applies a closure, `--auto` calls a hook from every
- * function), so calibration measures each one (see calibration). */
-enum { LP_PATH_DIRECT, LP_PATH_HOOK, LP_PATH_SCOPE, LP_PATH_ENTER, LP_PATHS };
+ * function), so calibration measures each one (see calibration).
+ * LP_PATH_PURE is what `profile!` on a pure term compiles to: a call before
+ * the term and one after it, with no closure (see leanprof_enter_pure). */
+enum { LP_PATH_DIRECT, LP_PATH_HOOK, LP_PATH_SCOPE, LP_PATH_ENTER, LP_PATH_PURE, LP_PATHS };
 
 typedef struct {
+    /* What every enter and exit touches comes first, in the first two cache
+     * lines (scopes are 64-byte aligned). */
     const void *key;
     uint8_t kind;              /* LP_LABEL, LP_FN, or LP_INTERNAL (calibration) */
     uint8_t path;              /* LP_PATH_*: how it is entered */
-    /* LP_FN: the C function's name up to the first compiler-generated part
-     * (`f___boxed`, `f___redArg`, `f___lam__0` are all `f`), hashed. All C
-     * functions of one Lean declaration share one scope (see lpf_scope_get). */
-    uint64_t decl;
+    uint8_t parent_kind;       /* LP_TASK: kind of the spawning scope */
+    uint32_t active;           /* recursion depth, so totals count the outermost call */
     /* Raw times. `sum` is every call's own duration, `total` only outermost
      * calls (recursion). Overhead is removed at report time: `kids` and
      * `desc_sum`/`desc_total` are the overhead of direct children and of all
@@ -61,14 +63,15 @@ typedef struct {
      * enter/exit pair (lpf_w_pair, lpf_w_kid); `outer` outermost calls;
      * `fwd` entries that were not calls (one C function of a declaration
      * calling another of the same declaration, such as `f___boxed` -> `f`). */
-    uint64_t calls, total, self, sum, min, max;
-    uint64_t kids, desc_sum, desc_total, outer, fwd;
-    uint64_t wait, wait_max;   /* LP_TASK: time from spawn to start */
+    uint64_t calls, total, self, sum, kids, desc_sum, desc_total, outer, fwd, min, max;
     /* allocations (LEANPROF_ALLOCS builds): made while this scope was the
      * innermost (self), and including children over outermost calls (total) */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
-    uint8_t parent_kind;       /* LP_TASK: kind of the spawning scope */
-    uint32_t active;           /* recursion depth, so totals count the outermost call */
+    uint64_t wait, wait_max;   /* LP_TASK: time from spawn to start */
+    /* LP_FN: the C function's name up to the first compiler-generated part
+     * (`f___boxed`, `f___redArg`, `f___lam__0` are all `f`), hashed. All C
+     * functions of one Lean declaration share one scope (see lpf_scope_get). */
+    uint64_t decl;
     uint32_t hist[LP_BUCKETS]; /* per call, overhead removed */
 } lpf_scope;
 
@@ -117,7 +120,7 @@ typedef struct lpf_thread {
     uint8_t nogrow;            /* growing failed once: frames from `cap` on are not kept */
     uint32_t depth;
     uint64_t dropped;
-    uint64_t pairs;            /* enter/exit pairs of completed outermost frames (their probes' cost) */
+    uint64_t pairs;            /* probe cost of completed outermost frames, in 1/1024 of a direct pair */
     lpf_event *events;
     size_t nevents, capevents;
     uint64_t events_dropped;
@@ -143,7 +146,10 @@ static uint64_t lpf_start;
 static uint64_t lpf_inner_fp[LP_PATHS], lpf_pair_fp[LP_PATHS];
 /* (until the first calibration ends, which other threads may not wait for:
  * every pair counts as a direct one, half of it outside the child) */
-static uint64_t lpf_w_pair[LP_PATHS] = {1024, 1024, 1024, 1024}, lpf_w_kid[LP_PATHS] = {512, 512, 512, 512};
+static uint64_t lpf_w_pair[LP_PATHS] = {1024, 1024, 1024, 1024, 1024}, lpf_w_kid[LP_PATHS] = {512, 512, 512, 512, 512};
+/* the part of a pair inside the scope's own time, in the same units (0 until
+ * the first calibration: before it nothing is subtracted) */
+static uint64_t lpf_w_inner[LP_PATHS];
 static int lpf_weighted; /* weights set by the first calibration */
 static int lpf_calibrated; /* first calibration started (atomic) */
 static void lpf_calibrate(void);
@@ -152,8 +158,19 @@ static void lpf_label_name(const char *label, char *out, size_t cap);
 
 /* ---------- clock ---------- */
 
+/* On Apple Silicon, mach_absolute_time reads the self-synchronizing
+ * counter (CNTVCTSS_EL0), which waits for every earlier instruction to
+ * finish: in real code that is most of a probe's cost, since each scope reads
+ * the clock twice. leanprof reads the same 24 MHz counter (CNTVCT_EL0)
+ * without waiting. The read may then happen a few cycles early, at both ends
+ * of a scope alike, so durations are not biased; calibration measures the
+ * probes with the same reads. LEANPROF_SYNC_CLOCK restores the old read. */
 static inline uint64_t lpf_now(void) {
-#ifdef __APPLE__
+#if defined(__APPLE__) && defined(__aarch64__) && !defined(LEANPROF_SYNC_CLOCK)
+    uint64_t v;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v) : : "memory");
+    return v;
+#elif defined(__APPLE__)
     return mach_absolute_time();
 #else
     struct timespec ts;
@@ -163,6 +180,11 @@ static inline uint64_t lpf_now(void) {
 }
 
 static double lpf_ns_per_tick(void) {
+#if defined(__APPLE__) && defined(__aarch64__) && !defined(LEANPROF_SYNC_CLOCK)
+    uint64_t hz;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(hz));
+    if (hz > 0) return 1e9 / (double)hz;
+#endif
 #ifdef __APPLE__
     mach_timebase_info_data_t tb;
     mach_timebase_info(&tb);
@@ -267,6 +289,185 @@ static inline size_t lpf_hash(const void *a, const void *b) {
     return (size_t)h & (LP_TABLE - 1);
 }
 
+/* ---------- symbols ----------
+ * Names of code addresses. dladdr scans the whole symbol table on every
+ * call: a Lean executable linked with -rdynamic has hundreds of thousands of
+ * symbols (the standard library), so one call took ~0.3 ms, and `--auto`
+ * spent most of its time there (once per function seen, and again for every
+ * row of the report). The main executable's symbols are read once into a
+ * sorted table instead; addresses outside it fall back to dladdr. */
+
+typedef struct {
+    uintptr_t addr;
+    const char *name;
+} lpf_sym;
+
+static lpf_sym *lpf_syms;
+static size_t lpf_nsyms;
+static uintptr_t lpf_text_lo, lpf_text_hi; /* the main executable's code */
+static pthread_once_t lpf_syms_once = PTHREAD_ONCE_INIT;
+
+static int lpf_sym_cmp(const void *a, const void *b) {
+    const lpf_sym *x = a, *y = b;
+    return x->addr < y->addr ? -1 : x->addr > y->addr ? 1 : 0;
+}
+
+static void lpf_syms_push(size_t *cap, uintptr_t addr, const char *name) {
+    if (lpf_nsyms == *cap) {
+        size_t c = *cap ? *cap * 2 : 65536;
+        lpf_sym *v = realloc(lpf_syms, c * sizeof(lpf_sym));
+        if (v == NULL) return;
+        lpf_syms = v;
+        *cap = c;
+    }
+    lpf_syms[lpf_nsyms++] = (lpf_sym){addr, name};
+}
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#include <mach-o/nlist.h>
+
+static void lpf_syms_load(void) {
+    /* the image leanprof is linked into (the executable; image 0 need not
+     * be it when libraries are inserted, as samply does) */
+    Dl_info self;
+    if (!dladdr((const void *)lpf_syms_load, &self) || self.dli_fbase == NULL) return;
+    const struct mach_header_64 *h = (const struct mach_header_64 *)self.dli_fbase;
+    if (h->magic != MH_MAGIC_64) return;
+    uintptr_t slide = 0;
+    uint32_t n = _dyld_image_count(), i = 0;
+    for (; i < n; i++)
+        if ((const void *)_dyld_get_image_header(i) == (const void *)h) {
+            slide = (uintptr_t)_dyld_get_image_vmaddr_slide(i);
+            break;
+        }
+    if (i == n) return;
+    const struct load_command *lc = (const struct load_command *)(h + 1);
+    const struct segment_command_64 *linkedit = NULL;
+    const struct symtab_command *st = NULL;
+    for (uint32_t k = 0; k < h->ncmds; k++, lc = (const struct load_command *)((const char *)lc + lc->cmdsize)) {
+        if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *sg = (const struct segment_command_64 *)lc;
+            if (strcmp(sg->segname, SEG_LINKEDIT) == 0) linkedit = sg;
+            if (strcmp(sg->segname, SEG_TEXT) == 0) {
+                lpf_text_lo = slide + sg->vmaddr;
+                lpf_text_hi = lpf_text_lo + sg->vmsize;
+            }
+        } else if (lc->cmd == LC_SYMTAB) {
+            st = (const struct symtab_command *)lc;
+        }
+    }
+    if (linkedit == NULL || st == NULL || lpf_text_hi == 0) return;
+    uintptr_t base = slide + linkedit->vmaddr - linkedit->fileoff;
+    const struct nlist_64 *nl = (const struct nlist_64 *)(base + st->symoff);
+    const char *strs = (const char *)(base + st->stroff);
+    size_t cap = 0;
+    for (uint32_t k = 0; k < st->nsyms; k++) {
+        if ((nl[k].n_type & N_STAB) || (nl[k].n_type & N_TYPE) != N_SECT || nl[k].n_un.n_strx == 0) continue;
+        uintptr_t a = slide + nl[k].n_value;
+        if (a < lpf_text_lo || a >= lpf_text_hi) continue;
+        /* not read here: touching every name would page in the whole string table */
+        lpf_syms_push(&cap, a, strs + nl[k].n_un.n_strx);
+    }
+}
+#else
+#include <elf.h>
+#include <fcntl.h>
+#include <link.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+
+static int lpf_syms_main(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size;
+    /* the first object is the main program */
+    for (int i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *p = &info->dlpi_phdr[i];
+        if (p->p_type == PT_LOAD && (p->p_flags & PF_X)) {
+            uintptr_t lo = info->dlpi_addr + p->p_vaddr, hi = lo + p->p_memsz;
+            if (lpf_text_hi == 0 || lo < lpf_text_lo) lpf_text_lo = lo;
+            if (hi > lpf_text_hi) lpf_text_hi = hi;
+        }
+    }
+    *(uintptr_t *)data = info->dlpi_addr;
+    return 1;
+}
+
+static void lpf_syms_load(void) {
+    uintptr_t bias = 0;
+    dl_iterate_phdr(lpf_syms_main, &bias);
+    if (lpf_text_hi == 0) return;
+    int fd = open("/proc/self/exe", O_RDONLY);
+    if (fd < 0) return;
+    struct stat sb;
+    void *m = fstat(fd, &sb) == 0 ? mmap(NULL, (size_t)sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0) : MAP_FAILED;
+    close(fd);
+    if (m == MAP_FAILED) return;
+    const char *f = m;
+    const ElfW(Ehdr) *eh = m;
+    if ((size_t)sb.st_size < sizeof *eh || memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 ||
+        eh->e_shoff + (size_t)eh->e_shnum * sizeof(ElfW(Shdr)) > (size_t)sb.st_size)
+        return;
+    const ElfW(Shdr) *sh = (const ElfW(Shdr) *)(f + eh->e_shoff);
+    /* the full symbol table if the binary has one, else the dynamic one */
+    const ElfW(Shdr) *tab = NULL;
+    for (int k = 0; k < eh->e_shnum; k++)
+        if (sh[k].sh_type == SHT_SYMTAB) tab = &sh[k];
+    if (tab == NULL)
+        for (int k = 0; k < eh->e_shnum; k++)
+            if (sh[k].sh_type == SHT_DYNSYM) tab = &sh[k];
+    if (tab == NULL || tab->sh_link >= eh->e_shnum) return;
+    const ElfW(Shdr) *strsec = &sh[tab->sh_link];
+    if (tab->sh_offset + tab->sh_size > (size_t)sb.st_size || strsec->sh_offset + strsec->sh_size > (size_t)sb.st_size)
+        return;
+    const ElfW(Sym) *sy = (const ElfW(Sym) *)(f + tab->sh_offset);
+    size_t n = tab->sh_size / sizeof(ElfW(Sym)), cap = 0;
+    const char *strs = f + strsec->sh_offset;
+    for (size_t i = 0; i < n; i++) {
+        int type = ELF64_ST_TYPE(sy[i].st_info);
+        if (sy[i].st_shndx == SHN_UNDEF || sy[i].st_name == 0 || sy[i].st_name >= strsec->sh_size ||
+            (type != STT_FUNC && type != STT_NOTYPE))
+            continue;
+        uintptr_t a = bias + sy[i].st_value;
+        if (a < lpf_text_lo || a >= lpf_text_hi) continue;
+        lpf_syms_push(&cap, a, strs + sy[i].st_name);
+    }
+}
+#endif
+
+static void lpf_syms_init(void) {
+    lpf_syms_load();
+    if (lpf_nsyms == 0) {
+        lpf_text_lo = lpf_text_hi = 0; /* dladdr for everything */
+        return;
+    }
+    qsort(lpf_syms, lpf_nsyms, sizeof(lpf_sym), lpf_sym_cmp);
+}
+
+/* The name of the symbol containing `pc` (as dladdr names it), or NULL. */
+static const char *lpf_sym_name(const void *pc) {
+    pthread_once(&lpf_syms_once, lpf_syms_init);
+    uintptr_t a = (uintptr_t)pc;
+    if (a >= lpf_text_lo && a < lpf_text_hi) {
+        size_t lo = 0, hi = lpf_nsyms; /* last symbol at or below a */
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            if (lpf_syms[mid].addr <= a) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo > 0) {
+            const char *nm = lpf_syms[lo - 1].name;
+#ifdef __APPLE__
+            if (nm[0] == '_') nm++; /* C names have a leading underscore; dladdr drops it too */
+#endif
+            return nm;
+        }
+    }
+    Dl_info info;
+    if (!dladdr(pc, &info)) return NULL;
+    return info.dli_sname;
+}
+
 /* The Lean declaration a compiled function belongs to: its symbol up to the
  * first compiler-generated component (`f___boxed`, `f___redArg`,
  * `f___lam__0`, `f___closed__1` are all `f`; the demangler drops the same
@@ -274,9 +475,9 @@ static inline size_t lpf_hash(const void *a, const void *b) {
 static uint64_t lpf_decl_of(const void *fn) {
     static const char *parts[] = {"lam__", "elam__", "closed__", "boxed", "redArg", "impl", "jp",
                                   "override", "unsafe__rec"};
-    Dl_info info;
-    if (!dladdr(fn, &info) || info.dli_sname == NULL) return 0;
-    const char *s = info.dli_sname, *end = s + strlen(s);
+    const char *s = lpf_sym_name(fn);
+    if (s == NULL) return 0;
+    const char *end = s + strlen(s);
     for (const char *p = strstr(s + 1, "___"); p != NULL && p < end; p = strstr(p + 1, "___")) {
         for (size_t k = 0; k < sizeof parts / sizeof parts[0]; k++)
             if (strncmp(p + 3, parts[k], strlen(parts[k])) == 0) { end = p; break; }
@@ -287,8 +488,9 @@ static uint64_t lpf_decl_of(const void *fn) {
 }
 
 static lpf_scope *lpf_new_scope(const void *key, uint8_t kind, uint8_t path) {
-    lpf_scope *s = calloc(1, sizeof(lpf_scope));
+    lpf_scope *s = aligned_alloc(64, (sizeof(lpf_scope) + 63) / 64 * 64);
     if (s == NULL) abort();
+    memset(s, 0, sizeof(lpf_scope));
     s->key = key;
     s->kind = kind;
     s->path = path;
@@ -392,7 +594,7 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
     lpf_frame *f = &t->stack[d];
     if (LEAN_UNLIKELY(f->traced)) lpf_trace(t, 'E', f->scope ? f->scope->key : NULL, 0, now, 0);
     uint64_t raw = now - f->start;
-    if (d == 0 && (f->scope == NULL || f->scope->kind != LP_INTERNAL)) t->pairs += 1 + f->desc;
+    if (d == 0 && (f->scope == NULL || f->scope->kind != LP_INTERNAL)) t->pairs += lpf_w_pair[f->path] + f->desc;
     if (d > 0) {
         lpf_frame *p = &t->stack[d - 1];
         p->child += raw;
@@ -493,6 +695,16 @@ static __attribute__((noinline)) lean_obj_res lpf_cal_exit(lean_obj_arg unit) {
     lpf_exit();
     return lean_box(0);
 }
+static __attribute__((noinline)) uint64_t lpf_cal_enter_pure(lean_obj_arg site, b_lean_obj_arg key) {
+    lean_dec(site);
+    lpf_enter(key, LP_INTERNAL, LP_PATH_PURE);
+    return 0;
+}
+static __attribute__((noinline)) uint64_t lpf_cal_exit_pure(uint64_t tok, uint64_t v) {
+    (void)tok;
+    lpf_exit();
+    return v;
+}
 
 /* `n` empty scopes entered the way `path` enters them. */
 static __attribute__((noinline)) void lpf_cal_batch(int path, int n) {
@@ -521,6 +733,11 @@ static __attribute__((noinline)) void lpf_cal_batch(int path, int n) {
     case LP_PATH_ENTER:
         for (int i = 0; i < n; i++) lpf_cal_exit(lpf_cal_enter((lean_object *)k));
         break;
+    case LP_PATH_PURE: {
+        uint64_t v = 0;
+        for (int i = 0; i < n; i++) v = lpf_cal_exit_pure(lpf_cal_enter_pure(lean_box(0), (lean_object *)k), v);
+        break;
+    }
     }
 }
 
@@ -566,7 +783,8 @@ static void lpf_calibrate(void) {
         uint64_t base = lpf_pair_fp[LP_PATH_DIRECT];
         for (int p = 0; p < LP_PATHS; p++) {
             lpf_w_pair[p] = (lpf_pair_fp[p] << 10) / base;
-            lpf_w_kid[p] = ((lpf_pair_fp[p] - lpf_inner_fp[p]) << 10) / base;
+            lpf_w_inner[p] = (lpf_inner_fp[p] << 10) / base;
+            lpf_w_kid[p] = lpf_w_pair[p] - lpf_w_inner[p]; /* exactly: see lpf_inner_ticks */
         }
         lpf_weighted = 1;
     }
@@ -583,7 +801,7 @@ static int lpf_main_path(void) {
             if (s != NULL && t->keys[i] == s->key && s->kind != LP_INTERNAL && s->kind != LP_TASK)
                 calls[s->path] += s->calls;
         }
-    int best = LP_PATH_SCOPE;
+    int best = LP_PATH_PURE;
     for (int p = 0; p < LP_PATHS; p++)
         if (calls[p] > calls[best]) best = p;
     return best;
@@ -615,6 +833,30 @@ LEAN_EXPORT lean_obj_res leanprof_exit(lean_obj_arg unit) {
     lpf_exit();
     return lean_box(0);
 }
+
+/* `profile!` on a pure term: `exitPure (enterPure site) e`. No closure is
+ * built and nothing is boxed: the term runs between the two calls, its value
+ * passes through `exit` unchanged (one variant per scalar type, so scalars
+ * stay unboxed). The token only orders the calls. */
+LEAN_EXPORT uint64_t leanprof_enter_pure(lean_obj_arg site, b_lean_obj_arg key) {
+    lean_dec(site); /* a string literal: persistent, so this costs a compare */
+    lpf_enter(key, LP_LABEL, LP_PATH_PURE);
+    return 0;
+}
+#define LP_EXIT_PURE(name, T)                                    \
+    LEAN_EXPORT T name(uint64_t tok, T v) {                      \
+        (void)tok;                                               \
+        lpf_exit();                                              \
+        return v;                                                \
+    }
+LP_EXIT_PURE(leanprof_exit_pure, lean_object *)
+LP_EXIT_PURE(leanprof_exit_pure_u8, uint8_t)
+LP_EXIT_PURE(leanprof_exit_pure_u16, uint16_t)
+LP_EXIT_PURE(leanprof_exit_pure_u32, uint32_t)
+LP_EXIT_PURE(leanprof_exit_pure_u64, uint64_t)
+LP_EXIT_PURE(leanprof_exit_pure_usize, size_t)
+LP_EXIT_PURE(leanprof_exit_pure_f64, double)
+LP_EXIT_PURE(leanprof_exit_pure_f32, float)
 
 
 /* ---------- copies ----------
@@ -1324,18 +1566,18 @@ static void lpf_demangle(const char *s, char *out, size_t cap) {
 }
 
 static void lpf_symbol_raw(void *pc, char *out, size_t cap) {
-    Dl_info info;
-    if (!dladdr(pc, &info) || info.dli_sname == NULL) snprintf(out, cap, "%p", pc);
-    else snprintf(out, cap, "%s", info.dli_sname);
+    const char *nm = lpf_sym_name(pc);
+    if (nm == NULL) snprintf(out, cap, "%p", pc);
+    else snprintf(out, cap, "%s", nm);
 }
 
 static void lpf_symbol_name(void *pc, char *out, size_t cap) {
-    Dl_info info;
-    if (!dladdr(pc, &info) || info.dli_sname == NULL) {
+    const char *nm = lpf_sym_name(pc);
+    if (nm == NULL) {
         snprintf(out, cap, "%p", pc);
         return;
     }
-    lpf_demangle(info.dli_sname, out, cap);
+    lpf_demangle(nm, out, cap);
 }
 
 /* ---------- declaration positions ----------
@@ -1670,7 +1912,15 @@ LEAN_EXPORT lean_obj_res leanprof_calls(b_lean_obj_arg site) {
 
 /* What a scope measures of its own bookkeeping per call, and what one unit
  * of the overhead weights in `kids`/`desc_*` is, in ticks. */
-static double lpf_inner_ticks(const lpf_scope *s) { return (double)lpf_inner_fp[s->path] / 1024.0; }
+/* In the weights' units, like `kids` and `desc_*`, not from the latest
+ * calibration: `self` subtracts (calls + fwd) inner parts plus the outside
+ * parts of the direct children (`kids`), `total` one inner part per
+ * outermost call plus every descendant's whole pair (`desc_total`). For a
+ * recursive scope these are the same pairs counted two ways, and only agree
+ * if inner + outside = pair in one set of units: with the inner part taken
+ * from the calibration at exit and the rest from the weights fixed at the
+ * first one, `fib` in copybug showed a self time larger than its total. */
+static double lpf_inner_ticks(const lpf_scope *s) { return (double)lpf_w_inner[s->path] * lpf_unit_ticks(); }
 static double lpf_unit_ticks(void) { return (double)lpf_pair_fp[LP_PATH_DIRECT] / (1024.0 * 1024.0); }
 
 /* Total time of scopes named `site` (outermost calls, overhead removed), in
@@ -1749,8 +1999,21 @@ typedef struct {
     uint64_t wait, wait_max;   /* tasks: spawn to start */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
     uint64_t calls, total, self, sum, min, max;
+    double probes;             /* ticks: probe cost in and around its outermost calls */
     uint32_t hist[LP_BUCKETS];
 } lpf_scope_sum;
+
+/* A row is "near the probe cost" when the probes in and around its calls
+ * (its own enter/exit pairs and its descendants') cost at least this share
+ * of the time left after subtracting them: what the subtraction gets wrong,
+ * a few ns per scope, is then a large part of its time. 0.3 is a function
+ * that takes about three probe pairs per call (~25 ns on an M5 Max); in
+ * bench/RESULTS.md the reported time of every component below that is off
+ * by 10% to several times, and above it by noise only (see bench/README.md). */
+#define LP_NEAR_PROBE 0.3
+static int lpf_near_probe(const lpf_scope_sum *s) {
+    return !s->is_task && s->probes > 0 && s->probes >= LP_NEAR_PROBE * (double)s->total;
+}
 
 typedef struct {
     char fn[256], sym[256], scope[128], where[512];
@@ -1820,7 +2083,7 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         if (!S[k].is_task && (double)S[k].total * tick > base) base = (double)S[k].total * tick;
     lpf_fmt_time(base, wp, sizeof wp);
     int any_fn = 0;
-    size_t ntasks = 0, nwaits = 0, nallocs = 0;
+    size_t ntasks = 0, nwaits = 0, nallocs = 0, nnear = 0;
     for (size_t k = 0; k < ns; k++) {
         any_fn |= S[k].is_fn;
         ntasks += S[k].is_task;
@@ -1841,6 +2104,10 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
             if (S[k].is_task) continue;
             char tt[32], st[32], mt[32], p50[32], p99[32];
             lpf_fmt_time((double)S[k].total * tick, tt, sizeof tt);
+            if (lpf_near_probe(&S[k])) {
+                strncat(tt, "*", sizeof tt - strlen(tt) - 1);
+                nnear++;
+            }
             lpf_fmt_time((double)S[k].self * tick, st, sizeof st);
             lpf_fmt_time((double)S[k].sum * tick / (double)S[k].calls, mt, sizeof mt);
             lpf_fmt_time((double)lpf_percentile(S[k].hist, S[k].calls, 0.50) * tick, p50, sizeof p50);
@@ -1858,6 +2125,8 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
             if (S[k].where[0]) fprintf(f, "  %s  (%s)\n", shown, S[k].where);
             else fprintf(f, "  %s\n", shown);
         }
+        if (nnear > 0)
+            fprintf(f, "* near the probe cost: use `leanprof sample` for this function's time\n");
     }
     const char *all = getenv("LEANPROF_ALL");
     int show_all = all != NULL && strcmp(all, "1") == 0;
@@ -1965,9 +2234,9 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
 static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                           double wall, uint64_t dropped) {
     fprintf(f, "{\"version\":3,\"wall_ns\":%.0f,\"probe_ns\":%.0f,\"overhead_ns\":%.1f,", wall, lpf_probe_ns, lpf_overhead_of(lpf_main_path()));
-    fprintf(f, "\"overhead_by_path_ns\":{\"direct\":%.1f,\"auto\":%.1f,\"pure\":%.1f,\"monadic\":%.1f},",
-            lpf_overhead_of(LP_PATH_DIRECT), lpf_overhead_of(LP_PATH_HOOK), lpf_overhead_of(LP_PATH_SCOPE),
-            lpf_overhead_of(LP_PATH_ENTER));
+    fprintf(f, "\"overhead_by_path_ns\":{\"direct\":%.1f,\"auto\":%.1f,\"pure\":%.1f,\"closure\":%.1f,\"monadic\":%.1f},",
+            lpf_overhead_of(LP_PATH_DIRECT), lpf_overhead_of(LP_PATH_HOOK), lpf_overhead_of(LP_PATH_PURE),
+            lpf_overhead_of(LP_PATH_SCOPE), lpf_overhead_of(LP_PATH_ENTER));
     fprintf(f, "\"dropped\":%llu,\"scopes\":[", (unsigned long long)dropped);
     int first = 1;
     for (size_t k = 0; k < ns; k++) {
@@ -1980,13 +2249,13 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
         fprintf(f, ",\"auto\":%s", S[k].is_fn ? "true" : "false");
         fprintf(f, ",\"calls\":%llu,\"total_ns\":%.0f,\"self_ns\":%.0f,\"min_ns\":%.0f,\"max_ns\":%.0f,"
                    "\"mean_ns\":%.0f,\"p50_ns\":%.0f,\"p99_ns\":%.0f,\"allocs\":%llu,\"alloc_bytes\":%llu,"
-                   "\"allocs_self\":%llu,\"alloc_bytes_self\":%llu}",
+                   "\"allocs_self\":%llu,\"alloc_bytes_self\":%llu,\"probes_ns\":%.0f,\"near_probe_cost\":%s}",
                 (unsigned long long)S[k].calls, (double)S[k].total * tick, (double)S[k].self * tick,
                 (double)S[k].min * tick, (double)S[k].max * tick, (double)S[k].sum * tick / (double)S[k].calls,
                 (double)lpf_percentile(S[k].hist, S[k].calls, 0.50) * tick,
                 (double)lpf_percentile(S[k].hist, S[k].calls, 0.99) * tick, (unsigned long long)S[k].allocs_total,
                 (unsigned long long)S[k].bytes_total, (unsigned long long)S[k].allocs_self,
-                (unsigned long long)S[k].bytes_self);
+                (unsigned long long)S[k].bytes_self, S[k].probes * tick, lpf_near_probe(&S[k]) ? "true" : "false");
     }
     fprintf(f, "],\"allocations\":[");
     first = 1;
@@ -2164,7 +2433,7 @@ static void lpf_report(void) {
     uint64_t pairs = 0;
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
         if (t->pairs > pairs) pairs = t->pairs;
-    lpf_probe_ns = (double)pairs * lpf_overhead_of(lpf_main_path());
+    lpf_probe_ns = (double)pairs * lpf_unit_ticks() * tick; /* `desc` was counted in 1/1024 of a pair */
     size_t ns = 0, nc = 0, cap_s = 64, cap_c = 64;
     uint64_t dropped = 0;
     lpf_scope_sum *S = calloc(cap_s, sizeof(lpf_scope_sum));
@@ -2232,6 +2501,9 @@ static void lpf_report(void) {
             /* remove leanprof's own cost (see calibration) */
             double inner = lpf_inner_ticks(s), unit = lpf_unit_ticks();
             S[k].calls += s->calls;
+            /* the probes of its descendants, and its own whole pair (part of
+             * which lands in its caller) */
+            S[k].probes += (double)s->outer * (double)lpf_pair_fp[s->path] / 1024.0 + (double)s->desc_total * unit;
             S[k].total += lpf_clamp((double)s->total - (double)s->outer * inner - (double)s->desc_total * unit);
             S[k].self += lpf_clamp((double)s->self - (double)(s->calls + s->fwd) * inner - (double)s->kids * unit);
             S[k].sum += lpf_clamp((double)s->sum - (double)s->calls * inner - (double)s->desc_sum * unit);
