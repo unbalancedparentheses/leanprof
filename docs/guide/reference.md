@@ -16,10 +16,12 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--out F] EXE [-- ARGS]` | repeated runs into one summary |
 | `judge BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
 | `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
+| `html [-o F] [--trace F] [--profile F] [REPORT.json…]` | one self-contained HTML page: summary, flame graph, tables, source, comparison of two reports ([HTML report](html-report.md)) |
 | `doctor` | check the tools and project setup leanprof needs |
 
 Reports go to `.lake/leanprof/`: `report.json` (run and sample),
-`elab.json`, `measure.json`, and samply's profile `EXE.json`.
+`elab.json`, `measure.json`, samply's profile `EXE.json`, and the page of
+`leanprof html`, `report.html`.
 
 ## Environment variables
 
@@ -89,7 +91,8 @@ and objects:
 
 Sampled reports add `"sampled": true`; compile reports from `elab` have
 `"elab": true`, `"unit": "ns"` or `"heartbeats"`, per-line `elab_ns`,
-`kernel_ns`, `compile_ns`, `lint_ns`, `top` operations, and `repeated`.
+`kernel_ns`, `compile_ns`, `lint_ns`, `top` operations, `repeated`, and
+`kinds` (self cost per operation kind: `class`, `total`).
 
 ## GitHub Action and releases
 

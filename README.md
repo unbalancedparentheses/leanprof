@@ -51,6 +51,13 @@ buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
 | Regressions in CI, exactly for copies, calls and heartbeats; PR comments | `leanprof compare`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, for automated optimization loops | `leanprof measure`, `leanprof judge` |
 | All of the above next to the code | `#leanprof` |
+| All of the above in one shareable page | `leanprof html` |
+
+`leanprof html` turns the reports into one page you can open offline or
+share: a flame graph, sortable tables, source lines with the findings, and a
+base-versus-new comparison.
+
+![leanprof html: sampled flame graph of the example, with compile-time tiles](docs/images/html-report.png)
 
 In the editor, `#leanprof` shows the last reports as inlay hints:
 
@@ -121,7 +128,7 @@ Overhead from [`bench/`](bench/README.md) on an Apple M5 Max.
 - [Copies and allocations](docs/guide/copies-and-allocations.md), reuse and closures
 - [Memory, frees and `leanprof stat`](docs/guide/memory.md)
 - [Compile time](docs/guide/compile-time.md)
-- [In the editor](docs/guide/editor.md)
+- [In the editor](docs/guide/editor.md) and [HTML report](docs/guide/html-report.md)
 - [CI, regressions and autoresearch](docs/guide/ci-and-regressions.md)
 - [Lean API](docs/guide/lean-api.md) and [reference](docs/guide/reference.md) (commands, environment, JSON)
 - [How it works, and limits](docs/guide/how-it-works.md)

@@ -161,6 +161,25 @@ jobs:
           lake exe leanprof report-md --fail-on none base.json .lake/leanprof/elab.json | tee elab.md
           grep -q '| compile heartbeats |.*| ⚠️ worse (not enforced) |' elab.md
           if lake exe leanprof report-md --fail-on heartbeats base.json .lake/leanprof/elab.json > /dev/null; then echo "expected a regression"; exit 1; fi
+      - name: HTML report (leanprof html)
+        run: |
+          LEANPROF_QUIET=1 lake exe leanprof run --allocs --counters --frees --trace html-trace.json copybug -- 2000
+          lake exe leanprof elab --heartbeats Examples/CopyBug.lean
+          lake exe leanprof html --trace html-trace.json
+          # well-formed, self-contained, under 300 KiB, with the call tree and the source lines
+          python3 scripts/check-html.py .lake/leanprof/report.html --expect '"flame"' \
+            --expect '"n":"buildWithHistory"' --expect '"n":"fib"' \
+            --expect '"elab":true' --expect 'def buildWithHistory'
+          lake exe leanprof html -o diff.html small.json large.json
+          python3 scripts/check-html.py diff.html --expect '"role":"base"' --expect '"role":"new"' --expect buildWithHistory
+          cp .lake/leanprof/report.html leanprof-report.html
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: leanprof-html-report
+          path: |
+            leanprof-report.html
+            diff.html
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -168,6 +187,12 @@ jobs:
           lake exe leanprof sample --top 5 copybug -- 15000 | tee sample.txt
           grep -q "copying non-exclusive values" sample.txt
           grep -q "buildWithHistory  (Examples/CopyBug.lean:17)" sample.txt
+      - name: HTML report of the sampled run (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          lake exe leanprof html -o sample.html .lake/leanprof/report.json
+          python3 scripts/check-html.py sample.html --expect '"flame"' --expect lean_copy_expand_array \
+            --expect '"n":"buildWithHistory"' --expect 'def buildWithHistory'
 
   # leanprof used from outside on real projects that do not depend on it.
   # leanprover-community/repl, pinned to its v4.35.0 tag (the Lean version
