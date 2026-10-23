@@ -12,13 +12,14 @@
 Copies are what only leanprof sees. For the rest, it does what each
 alternative does, measured and in Lean's terms, from one command.
 
-- **Timing that tells the truth about itself.** About 11 ns per profiled
+- **Timing that tells the truth about itself.** About 8 ns per profiled
   scope, constant however long the program runs (LeanProfiler's cost per span
   grows with every recorded event, from 4.6 µs to 88 µs, and leanprof found
   why). It measures its own cost and removes it from the report, call counts
   are exact in every mode, and where its exact times are not reliable
-  (functions that run for nanoseconds) the [benchmark](bench/RESULTS.md) says
-  so and `leanprof sample` is as accurate as samply.
+  (functions that run for nanoseconds) the report marks the row and points
+  to `leanprof sample`, which is as accurate as samply
+  ([benchmark](bench/RESULTS.md)).
 - **Sampling that speaks Lean.** samply and perf show mangled C names like
   `lp_pkg_Foo_bar___lam__0`; `leanprof sample` shows `Foo.bar` with file:line,
   folds compiler-generated helpers into the function you wrote, and says where
@@ -170,7 +171,7 @@ Profiled from outside, without changing the projects:
 | | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler) | samply / perf |
 |---|---|---|---|---|
 | Run time | exact and sampled | manual spans | – | sampled |
-| Overhead while recording | 11 ns per `IO` scope, 21 ns per pure one, 15 ns per call with `--auto`; constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low |
+| Overhead while recording | about 8 ns per scope (pure, `IO` or `--auto`); constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low |
 | Works without changing the project | ✅ | – | ✅ | ✅ |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – |
@@ -186,13 +187,15 @@ Profiled from outside, without changing the projects:
 
 Measured against workloads with known answers ([results](bench/RESULTS.md)):
 call and copy counts are exact in every mode. For time, `leanprof sample` is
-as accurate as samply (within 0.1–1.7 percentage points of each function's
-true share) and adds Lean names, file:line and the runtime breakdown. The
-exact modes (`profile!`, `--auto`) report times that match the
-uninstrumented program when each scope does real work (0.98–1.06× on the
-allocation, copy and mixed workloads), but over-report functions that run
-for only a few nanoseconds (up to 5.5× for `fib`-sized calls): use them for
-counts, copies and causes, and `sample` for the time of tiny functions.
+as accurate as samply (within 0.1–1.9 percentage points of each function's
+true share, samply 0.5–2.9) and adds Lean names, file:line and the runtime
+breakdown. The exact modes (`profile!`, `--auto`) report times that match
+the uninstrumented program when each scope does real work (0.92–1.03× on
+the allocation, copy and mixed workloads). For functions that run for only
+a few nanoseconds, a call costs about as much as its probes, and their
+times can be off by half either way: the report marks those rows with `*`.
+Use the exact modes for counts, copies and causes, and `sample` for the
+time of tiny functions.
 
 ## Documentation
 
