@@ -346,6 +346,8 @@ jobs:
           # TSan's shadow memory needs fewer random bits in mmap addresses
           # than Ubuntu 24.04's kernel uses
           if [ "$SAN" = thread ]; then sudo sysctl -w vm.mmap_rnd_bits=28; fi
+          # races inside Lean's uninstrumented runtime (see the file)
+          echo "TSAN_OPTIONS=$TSAN_OPTIONS:suppressions=$PWD/scripts/tsan.supp" >> "$GITHUB_ENV"
       - name: Build tests and examples
         run: |
           lake build tests copybug tasks taskchains server corecopies stress

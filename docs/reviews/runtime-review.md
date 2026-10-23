@@ -43,7 +43,12 @@ not rebuilt, so:
   but not instrumented for it: its threads synchronize through the
   runtime's atomics (task completion, reference counts), which TSan cannot
   see. Instrumented, it reported a false race on a task's result, written
-  by the worker and read after `IO.wait`.
+  by the worker and read after `IO.wait`. On Linux TSan also intercepts
+  the runtime's own `memcpy`, `memmove` and `memset`; two workers' array
+  copies (`lean_copy_expand_array`) into memory mimalloc reused between
+  them were reported, a false race in the Lean heap. `scripts/tsan.supp`
+  suppresses races whose top frame is one of these three: leanprof shares
+  no memory through them.
 - **LeakSanitizer is off**: leanprof keeps its records until the exit
   report, and Lean's runtime does not free everything at exit.
 

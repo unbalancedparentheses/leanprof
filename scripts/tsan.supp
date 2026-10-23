@@ -1,0 +1,11 @@
+# ThreadSanitizer suppressions for leanprof's CI (TSAN_OPTIONS=suppressions=...).
+# Lean's runtime is precompiled and not instrumented, but its calls to libc's
+# memcpy, memmove and memset are intercepted. It hands Lean objects between
+# threads, and mimalloc reuses their memory across threads, through atomics
+# TSan cannot see, so its copies (lean_copy_expand_array into an array another
+# worker freed) look like races. leanprof's runtime shares no memory through
+# these functions: events and counters other threads read are written with
+# atomics, and grown stacks are copied before they are published.
+race_top:^memcpy$
+race_top:^memmove$
+race_top:^memset$
