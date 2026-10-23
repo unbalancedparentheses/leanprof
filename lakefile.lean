@@ -64,7 +64,12 @@ target leanprof_o pkg : FilePath := do
   let coverage ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "coverage.inc.c"))
   let explain ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "explain.inc.c"))
   let live ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "live.inc.c"))
-  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc"
+  -- LEANPROF_SANITIZE (CI, with LEAN_CC=scripts/leanprof-cc): the runtime
+  -- with the same sanitizers as the rest of the program, compiled by clang
+  let sanitize := (← IO.getEnv "LEANPROF_SANITIZE").getD ""
+  let (cc, sanArgs) := if sanitize.isEmpty then ("cc", #[]) else
+    ("clang", #[s!"-fsanitize={sanitize}", "-fno-omit-frame-pointer", "-g"])
+  buildO oFile srcJob weakArgs (#["-fPIC", "-O2", "-Wall"] ++ sanArgs) cc
     (return (((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain).mix live)
 
 extern_lib leanprof_c pkg := do
@@ -119,6 +124,13 @@ lean_exe taskchains where
 
 lean_exe corecopies where
   root := `Examples.CoreCopies
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags
+
+/-- Stress test of the runtime (CI): many threads and tasks, deep recursion,
+millions of scopes and copies, with exact counts checked at the end. -/
+lean_exe stress where
+  root := `Examples.Stress
   moreLeancArgs := copyFlags
   moreLinkArgs := linkFlags
 

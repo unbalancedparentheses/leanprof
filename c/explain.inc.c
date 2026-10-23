@@ -62,11 +62,14 @@ static size_t lpf_obj_cap(lean_object *o) {
 }
 
 static void lpf_why_write(void) {
-    if (!lpf_why_used) return;
+    if (!LP_LD(lpf_why_used)) return;
     const char *path = getenv("LEANPROF_WHY_JSON");
     if (path == NULL || !path[0]) path = ".lake/leanprof/why.json";
     FILE *f = fopen(path, "w");
-    if (f == NULL) return;
+    if (f == NULL) {
+        fprintf(stderr, "leanprof: cannot write %s\n", path);
+        return;
+    }
     fprintf(f, "{\"version\":1,\"unrecorded\":%llu,\"dropped\":%llu,\"shares\":[",
             (unsigned long long)lpf_why_unknown, (unsigned long long)lpf_why_dropped);
     int first = 1;
@@ -94,11 +97,12 @@ static void lpf_why_write(void) {
         fprintf(f, ",\"line\":%u,\"count\":%llu}", p->line, (unsigned long long)p->count);
     }
     fprintf(f, "]}\n");
-    fclose(f);
+    int bad = ferror(f);
+    if (fclose(f) != 0 || bad) fprintf(stderr, "leanprof: cannot write %s\n", path);
 }
 
 static void lpf_why_init(void) {
-    lpf_why_used = 1;
+    LP_ST(lpf_why_used, 1); /* read by every copy shim, on any thread */
     atexit(lpf_why_write);
 }
 
@@ -107,8 +111,11 @@ static void lpf_why_init(void) {
 LEAN_EXPORT void leanprof_note_share(lean_object *o, const char *fn, const char *file, unsigned line) {
     if (LEAN_UNLIKELY(lpf_shares == NULL)) {
         pthread_once(&lpf_why_once, lpf_why_init);
-        lpf_shares = calloc(LP_SHARE_SLOTS, sizeof(lpf_share));
-        if (lpf_shares == NULL) return;
+        /* kept with the thread's record, and reused with it (it was lost
+         * when the thread exited) */
+        lpf_thread *t = lpf_thread_get();
+        if (t->shares == NULL) t->shares = calloc(LP_SHARE_SLOTS, sizeof(lpf_share));
+        if ((lpf_shares = t->shares) == NULL) return;
     }
     lpf_share *s = &lpf_shares[((uintptr_t)o >> 4) & (LP_SHARE_SLOTS - 1)];
     s->obj = o;
@@ -168,7 +175,7 @@ LEAN_EXPORT lean_obj_res leanprof_string_utf8_set(lean_obj_arg s, b_lean_obj_arg
 
 /* `lpf_begin` with the share lookup; the copy shims below call this one. */
 static inline lpf_pending lpf_explain_begin(void *pc, lean_object *o, uint8_t kind, size_t bytes) {
-    if (LEAN_UNLIKELY(lpf_why_used) && lean_internal_get_rc(o) > 0) lpf_why_count(pc, o);
+    if (LEAN_UNLIKELY(LP_LD(lpf_why_used)) && lean_internal_get_rc(o) > 0) lpf_why_count(pc, o);
     return lpf_begin(pc, o, kind, bytes);
 }
 #define lpf_begin lpf_explain_begin

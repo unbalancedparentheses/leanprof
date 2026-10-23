@@ -27,6 +27,17 @@
 #define LP_DEPTH_MAX (1u << 22) /* deepest scope nesting we keep frames for */
 #define LP_SUB 16          /* histogram sub-buckets per power of two */
 #define LP_BUCKETS (64 * LP_SUB)
+#define LP_TRACE_LIMIT (1u << 28) /* events per thread at most (LEANPROF_TRACE_MAX): 8 GiB */
+
+/* Records other threads read while their owner runs (the live thread in
+ * live.inc.c, the queries below) are published with release stores, and
+ * their counters written with relaxed atomic stores: on every target the same
+ * plain store, but race-free, since only the owning thread writes them. */
+#define LP_LD(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
+#define LP_ST(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELAXED)
+#define LP_ADD(x, v) LP_ST(x, (x) + (v))
+#define LP_PUBLISH(slot, p) __atomic_store_n(&(slot), (p), __ATOMIC_RELEASE)
+#define LP_GET(slot) __atomic_load_n(&(slot), __ATOMIC_ACQUIRE)
 
 enum { LP_ARRAY, LP_SCALAR_ARRAY, LP_STRING, LP_KINDS, LP_WAIT = LP_KINDS, LP_ALLOC };
 enum { LP_SHARED, LP_MULTI_THREADED, LP_PERSISTENT, LP_REASONS };
@@ -67,9 +78,11 @@ typedef struct {
     /* allocations (LEANPROF_ALLOCS builds): made while this scope was the
      * innermost (self), and including children over outermost calls (total) */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
-    uint8_t parent_kind;       /* LP_TASK: kind of the spawning scope */
+    uint8_t parent_kind;       /* LP_TASK: kind of the spawning scope (set before it is published) */
     uint32_t active;           /* recursion depth, so totals count the outermost call */
-    uint32_t hist[LP_BUCKETS]; /* per call, overhead removed */
+    /* per call, overhead removed; 64-bit: a hot scope fills a 32-bit bucket
+     * in about a minute, and wrapped buckets gave percentiles of 0 */
+    uint64_t hist[LP_BUCKETS];
 } lpf_scope;
 
 typedef struct {
@@ -86,6 +99,7 @@ typedef struct {
     uint8_t traced;            /* its begin event was recorded */
     uint8_t path;              /* LP_PATH_* */
     uint8_t fwd;               /* not a call: forwarded within one declaration */
+    const void *label;         /* the innermost `profile!` label from this frame down, or NULL */
     uint64_t start;
     uint64_t child;            /* raw time in direct children */
     uint64_t kids, desc;       /* overhead of direct children and of all completed
@@ -121,12 +135,22 @@ typedef struct lpf_thread {
     lpf_event *events;
     size_t nevents, capevents;
     uint64_t events_dropped;
+    uint8_t task_parent_kind;  /* lpf_task_run: the spawning scope's kind, for the task's scope and begin event */
     uint32_t id;               /* registration order, the trace's tid */
+    /* The thread's records in the other parts (counters, memory, flight
+     * recorder, explain) are kept with these: when the thread exits, all of
+     * them go to the next new thread (lpf_thread_retire). */
+    struct lpf_ctr_thread *ctr;
+    struct lpf_mem_thread *mem;
+    struct lpf_flight_thread *flight;
+    void *shares;
+    struct lpf_thread *free_next;
     struct lpf_thread *next;
 } lpf_thread;
 
 static _Thread_local lpf_thread *lpf_self;
 static lpf_thread *lpf_threads;
+static lpf_thread *lpf_free_threads; /* records of exited threads (under lpf_lock) */
 static uint32_t lpf_nthreads;
 static int lpf_tracing;                /* LEANPROF_TRACE is set */
 static size_t lpf_trace_max = 1u << 20; /* events per thread, LEANPROF_TRACE_MAX */
@@ -146,6 +170,9 @@ static uint64_t lpf_inner_fp[LP_PATHS], lpf_pair_fp[LP_PATHS];
 static uint64_t lpf_w_pair[LP_PATHS] = {1024, 1024, 1024, 1024}, lpf_w_kid[LP_PATHS] = {512, 512, 512, 512};
 static int lpf_weighted; /* weights set by the first calibration */
 static int lpf_calibrated; /* first calibration started (atomic) */
+/* One calibration at a time (first use, queries, exit); the hot path and the
+ * live thread read the results with relaxed loads while it writes them. */
+static pthread_mutex_t lpf_cal_lock = PTHREAD_MUTEX_INITIALIZER;
 static void lpf_calibrate(void);
 
 static void lpf_label_name(const char *label, char *out, size_t cap);
@@ -187,7 +214,7 @@ static uint64_t lpf_bucket_low(uint32_t b) {
     return (uint64_t)(LP_SUB + sub) << (msb - 4);
 }
 
-static uint64_t lpf_percentile(const uint32_t *hist, uint64_t calls, double q) {
+static uint64_t lpf_percentile(const uint64_t *hist, uint64_t calls, double q) {
     uint64_t want = (uint64_t)(q * (double)calls), seen = 0;
     for (uint32_t b = 0; b < LP_BUCKETS; b++) {
         seen += hist[b];
@@ -198,20 +225,37 @@ static uint64_t lpf_percentile(const uint32_t *hist, uint64_t calls, double q) {
 
 /* ---------- per-thread state ---------- */
 
+static void lpf_thread_retire(void *p);
+static pthread_key_t lpf_key; /* its destructor runs lpf_thread_retire when a thread exits */
+static pthread_once_t lpf_key_once = PTHREAD_ONCE_INIT;
+static void lpf_key_init(void) { pthread_key_create(&lpf_key, lpf_thread_retire); }
+
 static lpf_thread *lpf_thread_get(void) {
     lpf_thread *t = lpf_self;
     if (LEAN_LIKELY(t != NULL)) return t;
-    t = calloc(1, sizeof(lpf_thread));
-    if (t == NULL) abort();
-    t->stack = calloc(LP_DEPTH, sizeof(lpf_frame));
-    if (t->stack == NULL) abort();
-    t->cap = LP_DEPTH;
+    /* An exited thread's records are reused. Kept per thread, they grew
+     * without bound with a new thread per dedicated task: about 1 MiB of
+     * tables each, and 8 MiB more with the flight recorder on. */
+    pthread_once(&lpf_key_once, lpf_key_init);
     pthread_mutex_lock(&lpf_lock);
-    t->id = lpf_nthreads++;
-    t->next = lpf_threads;
-    lpf_threads = t;
+    t = lpf_free_threads;
+    if (t != NULL) lpf_free_threads = t->free_next;
     pthread_mutex_unlock(&lpf_lock);
+    if (t == NULL) {
+        t = calloc(1, sizeof(lpf_thread));
+        if (t == NULL) abort();
+        t->stack = calloc(LP_DEPTH, sizeof(lpf_frame));
+        if (t->stack == NULL) abort();
+        t->cap = LP_DEPTH;
+        pthread_mutex_lock(&lpf_lock);
+        t->id = lpf_nthreads;
+        LP_ST(lpf_nthreads, t->id + 1);
+        t->next = lpf_threads;
+        LP_PUBLISH(lpf_threads, t); /* the live thread walks the list without the lock */
+        pthread_mutex_unlock(&lpf_lock);
+    }
     lpf_self = t;
+    pthread_setspecific(lpf_key, t);
     return t;
 }
 
@@ -321,9 +365,12 @@ static lpf_scope *lpf_scope_get(lpf_thread *t, const void *key, uint8_t kind, ui
                     if (c->decl == decl) { s = c; break; } /* another function of the same declaration */
                 }
             }
-            if (s == NULL) s = lpf_new_scope(key, kind, path);
+            if (s == NULL) {
+                s = lpf_new_scope(key, kind, path);
+                if (kind == LP_TASK) s->parent_kind = t->task_parent_kind;
+            }
             t->keys[i] = key;
-            t->scopes[i] = s;
+            LP_PUBLISH(t->scopes[i], s);
             t->nscopes++;
             return s;
         }
@@ -344,7 +391,7 @@ static lpf_copy *lpf_copy_get(lpf_thread *t, void *pc, const lean_object *site, 
             c->pc = pc;
             c->site = site;
             c->kind = kind;
-            t->copies[i] = c;
+            LP_PUBLISH(t->copies[i], c);
             t->ncopies++;
             return c;
         }
@@ -362,7 +409,8 @@ __attribute__((no_instrument_function)) static inline void lpf_enter(const void 
         !__atomic_exchange_n(&lpf_calibrated, 1, __ATOMIC_ACQ_REL))
         lpf_calibrate();
     lpf_thread *t = lpf_thread_get();
-    uint32_t d = t->depth++;
+    uint32_t d = t->depth;
+    LP_ST(t->depth, d + 1);
     if (LEAN_UNLIKELY(d >= t->cap) && (t->nogrow || !lpf_grow(t, d))) return;
     lpf_scope *s = lpf_scope_get(t, key, kind, path);
     lpf_frame *f = &t->stack[d];
@@ -370,13 +418,17 @@ __attribute__((no_instrument_function)) static inline void lpf_enter(const void 
      * (`f___boxed` -> `f`, `f` -> its lambda) continues the same call. */
     f->fwd = kind == LP_FN && s != NULL && d > 0 && t->stack[d - 1].scope == s && t->stack[d - 1].key != key;
     if (s != NULL) s->active++;
-    f->scope = s;
+    LP_ST(f->scope, s); /* scope and start: read by the live thread */
+    f->label = s != NULL && s->kind == LP_LABEL ? key : d > 0 ? t->stack[d - 1].label : NULL;
     f->key = key;
     f->path = path;
     f->child = f->kids = f->desc = 0;
     f->allocs = f->bytes = f->allocs_in = f->bytes_in = 0;
-    f->start = lpf_now();
-    f->traced = LEAN_UNLIKELY(lpf_tracing) && kind != LP_INTERNAL && lpf_trace(t, 'B', key, kind, f->start, 0);
+    uint64_t now = lpf_now();
+    LP_ST(f->start, now);
+    /* a task's begin event carries its spawning scope's kind from the start */
+    f->traced = LEAN_UNLIKELY(lpf_tracing) && kind != LP_INTERNAL &&
+                lpf_trace(t, 'B', key, kind == LP_TASK ? (uint8_t)(LP_TASK | t->task_parent_kind << 4) : kind, now, 0);
 }
 
 static inline uint64_t lpf_sub(uint64_t a, uint64_t b) { return a > b ? a - b : 0; }
@@ -387,7 +439,8 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
     uint64_t now = lpf_now();
     lpf_thread *t = lpf_self;
     if (t == NULL || t->depth == 0) return;
-    uint32_t d = --t->depth;
+    uint32_t d = t->depth - 1;
+    LP_ST(t->depth, d);
     if (LEAN_UNLIKELY(d >= t->cap)) return;
     lpf_frame *f = &t->stack[d];
     if (LEAN_UNLIKELY(f->traced)) lpf_trace(t, 'E', f->scope ? f->scope->key : NULL, 0, now, 0);
@@ -396,37 +449,38 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
     if (d > 0) {
         lpf_frame *p = &t->stack[d - 1];
         p->child += raw;
-        p->kids += lpf_w_kid[f->path];
-        p->desc += lpf_w_pair[f->path] + f->desc;
+        p->kids += LP_LD(lpf_w_kid[f->path]);
+        p->desc += LP_LD(lpf_w_pair[f->path]) + f->desc;
         p->allocs_in += f->allocs + f->allocs_in;
         p->bytes_in += f->bytes + f->bytes_in;
     }
     lpf_scope *s = f->scope;
     if (s == NULL) return;
     lpf_mem_on_exit(s, f->start, now);
-    s->self += raw - f->child;
-    s->kids += f->kids;
-    s->allocs_self += f->allocs;
-    s->bytes_self += f->bytes;
+    LP_ADD(s->self, raw - f->child);
+    LP_ADD(s->kids, f->kids);
+    LP_ADD(s->allocs_self, f->allocs);
+    LP_ADD(s->bytes_self, f->bytes);
     if (--s->active == 0) {
-        s->total += raw;
-        s->desc_total += f->desc;
-        s->outer++;
-        s->allocs_total += f->allocs + f->allocs_in;
-        s->bytes_total += f->bytes + f->bytes_in;
+        LP_ADD(s->total, raw);
+        LP_ADD(s->desc_total, f->desc);
+        LP_ADD(s->outer, 1);
+        LP_ADD(s->allocs_total, f->allocs + f->allocs_in);
+        LP_ADD(s->bytes_total, f->bytes + f->bytes_in);
     }
     if (f->fwd) {
-        s->fwd++;
+        LP_ADD(s->fwd, 1);
         return;
     }
-    s->calls++;
-    s->sum += raw;
-    s->desc_sum += f->desc;
+    LP_ADD(s->calls, 1);
+    LP_ADD(s->sum, raw);
+    LP_ADD(s->desc_sum, f->desc);
     /* per-call view for min/max/percentiles: clamped, so only approximate */
-    uint64_t elapsed = lpf_sub(raw, ((lpf_inner_fp[f->path] << 10) + f->desc * lpf_pair_fp[LP_PATH_DIRECT]) >> 20);
+    uint64_t elapsed =
+        lpf_sub(raw, ((LP_LD(lpf_inner_fp[f->path]) << 10) + f->desc * LP_LD(lpf_pair_fp[LP_PATH_DIRECT])) >> 20);
     if (elapsed < s->min) s->min = elapsed;
-    if (elapsed > s->max) s->max = elapsed;
-    s->hist[lpf_bucket(elapsed)]++;
+    if (elapsed > s->max) LP_ST(s->max, elapsed);
+    LP_ADD(s->hist[lpf_bucket(elapsed)], 1);
 }
 
 /* `profile!` on a pure term: time `f ()`. `kind` is LP_INTERNAL when
@@ -532,8 +586,20 @@ static void lpf_calibrate(void) {
     const char *off = getenv("LEANPROF_NO_CALIBRATION");
     if (off != NULL && strcmp(off, "1") == 0) return;
     enum { BATCH = 2048, BATCHES = 48 };
+    pthread_mutex_lock(&lpf_cal_lock);
     lpf_thread *t = lpf_thread_get();
     uint32_t depth = t->depth;
+    /* A query inside an open scope: calibration's frames must not count as
+     * that scope's children (they took its time and overhead units). */
+    lpf_frame *up = depth > 0 && depth <= t->cap ? &t->stack[depth - 1] : NULL;
+    uint64_t up_child = 0, up_kids = 0, up_desc = 0, up_allocs = 0, up_bytes = 0;
+    if (up != NULL) {
+        up_child = up->child;
+        up_kids = up->kids;
+        up_desc = up->desc;
+        up_allocs = up->allocs_in;
+        up_bytes = up->bytes_in;
+    }
     uint64_t best_pair[LP_PATHS], best_inner[LP_PATHS];
     uint64_t warm_until = lpf_now() + (uint64_t)(3e6 / lpf_ns_per_tick()); /* ~3 ms */
     lpf_enter(&lpf_calibration_key[0], LP_INTERNAL, LP_PATH_DIRECT); /* outer frame: sees the full pair cost */
@@ -556,20 +622,29 @@ static void lpf_calibrate(void) {
         if (best_inner[p] > best_pair[p]) best_inner[p] = best_pair[p];
     }
     lpf_exit();
-    t->depth = depth;
+    LP_ST(t->depth, depth);
+    if (up != NULL) { /* the stack may have grown: the frame is in the current buffer */
+        up = &t->stack[depth - 1];
+        up->child = up_child;
+        up->kids = up_kids;
+        up->desc = up_desc;
+        up->allocs_in = up_allocs;
+        up->bytes_in = up_bytes;
+    }
     for (int p = 0; p < LP_PATHS; p++)
         if (lpf_pair_fp[p] == 0 || best_pair[p] < lpf_pair_fp[p]) {
-            lpf_pair_fp[p] = best_pair[p];
-            lpf_inner_fp[p] = best_inner[p];
+            LP_ST(lpf_pair_fp[p], best_pair[p]);
+            LP_ST(lpf_inner_fp[p], best_inner[p]);
         }
     if (!lpf_weighted && lpf_pair_fp[LP_PATH_DIRECT] > 0) {
         uint64_t base = lpf_pair_fp[LP_PATH_DIRECT];
         for (int p = 0; p < LP_PATHS; p++) {
-            lpf_w_pair[p] = (lpf_pair_fp[p] << 10) / base;
-            lpf_w_kid[p] = ((lpf_pair_fp[p] - lpf_inner_fp[p]) << 10) / base;
+            LP_ST(lpf_w_pair[p], (lpf_pair_fp[p] << 10) / base);
+            LP_ST(lpf_w_kid[p], ((lpf_pair_fp[p] - lpf_inner_fp[p]) << 10) / base);
         }
         lpf_weighted = 1;
     }
+    pthread_mutex_unlock(&lpf_cal_lock);
 }
 
 
@@ -579,9 +654,9 @@ static int lpf_main_path(void) {
     uint64_t calls[LP_PATHS] = {0};
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
         for (size_t i = 0; i < LP_TABLE; i++) {
-            lpf_scope *s = t->scopes[i];
+            lpf_scope *s = LP_GET(t->scopes[i]);
             if (s != NULL && t->keys[i] == s->key && s->kind != LP_INTERNAL && s->kind != LP_TASK)
-                calls[s->path] += s->calls;
+                calls[s->path] += LP_LD(s->calls);
         }
     int best = LP_PATH_SCOPE;
     for (int p = 0; p < LP_PATHS; p++)
@@ -589,7 +664,7 @@ static int lpf_main_path(void) {
     return best;
 }
 
-static double lpf_overhead_of(int path) { return (double)lpf_pair_fp[path] / 1024.0 * lpf_ns_per_tick(); }
+static double lpf_overhead_of(int path) { return (double)LP_LD(lpf_pair_fp[path]) / 1024.0 * lpf_ns_per_tick(); }
 
 /* Queries refine the estimate (they are not on a hot path). */
 LEAN_EXPORT double leanprof_overhead_ns(void) {
@@ -638,6 +713,14 @@ typedef struct {
     uint64_t start;
 } lpf_pending;
 
+/* The innermost `profile!` scope's label (automatic-mode frames skipped),
+ * kept in each frame: looking for it down the stack made every copy and
+ * allocation cost the depth, quadratic in deep recursion under --auto. */
+static inline const lean_object *lpf_site(const lpf_thread *t) {
+    uint32_t d = t->depth < t->cap ? t->depth : t->cap;
+    return d > 0 ? (const lean_object *)t->stack[d - 1].label : NULL;
+}
+
 static inline lpf_pending lpf_begin(void *pc, lean_object *o, uint8_t kind, size_t bytes) {
     lpf_pending p = {pc, kind, (uint8_t)lpf_reason(o), bytes, 0};
     p.start = lpf_now();
@@ -647,19 +730,13 @@ static inline lpf_pending lpf_begin(void *pc, lean_object *o, uint8_t kind, size
 static inline void lpf_end(const lpf_pending *p) {
     uint64_t elapsed = lpf_now() - p->start;
     lpf_thread *t = lpf_thread_get();
-    const lean_object *site = NULL;
-    uint32_t d = t->depth;
-    /* the innermost `profile!` scope; automatic-mode frames are skipped */
-    for (uint32_t k = d < t->cap ? d : t->cap; k > 0; k--) {
-        lpf_scope *sc = t->stack[k - 1].scope;
-        if (sc != NULL && sc->kind == LP_LABEL) { site = (const lean_object *)sc->key; break; }
-    }
+    const lean_object *site = lpf_site(t);
     if (LEAN_UNLIKELY(lpf_tracing)) lpf_trace(t, 'C', p->pc, p->kind, p->start, p->bytes);
     lpf_copy *c = lpf_copy_get(t, p->pc, site, p->kind);
     if (c == NULL) return;
-    c->count[p->reason]++;
-    c->bytes += p->bytes;
-    c->ticks += elapsed;
+    LP_ADD(c->count[p->reason], 1);
+    LP_ADD(c->bytes, p->bytes);
+    LP_ADD(c->ticks, elapsed);
 }
 
 static inline size_t lpf_sarray_bytes(lean_object *a) {
@@ -759,15 +836,16 @@ static lean_obj_res lpf_task_run(lean_obj_arg ctx, lean_obj_arg arg) {
     uint8_t parent_kind = lean_ctor_get_uint8(ctx, sizeof(void *) + 16);
     lean_dec(ctx);
     lpf_thread *t = lpf_thread_get();
+    /* known before the scope and its begin event exist: patching them after
+     * lpf_enter raced with the live and flight readers that see both */
+    t->task_parent_kind = parent_kind;
     lpf_enter(parent, LP_TASK, LP_PATH_DIRECT);
     uint32_t d = t->depth;
     if (d > 0 && d <= t->cap && t->stack[d - 1].scope != NULL) {
         lpf_scope *s = t->stack[d - 1].scope;
-        s->parent_kind = parent_kind;
-        if (t->stack[d - 1].traced) t->events[t->nevents - 1].kind = (uint8_t)(LP_TASK | (parent_kind << 4));
         uint64_t w = now > spawned ? now - spawned : 0;
-        s->wait += w;
-        if (w > s->wait_max) s->wait_max = w;
+        LP_ADD(s->wait, w);
+        if (w > s->wait_max) LP_ST(s->wait_max, w);
     }
     lean_object *r = lean_apply_1(orig, arg);
     lpf_exit();
@@ -810,8 +888,8 @@ static void lpf_record_wait(void *pc, uint64_t start) {
     const lean_object *site = kind == LP_LABEL ? (const lean_object *)key : NULL;
     lpf_copy *c = lpf_copy_get(t, pc, site, LP_WAIT);
     if (c == NULL) return;
-    c->count[0]++;
-    c->ticks += elapsed;
+    LP_ADD(c->count[0], 1);
+    LP_ADD(c->ticks, elapsed);
 }
 
 LEAN_EXPORT lean_object *leanprof_io_wait(lean_object *task) {
@@ -842,15 +920,10 @@ static inline void lpf_alloc(void *pc, size_t sz) {
         t->stack[d - 1].allocs++;
         t->stack[d - 1].bytes += sz;
     }
-    const lean_object *site = NULL;
-    for (uint32_t k = d < t->cap ? d : t->cap; k > 0; k--) {
-        lpf_scope *sc = t->stack[k - 1].scope;
-        if (sc != NULL && sc->kind == LP_LABEL) { site = (const lean_object *)sc->key; break; }
-    }
-    lpf_copy *c = lpf_copy_get(t, pc, site, LP_ALLOC);
+    lpf_copy *c = lpf_copy_get(t, pc, lpf_site(t), LP_ALLOC);
     if (c == NULL) return;
-    c->count[0]++;
-    c->bytes += sz;
+    LP_ADD(c->count[0], 1);
+    LP_ADD(c->bytes, sz);
 }
 
 #if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 35)
@@ -1221,6 +1294,9 @@ static const char *lpf_proj_path(const char *rel, char *out, size_t cap) {
  * package name has escapes (`lean-compiler-backend` is `lean_x2dcompiler_x2dbackend`). */
 static char lpf_pkgs[64][256];
 static int lpf_npkgs = -1;
+/* Read once, by whichever thread names a symbol first: the live thread, a
+ * `demangle` or `whereIs` query, the report. */
+static pthread_once_t lpf_pkgs_once = PTHREAD_ONCE_INIT;
 
 /* String.Internal.mangle: a package name is mangled as one string, so a '.'
  * in it is an escape, not a separator. */
@@ -1253,7 +1329,7 @@ static void lpf_load_pkgs(void) {
 }
 
 static const char *lpf_skip_package(const char *s) {
-    if (lpf_npkgs < 0) lpf_load_pkgs();
+    pthread_once(&lpf_pkgs_once, lpf_load_pkgs);
     /* the longest known package: `foo__bar` before `foo` */
     size_t best = 0;
     for (int i = 0; i < lpf_npkgs; i++) {
@@ -1449,6 +1525,10 @@ static void lpf_find_root_pkg(void) {
  * program other than this one (`leanprof sample`). */
 static char **lpf_symbols;
 static size_t lpf_nsymbols;
+/* The declaration index (lpf_where) is built on first use and rebuilt after
+ * leanprof_set_symbols: one thread at a time (the live thread and a `whereIs`
+ * query could both build it, reallocating the same array). */
+static pthread_mutex_t lpf_where_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int lpf_cmp_str(const void *a, const void *b) {
     return strcmp(*(char *const *)a, *(char *const *)b);
@@ -1463,11 +1543,17 @@ LEAN_EXPORT lean_obj_res leanprof_set_symbols(b_lean_obj_arg names) {
     size_t n = lean_array_size(names);
     char **v = calloc(n ? n : 1, sizeof(char *));
     if (v == NULL) return lean_box(0);
-    for (size_t i = 0; i < n; i++) v[i] = strdup(lean_string_cstr(lean_array_get_core(names, i)));
+    for (size_t i = 0; i < n; i++)
+        if ((v[i] = strdup(lean_string_cstr(lean_array_get_core(names, i)))) == NULL) {
+            n = i; /* out of memory: the names so far (qsort must not see a NULL) */
+            break;
+        }
     qsort(v, n, sizeof(char *), lpf_cmp_str);
+    pthread_mutex_lock(&lpf_where_lock);
     lpf_symbols = v;
     lpf_nsymbols = n;
     lpf_indexed = 0; /* re-index against these symbols */
+    pthread_mutex_unlock(&lpf_where_lock);
     return lean_box(0);
 }
 
@@ -1584,6 +1670,7 @@ static void lpf_index_dir(const char *dir, const char *prefix, const char *pkg, 
 
 /* file:line of a reported function name, or "" when unknown. */
 static const char *lpf_where(const char *fn, char *out, size_t cap) {
+    pthread_mutex_lock(&lpf_where_lock);
     if (!lpf_indexed) {
         lpf_indexed = 1;
         const char *dir = getenv("LEANPROF_ILEAN_DIR");
@@ -1591,7 +1678,7 @@ static const char *lpf_where(const char *fn, char *out, size_t cap) {
             lpf_index_dir(dir, "", NULL, 0);
         } else {
             /* this package, then each dependency Lake checked out */
-            lpf_find_root_pkg();
+            pthread_once(&lpf_pkgs_once, lpf_load_pkgs); /* finds the root package */
             char path[1024], prefix[1024];
             lpf_index_dir(lpf_proj_path(".lake/build/lib/lean", path, sizeof path), "", lpf_root_pkg, 0);
             DIR *d = opendir(lpf_proj_path(".lake/packages", path, sizeof path));
@@ -1617,6 +1704,7 @@ static const char *lpf_where(const char *fn, char *out, size_t cap) {
             break;
         }
     }
+    pthread_mutex_unlock(&lpf_where_lock);
     return out;
 }
 
@@ -1636,9 +1724,11 @@ LEAN_EXPORT lean_obj_res leanprof_copies(void) {
     uint64_t n = 0;
     pthread_mutex_lock(&lpf_lock);
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
-        for (size_t i = 0; i < LP_TABLE; i++)
-            if (t->copies[i] != NULL && t->copies[i]->kind < LP_KINDS) /* not waits or allocations */
-                n += t->copies[i]->count[LP_SHARED] + t->copies[i]->count[LP_MULTI_THREADED];
+        for (size_t i = 0; i < LP_TABLE; i++) {
+            lpf_copy *c = LP_GET(t->copies[i]); /* other threads may be adding records */
+            if (c != NULL && c->kind < LP_KINDS) /* not waits or allocations */
+                n += LP_LD(c->count[LP_SHARED]) + LP_LD(c->count[LP_MULTI_THREADED]);
+        }
     pthread_mutex_unlock(&lpf_lock);
     return lean_uint64_to_nat(n);
 }
@@ -1651,9 +1741,10 @@ LEAN_EXPORT lean_obj_res leanprof_calls(b_lean_obj_arg site) {
     pthread_mutex_lock(&lpf_lock);
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
         for (size_t i = 0; i < LP_TABLE; i++) {
-            if (t->scopes[i] == NULL || t->scopes[i]->kind != LP_LABEL) continue;
-            lpf_label_name(lean_string_cstr((lean_object *)t->scopes[i]->key), name, sizeof name);
-            if (strcmp(name, want) == 0) n += t->scopes[i]->calls;
+            lpf_scope *sc = LP_GET(t->scopes[i]);
+            if (sc == NULL || sc->kind != LP_LABEL) continue;
+            lpf_label_name(lean_string_cstr((lean_object *)sc->key), name, sizeof name);
+            if (strcmp(name, want) == 0) n += LP_LD(sc->calls);
         }
     pthread_mutex_unlock(&lpf_lock);
     return lean_uint64_to_nat(n);
@@ -1661,8 +1752,8 @@ LEAN_EXPORT lean_obj_res leanprof_calls(b_lean_obj_arg site) {
 
 /* What a scope measures of its own bookkeeping per call, and what one unit
  * of the overhead weights in `kids`/`desc_*` is, in ticks. */
-static double lpf_inner_ticks(const lpf_scope *s) { return (double)lpf_inner_fp[s->path] / 1024.0; }
-static double lpf_unit_ticks(void) { return (double)lpf_pair_fp[LP_PATH_DIRECT] / (1024.0 * 1024.0); }
+static double lpf_inner_ticks(const lpf_scope *s) { return (double)LP_LD(lpf_inner_fp[s->path]) / 1024.0; }
+static double lpf_unit_ticks(void) { return (double)LP_LD(lpf_pair_fp[LP_PATH_DIRECT]) / (1024.0 * 1024.0); }
 
 /* Total time of scopes named `site` (outermost calls, overhead removed), in
  * ns, on all threads. */
@@ -1675,11 +1766,12 @@ LEAN_EXPORT double leanprof_total_ns(b_lean_obj_arg site) {
     pthread_mutex_lock(&lpf_lock);
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
         for (size_t i = 0; i < LP_TABLE; i++) {
-            lpf_scope *sc = t->scopes[i];
+            lpf_scope *sc = LP_GET(t->scopes[i]);
             if (sc == NULL || sc->kind != LP_LABEL) continue;
             lpf_label_name(lean_string_cstr((lean_object *)sc->key), name, sizeof name);
             if (strcmp(name, want) == 0)
-                ticks += (double)sc->total - (double)sc->outer * lpf_inner_ticks(sc) - (double)sc->desc_total * lpf_unit_ticks();
+                ticks += (double)LP_LD(sc->total) - (double)LP_LD(sc->outer) * lpf_inner_ticks(sc) -
+                         (double)LP_LD(sc->desc_total) * lpf_unit_ticks();
         }
     pthread_mutex_unlock(&lpf_lock);
     return ticks > 0 ? ticks * lpf_ns_per_tick() : 0;
@@ -1690,8 +1782,10 @@ LEAN_EXPORT lean_obj_res leanprof_allocs(void) {
     uint64_t n = 0;
     pthread_mutex_lock(&lpf_lock);
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
-        for (size_t i = 0; i < LP_TABLE; i++)
-            if (t->copies[i] != NULL && t->copies[i]->kind == LP_ALLOC) n += t->copies[i]->count[0];
+        for (size_t i = 0; i < LP_TABLE; i++) {
+            lpf_copy *c = LP_GET(t->copies[i]);
+            if (c != NULL && c->kind == LP_ALLOC) n += LP_LD(c->count[0]);
+        }
     pthread_mutex_unlock(&lpf_lock);
     return lean_uint64_to_nat(n);
 }
@@ -1740,7 +1834,7 @@ typedef struct {
     uint64_t wait, wait_max;   /* tasks: spawn to start */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
     uint64_t calls, total, self, sum, min, max;
-    uint32_t hist[LP_BUCKETS];
+    uint64_t hist[LP_BUCKETS];
 } lpf_scope_sum;
 
 typedef struct {
@@ -2132,7 +2226,8 @@ static void lpf_write_trace(const char *path, double tick) {
     }
     lpf_mem_trace(f, tick, &first);
     fprintf(f, "]}\n");
-    fclose(f);
+    int bad = ferror(f);
+    if (fclose(f) != 0 || bad) fprintf(stderr, "leanprof: cannot write %s\n", path);
     if (cname != NULL)
         for (size_t i = 0; i < NCACHE; i++) free(cname[i]);
     free(cname);
@@ -2160,7 +2255,11 @@ static void lpf_report(void) {
     uint64_t dropped = 0;
     lpf_scope_sum *S = calloc(cap_s, sizeof(lpf_scope_sum));
     lpf_copy_sum *C = calloc(cap_c, sizeof(lpf_copy_sum));
-    if (S == NULL || C == NULL) return;
+    if (S == NULL || C == NULL) {
+        free(S);
+        free(C);
+        return;
+    }
 
     pthread_mutex_lock(&lpf_lock);
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next) {
@@ -2197,9 +2296,12 @@ static void lpf_report(void) {
             while (k < ns && strcmp(S[k].label, label) != 0) k++;
             if (k == ns) {
                 if (ns == cap_s) {
+                    /* out of memory: unlock, and free what was built (returning
+                     * with lpf_lock held deadlocked any later query) */
+                    lpf_scope_sum *S2 = realloc(S, 2 * cap_s * sizeof(lpf_scope_sum));
+                    if (S2 == NULL) goto fail;
+                    S = S2;
                     cap_s *= 2;
-                    S = realloc(S, cap_s * sizeof(lpf_scope_sum));
-                    if (S == NULL) return;
                 }
                 memset(&S[k], 0, sizeof(lpf_scope_sum));
                 S[k].is_fn = s->kind == LP_FN;
@@ -2216,7 +2318,7 @@ static void lpf_report(void) {
                     lpf_label_name(label, S[k].name, sizeof S[k].name);
                     snprintf(S[k].where, sizeof S[k].where, "%s", lpf_label_pos(label));
                 }
-                if (S[k].label == NULL) return;
+                if (S[k].label == NULL) goto fail;
                 S[k].min = UINT64_MAX;
                 ns++;
             }
@@ -2248,9 +2350,10 @@ static void lpf_report(void) {
                 k++;
             if (k == nc) {
                 if (nc == cap_c) {
+                    lpf_copy_sum *C2 = realloc(C, 2 * cap_c * sizeof(lpf_copy_sum));
+                    if (C2 == NULL) goto fail;
+                    C = C2;
                     cap_c *= 2;
-                    C = realloc(C, cap_c * sizeof(lpf_copy_sum));
-                    if (C == NULL) return;
                 }
                 memset(&C[k], 0, sizeof(lpf_copy_sum));
                 snprintf(C[k].fn, sizeof C[k].fn, "%s", fn);
@@ -2288,13 +2391,41 @@ static void lpf_report(void) {
             fprintf(stderr, "leanprof: cannot write %s\n", path);
         } else {
             lpf_write_json(f, S, ns, C, nc, tick, wall, dropped);
-            fclose(f);
+            int bad = ferror(f);
+            if (fclose(f) != 0 || bad) fprintf(stderr, "leanprof: cannot write %s\n", path);
         }
     }
+done:
     for (size_t k = 0; k < ns; k++)
         if (S[k].is_fn || S[k].is_task) free((void *)S[k].label);
     free(S);
     free(C);
+    return;
+fail:
+    pthread_mutex_unlock(&lpf_lock);
+    fprintf(stderr, "leanprof: out of memory for the report\n");
+    goto done;
+}
+
+/* A thread exits (lpf_key's destructor): close the scopes it left open and
+ * hand all its records to the next new thread (lpf_thread_get). They keep
+ * their contents, which the report and the live view merge by name anyway,
+ * and their id, so one timeline row can show several threads one after
+ * another. Instrumented code running later on the exiting thread (another
+ * key's destructor) gets a record again, and gives it back the same way. */
+static void lpf_thread_retire(void *p) {
+    lpf_thread *t = p;
+    lpf_self = t; /* thread-local storage may already be torn down, and come back zeroed */
+    while (t->depth > 0) lpf_exit();
+    lpf_self = NULL;
+    lpf_ctr_self = NULL;
+    lpf_mem_self = NULL;
+    lpf_flight_self = NULL;
+    lpf_shares = NULL;
+    pthread_mutex_lock(&lpf_lock);
+    t->free_next = lpf_free_threads;
+    lpf_free_threads = t;
+    pthread_mutex_unlock(&lpf_lock);
 }
 
 __attribute__((constructor)) static void lpf_init(void) {
@@ -2303,7 +2434,9 @@ __attribute__((constructor)) static void lpf_init(void) {
     const char *max = getenv("LEANPROF_TRACE_MAX");
     if (max != NULL) {
         size_t n = 0;
-        for (const char *q = max; *q >= '0' && *q <= '9'; q++) n = n * 10 + (size_t)(*q - '0');
+        /* capped: a huge value wrapped `n * sizeof(lpf_event)` to a tiny buffer */
+        for (const char *q = max; *q >= '0' && *q <= '9' && n <= LP_TRACE_LIMIT; q++) n = n * 10 + (size_t)(*q - '0');
+        if (n > LP_TRACE_LIMIT) n = LP_TRACE_LIMIT;
         if (n > 2 * LP_DEPTH) lpf_trace_max = n;
     }
     lpf_start = lpf_now();

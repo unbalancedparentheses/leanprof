@@ -36,6 +36,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   categories.
 - The report's JSON has `probe_ns`, the probes' calibrated cost in the wall
   time.
+- A `sanitizers` job: tests, examples, the server with live snapshots and
+  the flight recorder, `run --allocs --counters --frees`, `explain --why`
+  and the stress test, built with ASan and UBSan and with TSan on Linux
+  (`LEANPROF_SANITIZE` with `scripts/leanprof-cc`), and plain on Linux and
+  macOS.
+- `Examples/Stress.lean` and `scripts/stress.sh`: many threads and tasks,
+  deep recursion, millions of scopes and copies, snapshots every 10 ms and
+  flight dumps under load, with exact counts.
 
 ### Fixed
 
@@ -93,6 +101,50 @@ Found on real projects (see the case studies):
   before the call: 9.5 MiB for a parser of ten characters).
 - The scope table was printed with a header and no rows when the only
   scopes were tasks.
+
+Found hardening the runtime (sanitizers, a review by Codex, a stress test;
+see [the review](docs/reviews/runtime-review.md)):
+
+- Data races ThreadSanitizer found between the program's threads and the
+  live snapshot thread: thread registration, new scope and copy records
+  published with plain stores, counters, open frames and the calibration
+  results. Records are now published with release stores and counters
+  written with relaxed atomic stores (the same instructions), and one
+  calibration runs at a time.
+- A task's scope got its spawning scope's kind, and its begin event its
+  kind, after both were visible to the live and flight readers; the
+  flight recorder copied and compacted events with plain `memcpy` under its
+  sequence count. Both are now race-free, and dumps no longer drop the
+  newest event of a thread to work around the first.
+- Threads that exit (one per dedicated task) kept their tables for good,
+  and their flight buffer (8 MiB each): memory grew with every such task.
+  An exited thread's records are now reused by the next new thread (83 to
+  27 records, 1.0 to 0.47 GB in the stress test).
+- Under `--auto`, each copy and allocation looked down the whole scope
+  stack for the innermost `profile!` label: quadratic in deep recursion
+  (80,000 levels that allocate took 4.5 s, now 6 ms). The label is kept in
+  each frame.
+- Histogram buckets were 32-bit: a hot scope fills one in about a minute,
+  and its percentiles then read 0. They are 64-bit.
+- Memory was sampled every millisecond for as long as the program ran (24
+  bytes each, up to 400 MB); after the first minute samples are spread over
+  the run so far (about 13 MB in a day).
+- A huge `LEANPROF_TRACE_MAX` wrapped the flight buffer's size and wrote
+  past it; it is capped at 2^28 events.
+- A query (`totalNs`, `overheadNs`) inside an open scope charged that
+  scope with the calibration it ran.
+- Error paths: the report returned with its lock held when out of memory;
+  a live snapshot without memory for its rows replaced the last good one
+  with broken JSON; the report, timeline, `explain` data and flight marker
+  ignored write errors; if the live thread could not start, the flight
+  recorder stayed on with nothing to dump it.
+- SIGUSR1 requests could be lost between the background thread's test and
+  clear, and one arriving just before exit was dropped.
+- The counters' table had no fill limit (a full table scanned every slot
+  per call), and a thread still running at exit could make the counter
+  report write past its array.
+- The project's package names were read on the live thread while a
+  program thread could read them too; they are read at startup.
 
 ## [0.1.0] - 2026-10-23
 

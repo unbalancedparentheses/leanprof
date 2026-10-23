@@ -301,6 +301,103 @@ jobs:
           python3 scripts/check-html.py sample.html --expect '"flame"' --expect lean_copy_expand_array \
             --expect '"n":"buildWithHistory"' --expect 'def buildWithHistory'
 
+  # The runtime under sanitizers, and the stress test (Examples/Stress.lean,
+  # scripts/stress.sh: many threads and tasks, deep recursion, millions of
+  # scopes and copies, live snapshots every 10 ms and flight dumps under
+  # load, exact counts). `sanitize` builds through scripts/leanprof-cc with
+  # LEANPROF_SANITIZE; Lean's runtime and libraries are precompiled and stay
+  # uninstrumented, so ASan sees leanprof's memory and the emitted code's,
+  # not the Lean heap's, and TSan sees races inside leanprof's runtime only
+  # (the emitted C is not instrumented for it: it synchronizes through the
+  # runtime's atomics, which TSan cannot see).
+  sanitizers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, sanitize: none}
+          - {os: macos-15, sanitize: none}
+          - {os: ubuntu-24.04, sanitize: 'address,undefined'}
+          - {os: ubuntu-24.04, sanitize: thread}
+    name: sanitizers (${{ matrix.sanitize }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      SAN: ${{ matrix.sanitize }}
+      # LeakSanitizer off: leanprof keeps its records for the exit report, and
+      # Lean's runtime does not free everything at exit. use_sigaltstack=0:
+      # Lean installs its own alternate signal stack, which ASan would unmap.
+      ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:use_sigaltstack=0
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+      LEANPROF_QUIET: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          if [ "$SAN" != none ]; then
+            echo "LEANPROF_SANITIZE=$SAN" >> "$GITHUB_ENV"
+            echo "LEAN_CC=$PWD/scripts/leanprof-cc" >> "$GITHUB_ENV"
+          fi
+          # TSan's shadow memory needs fewer random bits in mmap addresses
+          # than Ubuntu 24.04's kernel uses
+          if [ "$SAN" = thread ]; then sudo sysctl -w vm.mmap_rnd_bits=28; fi
+      - name: Build tests and examples
+        run: |
+          lake build tests copybug tasks taskchains server corecopies stress
+          if [ "$SAN" != none ]; then nm .lake/build/bin/copybug | grep -Eq '__(asan|tsan)_'; fi
+      - name: Tests
+        run: .lake/build/bin/tests
+      - name: Examples
+        run: |
+          LEANPROF_JSON=copybug.json .lake/build/bin/copybug 2000
+          grep -q '"shared":1999' copybug.json
+          LEANPROF_JSON=tasks.json .lake/build/bin/tasks
+          grep -q '"spawned_by":"pureTasks","tasks":16' tasks.json
+          LEANPROF_JSON=chains.json .lake/build/bin/taskchains 20000
+          grep -q '"spawned_by":"bound","tasks":24' chains.json
+          .lake/build/bin/corecopies 1000
+      - name: Server with live snapshots and the flight recorder
+        run: |
+          rm -rf fl && mkdir fl
+          LEANPROF_LIVE=live.json LEANPROF_LIVE_MS=10 LEANPROF_FLIGHT=fl LEANPROF_SLOW_MS=200 \
+            LEANPROF_FLIGHT_SECS=2 .lake/build/bin/server 40 10 &
+          pid=$!
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 0.5
+            if [ -e "${TMPDIR:-/tmp}/leanprof-$pid.flight" ]; then kill -USR1 $pid || true; fi
+          done
+          wait $pid
+          python3 - <<'PY'
+          import glob, json, sys
+          d = json.load(open('live.json'))
+          s = {x['name']: x['calls'] for x in d['scopes']}
+          triggers = [json.load(open(f))['otherData']['trigger'] for f in glob.glob('fl/*.trace.json')]
+          print(s, triggers)
+          sys.exit(0 if d['exited'] and s.get('handle') == 40 and 'SIGUSR1' in triggers
+                   and any('slowPath' in t for t in triggers) else 1)
+          PY
+      - name: Stress
+        run: |
+          # TSan is slower: a smaller run (rounds, tasks, scopes, depth)
+          if [ "$SAN" = thread ]; then args="4 16 20000 5000"; else args=""; fi
+          sh scripts/stress.sh .lake/leanprof/stress $args
+      - name: leanprof run --allocs --counters --frees, explain --why, and --auto --allocs under stress
+        run: |
+          lake exe leanprof run --allocs --counters --frees --json all.json copybug -- 2000
+          python3 -c "import json,sys; d=json.load(open('all.json')); sys.exit(0 if d['frees']['objects'] >= 2000 and sum(r['checks'] for r in d['reuse']) >= 2000 else 1)"
+          lake exe leanprof explain --why copybug -- 2000 | tee why.txt
+          grep -q "1999×" why.txt
+          # deep recursion that allocates at every level, with every function
+          # timed: quadratic before the innermost label was kept per frame
+          if [ "$SAN" = thread ]; then args="1 8 10000 20000"; else args="2 16 20000 100000"; fi
+          lake exe leanprof run --auto --allocs --json auto.json stress -- $args
+          python3 -c "import json,sys; d=json.load(open('auto.json')); s={x['name']: x['calls'] for x in d['scopes']}; print(s.get('pairs'), s.get('stress.deep')); sys.exit(0 if s.get('pairs', 0) > 0 and d['dropped'] == 0 else 1)"
+
   # bench/run.py --quick: every tool configuration on every workload; fails
   # unless leanprof's call and copy counts are exact and its reported totals
   # are within the stated tolerance of the plain program's time.
