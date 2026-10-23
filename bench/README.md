@@ -11,11 +11,17 @@ python3 bench/run.py                    # full: 7 runs, ~8 min on an M5 Max; wri
 python3 bench/run.py --quick --check    # CI: 30% inputs, 3 runs, ~4 min, exits 1 on a failed check
 python3 bench/run.py --lcb DIR          # also the real program (a lean-compiler-backend checkout; or LCB_DIR)
 python3 bench/run.py --before OLD.json  # adds a before/after table against an earlier results file
+python3 bench/run.py --from-json results.json --also "CI Linux=linux.json" --also "CI macOS=mac.json"
+                                        # no run: rewrites RESULTS.md with other machines side by side
 ```
 
 Options: `--reps N`, `--scale PCT`, `--workloads tiny,rec`, `--configs
 plain,profile,auto`, `--no-build`, `--noisy` (says in RESULTS.md that the
-machine was shared), `--md`/`--json` (output paths). It needs `lake` (elan)
+machine was shared), `--label NAME` and `--note TEXT` (how this run is named
+and described in the across-machines tables), `--also [LABEL=]FILE.json`
+(another run's results, shown side by side; a `machine.txt` next to it, as a
+dedicated-server runner writes, becomes its note), `--from-json FILE`
+(render only), `--md`/`--json` (output paths). It needs `lake` (elan)
 and `python3`; `sample` and `samply` need [samply](https://github.com/mstange/samply)
 and are skipped, with the reason in RESULTS.md, when it cannot record (on
 Linux it needs `kernel.perf_event_paranoid` ≤ 1; CI lowers it with `sudo
@@ -41,6 +47,27 @@ allocations.
 | `alloc` | lists of structures (2 allocations per element) and complete trees (one per node) |
 | `copy` | an array pushed while an old version is kept (one hidden copy per push) against the same pushes in place |
 | `tasks` | the same work split over 2, 4 and 8 dedicated threads, a tiny scope per step; truth is the sum of the tasks' own durations |
+
+The same file also has three **real programs**, not loops built to be
+measured, each in three phases:
+
+| workload | phases | exact counts known by construction |
+|---|---|---|
+| `interp` | `phLex` (a byte-level lexer), `phParse` (recursive descent), `phEval` (a tree-walking interpreter run 20 times) of a generated program in a small language (`v7 = (v3 * 12) - v5;`) | the generator counts the tokens, atoms, operators and parenthesized groups it writes: `lexToken` = tokens + 1, `parseExpr` = statements + groups, `parseAtom` = atoms + groups, `evalExpr` = (atoms + operators) × rounds |
+| `sortmap` | `phSort` (heap sort, twice, of an array the caller keeps), `phCount` (key counts in a `Std.HashMap`), `phLookup` | one hidden copy per sort (the first swap, in `siftDown`, of an array the caller still holds); `bump` = keys, `lookupOne` = queries |
+| `csv` | `phSplit` (`splitOn` lines and fields, `toNat!`), `phAggregate` (totals per key in a `Std.HashMap String`), `phFormat` (a report built by `String` appends, 40 times) | `parseRow` = `addRow` = lines; `fmtLine` = distinct keys (counted by a separate pass over the generator's sequence) × 40 |
+
+Their time ground truth does not come from the run being compared: `wl
+WORKLOAD SCALE PHASE` builds the phase's input untimed, times that phase
+alone, and stops, so each phase is measured in its own process, with no
+profiler and no other phase timed. The suite runs every phase that way once
+per round, interleaved with everything else, and the truth is the median.
+RESULTS.md also prints the plain build's in-run phase times over the
+isolated ones, which shows how much phases disturb each other (caches, the
+allocator, freeing what the previous phase left). `lookupOne` is inlined by
+the C compiler into its caller, so `run --auto` (which instruments after
+inlining) has no hooks for it: its count is checked in the `profile!` modes
+only.
 
 The program is built three times from the same file: plain (the baseline,
 also what `run --auto`, `sample` and samply run), with `profile!` around
@@ -166,7 +193,24 @@ In that round's before/after table counts went from wrong to exact; for tiny pur
 
 ### CI
 
-The `bench` job runs `python3 bench/run.py --quick --check` on Linux and
+**Full runs.** `.github/workflows/bench-full.yml` (manual, and weekly on
+Mondays) runs the full suite (9 runs at full scale) on `ubuntu-24.04` and
+`macos-15`, with `--check` and the CI tolerance band, writes RESULTS.md to
+the job summary and uploads `bench-results.json`/`.md`. GitHub's runners are
+shared virtual machines, so each result records the runner's CPU model and
+core count, the load average at the start, during (min, median, max over the
+rounds) and at the end, and on Linux the CPU steal time; every number is a
+median with its range. Download the artifacts and render them next to this
+machine's run with `--from-json results.json --also "CI Linux=..." --also
+"CI macOS=..."`.
+
+**Dedicated server.** The lead's runner for bare-metal Linux servers
+(governor `performance`, boost off, pinned cores) lives in the user's
+dotfiles (`servers/leanprof-bench-run.sh`, host setup
+`services/leanprof-bench.sh`); its `results.json` + `machine.txt` go in with
+`--also`.
+
+**Quick check.** The `bench` job runs `python3 bench/run.py --quick --check` on Linux and
 macOS and uploads the results. `--check` fails unless, in every leanprof
 mode, call counts (and copy counts) are exact on every workload, and the
 reported total is within 0.75–1.35 of the plain program's time where every

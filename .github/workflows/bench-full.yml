@@ -1,0 +1,73 @@
+name: Benchmark (full)
+# The full accuracy and overhead suite (bench/run.py, 9 runs at full scale),
+# not the quick one the CI workflow runs on every push. GitHub's runners are
+# shared virtual machines: each run records the runner's CPU model, cores,
+# load average during the run and (Linux) CPU steal time, and every number
+# comes with its range over the runs. Results are artifacts and the job
+# summary; bench/RESULTS.md shows them next to other machines with
+# `python3 bench/run.py --from-json ... --also LABEL=results.json`.
+on:
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: runs of each workload and configuration
+        default: "9"
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays 04:17 UTC
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            label: CI Linux
+          - os: macos-15
+            label: CI macOS
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install samply
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install samply
+          else
+            echo "kernel.perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid)"
+            sudo sysctl -w kernel.perf_event_paranoid=1 || echo "cannot lower perf_event_paranoid"
+            curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mstange/samply/releases/download/samply-v0.13.1/samply-installer.sh | sh || echo "samply not installed"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Runner
+        run: |
+          uname -a
+          if [ "$RUNNER_OS" = macOS ]; then
+            sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize vm.loadavg
+          else
+            lscpu | head -20; nproc; cat /proc/loadavg; free -m
+          fi
+      - name: Full suite
+        # counts are checked strictly; totals get the CI band (shared VMs)
+        run: |
+          python3 bench/run.py --reps "${{ inputs.reps || '9' }}" --label "${{ matrix.label }}" \
+            --note "GitHub-hosted ${{ matrix.os }} runner (a shared virtual machine)" \
+            --check --tolerance 0.7,1.6 --md bench-results.md --json bench-results.json
+      - name: Job summary
+        if: always()
+        run: cat bench-results.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-full-${{ matrix.os }}
+          path: bench-results.*
