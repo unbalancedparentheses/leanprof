@@ -43,6 +43,28 @@ def simpDiag : String := "[simp] Diagnostics
 
 def near (x y : Float) : Bool := (x - y).abs < 1e-9
 
+/-- A trace of `4 * n` operations in one message, as one declaration's trace
+can be: `isDefEq` checks whose descriptions need JSON escapes (quotes,
+backslashes, tabs, control characters), unfolds, and steps with long
+descriptions that are never reported. -/
+def bigTrace (n : Nat) : String := Id.run do
+  let long := String.ofList (List.replicate 300 'x')
+  let mut s := "[Elab.command] [90000000] ✅️ def big : String := \"q\\\\\""
+  for i in [0:n] do
+    s := s ++ s!"\n  [Meta.isDefEq] [{100 + i % 7}] ✅️ f{i % 50} ?m.{i} \"x\"\t=?= g «α» \\ \x01 y"
+    s := s ++ s!"\n    [Meta.isDefEq.delta.unfoldLeft] Foo.f{i % 13}"
+    s := s ++ s!"\n    [Meta.isDefEq] [{40 + i % 3}] ✅️ a =?= b"
+    s := s ++ s!"\n  [Elab.app] [20] ✅️ {long}"
+  return s
+
+/-- What the report is made of, to compare two accumulators. -/
+def summary (a : Acc) : String :=
+  let sorted (xs : Array String) := (xs.qsort (· < ·)).toList
+  toString (a.grand, sorted (a.byClass.toArray.map fun (k, x) => s!"{k} {x}"),
+    sorted (a.ops.toArray.map fun ((c, t), o) => s!"{c} {t} {o.count} {o.total} {o.maxOne} {o.firstAt}"),
+    sorted (a.consts.toArray.map fun (k, c) => s!"{k} {c.kind} {c.cost} {c.count} {c.sites.size} {sorted (c.diag.toArray.map toString)}"),
+    sorted (a.lines.toArray.map fun (k, c) => s!"{k} {c.total} {c.elaboration} {c.name} {c.top} {c.consts.size}"))
+
 def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat IO Unit := do
   let nodes := parseTrace sample
   check "elab: untimed unfold and simp lines are part of the tree"
@@ -91,5 +113,38 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   check "elab: digit groups" (groupDigits 10000 == "10,000" && groupDigits 1234567 == "1,234,567" && groupDigits 999 == "999") ""
   check "elab: leading constants" (leadingConst "@instFoo to X" == some "instFoo" && leadingConst "inst✝ to X" == none &&
     leadingConst "?m.1 x" == none && leadingConst "Size α" == some "Size") ""
+  -- Lean's `--json` output with a multi-megabyte message (one line), a diagnostics
+  -- message, an error, a line that is not JSON and a last message without a newline:
+  -- read as it streams in, the report is the one from parsing each line whole
+  let big := bigTrace 20000
+  let msgs : Array Lean.Json := #[
+    Lean.Json.mkObj [("data", .str big), ("pos", Lean.Json.mkObj [("line", (3 : Nat)), ("column", (0 : Nat))]),
+      ("severity", "information")],
+    Lean.Json.mkObj [("data", .str diag), ("pos", Lean.Json.mkObj [("line", (9 : Nat)), ("column", (0 : Nat))]),
+      ("severity", "information")],
+    Lean.Json.mkObj [("data", .str "unknown identifier 'x'"), ("severity", "error")],
+    msg "[Elab.command] [7] ✅️ def c := 1" 30]
+  let lines := msgs.map (·.compress)
+  let out := "\n".intercalate (lines.toList.take 3) ++ "\nnot json {\"data\":\"x\n" ++ lines[3]!
+  let whole := lines.foldl (fun a l => match Lean.Json.parse l with
+    | .ok m => a.addMessage "F.lean" 1 m
+    | .error _ => a) ({} : Acc)
+  for chunk in [7, 1048576] do
+    let buf ← IO.mkRef ({ data := out.toUTF8 } : IO.FS.Stream.Buffer)
+    let acc ← IO.mkRef ({} : Acc)
+    let errors ← IO.mkRef 0
+    let kept ← IO.mkRef 0  -- bytes of descriptions kept from the big message
+    readMessages (IO.FS.Stream.ofBuffer buf) (chunk := chunk) fun m p => do
+      if str m "severity" == "error" then errors.modify (· + 1)
+      if let .trace nodes := p then
+        if nodes.size > 1000 then kept.set (nodes.foldl (· + ·.text.utf8ByteSize) 0)
+      acc.modify (·.addParsed "F.lean" 1 m p)
+    let a ← acc.get
+    check s!"elab: a {big.utf8ByteSize / 1000000} MB message read as it streams in ({chunk}-byte reads) gives the same report"
+      (summary a == summary whole && (← errors.get) == 1 && near a.grand (90000000 + 7) &&
+        (a.consts.get? "Foo.bar").any (·.diag.contains "unfolds"))
+      s!"grand={a.grand} errors={← errors.get}"
+    check s!"elab: descriptions that are never reported are not kept ({chunk}-byte reads)"
+      ((← kept.get) * 4 < big.utf8ByteSize) s!"kept={← kept.get} of {big.utf8ByteSize}"
 
 end Tests.Elab

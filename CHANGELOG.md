@@ -71,10 +71,14 @@ Found on real projects (see the case studies):
   instead of the trace's pretty-printed command (which can be `failed to
   pretty print term`), and the header says what a kHB is.
 - `leanprof elab` read each of Lean's messages whole and then parsed it:
-  concrete's `Check.lean` prints a 2.4 GB trace in one message, and
-  leanprof needed 15.5 GB. Messages are now decoded a line at a time as they
-  arrive, only reported texts are kept, and the table of operations is
-  bounded: 167 MB for the same report.
+  concrete's `Check.lean` prints its whole trace (1.3 to 2.4 GB, depending
+  on the Lean version) in one message, and leanprof needed 7.5 to 15.5 GB.
+  Messages are now decoded a line at a time as they arrive, and only the
+  descriptions the report reads are kept (the command's, repeated
+  operations', tactics' and those naming a constant): 57 MB for the same
+  report, single files and `--project` alike. (This was first fixed in the
+  elab code that the definitions, tactics and `--project` rewrite replaced,
+  and lost with it.)
 - Building with probes printed a report from every `lean` process that
   loaded an instrumented precompiled module (doc-gen4's dependencies); the
   build now runs with reports off and without the user's `LEANPROF_JSON`
