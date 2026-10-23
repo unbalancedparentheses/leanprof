@@ -58,6 +58,28 @@ allocation; `Parser.peek`, which should not need to allocate, allocates
 910,550 times. Both are cheap to fix and would also cut the time spent
 freeing objects (9% of CPU in the sampled profile).
 
+### The fix
+
+The loop state was the cause: `tokenize` was a `for c in source` loop with
+seven `let mut` variables, which compiled to a `WellFounded.opaqueFix₃` loop
+allocating seven constructor cells per input byte. The tokenizer now scans
+bytes with its state in arguments, reads them in place with `getUTF8Byte` and
+extracts each token once
+([commit 4864dd2](https://github.com/unbalancedparentheses/lean-compiler-backend/commit/4864dd2), on `main`):
+
+| | before | after |
+|---|---|---|
+| tokenizer allocations | 4,066,775 (88.8 MiB) | 692,597 (37.3 MiB) |
+| whole run | 11,946,202 (266.6 MiB) | 8,572,024 (215.1 MiB), −28% |
+| output | | byte-identical on all 160 input/target/option combinations |
+
+The first version of the fix was 30 times slower. `leanprof run` showed why
+in one run: `tokenize.go` copied the token array 91,020 times (6.84 GiB) on
+`crc32` alone, because a `let flush := … tokens.push …` written above the
+branches was evaluated while `tokens` was still used by other branches. Moving
+the push into the branches that use it removed every copy. The project's CI
+(three runners, proofs and native checks) passed before the merge.
+
 ## Compile time (`leanprof elab --heartbeats`)
 
 Six large or proof-heavy files: 296M heartbeats in total (2 min 38 s).

@@ -86,7 +86,7 @@ The [getting started guide](docs/guide/getting-started.md) walks through it.
 - **[lean-compiler-backend](docs/case-studies/lean-compiler-backend.md)**, a
   QBE-compatible compiler written in Lean. Its tokenizer made a third of the
   11.9 million allocations needed to compile zlib, seven per input byte. The
-  fix cut the whole run's allocations by 28% with byte-identical output. While
+  fix, now on its `main`, cut the whole run's allocations by 28% with byte-identical output. While
   writing that fix, leanprof caught a 6.8 GiB copy the first attempt had
   introduced. `leanprof explain` traced its 121,054 copies in `CFG.build` to
   arrays pushed while still held by an outer array, and printed the fix
