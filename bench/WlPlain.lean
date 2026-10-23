@@ -38,9 +38,9 @@ namespace W
 /-! ## rec: deep and wide recursion -/
 
 /-- Non-tail recursion `n` deep, a little work per level. -/
-@[noinline] def deepRec : Nat → UInt64 → UInt64
-  | 0, x => x
-  | n + 1, x => scope! "deepRec" (spin 8 (deepRec n x) + 1)
+@[noinline] def deepRec (n : Nat) (x : UInt64) : UInt64 := scope! "deepRec" (match n with
+  | 0 => x
+  | n + 1 => spin 8 (deepRec n x) + 1)
 
 @[noinline] def phDeep100 (total : Nat) : UInt64 := scope! "phDeep100" (repeatU (total / 100) (deepRec 100))
 @[noinline] def phDeep1k (total : Nat) : UInt64 := scope! "phDeep1k" (repeatU (total / 1000) (deepRec 1000))
@@ -200,7 +200,7 @@ def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
     let c ← timePhase "phDeep10k" W.phDeep10k total
     let d ← timePhase "phFib" W.phFib fn
     emit w scale [a, b, c, d] [("phDeep100", 1), ("phDeep1k", 1), ("phDeep10k", 1), ("phFib", 1),
-      ("deepRec", 3 * total), ("fib", W.fibCalls fn)]
+      ("deepRec", 3 * total + total / 100 + total / 1000 + total / 10000), ("fib", W.fibCalls fn)]
   | "mix" =>
     let m := sc 80000
     let a ← timePhase "phHot" W.phHot m

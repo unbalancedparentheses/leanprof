@@ -159,6 +159,46 @@ jobs:
           grep -q "copying non-exclusive values" sample.txt
           grep -q "buildWithHistory  (Examples/CopyBug.lean:17)" sample.txt
 
+  # bench/run.py --quick: every tool configuration on every workload; fails
+  # unless leanprof's call and copy counts are exact and its reported totals
+  # are within the stated tolerance of the plain program's time.
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install samply
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install samply
+          else
+            # samply needs perf events; the suite skips it (and says so) if they stay unavailable
+            echo "kernel.perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid)"
+            sudo sysctl -w kernel.perf_event_paranoid=1 || echo "cannot lower perf_event_paranoid"
+            curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mstange/samply/releases/download/samply-v0.13.1/samply-installer.sh | sh || echo "samply not installed"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Benchmark and accuracy suite (quick)
+        run: python3 bench/run.py --quick --check --md bench-results.md --json bench-results.json
+      - name: Results
+        if: always()
+        run: cat bench-results.md || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results-${{ matrix.os }}
+          path: bench-results.*
+
   # leanprof used from outside on real projects that do not depend on it.
   # leanprover-community/repl, pinned to its v4.35.0 tag (the Lean version
   # leanprof is built with): an executable that depends only on Lean core

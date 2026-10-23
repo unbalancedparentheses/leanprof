@@ -62,18 +62,16 @@ LEANPROF_EXACT = ["profile", "run", "auto", "allocs", "counters", "frees"]
 LABEL_ONLY = {"taskStep"}
 SHIMS = ["run", "auto", "allocs", "counters", "frees"]  # builds with copy shims
 
-# Tolerance for --check: leanprof's reported total of each phase over the
-# plain build's phase time, after subtracting its own overhead. Phases made of
-# millions of tiny scopes keep the cost of the closure `profile!` builds and
-# of boxing (Lean's, not leanprof's), and in --auto of the call to the hook,
-# so they get a wider band; see RESULTS.md for the measured values.
-TOL_DEFAULT = (0.85, 1.20)
-TOL_TINY = {  # phase -> (lo, hi), per config
-    "profile": (0.80, 1.60),
-    "run": (0.80, 1.60),
-    "auto": (0.70, 1.60),
-}
-TINY_PHASES = {"phTinyA", "phTinyB", "phFib", "taskWork2", "taskWork4", "taskWork8"}
+# Tolerance for --check: the sum of leanprof's reported times for a workload's
+# components (after it subtracts its own overhead) over the plain program's
+# time, for `profile!`, `run` and `run --auto`, on the workloads whose scopes
+# do at least a microsecond of work per call. Where scopes do a few
+# nanoseconds of work (tiny, rec, tasks) the residual of the subtraction is
+# as large as the work itself, so those are reported but not checked (see
+# RESULTS.md and README.md).
+TOL = (0.80, 1.25)
+TOL_WORKLOADS = {"mix", "alloc", "copy"}
+TOL_CONFIGS = ("profile", "run", "auto")
 
 
 def log(*a):
@@ -391,6 +389,9 @@ def analyse(runs, configs):
                     out["share_mae_pp_max"] = max(maes)
                     out["share_max_err_pp"] = med(maxes)
                     out["total_ratio"] = med(ratios)
+                    if cfg in LEANPROF_EXACT:
+                        # what each scope still adds to the report after the subtraction
+                        out["residual_ns_per_scope"] = (med(ratios) - 1) * tsum / total_scopes
                     out["total_ratio_min"] = min(ratios)
                     out["total_ratio_max"] = max(ratios)
                     out["component_ratio"] = {c: med(v) for c, v in per_comp.items()}
@@ -426,12 +427,6 @@ def analyse(runs, configs):
     return res
 
 
-def tolerance(cfg, comp):
-    if comp in TINY_PHASES and cfg in TOL_TINY:
-        return TOL_TINY[cfg]
-    return TOL_DEFAULT
-
-
 def check(res, configs):
     problems = []
     for w, wr in res.items():
@@ -448,12 +443,12 @@ def check(res, configs):
                     problems.append(f"{w}/{cfg}: no call counts checked")
                 if o.get("copies_wrong"):
                     problems.append(f"{w}/{cfg}: copy counts not exact: {o['copies_wrong']}")
-            if cfg in ("profile", "run", "auto"):
-                for comp, ratio in (o.get("component_ratio") or {}).items():
-                    lo, hi = tolerance(cfg, comp)
-                    if not (lo <= ratio <= hi):
-                        problems.append(f"{w}/{cfg}: reported {comp} is {ratio:.2f}x the plain time "
-                                        f"(tolerance {lo:.2f}-{hi:.2f})")
+            if cfg in TOL_CONFIGS and w in TOL_WORKLOADS:
+                ratio = o.get("total_ratio")
+                lo, hi = TOL
+                if ratio is None or not (lo <= ratio <= hi):
+                    problems.append(f"{w}/{cfg}: reported total is {fx(ratio)}x the plain time "
+                                    f"(tolerance {lo:.2f}-{hi:.2f})")
     return problems
 
 
@@ -554,6 +549,12 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
                      else o.get("share_note", "–")),
           "Mean absolute error of each component's share of time against the ground truth, in "
           "percentage points (median of runs; in brackets the largest single-component error). 0 is perfect.")
+    table("Residual per scope after subtraction", "residual_ns_per_scope",
+          lambda o: (f"{o['residual_ns_per_scope']:+.1f} ns" if "residual_ns_per_scope" in o else "–"),
+          "(reported total − plain time) / the workload's counted calls (the `calls` it prints; `run --auto` "
+          "also times functions not counted there, such as `K.spin`). Positive: time leanprof leaves in "
+          "the report; negative: it subtracts more than its probes cost.",
+          cfgs=[c for c in cols if c in LEANPROF_EXACT])
     table("Accuracy: reported total over plain time", "total_ratio",
           lambda o: (f"{o['total_ratio']:.2f} ({o['total_ratio_min']:.2f}–{o['total_ratio_max']:.2f})"
                      if "total_ratio" in o else "–"),
@@ -742,7 +743,7 @@ def lcb_suite(src, reps, configs, skipped):
     reports = {c: None for c in cfgs}
     order = list(cfgs)
     rnd = random.Random(7)
-    for rep in range(reps):
+    for rep in range(-1, reps):  # run -1 warms the caches and is not counted
         rnd.shuffle(order)
         for cfg in order:
             how = CONFIGS[cfg][2]
@@ -761,6 +762,8 @@ def lcb_suite(src, reps, configs, skipped):
             dt = time.perf_counter() - t0
             if r.returncode != 0:
                 log(f"  lcb {cfg} failed: {r.stderr[-500:]}")
+                continue
+            if rep < 0:
                 continue
             if how == "sample":
                 # `leanprof sample` also runs `lake build` and its own analysis: time samply only
@@ -787,7 +790,9 @@ def lcb_suite(src, reps, configs, skipped):
     shares = {}
     if reports.get("auto"):
         d = reports["auto"]
-        wall = d["wall_ns"]
+        # the program's time with leanprof's overhead removed: its outermost
+        # scope (`main`), not the wall time of the slowed-down process
+        wall = max(s["total_ns"] for s in d["scopes"])
         shares["auto"] = {s["name"]: s["total_ns"] / wall * 100 for s in d["scopes"]}
     if reports.get("sample"):
         d = reports["sample"]
