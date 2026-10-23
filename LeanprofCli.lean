@@ -195,7 +195,10 @@ def coreLibDir (allocs : Bool) : IO FilePath := do
     let dst := dir / s!"lib{lib}.a"
     unless (← src.pathExists) && !(← dst.pathExists) do continue
     let tmp := dir / s!"lib{lib}.a.tmp"
-    let out ← IO.Process.output { cmd := objcopy, args := args ++ #[src.toString, tmp.toString] }
+    -- `lake exe` puts the toolchain's lib on the loader path, and its libLLVM
+    -- is not the one a Homebrew or Debian llvm-objcopy was built against
+    let env := #["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "LD_LIBRARY_PATH"].map (·, none)
+    let out ← IO.Process.output { cmd := objcopy, args := args ++ #[src.toString, tmp.toString], env }
     if out.exitCode != 0 then
       throw <| IO.userError s!"{objcopy} failed on {src}:\n{out.stderr}"
     IO.FS.rename tmp dst
