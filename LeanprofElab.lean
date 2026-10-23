@@ -60,9 +60,14 @@ structure TNode where
   cls : String
   amount : Float           -- seconds or heartbeats, inclusive; 0 for an untimed message
   timed : Bool := true
-  text : String            -- first line of the operation's description
+  /-- The operation's description (its first line, then more up to 160
+  characters); kept only where it is read (`keepsText`). -/
+  text : String
   depth : Nat
-  children : Array Nat := #[]
+  childSum : Float := 0    -- amounts of its direct children
+  /-- The index after its subtree: its children are `i + 1`, then each
+  child's `next`, up to this. -/
+  next : Nat := 0
   parent : Option Nat := none
   deriving Inhabited
 
@@ -105,30 +110,72 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
       | _ => none
     return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat), String.ofList text)
 
-/-- Parse one message's trace into nodes (index 0 is the root). -/
-def parseTrace (data : String) : Array TNode := Id.run do
-  let mut nodes : Array TNode := #[]
-  let mut stack : Array Nat := #[]  -- open nodes by indentation
-  for line in data.splitOn "\n" do
-    match traceLine line with
-    | some (indent, cls, amount, text) =>
-      -- an untimed message before any timed root is not part of a tree
-      if nodes.isEmpty && amount.isNone then continue
-      while !stack.isEmpty && nodes[stack.back!]!.depth >= indent do
-        stack := stack.pop
-      let parent := stack.back?
-      let i := nodes.size
-      nodes := nodes.push { cls, amount := amount.getD 0, timed := amount.isSome, text, depth := indent, parent }
-      if let some p := parent then
-        nodes := nodes.modify p fun n => { n with children := n.children.push i }
-      stack := stack.push i
-    | none =>
-      -- continuation of a multi-line description: part of the operation
-      if let some last := stack.back? then
+/-- Classes whose repeated identical operations are worth reporting. -/
+def repeatable (cls : String) : Bool :=
+  cls == "Meta.synthInstance" || cls == "Meta.isDefEq" || cls == "Meta.whnf" ||
+    cls == "Meta.isDefEq.delta" || cls == "Elab.step" || cls.startsWith "Meta.Tactic" || cls == "Tactic.simp"
+
+/-- Whether a node's description is ever read: those of repeated operations and
+tactics (`repeatable`) and of nodes that name a constant (`attributedConst`),
+besides the root's. The others are dropped as the trace is read: one
+declaration's trace can be gigabytes. -/
+def keepsText (cls : String) : Bool :=
+  repeatable cls || unfoldClasses.contains cls || cls == "Meta.synthInstance.apply"
+
+/-- A trace being read a line at a time: its nodes so far (index 0 is the
+root), the open ones by indentation, and one copy of each class name, shared
+by its nodes. -/
+structure TraceBuilder where
+  nodes : Array TNode := #[]
+  stack : Array Nat := #[]
+  classes : Std.HashMap String String := {}
+
+/-- One line of a trace: a new node, or more of the last one's description. -/
+def TraceBuilder.addLine (b : TraceBuilder) (line : String) : TraceBuilder := Id.run do
+  let ⟨nodes, stack, classes⟩ := b
+  let mut nodes := nodes
+  let mut stack := stack
+  let mut classes := classes
+  match traceLine line with
+  | some (indent, cls, amount, text) =>
+    -- an untimed message before any timed root is not part of a tree
+    if nodes.isEmpty && amount.isNone then return ⟨nodes, stack, classes⟩
+    let i := nodes.size
+    while !stack.isEmpty && nodes[stack.back!]!.depth >= indent do
+      nodes := nodes.modify stack.back! fun n => { n with next := i }
+      stack := stack.pop
+    let parent := stack.back?
+    let cls ← match classes.get? cls with
+      | some c => pure c
+      | none => do classes := classes.insert cls cls; pure cls
+    let text := if i == 0 || keepsText cls then text else ""
+    let x := amount.getD 0
+    nodes := nodes.push { cls, amount := x, timed := amount.isSome, text, depth := indent, parent }
+    if let some p := parent then
+      nodes := nodes.modify p fun n => { n with childSum := n.childSum + x }
+    stack := stack.push i
+  | none =>
+    -- continuation of a multi-line description: part of the operation
+    if let some last := stack.back? then
+      let n := nodes[last]!
+      if (last == 0 || keepsText n.cls) && n.text.length < 160 then
         let t := String.ofList (line.toList.dropWhile (· == ' '))
-        if !t.isEmpty && nodes[last]!.text.length < 160 then
+        if !t.isEmpty then
           nodes := nodes.modify last fun n => { n with text := n.text ++ " " ++ t }
+  return ⟨nodes, stack, classes⟩
+
+/-- The nodes of a trace read to its end (every subtree closed). -/
+def TraceBuilder.finish (b : TraceBuilder) : Array TNode := Id.run do
+  let ⟨nodes, stack, _⟩ := b
+  let mut nodes := nodes
+  let n := nodes.size
+  for i in stack do
+    nodes := nodes.modify i fun x => { x with next := n }
   return nodes
+
+/-- Parse one message's trace into nodes (index 0 is the root). -/
+def parseTrace (data : String) : Array TNode :=
+  ((data.splitOn "\n").foldl TraceBuilder.addLine {}).finish
 
 /-- Merge operations that differ only in metavariable numbers (`?m.123`). -/
 def normalizeOp (t : String) : String := Id.run do
@@ -150,11 +197,6 @@ def normalizeOp (t : String) : String := Id.run do
       cs := rest
     | [] => break
   return String.ofList (out.take 120)
-
-/-- Classes whose repeated identical operations are worth reporting. -/
-def repeatable (cls : String) : Bool :=
-  cls == "Meta.synthInstance" || cls == "Meta.isDefEq" || cls == "Meta.whnf" ||
-    cls == "Meta.isDefEq.delta" || cls == "Elab.step" || cls.startsWith "Meta.Tactic" || cls == "Tactic.simp"
 
 /-- A constant's name at the start of `s` (`Foo.bar`, `«odd name».x`,
 `_private.M.0.f`), or none when `s` starts with notation, a variable with a
@@ -210,11 +252,13 @@ partial def attributions (nodes : Array TNode) : Array (String × String × Opti
     -- cost. An unfold whose comparison was too cheap to record (under the threshold) has
     -- moved up to an ancestor: it is counted, at no cost. A simp rewrite is charged the
     -- unification just before it.
-    let kids := n.children
     let mut pending : Float := 0                   -- unification since the last simp step
     let mut unfolded : Option String := none       -- an unfold waiting for its comparison
-    for j in kids do
+    let mut next := i + 1
+    while next < n.next do
+      let j := next
       let c := nodes[j]!
+      next := c.next
       if c.timed then
         let mut act := active
         if let some f := unfolded then
@@ -243,39 +287,77 @@ partial def attributions (nodes : Array TNode) : Array (String × String × Opti
 
 /-- The counters of one `diagnostics` message: (constant, counter, count).
 Counters: `unfolds` (whnf and isDefEq), `instances` (used), `kernel`
-(unfolded by the kernel), `simp_used`, `simp_tried`, `simp_failed`. -/
-def parseDiag (data : String) : Array (String × String × Nat) := Id.run do
-  let mut out := #[]
-  let mut sect := ""
-  for line in data.splitOn "\n" do
-    let t := line.trimAscii.toString
-    unless t.startsWith "[" do continue
-    let cat := (t.drop 1).takeWhile (· != ']') |>.toString
-    let rest := ((t.drop (cat.length + 2)).dropWhile (· == ' ')).toString
-    match rest.splitOn " ↦ " with
-    | [name, count] =>
-      let n := (count.takeWhile Char.isDigit).toString.toNat!
-      let ctr := match cat, sect with
-        | "reduction", _ => "unfolds"
-        | "type_class", _ => "instances"
-        | "kernel", _ => "kernel"
-        | "simp", s => if s.startsWith "used" then "simp_used" else "simp_tried"
-        | _, _ => ""
-      if ctr.isEmpty then continue
-      out := out.push (name, ctr, n)
-      if ctr == "simp_tried" then
-        let failed :=
-          if count.endsWith "❌️" || count.endsWith "❌" then n
-          else match count.splitOn "succeeded: " with
-            | [_, k] => n - (k.takeWhile Char.isDigit).toString.toNat!
-            | _ => 0
-        if failed > 0 then out := out.push (name, "simp_failed", failed)
-    | _ => sect := rest
-  return out
+(unfolded by the kernel), `simp_used`, `simp_tried`, `simp_failed`.
+One line of the message at a time, with the counts so far and the section
+the line is in. -/
+def diagLine (st : Array (String × String × Nat) × String) (line : String) :
+    Array (String × String × Nat) × String := Id.run do
+  let (out, sect) := st
+  let mut out := out
+  let t := line.trimAscii.toString
+  unless t.startsWith "[" do return (out, sect)
+  let cat := (t.drop 1).takeWhile (· != ']') |>.toString
+  let rest := ((t.drop (cat.length + 2)).dropWhile (· == ' ')).toString
+  match rest.splitOn " ↦ " with
+  | [name, count] =>
+    let n := (count.takeWhile Char.isDigit).toString.toNat!
+    let ctr := match cat, sect with
+      | "reduction", _ => "unfolds"
+      | "type_class", _ => "instances"
+      | "kernel", _ => "kernel"
+      | "simp", s => if s.startsWith "used" then "simp_used" else "simp_tried"
+      | _, _ => ""
+    if ctr.isEmpty then return (out, sect)
+    out := out.push (name, ctr, n)
+    if ctr == "simp_tried" then
+      let failed :=
+        if count.endsWith "❌️" || count.endsWith "❌" then n
+        else match count.splitOn "succeeded: " with
+          | [_, k] => n - (k.takeWhile Char.isDigit).toString.toNat!
+          | _ => 0
+      if failed > 0 then out := out.push (name, "simp_failed", failed)
+    return (out, sect)
+  | _ => return (out, rest)
+
+/-- The counters of one whole `diagnostics` message. -/
+def parseDiag (data : String) : Array (String × String × Nat) :=
+  ((data.splitOn "\n").foldl diagLine (#[], "")).1
+
+/-- Does a message with this first line look like `diagnostics` output? -/
+def diagHeader (line : String) : Bool :=
+  line.startsWith "[diag] Diagnostics" || line.startsWith "[simp] Diagnostics" ||
+    line.startsWith "[kernel] Diagnostics"
+
+def hasArrow (line : String) : Bool := (line.splitOn " ↦ ").length > 1
 
 def isDiagMessage (data : String) : Bool :=
-  (data.startsWith "[diag] Diagnostics" || data.startsWith "[simp] Diagnostics" ||
-   data.startsWith "[kernel] Diagnostics") && (data.splitOn " ↦ ").length > 1
+  diagHeader data && hasArrow data
+
+/-- One message's `data`, read a line at a time: as a trace, and when it
+starts like `diagnostics` output, as that too. -/
+structure MsgData where
+  trace : TraceBuilder := {}
+  lines : Nat := 0
+  diagHead : Bool := false
+  diagArrow : Bool := false
+  diag : Array (String × String × Nat) × String := (#[], "")
+
+def MsgData.addLine (d : MsgData) (line : String) : MsgData :=
+  let ⟨trace, lines, diagHead, diagArrow, diag⟩ := d
+  let diagHead := if lines == 0 then diagHeader line else diagHead
+  let (diagArrow, diag) := if diagHead then (diagArrow || hasArrow line, diagLine diag line) else (diagArrow, diag)
+  ⟨trace.addLine line, lines + 1, diagHead, diagArrow, diag⟩
+
+/-- A message's `data` as read: `diagnostics` counters, or a trace's nodes. -/
+inductive Parsed where
+  | diag (counts : Array (String × String × Nat))
+  | trace (nodes : Array TNode)
+
+def MsgData.finish (d : MsgData) : Parsed :=
+  if d.diagHead && d.diagArrow then .diag d.diag.1 else .trace d.trace.finish
+
+def parseData (data : String) : Parsed :=
+  ((data.splitOn "\n").foldl MsgData.addLine {}).finish
 
 /-! ## Accumulated costs -/
 
@@ -354,17 +436,18 @@ def Acc.addDiag (a : Acc) (name ctr : String) (n : Nat) (site : String) : Acc :=
   let c := { c with diag := c.diag.insert ctr (c.diag.getD ctr 0 + n), sites := c.sites.insert site }
   { a with consts := a.consts.insert name c }
 
-/-- Fold one `lean --json` message of `file` into the accumulator. -/
-def Acc.addMessage (a : Acc) (file : String) (scale : Float) (m : Json) : Acc := Id.run do
-  let data := str m "data"
+/-- Fold one `lean --json` message of `file` into the accumulator: `m`
+without its `data`, which was read into `p`. -/
+def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Parsed) : Acc := Id.run do
   let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
   let key := s!"{file}:{ln}"
   let mut a := a
-  if isDiagMessage data then
-    for (name, ctr, n) in parseDiag data do
-      a := a.addDiag name ctr n key
-    return a
-  let nodes := parseTrace data
+  let nodes ← match p with
+    | .diag counts =>
+      for (name, ctr, n) in counts do
+        a := a.addDiag name ctr n key
+      return a
+    | .trace nodes => pure nodes
   let some root := nodes[0]? | return a
   -- A command Lean expands into others (`theorem Foo.bar` into `namespace Foo theorem bar
   -- end`, `open X in ...`) traces the inner command first and then itself, at the same
@@ -422,8 +505,7 @@ def Acc.addMessage (a : Acc) (file : String) (scale : Float) (m : Json) : Acc :=
   for i in [0:nodes.size] do
     let n := nodes[i]!
     unless n.timed do continue
-    let childSum := n.children.foldl (fun acc j => acc + nodes[j]!.amount) 0
-    let self := max 0 (n.amount - childSum) * scale
+    let self := max 0 (n.amount - n.childSum) * scale
     a := { a with byClass := a.byClass.insert n.cls (a.byClass.getD n.cls 0 + self) }
     if i > 0 && repeatable n.cls then
       -- only the outermost of a nest of the same class
@@ -463,6 +545,10 @@ where
       | _ :: rest@(_ :: _) => ("-/".intercalate rest).trimAscii.toString
       | _ => text
     else text
+
+/-- Fold one whole `lean --json` message of `file` into the accumulator. -/
+def Acc.addMessage (a : Acc) (file : String) (scale : Float) (m : Json) : Acc :=
+  a.addParsed file scale m (parseData (str m "data"))
 
 /-- `b` folded into `a`; `b`'s operations count as first seen after `a`'s. -/
 def Acc.merge (a b : Acc) : Acc := Id.run do
@@ -539,11 +625,83 @@ def traceArgs (o : Opts) : Array String := Id.run do
     if o.diagnostics then args := args ++ #["-Ddiagnostics=true", "-Ddiagnostics.threshold=0"]
   return args
 
-partial def readLines (h : IO.FS.Handle) (f : String → IO Unit) : IO Unit := do
-  let l ← h.getLine
-  if l.isEmpty then return
-  f l
-  readLines h f
+/-- A message read by `readMessages`: the JSON without its `data` text, and
+`data` as read. None when it is not JSON. -/
+def finishMessage (rest : ByteArray) (d : MsgData) : Option (Json × Parsed) := do
+  let m ← (String.fromUTF8? rest).bind (Json.parse · |>.toOption)
+  return (m, d.finish)
+
+/-- Read Lean's `--json` messages (one per line) from `h` to its end, calling
+`f` with each one. A message's `data` text is decoded and parsed a line at a
+time as it arrives, never held whole: one declaration's trace can be
+gigabytes in a single message. `chunk`: bytes read at a time. -/
+def readMessages (h : IO.FS.Stream) (f : Json → Parsed → IO Unit) (chunk : Nat := 1048576) : IO Unit := do
+  let key := "\"data\":\"".toUTF8
+  let mut rest : ByteArray := .empty  -- the current message without its `data` text
+  let mut line : ByteArray := .empty  -- the current line of `data`, decoded
+  let mut d : MsgData := {}
+  -- 0: outside `data`, 1: inside, 2: after a backslash, 3 to 6: in `\uXXXX`
+  let mut mode : Nat := 0
+  let mut hex : Nat := 0
+  repeat
+    let buf ← h.read chunk.toUSize
+    if buf.isEmpty then break
+    let mut i := 0
+    while i < buf.size do
+      let b := buf[i]!
+      if mode == 1 then
+        -- copy the run up to the next quote, backslash or (not JSON) newline
+        let mut k := i
+        while k < buf.size && buf[k]! != 34 && buf[k]! != 92 && buf[k]! != 10 do k := k + 1
+        line := buf.copySlice i line line.size (k - i)
+        i := k
+        if k < buf.size then
+          let c := buf[k]!
+          i := k + 1
+          if c == 34 then  -- the end of `data`
+            d := d.addLine (String.fromUTF8? line |>.getD "")
+            line := .empty
+            rest := rest.push 34
+            mode := 0
+          else if c == 92 then mode := 2
+          else  -- a raw newline inside a string: not JSON, dropped
+            rest := .empty; line := .empty; d := {}; mode := 0
+        continue
+      i := i + 1
+      if mode == 0 then
+        if b == 10 then  -- the end of the message
+          if let some (m, p) := finishMessage rest d then f m p
+          rest := .empty; d := {}
+        else
+          rest := rest.push b
+          let n := rest.size
+          if b == 34 && n ≥ key.size && (List.range key.size).all (fun j => rest[n - key.size + j]! == key[j]!) then
+            mode := 1
+      else if mode == 2 then
+        mode := 1
+        if b == 110 then  -- `\n`: the next line
+          d := d.addLine (String.fromUTF8? line |>.getD "")
+          line := .empty
+        else if b == 116 then line := line.push 9
+        else if b == 114 then line := line.push 13
+        else if b == 98 then line := line.push 8
+        else if b == 102 then line := line.push 12
+        else if b == 117 then mode := 3; hex := 0
+        else line := line.push b  -- `"`, `\`, `/`
+      else
+        hex := hex * 16 + (if b ≤ 57 then b.toNat - 48 else if b ≤ 70 then b.toNat - 55 else b.toNat - 87)
+        if mode < 6 then mode := mode + 1
+        else
+          mode := 1
+          -- Lean writes only control characters this way (surrogates: not decoded)
+          let c := if 0xD800 ≤ hex && hex < 0xE000 then '\uFFFD' else Char.ofNat hex
+          if c == '\n' then
+            d := d.addLine (String.fromUTF8? line |>.getD "")
+            line := .empty
+          else line := line ++ (String.singleton c).toUTF8
+  -- a last message without a newline
+  if mode == 0 && !rest.isEmpty then
+    if let some (m, p) := finishMessage rest d then f m p
 
 /-- Elaborate one file and fold its trace into a fresh accumulator; its
 messages are read as Lean prints them, so a large trace is never held whole. -/
@@ -560,11 +718,10 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
     cmd := le.lean, args := (traceArgs o ++ setupArgs).push file, env := #[("LEAN_PATH", some le.path)],
     stdout := .piped, stderr := .null, stdin := .null }
   let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := src.map squash } : Acc)
-  readLines child.stdout fun line => do
-    let some m := (Json.parse line).toOption | return
+  readMessages (IO.FS.Stream.ofHandle child.stdout) fun m p => do
     if str m "severity" == "error" then
       acc.modify fun a => { a with files := a.files.modify 0 fun (k, f) => (k, { f with errors := f.errors + 1 }) }
-    acc.modify (·.addMessage file scale m)
+    acc.modify (·.addParsed file scale m p)
   discard child.wait
   let t1 ← IO.monoNanosNow
   let a ← acc.get
