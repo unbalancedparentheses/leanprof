@@ -14,6 +14,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--out F] EXE [-- ARGS]` | repeated runs into one summary |
 | `judge BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
+| `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
 | `doctor` | check the tools and project setup leanprof needs |
 
 Reports go to `.lake/leanprof/`: `report.json` (run and sample),
@@ -60,3 +61,12 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 Sampled reports add `"sampled": true`; compile reports from `elab` have
 `"elab": true`, `"unit": "ns"` or `"heartbeats"`, per-line `elab_ns`,
 `kernel_ns`, `compile_ns`, `lint_ns`, `top` operations, and `repeated`.
+
+## GitHub Action and releases
+
+The GitHub Action (`uses: unbalancedparentheses/leanprof@main`) is
+described in [CI and regressions](ci-and-regressions.md#github-action).
+Prebuilt commands for macOS arm64 and Linux x86-64 are attached to each
+[release](https://github.com/unbalancedparentheses/leanprof/releases);
+[RELEASING.md](../../RELEASING.md) says how to make one and what the
+archives contain.

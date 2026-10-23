@@ -18,6 +18,8 @@ import Leanprof.Core
   an executable several times with copy detection and writes one summary
   (time spread, copies, calls, compile heartbeats, exit code, output hash);
   `judge` compares two summaries and prints KEEP or DISCARD.
+* `report-md`: the GitHub Action's pull-request comment, as Markdown: base
+  against head for copies, allocations, calls, compile heartbeats and time.
 -/
 
 open Lean System
@@ -45,6 +47,10 @@ def commands : List (String × String × String) := [
   ("judge", "BASE.json NEW.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, heartbeats or time got worse."),
+  ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
+    "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
+    "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
+    "with pass/fail per exact metric. Exit 1 if a metric named by --fail-on (default: copies) regressed."),
   ("doctor", "",
     "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
   ("help", "[COMMAND]", "Show this overview, or one command's options.")]
@@ -57,6 +63,7 @@ def summary : String → String
   | "compare" => "compare two reports, exit 1 on regressions (for CI)"
   | "measure" => "run a program several times into one summary (for judge / autoresearch)"
   | "judge" => "KEEP or DISCARD a change from two measure summaries"
+  | "report-md" => "Markdown summary of base and head reports, for pull-request comments"
   | "doctor" => "check that leanprof's tools and the project are set up"
   | "help" => "this overview, or one command's options"
   | _ => ""
@@ -64,7 +71,7 @@ def summary : String → String
 def usage : String :=
   "leanprof: profiler for Lean 4 programs (https://github.com/unbalancedparentheses/leanprof)\n\n" ++
   "usage: leanprof COMMAND [OPTIONS]   (or `lake exe leanprof` in a project that depends on it)\n\n" ++
-  String.join (commands.map fun (c, _, _) => s!"  {c.pushn ' ' (9 - c.length)}{summary c}\n") ++
+  String.join (commands.map fun (c, _, _) => s!"  {c.pushn ' ' (11 - c.length)}{summary c}\n") ++
   "\nleanprof help COMMAND shows a command's options. Docs: docs/guide/getting-started.md"
 
 def commandHelp (c : String) : Option String :=
@@ -939,6 +946,218 @@ def judgeCmd (argv : List String) : IO UInt32 := do
   for r in notes do IO.println s!"    {r}"
   return if keep then 0 else 1
 
+/-! ## report-md -/
+
+/-- `n` with thousands separators. -/
+def groupDigits (n : Nat) : String :=
+  if _h : n < 1000 then toString n
+  else
+    let r := n % 1000
+    groupDigits (n / 1000) ++ "," ++ (if r < 10 then "00" else if r < 100 then "0" else "") ++ toString r
+termination_by n
+decreasing_by omega
+
+def fmtCount (x : Float) : String := groupDigits x.abs.round.toUInt64.toNat
+
+def fmtHeartbeats (x : Float) : String :=
+  if x.abs ≥ 1e6 then s!"{fmt2 (x / 1e6)} MHB" else s!"{fmt2 (x / 1000)} kHB"
+
+/-- A name for a Markdown table cell. -/
+def mdCode (s : String) : String := s!"`{(s.replace "`" "'").replace "|" "\\|"}`"
+
+/-- `+12 (+3.40%)`: the change from `b` to `n`, formatted with `f`. -/
+def fmtChange (f : Float → String) (b n : Float) : String :=
+  let d := n - b
+  let sign := if d > 0 then "+" else if d < 0 then "−" else ""
+  let pct := if b > 0 && d != 0 then s!" ({sign}{fmt2 ((d / b * 100).abs)}%)" else ""
+  if d == 0 then "0" else s!"{sign}{f d.abs}{pct}"
+
+/-- Entries whose value differs, largest change first. -/
+def mdDiffs (b n : Std.HashMap String Float) : Array (String × Float × Float) :=
+  let keys := (b.toList.map (·.1) ++ n.toList.map (·.1)).eraseDups
+  let ds := keys.filterMap fun k =>
+    let x := b.getD k 0
+    let y := n.getD k 0
+    if x == y then none else some (k, x, y)
+  ds.toArray.qsort (fun a c => (a.2.2 - a.2.1).abs > (c.2.2 - c.2.1).abs)
+
+def mapSum (m : Std.HashMap String Float) : Float := m.fold (fun s _ v => s + v) 0
+
+/-- The metrics of one `run --json` or `elab` report, keyed so that edits which
+only move lines still match. -/
+structure MdReport where
+  isElab : Bool := false
+  heartbeats : Bool := false
+  copies : Std.HashMap String Float := {}   -- function [kind] in scope ↦ copies
+  allocs : Std.HashMap String Float := {}   -- function in scope ↦ allocations
+  calls : Std.HashMap String Float := {}    -- scope name ↦ calls
+  time : Std.HashMap String Float := {}     -- scope name ↦ total ns
+  compile : Std.HashMap String Float := {}  -- declaration ↦ heartbeats (or ns)
+  wall : Float := 0
+
+def loadMdReport (path : String) : IO MdReport := do
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
+  let isElab := (j.getObjVal? "elab" >>= Json.getBool?).toOption.getD false
+  let add (m : Std.HashMap String Float) (k : String) (v : Float) := m.insert k (m.getD k 0 + v)
+  let mut r : MdReport := { isElab, heartbeats := str j "unit" == "heartbeats", wall := num j "wall_ns" }
+  for s in getArr j "scopes" do
+    if isElab then
+      let key := if (str s "key").isEmpty then s!"{str s "name"} {str s "pos"}" else str s "key"
+      r := { r with compile := add r.compile key (num s "total_ns") }
+    else
+      r := { r with calls := add r.calls (str s "name") (num s "calls"),
+                    time := add r.time (str s "name") (num s "total_ns") }
+  unless isElab do
+    for c in getArr j "copies" do
+      let n := num c "shared" + num c "multi_threaded"
+      if n > 0 then
+        r := { r with copies := add r.copies s!"{str c "function"} [{str c "kind"}] in {str c "scope"}" n }
+    for a in getArr j "allocations" do
+      r := { r with allocs := add r.allocs s!"{str a "function"} in {str a "scope"}" (num a "allocs") }
+  return r
+
+/-- One row of the summary table, with the entries that changed. -/
+structure MdMetric where
+  id : String
+  label : String
+  isExact : Bool
+  base : Float
+  new : Float
+  fmt : Float → String
+  rows : Array (String × Float × Float)
+  /-- which changed entries count as regressions -/
+  bad : Array (String × Float × Float)
+  /-- what a regression is, for the details -/
+  rule : String
+
+structure MdOpts where
+  failOn : List String := ["copies"]
+  threshold : Float := 10
+  minMs : Float := 1
+  title : String := "leanprof"
+  top : Nat := 10
+  files : Array String := #[]
+
+def mdMetricIds : List String := ["copies", "allocs", "calls", "heartbeats"]
+
+partial def parseReportMd (o : MdOpts) : List String → Except String MdOpts
+  | [] => .ok o
+  | "--fail-on" :: v :: rest =>
+    let ids := (v.splitOn ",").map (·.trimAscii.toString) |>.filter (· != "")
+    if ids == ["none"] then parseReportMd { o with failOn := [] } rest
+    else match ids.find? (!mdMetricIds.contains ·) with
+      | some bad => .error s!"--fail-on: unknown metric {bad} (use {", ".intercalate mdMetricIds} or none)"
+      | none => parseReportMd { o with failOn := ids } rest
+  | "--threshold" :: v :: rest => parseReportMd { o with threshold := v.toNat!.toFloat } rest
+  | "--min-ms" :: v :: rest => parseReportMd { o with minMs := v.toNat!.toFloat } rest
+  | "--title" :: v :: rest => parseReportMd { o with title := v } rest
+  | "--top" :: v :: rest => parseReportMd { o with top := v.toNat! } rest
+  | a :: rest =>
+    if a.startsWith "--" then .error s!"unknown option {a}"
+    else parseReportMd { o with files := o.files.push a } rest
+
+/-- A Markdown summary of two pairs of reports (a run's and an elab's), for a
+pull-request comment. Exits 1 when a metric named by `--fail-on` regressed. -/
+def reportMd (argv : List String) : IO UInt32 := do
+  let o ← IO.ofExcept (parseReportMd {} argv)
+  unless o.files.size == 2 || o.files.size == 4 do throw <| IO.userError (usageFor "report-md")
+  let mut run : Option (MdReport × MdReport) := none
+  let mut elabPair : Option (MdReport × MdReport) := none
+  for i in [0:o.files.size / 2] do
+    let b ← loadMdReport o.files[2 * i]!
+    let n ← loadMdReport o.files[2 * i + 1]!
+    if b.isElab != n.isElab then
+      throw <| IO.userError s!"{o.files[2 * i]!} and {o.files[2 * i + 1]!}: one is an elab report and the other is not"
+    if b.isElab then elabPair := some (b, n) else run := some (b, n)
+  let mut metrics : Array MdMetric := #[]
+  let mut timeRow : Option (MdReport × MdReport) := none
+  if let some (b, n) := run then
+    let d := mdDiffs b.copies n.copies
+    metrics := metrics.push {
+      id := "copies", label := "copies", isExact := true,
+      base := mapSum b.copies, new := mapSum n.copies, fmt := fmtCount, rows := d,
+      bad := d.filter (fun (_, x, y) => y > x), rule := "any increase at a call site" }
+    if b.allocs.size + n.allocs.size > 0 then
+      let d := mdDiffs b.allocs n.allocs
+      let (tb, tn) := (mapSum b.allocs, mapSum n.allocs)
+      metrics := metrics.push {
+        id := "allocs", label := "allocations", isExact := true,
+        base := tb, new := tn, fmt := fmtCount, rows := d,
+        bad := if tn > tb then d.filter (fun (_, x, y) => y > x) else #[],
+        rule := "the total grew" }
+    let d := mdDiffs b.calls n.calls
+    metrics := metrics.push {
+      id := "calls", label := "calls", isExact := true,
+      base := mapSum b.calls, new := mapSum n.calls, fmt := fmtCount, rows := d,
+      bad := d.filter (fun (k, _, _) => b.calls.contains k && n.calls.contains k),
+      rule := "any change in a scope present in both" }
+    timeRow := some (b, n)
+  if let some (b, n) := elabPair then
+    -- editing one declaration moves its neighbours by a few heartbeats: list
+    -- only changes above the regression threshold, and new or removed ones
+    let d := (mdDiffs b.compile n.compile).filter fun (k, x, y) =>
+      !b.compile.contains k || !n.compile.contains k || (y - x).abs > max (x * 0.01) 1000
+    if b.heartbeats && n.heartbeats then
+      metrics := metrics.push {
+        id := "heartbeats", label := "compile heartbeats", isExact := true,
+        base := mapSum b.compile, new := mapSum n.compile, fmt := fmtHeartbeats, rows := d,
+        bad := d.filter (fun (k, x, y) => b.compile.contains k && y - x > max (x * 0.01) 1000),
+        rule := "a declaration up by more than 1% and 1,000 heartbeats; smaller changes not listed" }
+    else
+      metrics := metrics.push {
+        id := "compile-time", label := "compile time (noisy)", isExact := false,
+        base := mapSum b.compile, new := mapSum n.compile, fmt := fmtMs, rows := d, bad := #[],
+        rule := "informational: run `leanprof elab --heartbeats` for an exact count" }
+  let failed := metrics.filter fun m => m.isExact && !m.bad.isEmpty && o.failOn.contains m.id
+  let mut out : Array String := #[]
+  out := out.push s!"### {o.title}: {if failed.isEmpty then "✅ no regressions" else "❌ regression"}"
+  out := out.push ""
+  out := out.push "| metric | base | head | change | check |"
+  out := out.push "|---|---:|---:|---:|---|"
+  for m in metrics do
+    let check :=
+      if !m.isExact then "noisy, not checked"
+      else if m.bad.isEmpty then (if m.new < m.base then "✅ pass (better)" else "✅ pass")
+      else if o.failOn.contains m.id then "❌ fail"
+      else "⚠️ worse (not enforced)"
+    out := out.push s!"| {m.label} | {m.fmt m.base} | {m.fmt m.new} | {fmtChange m.fmt m.base m.new} | {check} |"
+  if let some (b, n) := timeRow then
+    out := out.push s!"| time (wall, noisy) | {fmtMs b.wall} | {fmtMs n.wall} | {fmtChange fmtMs b.wall n.wall} | noisy, not checked |"
+  out := out.push ""
+  let enforced := if o.failOn.isEmpty then "nothing (fail-on: none)" else ", ".intercalate o.failOn
+  out := out.push s!"Exact metrics (copies, allocations, calls, heartbeats) do not vary between runs; time does, so it is shown but never checked. Enforced: {enforced}."
+  let row (m : MdMetric) (k : String) (x y : Float) : String :=
+    let mark := if !m.bad.any (·.1 == k) then "" else if o.failOn.contains m.id then " ❌" else " ⚠️"
+    s!"| {mdCode k} | {m.fmt x} | {m.fmt y} | {fmtChange m.fmt x y}{mark} |"
+  for m in metrics do
+    if m.rows.isEmpty then continue
+    out := out.push ""
+    let openAttr := if m.bad.isEmpty then "" else " open"
+    out := out.push s!"<details{openAttr}><summary>{m.label}: {m.rows.size} changed (regression: {m.rule})</summary>"
+    out := out.push ""
+    out := out.push s!"| {if m.id == "heartbeats" || m.id == "compile-time" then "declaration" else if m.id == "calls" then "scope" else "where"} | base | head | change |"
+    out := out.push "|---|---:|---:|---:|"
+    for (k, x, y) in (m.bad ++ m.rows.filter (fun r => !m.bad.any (·.1 == r.1))).toList.take o.top do
+      out := out.push (row m k x y)
+    if m.rows.size > o.top then out := out.push s!"\n… and {m.rows.size - o.top} more"
+    out := out.push ""
+    out := out.push "</details>"
+  if let some (b, n) := timeRow then
+    let d := (mdDiffs b.time n.time).filter fun (_, x, y) =>
+      (x == 0 || (y - x).abs / x * 100 > o.threshold) && (y - x).abs / 1e6 > o.minMs
+    unless d.isEmpty do
+      out := out.push ""
+      out := out.push s!"<details><summary>time: {d.size} scopes moved by more than {fmt2 o.threshold}% and {fmt2 o.minMs} ms (noisy)</summary>"
+      out := out.push ""
+      out := out.push "| scope | base | head | change |"
+      out := out.push "|---|---:|---:|---:|"
+      for (k, x, y) in d.toList.take o.top do
+        out := out.push s!"| {mdCode k} | {fmtMs x} | {fmtMs y} | {fmtChange fmtMs x y} |"
+      out := out.push ""
+      out := out.push "</details>"
+  IO.println ("\n".intercalate out.toList)
+  return if failed.isEmpty then 0 else 1
+
 /-! ## doctor -/
 
 def doctor : IO UInt32 := do
@@ -1004,6 +1223,7 @@ def main (argv : List String) : IO UInt32 := do
     | "measure" :: rest => measureCmd rest
     | "judge" :: rest => judgeCmd rest
     | "compare" :: rest => compare rest
+    | "report-md" :: rest => reportMd rest
     | "sample" :: rest => sample rest
     | "elab" :: rest => elabCmd rest
     | _ =>
