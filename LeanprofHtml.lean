@@ -323,6 +323,9 @@ def htmlCmd (usage : String) (argv : List String) : IO UInt32 := do
           | .obj kvs => .obj (kvs.erase "top")
           | x => x)
       else j
+    -- the costliest source ranges (an elab report lists up to 20,000)
+    let j := if kind == "elab" && (arr j "ranges").size > 2000 then
+        j.setObjVal! "ranges" (Json.arr ((arr j "ranges").extract 0 2000)) else j
     let mut entry : List (String × Json) := [("path", Json.str f), ("kind", Json.str kind),
       ("role", Json.str role), ("data", j)]
     -- a call tree for the flame graph, for the report shown (not a base)

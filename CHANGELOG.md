@@ -8,6 +8,22 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Added
 
+- **`leanprof elab` times every term and tactic by its exact source range**
+  (`file:line:col-line:col`). When the project's Lean is the one leanprof
+  was built with, files are elaborated by `leanprof-elab-driver`, Lean's
+  frontend run in-process (the module's setup file and `LEAN_PATH`, as
+  Lake does) with every term and tactic elaborator and every macro
+  wrapped to record the syntax it elaborates. The report lists the
+  costliest tactics and terms by range, `elab.json` has them (`ranges`;
+  `tactics` gain `range`), `#leanprof` lists them in the hover of their
+  line, and `leanprof html` in a "Source ranges" tab. Tactics are no
+  longer found by their text. With another Lean (or `--no-driver`) `elab`
+  runs `lean --json` as before and says why. The driver also formats only
+  the descriptions the report reads, so a full profile costs less than
+  with `lean --json`.
+- `leanprof elab --compact`: only commands, terms and tactics are timed,
+  not the operations inside them, within a few percent of plain `lean`
+  (needs the driver).
 - **GitHub Action** (`action.yml`): profiles a pull request's base and head
   commits (`leanprof run --json`, optionally `--allocs`, and
   `leanprof elab --heartbeats`), compares them, and posts or updates one

@@ -3,6 +3,7 @@ import Lean.Environment
 import Lean.DeclarationRange
 import Lean.Elab.ParseImportsFast
 import Lean.Util.Path
+import LeanprofElabRange
 
 /-!
 # `leanprof elab`: compile cost per line, declaration, file and definition
@@ -28,6 +29,10 @@ The constants are then looked up in the environment of the profiled modules
 
 `--project` profiles every built module of the current Lake package, several
 files at a time, and aggregates across files.
+
+When the project's Lean is the one leanprof was built with, files are elaborated
+by `leanprof-elab-driver` instead of `lean` (same options, same output format),
+which adds the exact source range of every term and tactic (LeanprofElabRange.lean).
 -/
 
 open Lean System
@@ -120,7 +125,7 @@ tactics (`repeatable`) and of nodes that name a constant (`attributedConst`),
 besides the root's. The others are dropped as the trace is read: one
 declaration's trace can be gigabytes. -/
 def keepsText (cls : String) : Bool :=
-  repeatable cls || unfoldClasses.contains cls || cls == "Meta.synthInstance.apply"
+  repeatable cls || unfoldClasses.contains cls || cls == "Meta.synthInstance.apply" || isSourceClass cls
 
 /-- A trace being read a line at a time: its nodes so far (index 0 is the
 root), the open ones by indentation, and one copy of each class name, shared
@@ -395,6 +400,14 @@ structure FileCost where
   wallNs : Nat := 0
   errors : Nat := 0
 
+/-- One source range's elaborations: inclusive cost, how many times, what it is. -/
+structure RangeCost where
+  total : Float := 0
+  count : Nat := 0
+  tactic : Bool := false
+  src : SrcRange := default
+  deriving Inhabited
+
 structure Acc where
   lines : Std.HashMap String LineCost := {}
   byClass : Std.HashMap String Float := {}
@@ -409,6 +422,12 @@ structure Acc where
   srcSq : Array String := #[]
   /-- The largest command traced so far at each `line:column` of the file (not merged). -/
   commandsAt : Std.HashMap String Float := {}
+  /-- Traces from the driver: tactics are placed by their source nodes, not their text. -/
+  exact : Bool := false
+  /-- Terms and tactics by exact source range, `file:line:col-line:col`. -/
+  ranges : Std.HashMap String RangeCost := {}
+  /-- The range of the outermost tactic on each `file:line` of `tactics`. -/
+  tacticRanges : Std.HashMap String String := {}
 
 /-- `s` without whitespace. -/
 def squash (s : String) : String := String.ofList (s.toList.filter fun c => !c.isWhitespace)
@@ -435,6 +454,47 @@ def Acc.addDiag (a : Acc) (name ctr : String) (n : Nat) (site : String) : Acc :=
   let c := a.consts.getD name {}
   let c := { c with diag := c.diag.insert ctr (c.diag.getD ctr 0 + n), sites := c.sites.insert site }
   { a with consts := a.consts.insert name c }
+
+/-- The source nodes of one trace: each range's inclusive cost (a node inside one with
+the same range, a macro's expansion, is not counted again), and the tactics by
+the line they start on (the outermost on each line). Tactic sequences are left
+out: their cost is their tactics'. -/
+def Acc.addRanges (a : Acc) (file : String) (scale : Float) (nodes : Array TNode) : Acc := Id.run do
+  let mut a := a
+  -- the nearest source node above each node, and each node's range
+  let mut up : Array (Option Nat) := Array.replicate nodes.size none
+  let mut src : Array (Option SrcRange) := Array.replicate nodes.size none
+  for i in [0:nodes.size] do
+    let n := nodes[i]!
+    let u := n.parent.bind fun p => if src[p]!.isSome then some p else up[p]!
+    up := up.set! i u
+    unless n.timed && isSourceClass n.cls do continue
+    let some r := parseSrcRange n.text | continue
+    -- tactic sequences are left out: they are their tactics
+    if seqKind r.kind then continue
+    src := src.set! i (some r)
+    if (u.bind (src[·]!)).map (·.range) == some r.range then continue
+    let tactic := n.cls == "Leanprof.tactic"
+    let k := s!"{file}:{r.range}"
+    let c := a.ranges.getD k { tactic, src := r }
+    a := { a with ranges := a.ranges.insert k { c with total := c.total + n.amount * scale, count := c.count + 1 } }
+    unless tactic do continue
+    -- by line: not inside another tactic on the same line
+    let mut q := u
+    let mut nested := false
+    while true do
+      let some j := q | break
+      if let some r' := src[j]! then
+        if nodes[j]!.cls == "Leanprof.tactic" && r'.line == r.line then
+          nested := true
+          break
+      q := up[j]!
+    unless nested do
+      let lk := s!"{file}:{r.line}"
+      let (x, t, cnt) := a.tactics.getD lk (0, r.text, 0)
+      a := { a with tactics := a.tactics.insert lk (x + n.amount * scale, t, cnt + 1),
+                    tacticRanges := if a.tacticRanges.contains lk then a.tacticRanges else a.tacticRanges.insert lk k }
+  return a
 
 /-- Fold one `lean --json` message of `file` into the accumulator: `m`
 without its `data`, which was read into `p`. -/
@@ -481,11 +541,11 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
     if root.cls == "Elab.command" && c.name.isEmpty then
       -- Lean sometimes cannot print the command: name it after its source line
       let text := if root.text.startsWith "failed to pretty print" then sourceLine a.src ln else root.text
-      c := { c with name := String.ofList ((dropDocComment text).toList.take 60) }
+      c := { c with name := String.ofList ((dropInPrefix (dropDocComment text)).toList.take 60) }
   if !a.files.isEmpty then a := { a with files := a.files.modify (a.files.size - 1) fun (k, _) => (k, f) }
   -- tactic steps, by the line each is on: found in the source after the command's start,
   -- in the order Lean ran them; a step nested in one on the same line is not counted again
-  if !a.src.isEmpty then
+  if !a.src.isEmpty && !a.exact then
     let mut lineOf : Array (Option Nat) := Array.replicate nodes.size none
     let mut cursor := max ln 1
     for i in [0:nodes.size] do
@@ -501,11 +561,22 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
             a := { a with tactics := a.tactics.insert k (x + n.amount * scale, t, cnt + 1) }
           continue
       lineOf := lineOf.set! i inherited
+  -- terms and tactics by exact source range (the driver's source nodes)
+  let mut childSum := nodes.map (·.childSum)
+  if a.exact then
+    a := a.addRanges file scale nodes
+    -- a source node only marks where its parent's work is: its own time is its parent's
+    for i' in [0:nodes.size] do
+      let i := nodes.size - 1 - i'
+      let n := nodes[i]!
+      if n.timed && isSourceClass n.cls then
+        if let some p := n.parent then
+          childSum := childSum.modify p (· - n.amount + childSum[i]!)
   -- self time per class; repeated operations; the line's heaviest nested operations
   for i in [0:nodes.size] do
     let n := nodes[i]!
-    unless n.timed do continue
-    let self := max 0 (n.amount - n.childSum) * scale
+    unless n.timed && !isSourceClass n.cls do continue
+    let self := max 0 (n.amount - childSum[i]!) * scale
     a := { a with byClass := a.byClass.insert n.cls (a.byClass.getD n.cls 0 + self) }
     if i > 0 && repeatable n.cls then
       -- only the outermost of a nest of the same class
@@ -556,6 +627,11 @@ def Acc.merge (a b : Acc) : Acc := Id.run do
   for (k, (x, t, n)) in b.tactics do
     let (x', t', n') := r.tactics.getD k (0, t, 0)
     r := { r with tactics := r.tactics.insert k (x + x', t', n + n') }
+  for (k, c) in b.ranges do
+    let p := r.ranges.getD k c
+    r := { r with ranges := r.ranges.insert k (if r.ranges.contains k then { p with total := p.total + c.total, count := p.count + c.count } else c) }
+  for (k, v) in b.tacticRanges do
+    unless r.tacticRanges.contains k do r := { r with tacticRanges := r.tacticRanges.insert k v }
   for (k, c) in b.lines do
     -- lines are per file: no two files share a key
     r := { r with lines := r.lines.insert k c }
@@ -582,6 +658,8 @@ structure LeanEnv where
   sysroot : FilePath := ""
   path : String := ""
   srcPath : String := ""
+  /-- `leanprof-elab-driver`, when it can elaborate for this Lean (`findDriver`). -/
+  driver : String := ""
 
 def leanEnv : IO LeanEnv := do
   let out ← IO.Process.output { cmd := "lake", args := #["env", "env"] }
@@ -611,6 +689,11 @@ structure Opts where
   diagnostics : Bool := false
   /-- Elaborate a built module with Lake's setup file for it. -/
   setup : Bool := true
+  /-- Elaborate with `leanprof-elab-driver` when it can (exact source ranges); `--no-driver`: with `lean`. -/
+  driver : Bool := true
+  /-- `--compact`: only commands, terms and tactics are timed, not the operations inside them
+  (needs the driver): close to plain `lean` in cost. -/
+  compact : Bool := false
 
 def Opts.thresholdValue (o : Opts) : Nat :=
   o.threshold.getD (if o.heartbeats then 10000 else 1)
@@ -623,6 +706,16 @@ def traceArgs (o : Opts) : Array String := Id.run do
       "-Dweak.trace.Meta.isDefEq.delta.unfoldRight=true", "-Dweak.trace.Meta.isDefEq.delta.unfoldLeftRight=true",
       "-Dweak.trace.Meta.Tactic.simp.rewrite=true", "-Dpp.fullNames=true"]
     if o.diagnostics then args := args ++ #["-Ddiagnostics=true", "-Ddiagnostics.threshold=0"]
+  return args
+
+/-- The driver's arguments for `o` (it takes the same options as `lean`, as flags). -/
+def driverArgs (o : Opts) : Array String := Id.run do
+  let mut args := #["--threshold", toString o.thresholdValue]
+  if o.heartbeats then args := args.push "--heartbeats"
+  if o.compact then args := args.push "--compact"
+  else if o.defs then
+    args := args.push "--defs"
+    if o.diagnostics then args := args.push "--counts"
   return args
 
 /-- A message read by `readMessages`: the JSON without its `data` text, and
@@ -713,18 +806,27 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   -- `leanOptions`, the exact imported files)
   let setup : FilePath := ".lake" / "build" / "ir" / (module.replace "." "/" ++ ".setup.json")
   let setupArgs := if o.setup && (← setup.pathExists) then #["--setup", setup.toString] else #[]
+  -- the driver when it can (exact ranges), else `lean`, with the same options
+  let exact := o.driver && !le.driver.isEmpty
   let t0 ← IO.monoNanosNow
   let child ← IO.Process.spawn {
-    cmd := le.lean, args := (traceArgs o ++ setupArgs).push file, env := #[("LEAN_PATH", some le.path)],
+    cmd := if exact then le.driver else le.lean,
+    args := ((if exact then driverArgs o else traceArgs o) ++ setupArgs).push file,
+    env := #[("LEAN_PATH", some le.path), ("LEAN_SYSROOT", some le.sysroot.toString)],
     stdout := .piped, stderr := .null, stdin := .null }
-  let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := src.map squash } : Acc)
+  let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := src.map squash, exact } : Acc)
   readMessages (IO.FS.Stream.ofHandle child.stdout) fun m p => do
     if str m "severity" == "error" then
       acc.modify fun a => { a with files := a.files.modify 0 fun (k, f) => (k, { f with errors := f.errors + 1 }) }
     acc.modify (·.addParsed file scale m p)
-  discard child.wait
+  let code ← child.wait
   let t1 ← IO.monoNanosNow
   let a ← acc.get
+  -- the driver could not load the file's imports (exit code 3), crashed, or stopped before any output:
+  -- `lean` reports what is wrong
+  if exact && (code ≥ 2 || (code == 1 && a.grand == 0 && (a.files[0]?.map (·.2.errors)).getD 0 == 0)) then
+    IO.eprintln s!"leanprof: {file}: leanprof-elab-driver could not elaborate it (exit code {code}); elaborating with `lean` instead"
+    return ← profileFile le { o with driver := false } file module
   let a := { a with files := a.files.modify 0 fun (k, f) => (k, { f with wallNs := t1 - t0 }), src := #[], srcSq := #[] }
   -- `diagnostics` can make Lean fail where it otherwise does not (4.35: nested inductive
   -- types, "Unknown constant `_nested.…rec`"): then profile the file again without it
@@ -913,6 +1015,8 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--counts" :: rest => parseOpts { o with diagnostics := true } rest
   | "--no-build" :: rest => parseOpts { o with build := false } rest
   | "--threshold" :: v :: rest => parseOpts { o with threshold := some v.toNat! } rest
+  | "--no-driver" :: rest => parseOpts { o with driver := false } rest
+  | "--compact" :: rest => parseOpts { o with compact := true } rest
   | f :: rest =>
     if f.startsWith "--" then .error s!"unknown option {f}" else parseOpts { o with files := o.files.push f } rest
 
@@ -958,7 +1062,7 @@ def kindLabel : String → String
 def main (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
   if o.files.isEmpty && !o.project then
-    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out FILE] [FILE.lean...]"
+    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--compact] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]"
   let tStart ← IO.monoNanosNow
   -- the modules must be built: their imports are read from `.olean` files
   if o.project && o.build then
@@ -970,6 +1074,13 @@ def main (argv : List String) : IO UInt32 := do
       throw <| IO.userError "lake build failed; leanprof elab --project needs the package built"
   let tBuilt ← IO.monoNanosNow
   let le ← leanEnv
+  -- exact source ranges need leanprof's own frontend, built with the project's Lean
+  let le ← if !o.driver then pure le else match ← findDriver le.lean with
+    | .ok d => pure { le with driver := d }
+    | .error why => do
+      IO.eprintln s!"leanprof: elaborating with `lean` ({why}): tactics are placed by their text, terms are not timed{if o.compact then "; --compact needs the driver, so this is a full profile" else ""}"
+      pure le
+  let o := if le.driver.isEmpty then { o with compact := false } else if o.compact then { o with defs := false } else o
   let mut files : Array (String × String) := o.files.map fun f => (f, moduleOfFile f)
   if o.project then
     let mods ← projectModules
@@ -1055,7 +1166,16 @@ def main (argv : List String) : IO UInt32 := do
         IO.println s!"      {pad (fmtAmt x) 12} {kindLabel kind} {userName s}{whereOf s}"
   -- tactic steps by line
   let tactics := acc.tactics.toArray.qsort fun a b => a.2.1 > b.2.1 || (a.2.1 == b.2.1 && a.1 < b.1)
-  if !tactics.isEmpty then
+  -- with the driver: tactics and terms by exact source range
+  let ranges := acc.ranges.toArray.qsort fun a b => a.2.total > b.2.total || (a.2.total == b.2.total && a.1 < b.1)
+  if !le.driver.isEmpty then
+    for (tac, title) in [(true, "tactics"), (false, "terms")] do
+      let rows := ranges.filter fun (_, c) => c.tactic == tac && !seqKind c.src.kind && c.total > 0
+      if rows.isEmpty then continue
+      IO.println s!"\n  costliest {title}, by exact source range (line:column, inclusive: a {if tac then "tactic" else "term"} contains those under it)"
+      for (k, c) in rows.toList.take o.top do
+        IO.println s!"  {pad (fmtAmt c.total) 12} {pad (if c.count > 1 then s!"{c.count}×" else "") 6} {k}  {shortKind c.src.kind}  {String.ofList (c.src.text.toList.take 70)}"
+  else if !tactics.isEmpty then
     IO.println "\n  costliest tactic steps, by the line each is on (inclusive: a step contains the steps under it)"
     for (k, (x, t, n)) in tactics.toList.take o.top do
       IO.println s!"  {pad (fmtAmt x) 12} {pad (if n > 1 then s!"{n}×" else "") 6} {k}  {String.ofList ((t.replace "\n" " ").toList.take 80)}"
@@ -1126,7 +1246,13 @@ def main (argv : List String) : IO UInt32 := do
       ("kinds", Json.arr ((acc.byClass.toArray.qsort (fun a b => a.2 > b.2)).map fun (cls, x) =>
         Json.mkObj [("class", Json.str cls), ("total", toJson x)])),
       ("tactics", Json.arr (tactics.map fun (k, (x, t, n)) => Json.mkObj [("pos", Json.str k), ("amount", toJson x),
-        ("tactic", Json.str t), ("count", toJson n)])),
+        ("tactic", Json.str t), ("count", toJson n), ("range", Json.str ((acc.tacticRanges.get? k).getD ""))])),
+      -- terms and tactics by exact source range (with the driver): `range` is `file:line:col-line:col`
+      ("exact_ranges", Json.bool !le.driver.isEmpty), ("compact", Json.bool o.compact),
+      ("ranges", Json.arr ((ranges.toList.take 20000).toArray.map fun (k, c) =>
+        Json.mkObj [("range", Json.str k), ("pos", Json.str s!"{(k.dropEnd (c.src.range.length + 1)).toString}:{c.src.line}"),
+          ("kind", Json.str (if c.tactic then "tactic" else "term")), ("syntax", Json.str c.src.kind),
+          ("text", Json.str c.src.text), ("amount", toJson c.total), ("count", toJson c.count)])),
       ("threshold", toJson o.thresholdValue),
       ("timing", Json.mkObj [("build_ns", toJson (tBuilt - tStart)), ("profile_ns", toJson (tProfiled - tBuilt)),
         ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])]).compress

@@ -206,7 +206,10 @@ jobs:
           grep -q "isDefEq unfolds  Lean.Omega.Coeffs.isZero  (Init/Omega/Coeffs.lean:" elab.txt
           grep -q "whnf reduces     List.foldl  (Init/Prelude.lean:" elab.txt
           grep -q "instance tried   instHAdd  (Init/Prelude.lean:" elab.txt
-          grep -q "Examples/ElabHeavy.lean:28  refine" elab.txt
+          # exact source ranges, from leanprof's in-process driver (line:column)
+          grep -q "costliest tactics, by exact source range" elab.txt
+          grep -q "Examples/ElabHeavy.lean:28:27-28:32  omega  omega" elab.txt
+          grep -q "Examples/ElabHeavy.lean:27:44-27:80  app" elab.txt
           lake exe leanprof elab --heartbeats --counts --out counts.json Examples/ElabHeavy.lean | tee counts.txt
           grep -q "most unfolded" counts.txt
           python3 - <<'PY'
@@ -216,11 +219,30 @@ jobs:
           k = {x['name']: x for x in json.load(open('counts.json'))['constants']}
           print(c.get('List.foldl'), k.get('List.rec'))
           line = [s for s in d['scopes'] if s['pos'] == 'Examples/ElabHeavy.lean:19'][0]
+          r = {x['range']: x for x in d['ranges']}
+          print(len(r), r.get('Examples/ElabHeavy.lean:22:3-22:8'))
           ok = (k['List.rec']['kernel'] > 100 and c['List.foldl']['where'].startswith('Init/Prelude.lean:')
                 and any(u['name'] == 'List.foldl' for u in line['unfolded'])
-                and any(t['pos'] == 'Examples/ElabHeavy.lean:22' for t in d['tactics']))
+                and any(t['pos'] == 'Examples/ElabHeavy.lean:22' and t['range'] == 'Examples/ElabHeavy.lean:22:3-22:8'
+                        for t in d['tactics'])
+                and d['exact_ranges'] and r['Examples/ElabHeavy.lean:22:3-22:8']['kind'] == 'tactic'
+                and r['Examples/ElabHeavy.lean:22:3-22:8']['pos'] == 'Examples/ElabHeavy.lean:22'
+                and r['Examples/ElabHeavy.lean:28:27-28:32']['count'] == 3)
           sys.exit(0 if ok else 1)
           PY
+          # compact: commands, terms and tactics only
+          lake exe leanprof elab --compact --threshold 0 --out compact.json Examples/ElabHeavy.lean | tee compact.txt
+          grep -q "Examples/ElabHeavy.lean:22:3-22:8  omega  omega" compact.txt
+          python3 -c "import json,sys; d=json.load(open('compact.json')); print(d['compact'], len(d['ranges']), len(d['constants'])); sys.exit(0 if d['compact'] and d['ranges'] else 1)"
+          # without the driver (another toolchain, or not built): `lean --json`, tactics by their text
+          printf '#!/bin/sh\necho 0123456789abcdef\n' > other-lean-driver && chmod +x other-lean-driver
+          LEANPROF_ELAB_DRIVER=$PWD/other-lean-driver lake exe leanprof elab --heartbeats --threshold 0 --out other.json Examples/ElabHeavy.lean > other.txt 2> other.err
+          cat other.err
+          grep -q "is not the one leanprof was built with" other.err
+          grep -q "Examples/ElabHeavy.lean:28  refine" other.txt
+          python3 -c "import json,sys; d=json.load(open('other.json')); sys.exit(0 if not d['exact_ranges'] and not d['ranges'] and any(t['pos'] == 'Examples/ElabHeavy.lean:22' for t in d['tactics']) else 1)"
+          lake exe leanprof elab --no-driver --out nodriver.json Examples/ElabHeavy.lean > /dev/null
+          python3 -c "import json,sys; d=json.load(open('nodriver.json')); sys.exit(0 if not d['exact_ranges'] else 1)"
           # a file Lean fails on is reported, not silently counted as nearly free
           printf 'def broken : Nat := "a"\n' > Broken.lean
           lake exe leanprof elab --out broken.json Broken.lean 2> broken.txt || true
@@ -245,7 +267,7 @@ jobs:
           # well-formed, self-contained, under 300 KiB, with the call tree and the source lines
           python3 scripts/check-html.py .lake/leanprof/report.html --expect '"flame"' \
             --expect '"n":"buildWithHistory"' --expect '"n":"fib"' \
-            --expect '"elab":true' --expect 'def buildWithHistory'
+            --expect '"elab":true' --expect 'def buildWithHistory' --expect '"exact_ranges":true'
           lake exe leanprof html -o diff.html small.json large.json
           python3 scripts/check-html.py diff.html --expect '"role":"base"' --expect '"role":"new"' --expect buildWithHistory
           cp .lake/leanprof/report.html leanprof-report.html
@@ -412,6 +434,9 @@ jobs:
           head -30 elab.txt
           python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 5
           grep -q '"pos":"REPL/Main.lean:' .lake/leanprof/elab.json
+          # the same Lean as leanprof's: elaborated in-process, with exact source ranges
+          grep -q '"exact_ranges":true' .lake/leanprof/elab.json
+          grep -q '"range":"REPL/Main.lean:[0-9]*:[0-9]*-[0-9]*:[0-9]*"' .lake/leanprof/elab.json
 
   # leanprof on lean-regex's own benchmark (docs/case-studies/lean-regex.md),
   # pinned to the commit of the case study: a project with no dependency on
@@ -503,7 +528,11 @@ jobs:
       - name: Compile time
         working-directory: ${{ env.RE }}
         run: |
-          $LP/leanprof elab --heartbeats Regex/VM/Basic.lean > elab.txt
+          $LP/leanprof elab --heartbeats Regex/VM/Basic.lean > elab.txt 2> elab.err
           head -20 elab.txt
+          cat elab.err
           python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 3
           grep -q "Regex/VM/Basic.lean:105  def eachStepChar" elab.txt
+          # another Lean than leanprof's: the driver cannot load its modules, `lean` is used
+          grep -q "is not the one leanprof was built with" elab.err
+          grep -q '"exact_ranges":false' .lake/leanprof/elab.json

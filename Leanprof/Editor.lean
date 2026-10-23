@@ -12,7 +12,8 @@ public meta import Lean.Data.Json
 or `sample`) and `elab.json` from `lake exe leanprof elab`. It shows inlay
 hints at the end of each line of this file they mention: run time per
 `profile!` scope or function, copies of shared values per declaration, and
-compile time per declaration. Hover a hint for
+compile time per declaration, tactic and term (with `elab`'s exact source
+ranges, `line:column`, in the hover). Hover a hint for
 details; the infoview at `#leanprof` lists everything for the file.
 
 The report describes the source as it was when the program ran; after edits,
@@ -142,6 +143,28 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     best := best.insert line (x, s!"⚙ {amount x}", s!"tactic step{if n > 1 then s!" (run {n} times)" else ""}: {str t "tactic"}\n" ++
       "inclusive: includes the steps nested in it")
     lines := lines.push s!"{file}:{line}  ⚙ {amount x}  ({str t "tactic"})"
+  -- terms and tactics by exact source range (`elab` with its driver): listed in the
+  -- hover of the line they start on, a hint of their own on a line with none
+  let mut onLine : Std.HashMap Nat (Array (Float × String × String)) := {}
+  for r in arr j "ranges" do
+    let some line := lineIn file (str r "pos") | continue
+    let x := num r "amount"
+    let n := (num r "count").toUInt64.toNat
+    -- `File.lean:12:3-12:40` without the file
+    let cols := ":".intercalate (((str r "range").splitOn ":").reverse.take 3).reverse
+    let syn := (((str r "syntax").splitOn ".").getLast?).getD ""
+    onLine := onLine.insert line ((onLine.getD line #[]).push
+      (x, cols, s!"{amount x}{if n > 1 then s!" ({n}×)" else ""}  {str r "kind"} {syn}: {str r "text"}"))
+  for (line, rs) in onLine.toList do
+    let rs := rs.qsort (fun a b => a.1 > b.1)
+    let list := "by exact source range (line:column, inclusive):" ++
+      String.join (rs.toList.take 6 |>.map fun (_, c, d) => s!"\n  {c}  {d}")
+    match best.get? line with
+    | some (x, label, tip) => best := best.insert line (x, label, tip ++ "\n" ++ list)
+    | none =>
+      let (x, c, d) := rs[0]!
+      best := best.insert line (x, s!"⚙ {amount x}", list)
+      lines := lines.push s!"{file}:{c}  ⚙ {d}"
   for (line, (_, label, tip)) in best.toList do
     hint (endOfLine fm line) label tip
   let explained ← explanations

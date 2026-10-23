@@ -92,12 +92,20 @@ lean_lib LeanprofLive
 
 /-- `leanprof elab`, imported by the command, and its tests (run by `tests`). -/
 lean_lib LeanprofElab where
-  roots := #[`LeanprofElab, `Tests.Elab]
+  roots := #[`LeanprofElab, `LeanprofElabRange, `Tests.Elab]
 
-/-- `lake exe leanprof run|compare`. -/
+/-- `leanprof elab`'s in-process Lean frontend: elaborates a file with every term and
+tactic timed against its exact source range (LeanprofElabDriver.lean). It runs the
+elaborators of the modules it imports, so it needs the interpreter. -/
+lean_exe «leanprof-elab-driver» where
+  root := `LeanprofElabDriver
+  supportInterpreter := true
+
+/-- `lake exe leanprof run|compare`. Builds the elab driver next to it. -/
 lean_exe leanprof where
   root := `LeanprofCli
   supportInterpreter := false
+  needs := #[«leanprof-elab-driver»]
 
 lean_exe tasks where
   root := `Examples.Tasks
