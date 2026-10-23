@@ -176,6 +176,12 @@ typedef struct lpf_mem_thread {
     size_t nscopes, nsites;    /* keys in each table (new keys stop at LP_TABLE_LIMIT) */
     uint64_t dropped;
     int in_free;
+    /* the last site: a run of frees from one call site in one scope (a loop
+     * dropping elements) skips the table */
+    void *last_pc;
+    const void *last_key;
+    uint8_t last_kind;
+    lpf_free_site *last_site;
     /* scratch for counting a cascade: a stack, and decrements seen per shared object */
     lean_object **stack;
     size_t nstack, capstack;
@@ -338,10 +344,15 @@ static lpf_free_site *lpf_free_site_get(lpf_mem_thread *m, void *pc) {
     const void *key;
     uint8_t kind;
     lpf_current(m->lt, &key, &kind);
+    if (pc == m->last_pc && key == m->last_key && kind == m->last_kind && m->last_site != NULL) return m->last_site;
+    m->last_pc = pc;
+    m->last_key = key;
+    m->last_kind = kind;
+    m->last_site = NULL;
     size_t i = lpf_hash(pc, key);
     for (size_t k = 0; k < LP_TABLE; k++, i = (i + 1) & (LP_TABLE - 1)) {
         lpf_free_site *s = m->sites[i];
-        if (s != NULL && s->pc == pc && s->scope == key && s->scope_kind == kind) return s;
+        if (s != NULL && s->pc == pc && s->scope == key && s->scope_kind == kind) return m->last_site = s;
         if (s == NULL) {
             if (m->nsites >= LP_TABLE_LIMIT) break;
             s = m->sites[i] = calloc(1, sizeof(lpf_free_site));
@@ -350,7 +361,7 @@ static lpf_free_site *lpf_free_site_get(lpf_mem_thread *m, void *pc) {
             s->pc = pc;
             s->scope = key;
             s->scope_kind = kind;
-            return s;
+            return m->last_site = s;
         }
     }
     m->dropped++;
@@ -365,7 +376,7 @@ LEAN_EXPORT void leanprof_dec_ref_cold(lean_object *o) {
         lean_dec_ref_cold(o);
         return;
     }
-    lpf_frees_seen = 1;
+    if (LEAN_UNLIKELY(!lpf_frees_seen)) lpf_frees_seen = 1; /* no store to a shared line on every free */
     if (rc < -1) { /* an atomic decrement that does not free */
         lean_dec_ref_cold(o);
         lpf_free_site *s = lpf_free_site_get(m, pc);

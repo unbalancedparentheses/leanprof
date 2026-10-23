@@ -182,12 +182,13 @@ def short(name):
 
 def leanprof_report(path):
     d = json.load(open(path))
-    times, calls, allocs = {}, {}, {}
+    times, calls, allocs, near = {}, {}, {}, {}
     for s in d.get("scopes", []):
         n = short(s["name"])
         if n is None:
             continue
         times[n] = times.get(n, 0) + s["total_ns"]
+        near[n] = near.get(n, False) or s.get("near_probe_cost", False)
         calls[n] = calls.get(n, 0) + s["calls"]
         if "allocs" in s:
             allocs[n] = allocs.get(n, 0) + s["allocs"]
@@ -197,7 +198,7 @@ def leanprof_report(path):
         # (the empty array literal a loop starts from), not the hidden copy
         n = c["function"].split(" (in ")[0].split(".")[-1]
         copies[n] = copies.get(n, 0) + c.get("shared", c["copies"])
-    return {"times": times, "calls": calls, "allocs": allocs, "copies": copies,
+    return {"times": times, "calls": calls, "allocs": allocs, "copies": copies, "near": near,
             "overhead_ns": d.get("overhead_ns"), "dropped": d.get("dropped", 0)}
 
 
@@ -370,7 +371,7 @@ def analyse(runs, configs):
                 out["ns_per_scope"] = (med(walls) - plain_wall) / total_scopes
             reps = [r["report"] for r in rs if r["report"]]
             if cfg != "plain" and reps:
-                maes, maxes, ratios, per_comp = [], [], [], {}
+                maes, maxes, ratios, per_comp, per_near = [], [], [], {}, {}
                 for rep in reps:
                     got = {c: rep["times"].get(c) for c in truth}
                     if any(v is None for v in got.values()):
@@ -384,6 +385,8 @@ def analyse(runs, configs):
                     ratios.append(gsum / tsum)
                     for c in truth:
                         per_comp.setdefault(c, []).append(got[c] / truth[c])
+                        if "near" in rep:
+                            per_near.setdefault(c, []).append(bool(rep["near"].get(c)))
                 if maes:
                     out["share_mae_pp"] = med(maes)
                     out["share_mae_pp_max"] = max(maes)
@@ -395,6 +398,9 @@ def analyse(runs, configs):
                     out["total_ratio_min"] = min(ratios)
                     out["total_ratio_max"] = max(ratios)
                     out["component_ratio"] = {c: med(v) for c, v in per_comp.items()}
+                    if per_near:
+                        # flagged "near the probe cost" in most runs
+                        out["component_near"] = {c: sum(v) * 2 > len(v) for c, v in per_near.items()}
                 else:
                     out["share_note"] = "components missing from the report"
                 # call counts
@@ -570,7 +576,30 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
           cfgs=[c for c in cols if c in LEANPROF_EXACT or c == "leanprofiler"])
 
     L.append("## Per component\n")
-    L.append("Reported time of each component over its plain time (median of runs).\n")
+    L.append("Reported time of each component over its plain time (median of runs). `*`: leanprof "
+             "flagged the row as near the probe cost (in most runs), telling the reader to take its time "
+             "from `leanprof sample`.\n")
+    flagged, clean = [], []
+    for w, wr in res.items():
+        for c in [c for c in cols if c in ("profile", "run", "auto")]:  # the others add costs they do not subtract
+            o = wr["configs"].get(c) or {}
+            for comp, r in (o.get("component_ratio") or {}).items():
+                if r is None or "component_near" not in o:
+                    continue
+                (flagged if o["component_near"].get(comp) else clean).append((abs(r - 1), f"`{w}`/`{comp}` `{c}`"))
+    if flagged or clean:
+        flagged.sort()
+        clean.sort()
+        fe = [e for e, _ in flagged]
+        line = (f"Flag calibration (`profile`, `run`, `auto`; the other modes add costs they do not subtract): "
+                f"{len(clean)} unflagged component rows, {len(flagged)} flagged.")
+        if clean:
+            line += (f" Unflagged: median error {med([e for e, _ in clean]) * 100:.0f}%, largest "
+                     f"{clean[-1][0] * 100:.0f}% ({clean[-1][1]}).")
+        if fe:
+            line += (f" Flagged: median error {med(fe) * 100:.0f}%, "
+                     f"{sum(e > 0.1 for e in fe)} of {len(fe)} off by more than 10%.")
+        L.append(line + "\n")
     for w, wr in res.items():
         L.append(f"**{w}**\n")
         L.append("| component | truth | " + " | ".join(f"`{c}`" for c in cols) + " |")
@@ -579,7 +608,8 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
             row = []
             for c in cols:
                 o = wr["configs"].get(c) or {}
-                row.append(fx((o.get("component_ratio") or {}).get(comp)))
+                row.append(fx((o.get("component_ratio") or {}).get(comp)) +
+                           ("*" if (o.get("component_near") or {}).get(comp) else ""))
             L.append(f"| `{comp}` | {ns / 1e6:.2f} ms | " + " | ".join(row) + " |")
         L.append("")
 

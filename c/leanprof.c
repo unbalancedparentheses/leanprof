@@ -49,13 +49,13 @@ enum { LP_LABEL, LP_FN, LP_INTERNAL, LP_TASK };
 enum { LP_PATH_DIRECT, LP_PATH_HOOK, LP_PATH_SCOPE, LP_PATH_ENTER, LP_PATH_PURE, LP_PATHS };
 
 typedef struct {
+    /* What every enter and exit touches comes first, in the first two cache
+     * lines (scopes are 64-byte aligned). */
     const void *key;
     uint8_t kind;              /* LP_LABEL, LP_FN, or LP_INTERNAL (calibration) */
     uint8_t path;              /* LP_PATH_*: how it is entered */
-    /* LP_FN: the C function's name up to the first compiler-generated part
-     * (`f___boxed`, `f___redArg`, `f___lam__0` are all `f`), hashed. All C
-     * functions of one Lean declaration share one scope (see lpf_scope_get). */
-    uint64_t decl;
+    uint8_t parent_kind;       /* LP_TASK: kind of the spawning scope */
+    uint32_t active;           /* recursion depth, so totals count the outermost call */
     /* Raw times. `sum` is every call's own duration, `total` only outermost
      * calls (recursion). Overhead is removed at report time: `kids` and
      * `desc_sum`/`desc_total` are the overhead of direct children and of all
@@ -63,14 +63,15 @@ typedef struct {
      * enter/exit pair (lpf_w_pair, lpf_w_kid); `outer` outermost calls;
      * `fwd` entries that were not calls (one C function of a declaration
      * calling another of the same declaration, such as `f___boxed` -> `f`). */
-    uint64_t calls, total, self, sum, min, max;
-    uint64_t kids, desc_sum, desc_total, outer, fwd;
-    uint64_t wait, wait_max;   /* LP_TASK: time from spawn to start */
+    uint64_t calls, total, self, sum, kids, desc_sum, desc_total, outer, fwd, min, max;
     /* allocations (LEANPROF_ALLOCS builds): made while this scope was the
      * innermost (self), and including children over outermost calls (total) */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
-    uint8_t parent_kind;       /* LP_TASK: kind of the spawning scope */
-    uint32_t active;           /* recursion depth, so totals count the outermost call */
+    uint64_t wait, wait_max;   /* LP_TASK: time from spawn to start */
+    /* LP_FN: the C function's name up to the first compiler-generated part
+     * (`f___boxed`, `f___redArg`, `f___lam__0` are all `f`), hashed. All C
+     * functions of one Lean declaration share one scope (see lpf_scope_get). */
+    uint64_t decl;
     uint32_t hist[LP_BUCKETS]; /* per call, overhead removed */
 } lpf_scope;
 
@@ -363,9 +364,8 @@ static void lpf_syms_load(void) {
         if ((nl[k].n_type & N_STAB) || (nl[k].n_type & N_TYPE) != N_SECT || nl[k].n_un.n_strx == 0) continue;
         uintptr_t a = slide + nl[k].n_value;
         if (a < lpf_text_lo || a >= lpf_text_hi) continue;
-        const char *nm = strs + nl[k].n_un.n_strx;
-        if (nm[0] == '_') nm++; /* C names have a leading underscore; dladdr drops it too */
-        lpf_syms_push(&cap, a, nm);
+        /* not read here: touching every name would page in the whole string table */
+        lpf_syms_push(&cap, a, strs + nl[k].n_un.n_strx);
     }
 }
 #else
@@ -452,7 +452,13 @@ static const char *lpf_sym_name(const void *pc) {
             if (lpf_syms[mid].addr <= a) lo = mid + 1;
             else hi = mid;
         }
-        if (lo > 0) return lpf_syms[lo - 1].name;
+        if (lo > 0) {
+            const char *nm = lpf_syms[lo - 1].name;
+#ifdef __APPLE__
+            if (nm[0] == '_') nm++; /* C names have a leading underscore; dladdr drops it too */
+#endif
+            return nm;
+        }
     }
     Dl_info info;
     if (!dladdr(pc, &info)) return NULL;
@@ -479,8 +485,9 @@ static uint64_t lpf_decl_of(const void *fn) {
 }
 
 static lpf_scope *lpf_new_scope(const void *key, uint8_t kind, uint8_t path) {
-    lpf_scope *s = calloc(1, sizeof(lpf_scope));
+    lpf_scope *s = aligned_alloc(64, (sizeof(lpf_scope) + 63) / 64 * 64);
     if (s == NULL) abort();
+    memset(s, 0, sizeof(lpf_scope));
     s->key = key;
     s->kind = kind;
     s->path = path;
@@ -1971,14 +1978,18 @@ typedef struct {
     uint64_t wait, wait_max;   /* tasks: spawn to start */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
     uint64_t calls, total, self, sum, min, max;
-    double probes;             /* ticks of probe cost subtracted from `total` */
+    double probes;             /* ticks: probe cost in and around its outermost calls */
     uint32_t hist[LP_BUCKETS];
 } lpf_scope_sum;
 
-/* A row whose subtracted probe cost is at least this share of what is left
- * is "near the probe cost": the residual of the subtraction (a few ns per
- * scope, see bench/RESULTS.md) is then a large part of its time. */
-#define LP_NEAR_PROBE 0.5
+/* A row is "near the probe cost" when the probes in and around its calls
+ * (its own enter/exit pairs and its descendants') cost at least this share
+ * of the time left after subtracting them: what the subtraction gets wrong,
+ * a few ns per scope, is then a large part of its time. 0.3 is a function
+ * that takes about three probe pairs per call (~25 ns on an M5 Max); in
+ * bench/RESULTS.md the reported time of every component below that is off
+ * by 10% to several times, and above it by noise only (see bench/README.md). */
+#define LP_NEAR_PROBE 0.3
 static int lpf_near_probe(const lpf_scope_sum *s) {
     return !s->is_task && s->probes > 0 && s->probes >= LP_NEAR_PROBE * (double)s->total;
 }
@@ -2469,9 +2480,10 @@ static void lpf_report(void) {
             /* remove leanprof's own cost (see calibration) */
             double inner = lpf_inner_ticks(s), unit = lpf_unit_ticks();
             S[k].calls += s->calls;
-            double probes = (double)s->outer * inner + (double)s->desc_total * unit;
-            S[k].probes += probes;
-            S[k].total += lpf_clamp((double)s->total - probes);
+            /* the probes of its descendants, and its own whole pair (part of
+             * which lands in its caller) */
+            S[k].probes += (double)s->outer * (double)lpf_pair_fp[s->path] / 1024.0 + (double)s->desc_total * unit;
+            S[k].total += lpf_clamp((double)s->total - (double)s->outer * inner - (double)s->desc_total * unit);
             S[k].self += lpf_clamp((double)s->self - (double)(s->calls + s->fwd) * inner - (double)s->kids * unit);
             S[k].sum += lpf_clamp((double)s->sum - (double)s->calls * inner - (double)s->desc_sum * unit);
             S[k].wait += s->wait;
