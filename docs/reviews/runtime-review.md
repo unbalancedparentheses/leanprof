@@ -47,8 +47,8 @@ not rebuilt, so:
   the runtime's own `memcpy`, `memmove` and `memset`; two workers' array
   copies (`lean_copy_expand_array`) into memory mimalloc reused between
   them were reported, a false race in the Lean heap. `scripts/tsan.supp`
-  suppresses races whose top frame is one of these three: leanprof shares
-  no memory through them.
+  suppresses races whose top frame is one of these three, or inside the
+  runtime's `lean_copy_*`: leanprof shares no memory through them.
 - **LeakSanitizer is off**: leanprof keeps its records until the exit
   report, and Lean's runtime does not free everything at exit.
 

@@ -6,6 +6,9 @@
 # worker freed) look like races. leanprof's runtime shares no memory through
 # these functions: events and counters other threads read are written with
 # atomics, and grown stacks are copied before they are published.
-race_top:^memcpy$
-race_top:^memmove$
-race_top:^memset$
+race_top:memcpy
+race_top:memmove
+race_top:memset
+# the runtime's copies of arrays, scalar arrays and strings, by name (the
+# interceptor's own name may not be what race_top sees)
+race:lean_copy_
