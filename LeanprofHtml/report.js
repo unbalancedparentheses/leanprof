@@ -495,10 +495,10 @@ if (run || elab) addTab("flame", run && (run.flame || sampled) ? "Flame graph" :
   if (run) {
     const t = runTree();
     const note = sampled ? (run.flame ? "Sampled CPU time by call stack, from samply's profile " + run.flame_from + ". Each frame's width is its share of CPU time; its children are what it called."
-        : "No samply profile was found next to " + run.path + " (EXE.json and EXE.syms.json, written by leanprof sample); pass --profile FILE. Showing sampled time per declaration.")
+        : "No samply profile was found next to " + run.path + " (EXE.json and EXE.syms.json, written by leanprof sample); pass --profile FILE. The Declarations tab has sampled time per declaration.")
       : run.flame ? "Time per scope by call path, from the timeline " + run.flame_from + "."
       : "A run report records time per scope but not who called whom, so this shows each scope's self time. For the call tree, render with --trace FILE from `leanprof run --trace FILE`, or use `leanprof sample`.";
-    out.push(panel(sampled ? "CPU flame graph" : "Run time", note, flame(t, { fmt: fNs })));
+    out.push(panel(sampled ? "CPU flame graph" : "Run time", note, sampled && !run.flame ? null : flame(t, { fmt: fNs })));
   }
   if (elab) out.push(panel("Compile cost", "Per file, line and phase (elaboration, kernel, compiler, linters), from " + elab.path + ".", flame(compileTree(), { fmt: fAmt(elab) })));
   return out;
