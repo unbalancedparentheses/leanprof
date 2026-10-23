@@ -17,6 +17,9 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `judge BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
 | `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
 | `html [-o F] [--trace F] [--profile F] [REPORT.json…]` | one self-contained HTML page: summary, flame graph, tables, source, comparison of two reports ([HTML report](html-report.md)) |
+| `top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS] \| --attach F \| --pid PID` | live view of a running program, refreshed like `top` ([live](live.md)) |
+| `dump [--timeout S] PID` | Perfetto trace of a running program's last seconds (flight recorder) |
+| `mcp` | Model Context Protocol server on stdio for AI agents ([live](live.md#mcp-server)) |
 | `doctor` | check the tools and project setup leanprof needs |
 
 Reports go to `.lake/leanprof/`: `report.json` (run and sample),
@@ -33,10 +36,19 @@ For programs that link leanprof:
 | `LEANPROF_QUIET=1` | no table on stderr |
 | `LEANPROF_ALL=1` | include copies of compile-time constants and non-Lean functions |
 | `LEANPROF_TRACE=path` | also write a Perfetto timeline |
-| `LEANPROF_TRACE_MAX=n` | timeline events kept per thread (default 1,048,576) |
+| `LEANPROF_TRACE_MAX=n` | timeline events kept per thread (default 1,048,576; with the flight recorder, the ring's size, default 262,144) |
 | `LEANPROF_NO_CALIBRATION=1` | raw times, leanprof's own cost not subtracted |
 | `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for positions |
 | `LEANPROF_STAT=1` | write the report even when nothing was recorded (set by `stat`) |
+| `LEANPROF_LIVE=path` / `1` | rewrite a live snapshot every 250 ms (`1`: `$TMPDIR/leanprof-<pid>.live.json`) ([live](live.md)) |
+| `LEANPROF_LIVE_MS=ms` | snapshot interval (default 250, at least 10) |
+| `LEANPROF_LIVE_WINDOW_MS=ms` | recent percentiles cover the last one to two windows (default 1000) |
+| `LEANPROF_LIVE_ROWS=n` | rows per snapshot section (default 100) |
+| `LEANPROF_FLIGHT=dir` / `1` | flight recorder: timeline in bounded per-thread rings, dumped on `SIGUSR1` into `dir` (`1`: the current directory) |
+| `LEANPROF_FLIGHT_SECS=s` | seconds a dump covers (default 10) |
+| `LEANPROF_SLOW_MS=ms` | also dump when a scope takes `ms` or more (turns the recorder on) |
+| `LEANPROF_SLOW_SCOPE=name` | only scopes with this name trigger slow dumps |
+| `LEANPROF_SLOW_MAX=n` | at most `n` slow dumps (default 10) |
 
 For `leanprof run --core`:
 
@@ -93,6 +105,30 @@ Sampled reports add `"sampled": true`; compile reports from `elab` have
 `"elab": true`, `"unit": "ns"` or `"heartbeats"`, per-line `elab_ns`,
 `kernel_ns`, `compile_ns`, `lint_ns`, `top` operations, `repeated`, and
 `kinds` (self cost per operation kind: `class`, `total`).
+
+## Live snapshot
+
+The file `LEANPROF_LIVE` names (rewritten atomically) has `leanprof_live`
+(1), `pid`, `seq`, `exited` (the final snapshot, written at exit),
+`interval_ms`, `ts_ns` (since start), `overhead_ns`, `threads`, objects
+`memory` (`rss`, `commit`, `peak_rss`, `peak_commit`), `cpu` (`user_ns`,
+`sys_ns`), `flight` (`dir`, `secs`, `slow_ms`, `dumps`, `last`, or null),
+and arrays, each with `name` and `where` (file:line), cumulative since
+start:
+
+- `scopes`: `auto`, `calls`, `total_ns`, `self_ns`, `max_ns`, `p50_ns`,
+  `p99_ns`, `allocs`, `alloc_bytes`, and `recent` (`calls`, `p50_ns`,
+  `p99_ns` of the calls in the last one to two windows);
+- `tasks` (`name` is the spawning scope): `tasks`, `run_ns`, `wait_ns`,
+  `wait_max_ns`;
+- `copies` (`name` is the function): `scope`, `kind`, `copies`,
+  `persistent`, `bytes`, `copy_ns`;
+- `allocations`: `scope`, `allocs`, `bytes`; `waits`: `scope`, `waits`,
+  `blocked_ns`;
+- `stacks`: per busy thread, `thread` and `frames` (`name`, `elapsed_ns`),
+  outermost first.
+
+Rates are differences between two snapshots over their `ts_ns`.
 
 ## GitHub Action and releases
 

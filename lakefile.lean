@@ -57,14 +57,15 @@ target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  -- leanprof.c includes counters.inc.c, memory.inc.c, coverage.inc.c and
-  -- explain.inc.c: rebuild when any changes
+  -- leanprof.c includes counters.inc.c, memory.inc.c, coverage.inc.c,
+  -- explain.inc.c and live.inc.c: rebuild when any changes
   let counters ← computeTrace (pkg.dir / "c" / "counters.inc.c")
   let memory ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "memory.inc.c"))
   let coverage ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "coverage.inc.c"))
   let explain ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "explain.inc.c"))
+  let live ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "live.inc.c"))
   buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc"
-    (return ((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain)
+    (return (((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain).mix live)
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch
@@ -86,6 +87,8 @@ input_file htmlJs where
 `needs` rebuilds it when the page's CSS or script changes. -/
 lean_lib LeanprofHtml where
   needs := #[htmlCss, htmlJs]
+/-- `leanprof top`, `dump` and `mcp`, imported by the command line. -/
+lean_lib LeanprofLive
 
 /-- `lake exe leanprof run|compare`. -/
 lean_exe leanprof where
@@ -112,5 +115,12 @@ lean_exe taskchains where
 
 lean_exe corecopies where
   root := `Examples.CoreCopies
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags
+
+/-- A long-running program for `leanprof top` and the flight recorder:
+requests with an occasional slow one. -/
+lean_exe server where
+  root := `Examples.Server
   moreLeancArgs := copyFlags
   moreLinkArgs := linkFlags

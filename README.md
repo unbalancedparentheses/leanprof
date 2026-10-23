@@ -47,6 +47,8 @@ buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
 | Allocations per function; failed in-place reuse; closure calls | `leanprof run --allocs --counters myapp` |
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
+| A running program, live; the last seconds of a slow request as a timeline | `leanprof top myapp`, `leanprof dump PID` |
+| Profiling tools for AI agents (MCP) | `leanprof mcp` |
 | Compile cost per line and operation kind, repeated work, exact heartbeats | `leanprof elab --heartbeats Foo.lean` |
 | Regressions in CI, exactly for copies, calls and heartbeats; PR comments | `leanprof compare`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, for automated optimization loops | `leanprof measure`, `leanprof judge` |
@@ -117,6 +119,7 @@ The [getting started guide](docs/guide/getting-started.md) walks through it.
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads |
 | Compile time | per line and operation, repeated work | – | deeper (unfolded definitions, all of Mathlib) | – |
 | Exact regression checks, PR comments | ✅ | thresholded time | – | – |
+| Live view, flight recorder | ✅ `top`, `dump` | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – |
 
 Overhead from [`bench/`](bench/README.md) on an Apple M5 Max.
@@ -130,6 +133,7 @@ Overhead from [`bench/`](bench/README.md) on an Apple M5 Max.
 - [Compile time](docs/guide/compile-time.md)
 - [In the editor](docs/guide/editor.md) and [HTML report](docs/guide/html-report.md)
 - [CI, regressions and autoresearch](docs/guide/ci-and-regressions.md)
+- [Live view, flight recorder and MCP server](docs/guide/live.md)
 - [Lean API](docs/guide/lean-api.md) and [reference](docs/guide/reference.md) (commands, environment, JSON)
 - [How it works, and limits](docs/guide/how-it-works.md)
 - [Roadmap](ROADMAP.md), [changelog](CHANGELOG.md), [ideas from other ecosystems](docs/research/other-ecosystems.md)

@@ -2,6 +2,7 @@ import Lean.Data.Json
 import Leanprof.Core
 import Leanprof.Explain
 import LeanprofHtml
+import LeanprofLive
 
 /-!
 # `lake exe leanprof`
@@ -73,6 +74,18 @@ def commands : List (String × String × String) := [
     "two reports of a kind (base, then new; regressions as `compare` counts them). The flame graph\n" ++
     "of a sampled report reads samply's profile next to it (or --profile FILE); for a run report,\n" ++
     "pass the timeline of `run --trace FILE` as --trace FILE."),
+  ("top", "[--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS...] | --attach FILE | --pid PID",
+    "Run EXE with probes (as `run`) and show it live, refreshed like top: hottest scopes, copy sites,\n" ++
+    "allocation sites, tasks and waits with rates per second, memory, CPU and what each thread is inside.\n" ++
+    "--attach/--pid watch a program started with LEANPROF_LIVE=FILE or LEANPROF_LIVE=1. --flight and\n" ++
+    "--slow-ms turn on the flight recorder. Plain ANSI; --plain (or no terminal) prints frames."),
+  ("dump", "[--timeout S] PID",
+    "Ask a program running with the flight recorder (LEANPROF_FLIGHT, LEANPROF_SLOW_MS) for a Perfetto\n" ++
+    "trace of its last seconds (SIGUSR1) and print its path."),
+  ("mcp", "",
+    "Model Context Protocol server on stdio for AI agents: tools to run, sample, stat, elab and measure\n" ++
+    "targets, read reports, list hot scopes/copies/allocations with file:line, compare, judge, and\n" ++
+    "query (live) or dump (dump) a running program."),
   ("doctor", "",
     "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
   ("help", "[COMMAND]", "Show this overview, or one command's options.")]
@@ -89,6 +102,9 @@ def summary : String → String
   | "report-md" => "Markdown summary of base and head reports, for pull-request comments"
   | "explain" => "why each copy happened: where the second reference comes from, and a fix"
   | "html" => "one self-contained HTML report: flame graph, tables, source, comparison"
+  | "top" => "live view of a running program: hot scopes, copies, allocations, tasks, per second"
+  | "dump" => "write a running program's last seconds to a Perfetto trace (flight recorder)"
+  | "mcp" => "MCP server on stdio: profiling tools for AI agents"
   | "doctor" => "check that leanprof's tools and the project are set up"
   | "help" => "this overview, or one command's options"
   | _ => ""
@@ -1484,6 +1500,9 @@ def main (argv : List String) : IO UInt32 := do
     | "explain" :: rest =>
       Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
     | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
+    | "top" :: rest => LeanprofLive.topCmd rest
+    | "dump" :: rest => LeanprofLive.dumpCmd rest
+    | "mcp" :: rest => LeanprofLive.mcpCmd rest
     | _ =>
       IO.eprintln usage
       return 2

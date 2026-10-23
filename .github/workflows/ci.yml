@@ -123,6 +123,51 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof run --json large.json copybug -- 2000
           lake exe leanprof compare small.json small.json
           if lake exe leanprof compare small.json large.json; then echo "expected a regression"; exit 1; fi
+      - name: Live snapshots, leanprof top, flight recorder, MCP server
+        run: |
+          lake build server copybug
+          # live snapshots while the program runs, and a final one at exit
+          LEANPROF_QUIET=1 LEANPROF_LIVE=live.json .lake/build/bin/server 60 20 &
+          pid=$!
+          sleep 1.5
+          python3 -c "import json,sys; d=json.load(open('live.json')); print(d['seq'], [(s['name'], s['calls']) for s in d['scopes']]); sys.exit(0 if not d['exited'] and any(s['name']=='handle' and s['calls']>0 for s in d['scopes']) else 1)"
+          wait $pid
+          python3 -c "import json,sys; d=json.load(open('live.json')); s={x['name']: x['calls'] for x in d['scopes']}; c=sum(x['copies'] for x in d['copies']); t=sum(x['tasks'] for x in d['tasks']); print(s, c, t); sys.exit(0 if d['exited'] and s.get('handle')==60 and c==59 and t==60 else 1)"
+          # leanprof top, without a terminal: plain frames
+          lake exe leanprof top --plain --interval 300 --frames 3 server -- 60 20 | tee top.txt
+          grep -q "calls/s" top.txt
+          grep -q "handle  (Examples/Server.lean:" top.txt
+          grep -q "copies of shared values" top.txt
+          grep -q "(exited)" top.txt
+          grep -q "exit code 0" top.txt
+          # flight recorder: a dump per slow scope, and one on demand
+          rm -rf fl && mkdir fl
+          LEANPROF_QUIET=1 LEANPROF_FLIGHT=fl LEANPROF_SLOW_MS=200 LEANPROF_FLIGHT_SECS=2 .lake/build/bin/server 0 20 &
+          pid=$!
+          sleep 2
+          lake exe leanprof dump $pid | tee dump.txt
+          kill $pid
+          python3 - <<'PY'
+          import glob, json, sys
+          files = sorted(glob.glob('fl/*.trace.json'))
+          triggers = []
+          for f in files:
+              d = json.load(open(f))
+              ev = d['traceEvents']
+              b = sum(e['ph'] == 'B' for e in ev); e_ = sum(e['ph'] == 'E' for e in ev)
+              names = {e.get('name') for e in ev if e['ph'] == 'B'}
+              triggers.append(d['otherData']['trigger'])
+              print(f, d['otherData'], b, e_)
+              if b != e_ or not {'handle', 'parse'} <= names: sys.exit(1)
+          ok = any('slowPath' in t for t in triggers) and 'SIGUSR1' in triggers
+          sys.exit(0 if ok else 1)
+          PY
+          grep -q "trace.json" dump.txt
+          # the bounded buffer keeps the newest events, balanced
+          LEANPROF_QUIET=1 LEANPROF_FLIGHT=fl LEANPROF_TRACE_MAX=5000 LEANPROF_TRACE=ring.json .lake/build/bin/copybug 300
+          python3 -c "import json,sys; ev=json.load(open('ring.json'))['traceEvents']; b=sum(e['ph']=='B' for e in ev); e=sum(e['ph']=='E' for e in ev); print(b, e); sys.exit(0 if b==e and 1000 < b <= 5000 else 1)"
+          # a scripted MCP session
+          python3 scripts/mcp-check.py .lake/build/bin/leanprof
       - name: report-md (the pull-request comment of the GitHub Action)
         run: |
           lake exe leanprof report-md small.json small.json | tee same.md
