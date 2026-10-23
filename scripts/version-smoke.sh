@@ -50,10 +50,16 @@ LEANPROF_QUIET=1 "$lp" explain --why smoke -- 2000 > why.txt
 grep -q "1999×" why.txt
 
 echo "== leanprof elab"
-"$lp" elab --heartbeats Main.lean > elab.txt
+"$lp" elab --heartbeats Main.lean > elab.txt 2> elab.err
+cat elab.err
 head -12 elab.txt
 python3 "$check" .lake/leanprof/elab.json --elab --min-pos 2
 grep -q '"pos":"Main.lean:27"' .lake/leanprof/elab.json
+# exact ranges on this Lean too: the driver is built for it (once) when it is not leanprof's
+grep -q '"exact_ranges":true' .lake/leanprof/elab.json
+"$lp" elab Main.lean > elab-time.txt
+python3 "$root/scripts/check-elab-dataset.py" .lake/leanprof/elab --timeline
+grep -q "costliest tactics, by exact source range" elab-time.txt
 
 if command -v samply >/dev/null 2>&1 || [ "$need_sample" = --sample ]; then
   echo "== leanprof sample"

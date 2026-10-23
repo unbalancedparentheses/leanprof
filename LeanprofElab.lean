@@ -1156,8 +1156,9 @@ def locate (le : LeanEnv) (modules : Array Name) (names : Array String) : IO (St
   initSearchPath le.sysroot (SearchPath.parse le.path)
   let mut built : Array Import := #[]
   for m in modules.toList.eraseDups do
-    if (← (try some <$> findOLean m catch _ => pure none)).isSome then
-      built := built.push { module := m }
+    -- `findOLean` names the file where it would be: a module that is not built has none
+    if let some f ← (try some <$> findOLean m catch _ => pure none) then
+      if ← f.pathExists then built := built.push { module := m }
   if built.isEmpty then return {}
   let cwd ← IO.currentDir
   -- all at once; modules that cannot be imported together (two executables' `main`):

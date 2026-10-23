@@ -1,4 +1,5 @@
 import Lean.Util.Path
+import Std.Data.HashMap
 
 /-!
 # `leanprof elab`: exact source ranges, from the in-process driver
@@ -98,12 +99,39 @@ def cacheDir : IO FilePath := do
   return (home : FilePath) / ".cache" / "leanprof"
 
 /-- The Lean commit a program reports with `--githash`, or none when it does not run. -/
-def githashOf (cmd : String) : IO (Option String) := do
+def runGithash (cmd : String) : IO (Option String) := do
   try
     let out ← IO.Process.output { cmd, args := #["--githash"] }
     let h := out.stdout.trimAscii.toString
     return if out.exitCode == 0 && !h.isEmpty then some h else none
   catch _ => return none
+
+/-- `runGithash`, remembered for the process and on disk (`cacheDir/githash/`, by the
+program's path, size and modification time): every `elab` asks it of the project's `lean`. -/
+initialize githashMemo : IO.Ref (Std.HashMap String (Option String)) ← IO.mkRef {}
+
+def githashOf (cmd : String) : IO (Option String) := do
+  if let some h := (← githashMemo.get).get? cmd then return h
+  let key? ← try
+      let p ← IO.FS.realPath cmd
+      let m ← p.metadata
+      pure (some s!"{p}|{m.byteSize}|{m.modified.sec}|{m.modified.nsec}")
+    catch _ => pure none
+  let file? ← key?.mapM fun k => return (← cacheDir) / "githash" / (String.ofList (Nat.toDigits 16 (hash k).toNat))
+  if let (some k, some f) := (key?, file?) then
+    if let some line ← (try some <$> IO.FS.readFile f catch _ => pure none) then
+      if let [k', h] := line.trimAscii.toString.splitOn "\n" then
+        if k' == k then
+          githashMemo.modify (·.insert cmd (some h))
+          return some h
+  let h ← runGithash cmd
+  githashMemo.modify (·.insert cmd h)
+  if let (some k, some f, some h) := (key?, file?, h) then
+    try
+      IO.FS.createDirAll (f.parent.getD ".")
+      IO.FS.writeFile f s!"{k}\n{h}\n"
+    catch _ => pure ()
+  return h
 
 /-- Hex digits of a string's hash: names the build of this source. -/
 def sourceKey (s : String) : String :=

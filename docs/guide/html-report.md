@@ -41,6 +41,19 @@ Without arguments it reads `report.json`, `elab.json` and `measure.json` from
     scope.
   - For `leanprof elab`, compile cost by file, line and phase (elaboration,
     kernel, compiler, linters).
+- **Timeline** (`leanprof elab`): when each command, term and tactic was
+  elaborated, and on which thread, with the operations inside them, for the
+  report's slowest files (a file selector; at most 12 files and 250,000
+  operations, `--timeline-files N`, `--timeline-events N`). Each thread is a
+  lane; an operation is drawn under the one it ran in. Scroll to zoom, drag to
+  pan, hover for its time (inclusive and self), click for what it ran in and
+  its exact source range highlighted in the source, double-click to zoom to
+  it; "with imports" shows the time spent loading the imports first. Colours:
+  commands, tactics, terms, internal operations (`isDefEq`, `whnf`,
+  instances), the kernel and asynchronous proofs, the compiler, linters. The
+  timelines come from the [dataset](elab-dataset.md) `elab` writes next to its
+  report; every file's is there, and `elab --chrome-trace FILE` writes them
+  for Perfetto. Profiles in heartbeats have none (no clock).
 - **Tables**, sortable by any column and filterable: scopes (or sampled
   declarations and self time per function), copies with why
   (shared, multi-threaded, persistent, tiny), their share of the run and of

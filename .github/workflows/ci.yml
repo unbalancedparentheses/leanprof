@@ -260,6 +260,16 @@ jobs:
           lake exe leanprof elab --compact --threshold 0 --out compact.json Examples/ElabHeavy.lean | tee compact.txt
           grep -q "Examples/ElabHeavy.lean:22:3-22:8  omega  omega" compact.txt
           python3 -c "import json,sys; d=json.load(open('compact.json')); print(d['compact'], len(d['ranges']), len(d['constants'])); sys.exit(0 if d['compact'] and d['ranges'] else 1)"
+          # every term and tactic is recorded (--term-threshold N: only those over N ms)
+          lake exe leanprof elab --compact --term-threshold 1 --no-dataset --out t1.json Examples/ElabHeavy.lean > /dev/null
+          python3 -c "import json,sys; a=len(json.load(open('compact.json'))['ranges']); b=len(json.load(open('t1.json'))['ranges']); print(a, b); sys.exit(0 if a > b else 1)"
+          # the dataset (one file per module, with its timeline) against its documented schemas,
+          # the Chrome trace, and the html Timeline tab
+          lake exe leanprof elab --chrome-trace trace.json Examples/ElabHeavy.lean > /dev/null
+          python3 scripts/check-elab-dataset.py .lake/leanprof/elab --timeline
+          python3 -c "import json,sys; e=json.load(open('trace.json'))['traceEvents']; print(len(e)); sys.exit(0 if any(x.get('cat') == 'Leanprof.tactic' and x['args']['range'].startswith('Examples/ElabHeavy.lean:') for x in e) else 1)"
+          lake exe leanprof html -o timeline.html .lake/leanprof/elab.json
+          python3 scripts/check-html.py timeline.html --expect '"timelines"' --expect '"Leanprof.tactic"' --expect '"28:27-28:32"'
           # without the driver (another toolchain, or not built): `lean --json`, tactics by their text
           printf '#!/bin/sh\necho 0123456789abcdef\n' > other-lean-driver && chmod +x other-lean-driver
           LEANPROF_ELAB_DRIVER=$PWD/other-lean-driver lake exe leanprof elab --heartbeats --threshold 0 --out other.json Examples/ElabHeavy.lean > other.txt 2> other.err
@@ -312,6 +322,7 @@ jobs:
           grep -q "slowest files" proj.txt
           grep -q "definitions behind the work" proj.txt
           lake exe leanprof elab --project --heartbeats --module-glob 'Leanprof.*' --out glob.json
+          python3 scripts/check-elab-dataset.py elab --min-files 2
           python3 - <<'PY'
           import json, sys
           p, g = json.load(open('proj1.json')), json.load(open('glob.json'))

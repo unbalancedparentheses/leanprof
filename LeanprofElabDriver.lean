@@ -48,8 +48,8 @@ def termCls : Name := `Leanprof.term
 @[extern "lean_internal_get_believer_trust_level"]
 opaque believerTrustLevel (_ : Unit) : UInt32
 
-/-- Run `k` and record it as a trace node of class `cls` carrying `stx`'s range (in its
-`tag`: start and end byte, and the syntax kind), every time (or, with
+/-- Run `k` and record it as a trace node of class `cls` carrying `stx` (its body is
+`ofOriginatingSyntax stx`: the range and kind are read when the trace is printed), every time (or, with
 `leanprof.termThreshold`, when it takes longer than that). In compact mode `k` runs with
 `trace.profiler` off.
 Generated syntax without a source range is not recorded: its time stays in the
@@ -72,10 +72,10 @@ node around it. -/
   let stop ← if hb then pure (← IO.getNumHeartbeats).toFloat else pure ((← IO.monoNanosNow).toFloat / 1e9)
   let th : Nat := opts.get termThresholdOpt 0
   if th == 0 || stop - start > (if hb then th.toFloat else th.toFloat / 1000) then
-    let data : TraceData := { cls, startTime := start, stopTime := stop, result? := some res.toTraceResult,
-                              tag := s!"{s.byteIdx}:{e.byteIdx}:{stx.getKind}" }
+    let _ := (s, e)
+    let data : TraceData := { cls, startTime := start, stopTime := stop, result? := some res.toTraceResult }
     let children := (← getTraces).toArray.map (·.msg)
-    modifyTraces fun _ => old.push { ref := stx, msg := .trace data .nil children }
+    modifyTraces fun _ => old.push { ref := stx, msg := .trace data (.ofOriginatingSyntax stx .nil) children }
   else
     modifyTraces (old ++ ·)
   MonadExcept.ofExcept res
@@ -152,6 +152,8 @@ def fmtAmount (hb : Bool) (x : Float) : String :=
 
 structure Ctx where
   fm : FileMap
+  /-- Each range printed so far, by its start and end byte: `line:col-line:col` and its source. -/
+  ranges : IO.Ref (Std.HashMap (Nat × Nat) (String × String))
   src : String
   hb : Bool
   fullNames : Bool
@@ -163,20 +165,29 @@ structure Ctx where
 
 /-- The source between two byte positions on one line, at most 100 characters. -/
 def excerpt (src : String) (s e : Nat) : String :=
-  let t := String.Pos.Raw.extract src ⟨s⟩ ⟨e⟩
+  -- at most 400 bytes are read (cut back to a character boundary): a range can be a whole
+  -- proof, and every node inside it has an excerpt
+  let e' := if e > s + 400 then (String.Pos.Raw.prev src ⟨s + 401⟩).byteIdx else e
+  let t := String.Pos.Raw.extract src ⟨s⟩ ⟨e'⟩
   let ws := (t.split Char.isWhitespace).filter (!·.isEmpty) |>.map (·.toString)
   String.ofList ((" ".intercalate ws.toList).toList.take 100)
 
-/-- A source node's description: `@line:col-line:col kind | source` (columns from 1). -/
-def rangeText (c : Ctx) (tag : String) : String :=
-  match tag.splitOn ":" with
-  | s :: e :: kind =>
-    let s := s.toNat!
-    let e := e.toNat!
-    let p := c.fm.toPosition ⟨s⟩
-    let q := c.fm.toPosition ⟨e⟩
-    s!"@{p.line}:{p.column + 1}-{q.line}:{q.column + 1} {":".intercalate kind} | {excerpt c.src s e}"
-  | _ => ""
+/-- A source node's description: `@line:col-line:col kind | source` (columns from 1), from the
+syntax in its body. -/
+def rangeText (c : Ctx) (body : MessageData) : IO String := do
+  let .ofOriginatingSyntax stx _ := body | return ""
+  let some s := stx.getPos? (canonicalOnly := true) | return ""
+  let some e := stx.getTailPos? (canonicalOnly := true) | return ""
+  let kind := stx.getKind
+  let (range, text) ← match (← c.ranges.get).get? (s.byteIdx, e.byteIdx) with
+    | some r => pure r
+    | none => do
+      let p := c.fm.toPosition s
+      let q := c.fm.toPosition e
+      let r := (s!"{p.line}:{p.column + 1}-{q.line}:{q.column + 1}", excerpt c.src s.byteIdx e.byteIdx)
+      c.ranges.modify (·.insert (s.byteIdx, e.byteIdx) r)
+      pure r
+  return s!"@{range} {kind} | {text}"
 
 /-- One trace tree as the lines `lean --json` prints: `[Class] [amount] mark text`,
 indented by depth. Untimed nodes other than those that name a constant are left
@@ -198,7 +209,7 @@ partial def render (c : Ctx) (root : Option String) (depth : Nat) (wrap : Messag
       for ch in children do out ← render c none depth wrap out ch
       return out
     let text ←
-      if data.cls == tacticCls || data.cls == termCls then pure (rangeText c data.tag)
+      if data.cls == tacticCls || data.cls == termCls then rangeText c body
       else if let some r := root then pure r
       else if depth == 0 || (!c.compact && keepsText data.cls) then describe c.fullNames (wrap body)
       else pure ""
@@ -305,7 +316,7 @@ def run (a : Args) : IO UInt32 := do
   let cmdState := Command.mkState (instrument env) {} opts'
   let cmdState := { cmdState with infoState.enabled := true }
   let first ← Language.Lean.processCommands inputCtx parserState cmdState
-  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact,
+  let c : Ctx := { fm := inputCtx.fileMap, ranges := ← IO.mkRef {}, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact,
                    t0 := t0.toFloat / 1e9 }
   -- messages and traces of each snapshot as it completes, in order
   let lastPos ← IO.mkRef (0 : String.Pos.Raw)
@@ -375,8 +386,8 @@ def locate (request : String) : IO UInt32 := do
   let names := strs "names"
   let mut built : Array Import := #[]
   for m in (strs "modules").toList.eraseDups do
-    if (← (try some <$> findOLean (parseName m) catch _ => pure none)).isSome then
-      built := built.push { module := parseName m }
+    if let some f ← (try some <$> findOLean (parseName m) catch _ => pure none) then
+      if ← f.pathExists then built := built.push { module := parseName m }
   let mut out : Std.HashMap String Json := {}
   if !built.isEmpty then
     let joint ← try some <$> importModules built {} (loadExts := false) catch _ => pure none
