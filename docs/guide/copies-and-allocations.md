@@ -21,14 +21,34 @@ def buildWithHistory (n : Nat) : Array Nat × Array (Array Nat) := Id.run do
 
 leanprof reports each such copy with the function that made it, its
 declaration's file:line, the bytes and time spent copying, its share of the
-enclosing scope, and why the value was not exclusive:
+whole run (`%run`) and of the enclosing scope (`%scope`), and why the value
+was not exclusive. Rows are sorted by time, costliest first: 20,000 copies
+that took 0.02% of the run matter less than 2,000 that took 11%.
 
 | why | meaning |
 |---|---|
 | `shared` | another reference was alive |
 | `multi-threaded` | the value was stored where other threads can reach it (a global `IO.Ref` or `Mutex`, a `Task` result): Lean never updates such values in place |
-| `persistent` | a compile-time constant; harmless, hidden unless `LEANPROF_ALL=1` |
+| `persistent` | a compile-time constant; harmless, hidden unless `--all-copies` (or `LEANPROF_ALL=1`) |
 
+Copies of **empty or tiny values** (at most 16 bytes per copy on average,
+such as the first push into an empty array slot of `Array.replicate n
+(Array.mkEmpty k)`) that took under 1% of the run are grouped into one row
+at the end of the table:
+
+```
+   11280   150.3 KiB  249.6 µs  0.02%       -  12 sites copied only empty or tiny values (at most 16 bytes each, ...; --all-copies shows them)
+```
+
+`leanprof run --all-copies` (or `LEANPROF_ALL_COPIES=1`) lists them row by
+row. The JSON report keeps every row, with `"tiny": true` on these. An empty
+array with a large capacity is copied with its capacity, which can take
+long: such a row stays in the table when it takes 1% of the run or more.
+
+A time too short to measure is never shown as 0: a copy shorter than one
+clock tick reads `< 1 ns` (or `< 42 ns` on Apple chips before the M5, whose
+clock ticks every 41.7 ns), and its JSON row lists `copy_ns` in
+`too_small`.
 ## How to get copy reports
 
 - `leanprof run EXE`: no project changes.
@@ -50,9 +70,9 @@ copy happens in code leanprof did not compile. `leanprof run --core EXE`
 sees it:
 
 ```
-copies of non-exclusive values (each one copied the whole value)
-  copies       bytes       time  %scope  kind        why            in scope           function  (where)
-     500     3.8 MiB  131.0 µs   44.9%  Array       shared         appendShared       Array.append
+copies of non-exclusive values (each one copied the whole value; costliest first)
+  copies       bytes       time   %run  %scope  kind        why            in scope           function  (where)
+     500     3.8 MiB  131.0 µs   4.1%   44.9%  Array       shared         appendShared       Array.append
 ```
 
 That is [`Examples/CoreCopies.lean`](../../Examples/CoreCopies.lean): without
@@ -87,13 +107,14 @@ events were dropped, and the run is slower.
 
 The report says *that* a value was shared. `leanprof explain` says where the
 second reference comes from, for each copy site of the last report
-(`.lake/leanprof/report.json`):
+(`.lake/leanprof/report.json`), costliest first, with each site's share of
+the run (sites that copied only empty or tiny values only with `--all`):
 
 ```
 $ leanprof run copybug -- 2000
 $ leanprof explain
 buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
-  Array copies: 1999 shared, 2 of a constant; 15.3 MiB, 2.64 ms copying
+  Array copies: 1999 shared, 2 of a constant; 15.3 MiB, 4.17 ms copying, 13.0% of the run
   why: `acc` is stored in `history` at line 21 (`history := history.push acc`) and is updated
        afterwards at line 22 (`acc := acc.push i`): both refer to the same Array, so the Array.push
        copies it.
@@ -161,18 +182,30 @@ the explanation to the copy hint's hover.
 ## Allocations
 
 `leanprof run --allocs EXE` also counts every allocation made by compiled
-Lean code, per scope (with and without children) and per call site:
+Lean code, per scope (with and without children) and per call site, with an
+estimated time and its share of the run (lean-compiler-backend):
 
 ```
-allocations: 11946202, 266.6 MiB (from compiled Lean code; frees are not tracked)
-function                                     allocs       bytes    share  in scope             where (declaration)
-LeanCompilerBackend.Parser.tokenize (in WellFounded.opaqueFix₃)    4066775    88.8 MiB    33.3%  -    LeanCompilerBackend/Parser.lean:20
-LeanCompilerBackend.Parser.peek              910550    16.2 MiB     6.1%  -                    LeanCompilerBackend/Parser.lean:79
+allocations: 20070908, 560.1 MiB, est. 102.9 ms (6.7% of the run at 5.1 ns each, allocation and free; from compiled Lean code)
+    allocs       bytes  est. time   %run  in scope           function  (where)
+   3226352   176.8 MiB    16.5 ms   1.1%  -                  LeanCompilerBackend.Parser.tokenize.go  (LeanCompilerBackend/Parser.lean:42)
+   3182487    56.7 MiB    16.3 ms   1.1%  -                  LeanCompilerBackend.Parser.peek  (LeanCompilerBackend/Parser.lean:91)
 ```
+
+The estimate is the count times the cost of one small allocation and its
+free, measured when the report is written (cache-warm, so a lower bound:
+the real cost adds cache misses and initializing the memory). On
+lean-compiler-backend it says 6.7%; `leanprof sample` puts the runtime's
+allocation at 7% of the CPU time. Rows are sorted by it, so by count, then
+bytes.
 
 Frees happen inside the runtime and are not seen, so this is allocation
-volume, not live memory. It is off by default because every allocation then
-pays a small cost.
+volume, not live memory. It is off by default in `run` because every
+allocation then costs about 6 ns that is not subtracted from the times
+(lean-compiler-backend runs about 10% slower, an allocation-heavy loop up
+to 27%); without it the report ends with "allocations: not counted
+(`leanprof run --allocs` counts them, ...)". `leanprof stat` and
+`leanprof measure` count them by default (`--no-allocs` turns that off).
 
 ## Failed constructor reuse and closure applications
 
