@@ -39,7 +39,9 @@ target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc" getLeanTrace
+  -- leanprof.c includes c/explain.inc.c
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc" do
+    return (← getLeanTrace).mix (← computeTrace (TextFilePath.mk (pkg.dir / "c" / "explain.inc.c")))
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch

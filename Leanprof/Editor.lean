@@ -74,6 +74,15 @@ def hint (pos : String.Pos.Raw) (label tooltip : String) : CommandElabM Unit :=
 
 syntax (name := leanprofCmd) "#leanprof" (ppSpace str)? : command
 
+/-- Explanations written by `leanprof explain` (`.lake/leanprof/explain.json`),
+one entry per explained copy site, keyed by the copying function's symbol. -/
+def explanations : CommandElabM (Array Json) := do
+  let path := ".lake/leanprof/explain.json"
+  unless ← System.FilePath.pathExists path do return #[]
+  match Json.parse (← (IO.FS.readFile path : IO String)) with
+  | .ok (.arr a) => return a
+  | _ => return #[]
+
 /-- Hints and summary lines for one report. -/
 def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Array String) := do
   let j ← match Json.parse (← (IO.FS.readFile path : IO String)) with
@@ -110,6 +119,7 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     lines := lines.push s!"{file}:{line}  {label}  ({str s "name"})"
   for (line, (_, label, tip)) in best.toList do
     hint (endOfLine fm line) label tip
+  let explained ← explanations
   for c in arr j "copies" do
     let shared := num c "shared" + num c "multi_threaded"
     if shared == 0 then continue
@@ -119,7 +129,10 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     let tip := s!"{str c "function"} copied a {why} {str c "kind"} {shared.toUInt64} times " ++
       s!"({fmtBytes (num c "bytes")}, {fmtNs (num c "copy_ns")}) in scope {str c "scope"}. " ++
       "Each copy happens because another reference to the value is still alive (or the value " ++
-      "was shared between threads), so Lean cannot update it in place."
+      "was shared between threads), so Lean cannot update it in place." ++
+      String.join ((explained.filter (str · "symbol" == str c "symbol")).toList.map fun e =>
+        s!"\n\nwhy: {str e "why"}" ++ (if (str e "fix").isEmpty then "" else s!"\nfix: {str e "fix"}") ++
+          s!"\n(leanprof explain; confidence {str e "confidence"})")
     hint (endOfLine fm line) label tip
     lines := lines.push s!"{file}:{line}  {label}  ({str c "function"})"
   return lines

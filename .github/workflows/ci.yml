@@ -45,6 +45,16 @@ jobs:
         run: |
           LEANPROF_QUIET=1 LEANPROF_TRACE=trace.json .lake/build/bin/copybug 300
           python3 -c "import json,sys; d=json.load(open('trace.json'))['traceEvents']; b=sum(e['ph']=='B' for e in d); e=sum(e['ph']=='E' for e in d); c=sum(e['ph']=='i' for e in d); print(b,e,c); sys.exit(0 if b==e and b>10000 and c>=299 else 1)"
+      - name: Explain copies (leanprof explain)
+        run: |
+          LEANPROF_QUIET=1 lake exe leanprof run copybug -- 2000
+          lake exe leanprof explain | tee explain.txt
+          grep -q 'is stored in `history` at line 21' explain.txt
+          grep -q "confidence: high" explain.txt
+          grep -q '"lines":\[2[12],2[12]\]' .lake/leanprof/explain.json
+          LEANPROF_QUIET=1 lake exe leanprof explain --why copybug -- 2000 | tee why.txt
+          grep -q "1999×" why.txt
+          grep -q "the increment the IR analysis above points to" why.txt
       - name: Automatic mode and dependency-wide copy detection
         run: |
           find .lake -name '*.c.o*' -delete

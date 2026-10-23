@@ -1,4 +1,4 @@
-import Leanprof
+import Leanprof import Leanprof.Explain
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -122,6 +122,27 @@ def tests : StateT Nat IO Unit := do
   for (sym, want) in demangleCases do
     let got := demangle sym
     check s!"demangle {sym}" (got == want) s!"got {got}"
+  -- BEGIN leanprof explain: why copies happen, from the emitted C (Leanprof/Explain.lean)
+  check "explain: C variable names" (Explain.sourceName "v_as_x27_256_" == some "as'" &&
+    Explain.sourceName "v___x_12_" == none && Explain.sourceName "v_namePrefix_90_" == some "namePrefix")
+  check "explain: modify rewrite"
+    (Explain.modifyRewrite "  xs := xs.set! i (xs[i]!.push t)" == some "xs := xs.modify i (·.push t)")
+  -- this file's own C: `withHistory` stores `acc` in `history`, then pushes to it
+  let cache ← IO.mkRef ({} : Explain.CCache)
+  let cfile : System.FilePath := ".lake/build/ir/Tests/Main.c"
+  let clines ← Explain.readLines cache cfile
+  let funs := ((List.range clines.size).filter fun i =>
+    let l := clines[i]!
+    l.endsWith "{" && Explain.has l "withHistory" && Explain.has l "_spec_" && !Explain.has l "_boxed(").toArray.map
+      (Explain.parseFun cfile clines ·)
+  let src := ((← IO.FS.readFile "Tests/Main.lean").splitOn "\n").toArray
+  let decl := Explain.declLines src 12
+  let found := funs.flatMap fun f => (Explain.analyzeFun f "Array").filterMap fun fd =>
+    if fd.holder matches .storedBy _ && fd.strength == 3 then some (Explain.explainFinding f fd "Array" 8 decl) else none
+  check "explain: the IR shows acc stored before the push" (!found.isEmpty) s!"{funs.size} functions"
+  let lines := found.flatMap (·.lines)
+  check "explain: source lines of the store and the push" (lines.contains 17 && lines.contains 18) s!"{lines}"
+  -- END leanprof explain
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0

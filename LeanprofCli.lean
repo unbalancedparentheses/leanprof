@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import Leanprof.Core
+import Leanprof.Explain
 
 /-!
 # `lake exe leanprof`
@@ -45,6 +46,11 @@ def commands : List (String × String × String) := [
   ("judge", "BASE.json NEW.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, heartbeats or time got worse."),
+  ("explain", "[--report FILE] [--out FILE] [--top N] [--all] [--why EXE [-- ARGS...]]",
+    "For each copy of a shared value in the last report, say where the second reference comes from,\n" ++
+    "read from the compiler's IR (.lake/build/ir/*.c), with source lines and a fix when the pattern is\n" ++
+    "known. --why EXE first reruns EXE recording where each copied value became shared. Writes\n" ++
+    ".lake/leanprof/explain.json (or --out FILE) for #leanprof hovers."),
   ("doctor", "",
     "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
   ("help", "[COMMAND]", "Show this overview, or one command's options.")]
@@ -57,6 +63,7 @@ def summary : String → String
   | "compare" => "compare two reports, exit 1 on regressions (for CI)"
   | "measure" => "run a program several times into one summary (for judge / autoresearch)"
   | "judge" => "KEEP or DISCARD a change from two measure summaries"
+  | "explain" => "why each copy happened: where the second reference comes from, and a fix"
   | "doctor" => "check that leanprof's tools and the project are set up"
   | "help" => "this overview, or one command's options"
   | _ => ""
@@ -1006,6 +1013,8 @@ def main (argv : List String) : IO UInt32 := do
     | "compare" :: rest => compare rest
     | "sample" :: rest => sample rest
     | "elab" :: rest => elabCmd rest
+    | "explain" :: rest =>
+      Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
     | _ =>
       IO.eprintln usage
       return 2
