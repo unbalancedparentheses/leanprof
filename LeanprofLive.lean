@@ -442,6 +442,17 @@ def dumpCmd (argv : List String) : IO UInt32 := do
 
 /-! ## Report summaries (for the MCP tools) -/
 
+/-- A time of a report row, or "< probe cost" / "< 1 clock tick" when the row
+lists it in `too_small` (too small to measure; never shown as 0). -/
+def rowTime (r : Json) (k : String) (tick := false) : String :=
+  if ((r.getObjVal? "too_small" >>= Json.getArr?).toOption.getD #[]).any (·.getStr?.toOption == some k) then
+    (if tick then "< 1 clock tick" else "< probe cost")
+  else fmtTime (num r k)
+
+/-- A row's share of the run (`pct_run`), as ", 1.2% of the run", or "". -/
+def runShare (r : Json) : String :=
+  if (r.getObjVal? "pct_run").isOk then s!", {fixed (num r "pct_run") 2}% of the run" else ""
+
 /-- The hottest rows of one section of a report or a live snapshot, with file:line. -/
 def hotLines (j : Json) (kind : String) (limit : Nat) : Array String := Id.run do
   let live := num j "leanprof_live" > 0
@@ -452,15 +463,18 @@ def hotLines (j : Json) (kind : String) (limit : Nat) : Array String := Id.run d
   match kind with
   | "scopes" =>
     let xs := take ((arr j "scopes").qsort fun a b => num a "total_ns" > num b "total_ns")
-    xs.map fun s => s!"{fmtTime (num s "total_ns")} total, {fmtTime (num s "self_ns")} self, {fmtCount (num s "calls")} calls, p99 {fmtTime (num s "p99_ns")}: {str s "name"}{w s}"
+    xs.map fun s => s!"{rowTime s "total_ns"} total, {rowTime s "self_ns"} self, {fmtCount (num s "calls")} calls, p99 {rowTime s "p99_ns"}: {str s "name"}{w s}"
   | "copies" =>
     let n (c : Json) := if live then num c "copies" else num c "shared" + num c "multi_threaded"
     let xs := take (((arr j "copies").filter (n · > 0)).qsort fun a b =>
       if num a "copy_ns" != num b "copy_ns" then num a "copy_ns" > num b "copy_ns" else num a "bytes" > num b "bytes")
-    xs.map fun c => s!"{fmtCount (n c)} copies, {fmtBytes (num c "bytes")}, {fmtTime (num c "copy_ns")} [{str c "kind"}] in scope {str c "scope"}: {str c "function"}{str c (if live then "name" else "")}{w c}"
+    xs.map fun c => s!"{fmtCount (n c)} copies, {fmtBytes (num c "bytes")}, {rowTime c "copy_ns" (tick := true)}{runShare c} [{str c "kind"}] in scope {str c "scope"}: {str c "function"}{str c (if live then "name" else "")}{w c}"
   | "allocations" =>
-    let xs := take ((arr j "allocations").qsort fun a b => num a "bytes" > num b "bytes")
-    xs.map fun a => s!"{fmtCount (num a "allocs")} allocations, {fmtBytes (num a "bytes")} in scope {str a "scope"}: {str a "function"}{str a (if live then "name" else "")}{w a}"
+    -- costliest first: estimated time is the count times one allocation's cost
+    let xs := take ((arr j "allocations").qsort fun a b =>
+      if num a "allocs" != num b "allocs" then num a "allocs" > num b "allocs" else num a "bytes" > num b "bytes")
+    let est (a : Json) := if num a "est_ns" > 0 then s!", est. {fmtTime (num a "est_ns")}{runShare a}" else ""
+    xs.map fun a => s!"{fmtCount (num a "allocs")} allocations, {fmtBytes (num a "bytes")}{est a} in scope {str a "scope"}: {str a "function"}{str a (if live then "name" else "")}{w a}"
   | "tasks" =>
     let run := if live then "run_ns" else "run_sum_ns"
     let xs := take ((arr j "tasks").qsort fun a b => num a run > num b run)
@@ -512,12 +526,14 @@ def explain (j : Json) (filter : String) (limit : Nat := 5) : String := Id.run d
     (scopes.find? (str · "name" == name)).map (num · "total_ns") |>.getD 0
   -- copies
   let nc (c : Json) := if live then num c "copies" else num c "shared" + num c "multi_threaded"
-  let copies := ((arr j "copies").filter fun c => nc c > 0 && has c).qsort fun a b => num a "copy_ns" > num b "copy_ns"
+  -- costliest first; copies of empty or tiny values (`tiny`) are not worth explaining
+  let copies := ((arr j "copies").filter fun c => nc c > 0 && has c && !bool c "tiny").qsort fun a b =>
+    num a "copy_ns" > num b "copy_ns"
   for c in copies[0:min limit copies.size] do
     let n := nc c
     let share := scopeTotal (str c "scope")
     let pct := if share > 0 then s!", {fixed (num c "copy_ns" / share * 100)}% of scope {str c "scope"}" else ""
-    out := out.push s!"COPY  {fmtCount n} copies of a shared {str c "kind"} in {fnOf c}{pos c}, inside scope {str c "scope"}: {fmtBytes (num c "bytes")} copied ({fmtBytes (num c "bytes" / max n 1)} each), {fmtTime (num c "copy_ns")}{pct}."
+    out := out.push s!"COPY  {fmtCount n} copies of a shared {str c "kind"} in {fnOf c}{pos c}, inside scope {str c "scope"}: {fmtBytes (num c "bytes")} copied ({fmtBytes (num c "bytes" / max n 1)} each), {rowTime c "copy_ns" (tick := true)}{runShare c}{pct}."
     if num c "multi_threaded" > 0 then
       out := out.push "  why: the value is marked multi-threaded (it was reachable from a Task, IO.asTask or a shared IO.Ref), so it is never updated in place. Fix: build it on one thread and share it only when finished, or give each task its own copy up front."
     if num c "shared" > 0 || live then
@@ -534,7 +550,7 @@ def explain (j : Json) (filter : String) (limit : Nat := 5) : String := Id.run d
     let p99 := num s "p99_ns"
     let wall := num j "wall_ns"
     let pct := if wall > 0 then s!" ({fixed (total / wall * 100)}% of the run)" else ""
-    out := out.push s!"SCOPE {str s "name"}{pos s}: {fmtTime total}{pct} in {fmtCount calls} calls, mean {fmtTime (total / max calls 1)}, self {fmtTime self}."
+    out := out.push s!"SCOPE {str s "name"}{pos s}: {rowTime s "total_ns"}{pct} in {fmtCount calls} calls, mean {if total > 0 then fmtTime (total / max calls 1) else rowTime s "total_ns"}, self {rowTime s "self_ns"}."
     if total > 0 && self / total < 0.2 then
       out := out.push s!"  most of its time ({fixed ((total - self) / total * 100)}%) is in nested scopes: look at its children."
     else if total > 0 && self / total > 0.8 then

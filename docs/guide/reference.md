@@ -8,12 +8,12 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries; `--cwd` runs EXE in DIR |
+| `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--cwd DIR] EXE [-- ARGS]` | sample with samply, report per Lean declaration; exits with the program's exit code |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
-| `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--out F] EXE [-- ARGS]` | repeated runs into one summary |
+| `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--no-allocs] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time, output) |
 | `judge BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
 | `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
 | `html [-o F] [--trace F] [--profile F] [REPORT.json…]` | one self-contained HTML page: summary, flame graph, tables, source, comparison of two reports ([HTML report](html-report.md)) |
@@ -35,6 +35,7 @@ For programs that link leanprof:
 | `LEANPROF_JSON=path` | also write the report as JSON |
 | `LEANPROF_QUIET=1` | no table on stderr |
 | `LEANPROF_ALL=1` | include copies of compile-time constants and non-Lean functions |
+| `LEANPROF_ALL_COPIES=1` | list copies of compile-time constants and of empty or tiny values row by row (set by `run --all-copies`) |
 | `LEANPROF_TRACE=path` | also write a Perfetto timeline |
 | `LEANPROF_TRACE_MAX=n` | timeline events kept per thread (default 1,048,576; with the flight recorder, the ring's size, default 262,144) |
 | `LEANPROF_NO_CALIBRATION=1` | raw times, leanprof's own cost not subtracted |
@@ -76,7 +77,10 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 cost in it, on the busiest thread), `overhead_ns` (per scope),
 `overhead_by_path_ns` (the calibrated cost of one scope entered each way:
 `direct`, `auto` (the `--auto` hooks), `pure` (`profile!` on a pure term),
-`closure` (`Leanprof.scope`), `monadic`) and arrays:
+`closure` (`Leanprof.scope`), `monadic`), `run_ns` (the wall time without
+the probes' cost, what every `pct_run` is a share of), `resolution_ns` (one
+clock tick), `alloc_ns` (with allocations counted: the calibrated cost of a
+small allocation and its free) and arrays:
 
 - `scopes`: `name`, `pos`, `auto` (a function, not a `profile!` label),
   `calls`, `total_ns`, `self_ns`, `min_ns`, `max_ns`, `mean_ns`, `p50_ns`,
@@ -86,11 +90,16 @@ cost in it, on the busiest thread), `overhead_ns` (per scope),
   `probes_ns` is at least 0.3 of `total_ns`: take this row's time from
   `leanprof sample`, see [run time](run-time.md#overhead-and-accuracy));
 - `copies`: `function`, `symbol`, `scope`, `where`, `kind`, `copies`,
-  `bytes`, `copy_ns`, `shared`, `multi_threaded`, `persistent`;
-- `allocations`: `function`, `scope`, `where`, `allocs`, `bytes`;
+  `bytes`, `copy_ns`, `shared`, `multi_threaded`, `persistent`, `pct_run`
+  (`copy_ns` as a percentage of `run_ns`), `tiny` (true when the copies
+  averaged at most 16 bytes and took under 1% of the run: grouped into one
+  row of the terminal report, not hinted in the editor);
+- `allocations`: `function`, `scope`, `where`, `allocs`, `bytes`, `est_ns`
+  (`allocs` times `alloc_ns`, an estimate), `pct_run`;
 - `tasks`: `spawned_by`, `tasks`, `run_total_ns`, `run_sum_ns`, `wait_ns`,
   `wait_max_ns`;
 - `waits`: `function`, `scope`, `where`, `waits`, `blocked_ns`;
+
 - `reuse` (with counters, else empty): per function, `function`, `where`,
   `checks`, `failures` (all failed checks), `shared`, `multi_threaded`,
   `persistent`, `fields` (total fields of the cells that failed), `sites`;
@@ -109,6 +118,15 @@ and objects:
   `objects`, `free_ns`, `p50_ns`, `p99_ns`, `max_ns`, `mt_decrements`, and
   the same per site in `sites` (`function`, `scope`, `where`) and per scope
   in `scopes` (`scope`, `pos`).
+
+`scopes`, `copies`, `tasks` and `waits` rows have `too_small` (only when it
+is not empty): the names of their time fields too small to measure, written
+as 0. For a scope that is what is left after subtracting the probes' cost
+(shown as `< probe` in the terminal and `< probe cost` in the HTML report,
+the editor, `compare` and the MCP tools); for a copy, wait or task, less
+than one clock tick (`< 1 ns` on an M5, `< 42 ns` on earlier Apple chips;
+`< 1 clock tick` outside the terminal). Read a field listed there as
+"below what leanprof can measure", never as 0.
 
 Sampled reports add `"sampled": true`. Compile reports from `elab` have
 `"elab": true`, `"project"` (true with `--project`), `"unit": "ns"` or
@@ -131,6 +149,19 @@ Sampled reports add `"sampled": true`. Compile reports from `elab` have
 
 Compile reports also have `kinds`: self cost per operation kind (`class`,
 `total`), for `leanprof html`.
+
+## Measure summary
+
+`measure.json` (`"leanprof": "measure"`, version 1), what `judge` reads:
+`command`, `runs`, `exit_code`, `output` (`source`, `hash`, `stable`),
+`time_ns` (`median`, `min`, `max`, `runs`), `copies_total`,
+`copies_stable`, `copies` (`key`, `copies` per site), `calls` (`key`,
+`calls` per scope), `allocs_total` (the last run's allocations by compiled
+Lean code), `allocs_runs` (each run's total), `allocs_stable`,
+`alloc_bytes_total`, `allocs` (`key` "function in scope", `allocs`), and
+`heartbeats_total` and `heartbeats` (`key`, `heartbeats`) with
+`--heartbeats-files`. The allocation fields are `null` with `--no-allocs`;
+`judge` then does not compare allocations.
 
 ## Live snapshot
 

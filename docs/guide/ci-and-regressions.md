@@ -9,6 +9,9 @@ leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
 exits 1 on a regression:
 
 - **copies**: any increase (exact, so no noise);
+- **allocations** (when both reports counted them, `run --allocs`): an
+  increase of the total (exact; per-site changes are listed, but inlining
+  and refactoring move allocations between sites);
 - **calls**: any change;
 - **compile heartbeats** (reports from `leanprof elab --heartbeats`): an
   increase above 1% and 1,000 heartbeats;
@@ -126,20 +129,34 @@ This repository's own pull requests run the action on `copybug`
 For deciding whether one change is an improvement:
 
 ```
-leanprof measure [--runs N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS]
+leanprof measure [--runs N] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--out FILE] EXE [-- ARGS]
 leanprof judge BASE.json NEW.json
 ```
 
-`measure` builds with copy detection, runs the program `N` times (default 5,
-after a warm-up run) and writes one summary: median, min and max time,
-copies and calls per scope, compile heartbeats of the given files, the exit
-code, and a hash of stdout (or of `FILE`). `judge` prints KEEP or DISCARD
-with reasons and exits 0 or 1:
+`measure` builds with copy detection and allocation counting, runs the
+program `N` times (default 5, after a warm-up run) and writes one summary:
+median, min and max time, copies and calls per scope, allocations per site
+and per run, compile heartbeats of the given files, the exit code, and a
+hash of stdout (or of `FILE`). Counting allocations costs about 6 ns each
+(lean-compiler-backend, 20 million allocations: 10% slower); both summaries
+pay it alike, so time comparisons stay fair. `--no-allocs` turns it off.
+`judge` prints KEEP or DISCARD with reasons and exits 0 or 1:
 
-- **DISCARD** if the exit code or output changed, copies or compile
-  heartbeats grew, or every new run was slower than every base run;
-- **KEEP** if nothing got worse and copies or heartbeats went down, or every
-  new run was faster than every base run.
+- **DISCARD** if the exit code or output changed, copies or allocations
+  grew (exact: any increase; when a threaded program's count varies between
+  runs, only when every new run allocated more than every base run),
+  compile heartbeats grew by more than 1% and 1,000, or every new run was
+  slower than every base run;
+- **KEEP** if nothing got worse and copies went down, allocations went down
+  by at least 1% and 100, heartbeats went down by more than 1% and 1,000,
+  or every new run was faster than every base run.
+
+Allocations matter because a change can trade one cost for another: the
+first fix of `CFG.build` in lean-compiler-backend removed its copies but
+added 59,514 allocations, and a judge that only counted copies kept it. A
+smaller cut than 1% is exact but saves less than timing can see (each
+allocation costs a few ns), so it is listed but is not an improvement on
+its own.
 
 ## Autoresearch
 
@@ -156,7 +173,7 @@ scripted experiments:
 
 ```
 KEEP
-  + copies: 2999 -> 0
+  + copies: 2,999 -> 0
   + compile heartbeats: 667.00 kHB -> 422.93 kHB
   + time: median 29.02 ms -> 12.33 ms (every new run faster than every base run)
 

@@ -31,6 +31,10 @@ no lakefile changes are needed).
    leanprof measure --runs 5 --heartbeats-files FILES --out .lake/research/base.json EXE -- ARGS
    ```
 
+   `measure` counts allocations (about 6 ns each; both sides of every
+   comparison pay it). Only if that makes the workload too slow, add
+   `--no-allocs`, for the whole session: `judge` then cannot see them.
+
 6. Create `research/results.tsv` (untracked: add it to `.git/info/exclude`)
    with the header and the baseline row (see below).
 
@@ -41,7 +45,11 @@ Repeat until the time budget is spent:
 1. **Look.** Read the last report and choose one hotspot:
    - `.lake/leanprof/report.json` (from `measure`, or
      `leanprof run --json ...`) lists copies of shared values per function;
-     each one copies a whole `Array`, `ByteArray` or `String`.
+     each one copies a whole `Array`, `ByteArray` or `String`. With
+     allocations counted (`measure` does; `run --allocs`), it lists
+     allocations per function too. Each row has `pct_run`, its share of the
+     run: pick findings by that, not by counts (20,000 copies at 0.02% of
+     the run are not worth an experiment; allocations at 1% rarely are).
    - `leanprof explain --json` reads that report and prints the copy sites
      as ranked findings: `cause` (`nested-array-element`,
      `map-value-reinserted`, `stored-then-updated`, `multi-threaded-global`,
@@ -79,13 +87,19 @@ DISCARD when any of these hold:
 - the command, the exit code or the output hash changed, or the output was
   not the same on every run;
 - copies of shared or multi-threaded values went up (they are exact counts);
+- allocations by compiled Lean code went up (exact counts; if a threaded
+  program's count varies between runs, only when every new run allocated
+  more than every base run). A change that removes copies by allocating
+  more elsewhere is not an improvement: fix the allocations too, or drop it;
 - compile heartbeats of `FILES` went up by more than 1% and 1,000
   (heartbeats are exact, but an edit moves neighbouring declarations by a
   few);
 - every new run was slower than every base run.
 
-Otherwise KEEP when copies or heartbeats went down by those margins, or
-every new run was faster than every base run (new max below base min; with
+Otherwise KEEP when copies went down, allocations went down by at least 1%
+of the base count and 100 (a smaller cut is exact but too small to show in
+time; it is listed, not counted), heartbeats went down by more than 1% and
+1,000, or every new run was faster than every base run (new max below base min; with
 5 runs each, chance alone does that about 1 time in 252). A change within
 the noise is DISCARDed: it has to show that it helps. Call counts are
 listed but not judged, since restructuring code changes them legitimately.

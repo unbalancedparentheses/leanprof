@@ -1290,9 +1290,30 @@ def fmt2 (x : Float) : String :=
   let v := (x.abs * 100).round.toUInt64.toNat
   s!"{v / 100}.{if v % 100 < 10 then "0" else ""}{v % 100}"
 
+/-- A copy row's time; one too small to measure (`too_small`) is shown as
+such, never as 0. -/
+def copyTime (c : Json) : String :=
+  let small := (jarr c "too_small").any (·.getStr?.toOption == some "copy_ns")
+  let ns := jnum c "copy_ns"
+  if small then "< 1 clock tick"
+  else if ns < 1e3 then s!"{ns.toUInt64} ns"
+  else if ns < 1e6 then s!"{fmt2 (ns / 1e3)} µs"
+  else s!"{fmt2 (ns / 1e6)} ms"
+
+/-- A share in percent: two decimals below 1%, one above. -/
+def fmtPct (p : Float) : String :=
+  if p < 1 then s!"{fmt2 p}%"
+  else
+    let v := (p * 10).round.toUInt64.toNat
+    s!"{v / 10}.{v % 10}%"
+
+/-- What a copy row costs, for ranking: its time copying. -/
+def copyCost (c : Json) : Float := jnum c "copy_ns"
+
 /-- Explain one copy site of the report: the text to print and the JSON entry
 for the editor. -/
-def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) : IO (String × Json) := do
+def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) (runNs : Float := 0) :
+    IO (String × Json) := do
   let sym := jstr c "symbol"
   let kind := jstr c "kind"
   let wherePos := jstr c "where"
@@ -1304,7 +1325,8 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
   let header := s!"{jstr c "function"}  {if wherePos.isEmpty then "(no position)" else wherePos}\n  " ++
     s!"{kind} copies: {shared.toUInt64} shared" ++ (if mt > 0 then s!", {mt.toUInt64} multi-threaded" else "") ++
     (if persistent > 0 then s!", {persistent.toUInt64} of a constant" else "") ++
-    s!"; {fmtBytes (jnum c "bytes")}, {fmt2 (jnum c "copy_ns" / 1e6)} ms copying"
+    s!"; {fmtBytes (jnum c "bytes")}, {copyTime c} copying" ++
+    (if runNs > 0 then s!", {fmtPct (jnum c "copy_ns" / runNs * 100)} of the run" else "")
   let mut out := header ++ "\n"
   let mut entries : Array Json := #[]
   -- source of the declaration
@@ -1436,20 +1458,29 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
     throw <| IO.userError s!"no report at {o.report}: run `leanprof run EXE` first"
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile o.report))
   let shares ← if o.run.isSome || (← (o.why : FilePath).pathExists) then loadWhy o.why else pure #[]
-  let sites := (jarr j "copies").filter fun c =>
-    o.all || jnum c "shared" + jnum c "multi_threaded" > 0
+  -- costliest first (time copying, then bytes); copies of empty or tiny
+  -- values (`tiny`) only with --all
+  let isTiny (c : Json) := (c.getObjValAs? Bool "tiny").toOption.getD false
+  let candidates := (jarr j "copies").filter fun c => o.all || jnum c "shared" + jnum c "multi_threaded" > 0
+  let sites := (candidates.filter fun c => o.all || !isTiny c).qsort fun a b =>
+    if copyCost a != copyCost b then copyCost a > copyCost b else jnum a "bytes" > jnum b "bytes"
+  let tiny := candidates.size - sites.size
   if sites.isEmpty then
     if o.json then IO.println (Json.mkObj [("report", o.report), ("sites", 0), ("findings", Json.arr #[])]).pretty
-    else IO.println "leanprof explain: the report has no copies of shared values"
+    else IO.println ("leanprof explain: the report has no copies of shared values" ++
+      (if tiny > 0 then s!" other than {tiny} site(s) of empty or tiny values (--all explains them)" else ""))
     return 0
+  let runNs := if jnum j "run_ns" > 0 then jnum j "run_ns" else jnum j "wall_ns"
   let cache ← IO.mkRef ({} : CCache)
   let mut entries : Array Json := #[]
   unless o.json do
-    IO.println s!"leanprof explain: why {min o.top sites.size} of {sites.size} copy sites copied (from {o.report})\n"
+    IO.println (s!"leanprof explain: why {min o.top sites.size} of {sites.size} copy sites copied, costliest first " ++
+      s!"(from {o.report})" ++
+      (if tiny > 0 then s!"; {tiny} site(s) that copied only empty or tiny values not shown (--all)" else "") ++ "\n")
   let mut rank : Nat := 0
   for c in sites.toList.take o.top do
     rank := rank + 1
-    let (text, js) ← explainSite cache c shares
+    let (text, js) ← explainSite cache c shares runNs
     unless o.json do IO.println text
     if let .arr a := js then entries := entries ++ a.map (·.setObjVal! "rank" (rank : Json))
   IO.FS.createDirAll ((o.out : FilePath).parent.getD ".")

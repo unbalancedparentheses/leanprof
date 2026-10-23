@@ -52,6 +52,36 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `leanprof elab --compact`: only commands, terms and tactics are timed,
   not the operations inside them, within a few percent of plain `lean`
   (needs the driver).
+||||||| parent of da92a3f (Docs: allocations in judge, compare and measure (rules, overhead), share of the run, tiny copies, times too small to measure; research/program.md judge rules; CHANGELOG)
+- **Allocations judged exactly.** `measure` counts allocations by default
+  (`--no-allocs` turns it off; about 6 ns per allocation, 10% on
+  lean-compiler-backend) and records them per site and per run; `judge`
+  says DISCARD when they go up (any increase; for counts that vary between
+  runs, only beyond their range) and counts a cut of at least 1% and 100
+  as an improvement. `compare` reports more allocations in total as a
+  regression when both reports counted them. The first `CFG.build` fix in
+  lean-compiler-backend cut copies but added 59,514 allocations; `judge`
+  kept it before and discards it now (a test checks that case).
+- **Each finding states its share of the run.** Copy rows show `%run` and
+  are sorted by time; allocation rows show an estimated time (count times
+  the calibrated cost of a small allocation and its free, a lower bound)
+  and `%run`, sorted by it; `explain`, `stat`, the HTML report, the editor
+  hints and the MCP tools show and rank by the same shares. A run without
+  `--allocs` says how to count allocations. JSON: `run_ns`,
+  `resolution_ns`, `alloc_ns`; `pct_run` on copies and allocations,
+  `est_ns` on allocations.
+- **Copies of empty or tiny values** (at most 16 bytes per copy, under 1%
+  of the run), such as the first push into an empty array slot, are
+  grouped into one row; `run --all-copies` (`LEANPROF_ALL_COPIES=1`) lists
+  them. The JSON keeps every row, with `"tiny": true`; `explain` and the
+  editor skip them.
+- **Times too small to measure are never shown as 0**: `< probe` (a
+  scope's time after subtracting the probes' cost) and `< 1 ns` / `< 42 ns`
+  (a copy, wait or task shorter than a clock tick) in the terminal, and
+  `too_small` (the fields concerned) on JSON rows, read as `< probe cost` /
+  `< 1 clock tick` by the HTML report, `#leanprof`, `compare` and the MCP
+  tools. `compare` shows times in adaptive units instead of `0.00 ms`.
+
 - Rows whose time is near the probes' own cost are marked: `*` after the
   total in the terminal report, `near_probe_cost` (and `probes_ns`) in the
   JSON, in the HTML report and in `#leanprof` hovers ("near the probe cost:
