@@ -190,7 +190,7 @@ true share) and adds Lean names, file:line and the runtime breakdown. The
 exact modes (`profile!`, `--auto`) report times that match the
 uninstrumented program when each scope does real work (0.98–1.06× on the
 allocation, copy and mixed workloads), but over-report functions that run
-for only a few nanoseconds (up to 4× for `fib`-sized calls): use them for
+for only a few nanoseconds (up to 5.5× for `fib`-sized calls): use them for
 counts, copies and causes, and `sample` for the time of tiny functions.
 
 ## Documentation

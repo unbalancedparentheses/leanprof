@@ -127,7 +127,7 @@ files it makes Lean 50 to 100 times slower, nearly all of it printing the
 trace (Batteries' `String/Lemmas.lean`: 1.2 s plain, 3.7 s at the default,
 111 s at 0).
 
-At the default, `elab` takes 1.3 to 1.7 times as long as plain `lean` on
+At the default, `elab` takes 1.3 to 2.1 times as long as plain `lean` on
 Batteries' heaviest files (3 times on `String/Lemmas.lean`, whose traces
 print large terms).
 
