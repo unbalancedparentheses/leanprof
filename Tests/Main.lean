@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Tests.Elab
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Tests.Elab
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -293,6 +293,34 @@ def tests : StateT Nat IO Unit := do
   let lines := found.flatMap (·.lines)
   check "explain: source lines of the store and the push" (lines.contains 17 && lines.contains 18) s!"{lines}"
   -- END leanprof explain
+  -- BEGIN leanprof judge (Leanprof/Judge.lean), on summaries written by hand
+  let summary (copies allocs : Nat) (runs : List Nat) (ms : List Nat) : Judge.Summary :=
+    let times := ms.map (· * 1000000)
+    let j := Lean.Json.mkObj [("leanprof", "measure"), ("command", Lean.toJson #["demo"]), ("exit_code", (0 : Nat)),
+      ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
+      ("time_ns", Lean.Json.mkObj [("median", Lean.toJson times[times.length / 2]!),
+        ("min", Lean.toJson (times.foldl Nat.min times[0]!)), ("max", Lean.toJson (times.foldl Nat.max 0))]),
+      ("copies_total", Lean.toJson copies), ("allocs_total", Lean.toJson allocs), ("allocs_runs", Lean.toJson runs),
+      ("allocs", Lean.toJson #[Lean.Json.mkObj [("key", "CFG.build in -"), ("allocs", Lean.toJson allocs)]])]
+    match Judge.Summary.ofJson j with
+    | .ok s => s
+    | .error _ => {}
+  let base := summary 2999 1000000 [1000000] [50, 51, 52]
+  -- lean-compiler-backend's first CFG.build fix: copies gone, 59,514 more
+  -- allocations; even when every run is faster, the change is discarded
+  let v := Judge.judge base (summary 0 1059514 [1059514] [40, 41, 42])
+  check "judge: fewer copies but more allocations is DISCARD"
+    (!v.keep && v.worse.contains "allocations: 1,000,000 -> 1,059,514") v.render
+  let v := Judge.judge base (summary 2999 980000 [980000] [50, 51, 52])
+  check "judge: allocations down by 2% is KEEP" (v.keep && v.better.any (·.startsWith "allocations")) v.render
+  let v := Judge.judge base (summary 2999 999950 [999950] [50, 51, 52])
+  check "judge: allocations down by less than the margin is not an improvement" (!v.keep) v.render
+  let v := Judge.judge (summary 2999 1000000 [999000, 1001000] [50, 51, 52])
+    (summary 2999 1000500 [1000500, 1000200] [50, 51, 52])
+  check "judge: allocations that vary between runs count only beyond their range" (v.worse.isEmpty) v.render
+  let v := Judge.judge base { summary 2999 0 [] [50, 51, 52] with allocs := none }
+  check "judge: allocations counted in one summary only are not compared" (v.worse.isEmpty) v.render
+  -- END leanprof judge
   -- leanprof elab: reading traces (Tests/Elab.lean)
   Tests.Elab.run fun n ok d => check n ok d
 

@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import Leanprof.Core
 import Leanprof.Explain
+import Leanprof.Judge
 import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
@@ -30,7 +31,7 @@ open Lean System
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
@@ -38,7 +39,8 @@ def commands : List (String × String × String) := [
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
     "--core also sees copies, tasks (and with --allocs, allocations) inside Lean's precompiled\n" ++
     "libraries, by linking against copies rewritten with llvm-objcopy (cached in .lake/leanprof/core).\n" ++
-    "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
+    "--all-copies lists copies of constants and of empty or tiny values row by row (summarized\n" ++
+    "by default). --trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
     "--cwd DIR runs EXE in DIR (for programs that read the current directory)."),
   ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
@@ -58,14 +60,16 @@ def commands : List (String × String × String) := [
     "are timed by exact source range (line:column); --compact times only those (close to plain lean).\n" ++
     "--no-driver elaborates with `lean --json` instead."),
   ("compare", "[--threshold PCT] [--min-ms MS] BASE.json NEW.json",
-    "Exit 1 on a regression: more copies, changed call counts, compile heartbeats up by more than\n" ++
-    "1% and 1,000, or a scope slower by more than PCT% (default 10) and MS ms (default 1)."),
-  ("measure", "[--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS...]",
-    "Run EXE N times (default 5) with probes and write one summary: time spread, copies, calls,\n" ++
-    "compile heartbeats, exit code and an output hash. For `judge` and autoresearch loops."),
+    "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
+    "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
+    "by more than PCT% (default 10) and MS ms (default 1)."),
+  ("measure", "[--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--out FILE] EXE [-- ARGS...]",
+    "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
+    "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
+    "For `judge` and autoresearch loops."),
   ("judge", "BASE.json NEW.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
-    "output or exit code changed, or copies, heartbeats or time got worse."),
+    "output or exit code changed, or copies, allocations, heartbeats or time got worse."),
   ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
@@ -170,6 +174,7 @@ structure RunOpts where
   counters : Bool := false
   frees : Bool := false
   core : Bool := false
+  allCopies : Bool := false
   cwd : Option String := none
   exe : Option String := none
   args : Array String := #[]
@@ -185,6 +190,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--counters" :: rest => parseRun { opts with counters := true } rest
   | "--frees" :: rest => parseRun { opts with frees := true } rest
   | "--core" :: rest => parseRun { opts with core := true } rest
+  | "--all-copies" :: rest => parseRun { opts with allCopies := true } rest
   | "--cwd" :: d :: rest => parseRun { opts with cwd := some d } rest
   | "--" :: rest => .ok { opts with args := opts.args ++ rest.toArray }
   | a :: rest =>
@@ -378,7 +384,8 @@ def run (argv : List String) : IO UInt32 := do
   -- the report `#leanprof` reads, unless another path was asked for
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
   let json := opts.json.getD ".lake/leanprof/report.json"
-  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)]
+  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)] ++
+    (if opts.allCopies then #[("LEANPROF_ALL_COPIES", some "1")] else #[])
   let rc ← runInstrumented exe opts runEnv
   unless opts.keep do
     cleanupInstrumented exe
@@ -390,6 +397,10 @@ structure Report where
   exact : Bool := false                            -- heartbeats: compare without a threshold
   scopes : Std.HashMap String (Float × Nat) := {}  -- name@pos ↦ (total ns or heartbeats, calls)
   copies : Std.HashMap String Nat := {}            -- function|kind|scope ↦ copies
+  allocs : Std.HashMap String Nat := {}            -- function in scope ↦ allocations (empty: not counted)
+  allocBytes : Nat := 0
+  /-- time fields too small to measure, per scope key (`too_small` in the JSON) -/
+  tooSmall : Std.HashMap String (Array String) := {}
 
 def num (j : Json) (k : String) : Float :=
   match j.getObjVal? k with
@@ -407,6 +418,8 @@ def loadReport (path : String) : IO Report := do
     -- a declaration's elaboration, kernel and compiler lines share its key
     let (t, c) := r.scopes.getD key (0, 0)
     r := { r with scopes := r.scopes.insert key (t + num s "total_ns", c + (num s "calls").toUInt64.toNat) }
+    let small := ((s.getObjVal? "too_small" >>= Json.getArr?).toOption.getD #[]).filterMap (·.getStr?.toOption)
+    if !small.isEmpty then r := { r with tooSmall := r.tooSmall.insert key small }
   -- project reports (`elab --project`): each module's total, as `module M`
   if (j.getObjVal? "project" >>= Json.getBool?).toOption.getD false then
     for f in (j.getObjVal? "files" >>= Json.getArr?).toOption.getD #[] do
@@ -416,6 +429,12 @@ def loadReport (path : String) : IO Report := do
     if n > 0 then
       let key := s!"{str c "function"} [{str c "kind"}] in {str c "scope"}"
       r := { r with copies := r.copies.insert key (r.copies.getD key 0 + n) }
+  for a in (j.getObjVal? "allocations" >>= Json.getArr?).toOption.getD #[] do
+    -- code without a symbol is named by its address, which moves between runs
+    let f := str a "function"
+    let key := s!"{if f.startsWith "0x" then "(no symbol)" else f} in {str a "scope"}"
+    r := { r with allocs := r.allocs.insert key (r.allocs.getD key 0 + (num a "allocs").toUInt64.toNat),
+                  allocBytes := r.allocBytes + (num a "bytes").toUInt64.toNat }
   return r
 
 /-- `x` with two decimals. -/
@@ -425,6 +444,16 @@ def fmt2 (x : Float) : String :=
   s!"{if x < 0 && v > 0 then "-" else ""}{v / 100}.{if frac < 10 then "0" else ""}{frac}"
 
 def fmtMs (ns : Float) : String := s!"{fmt2 (ns / 1e6)} ms"
+
+def fmtTime (ns : Float) : String :=
+  if ns < 1e3 then s!"{ns.toUInt64} ns"
+  else if ns < 1e6 then s!"{fmt2 (ns / 1e3)} µs"
+  else if ns < 1e9 then s!"{fmt2 (ns / 1e6)} ms"
+  else s!"{fmt2 (ns / 1e9)} s"
+
+/-- How reports show a time too small to measure (listed in a row's
+`too_small`): what is left of a scope after subtracting the probes' cost. -/
+def tooSmallLabel : String := "< probe cost"
 
 def compare (argv : List String) : IO UInt32 := do
   let rec parse (thr minMs : Float) (files : List String) : List String → Except String (Float × Float × List String)
@@ -440,6 +469,9 @@ def compare (argv : List String) : IO UInt32 := do
   IO.println s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
   let keys := (base.scopes.toList.map (·.1) ++ new.scopes.toList.map (·.1)).eraseDups
   for k in keys do
+    -- a total too small to measure is shown as such, never as 0
+    let small (r : Report) := (r.tooSmall.getD k #[]).contains "total_ns"
+    let time (r : Report) (x : Float) := if small r then tooSmallLabel else fmtTime x
     match base.scopes.get? k, new.scopes.get? k with
     | some (bt, bc), some (nt, nc) =>
       let pct := if bt > 0 then (nt - bt) / bt * 100 else 0
@@ -450,10 +482,12 @@ def compare (argv : List String) : IO UInt32 := do
       let callsChanged := bc != nc
       let mark := if slower || callsChanged then "REGRESSION" else if pct < -thr then "faster" else "ok"
       if slower || callsChanged then regressions := regressions + 1
-      let amt (x : Float) := if base.exact then s!"{fmt2 (x / 1000)} kHB" else fmtMs x
-      IO.println s!"  {mark}  {k}: {amt bt} -> {amt nt} ({fmt2 pct}%), calls {bc} -> {nc}"
-    | none, some (nt, nc) => IO.println s!"  new  {k}: {fmtMs nt}, calls {nc}"
-    | some (bt, _), none => IO.println s!"  gone {k}: was {fmtMs bt}"
+      let amt (r : Report) (x : Float) :=
+        if base.exact then s!"{fmt2 (x / 1000)} kHB" else time r x
+      let change := if (small base || small new) && !base.exact then "" else s!" ({fmt2 pct}%)"
+      IO.println s!"  {mark}  {k}: {amt base bt} -> {amt new nt}{change}, calls {bc} -> {nc}"
+    | none, some (nt, nc) => IO.println s!"  new  {k}: {time new nt}, calls {nc}"
+    | some (bt, _), none => IO.println s!"  gone {k}: was {time base bt}"
     | none, none => pure ()
   IO.println "copies of shared or multi-threaded values (any increase is a regression)"
   let ckeys := (base.copies.toList.map (·.1) ++ new.copies.toList.map (·.1)).eraseDups
@@ -465,6 +499,26 @@ def compare (argv : List String) : IO UInt32 := do
       IO.println s!"  REGRESSION  {k}: {b} -> {n}"
     else if n < b then
       IO.println s!"  fewer  {k}: {b} -> {n}"
+  -- allocations: exact; judged on the total, since inlining and refactoring
+  -- move them between sites
+  if !base.allocs.isEmpty && !new.allocs.isEmpty then
+    let total (r : Report) := r.allocs.fold (fun a _ n => a + n) 0
+    let (b, n) := (total base, total new)
+    IO.println "allocations by compiled Lean code (an increase of the total is a regression)"
+    if n > b then
+      regressions := regressions + 1
+      IO.println s!"  REGRESSION  total: {b} -> {n}"
+    else IO.println s!"  {if n < b then "fewer" else "ok"}  total: {b} -> {n}"
+    let akeys := (base.allocs.toList.map (·.1) ++ new.allocs.toList.map (·.1)).eraseDups
+    let changed := (akeys.filterMap fun k =>
+      let (x, y) := (base.allocs.getD k 0, new.allocs.getD k 0)
+      if x == y then none else some (k, x, y)).toArray.qsort fun (_, x1, y1) (_, x2, y2) =>
+        (Int.ofNat y1 - x1).natAbs > (Int.ofNat y2 - x2).natAbs
+    for (k, x, y) in changed.toList.take 10 do
+      IO.println s!"  {if y > x then "more" else "fewer"}  {k}: {x} -> {y}"
+    if changed.size > 10 then IO.println s!"  ({changed.size - 10} more sites changed)"
+  else if base.allocs.isEmpty != new.allocs.isEmpty then
+    IO.println "allocations counted in only one report (run --allocs); not compared"
   if regressions == 0 then
     IO.println "no regressions"
     return 0
@@ -789,6 +843,7 @@ structure MeasureOpts where
   warmup : Nat := 1
   hbFiles : Array String := #[]
   checkOutput : Option String := none
+  allocs : Bool := true
   out : String := ".lake/leanprof/measure.json"
   exe : Option String := none
   args : Array String := #[]
@@ -799,6 +854,7 @@ partial def parseMeasure (o : MeasureOpts) : List String → Except String Measu
   | "--warmup" :: v :: rest => parseMeasure { o with warmup := v.toNat! } rest
   | "--out" :: f :: rest => parseMeasure { o with out := f } rest
   | "--check-output" :: f :: rest => parseMeasure { o with checkOutput := some f } rest
+  | "--no-allocs" :: rest => parseMeasure { o with allocs := false } rest
   | "--heartbeats-files" :: rest =>
     -- every `.lean` argument that follows
     let fs := rest.takeWhile (·.endsWith ".lean")
@@ -830,7 +886,7 @@ def keyedArr (field : String) (xs : List (String × Json)) : Json :=
 def measureCmd (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseMeasure {} argv)
   let some exe := o.exe | throw <| IO.userError (usageFor "measure")
-  let rc ← buildWithShims exe none
+  let rc ← buildWithShims exe none (allocs := o.allocs)
   if rc != 0 then return rc
   let dir : FilePath := ".lake" / "leanprof"
   IO.FS.createDirAll dir
@@ -865,9 +921,15 @@ def measureCmd (argv : List String) : IO UInt32 := do
   let last := reports.back?.getD {}
   let copyTotal (r : Report) := r.copies.fold (fun acc _ n => acc + n) 0
   let copiesStable := reports.all (copyTotal · == copyTotal last)
+  -- allocations: exact too, but threads can change them; judge uses the range
+  let allocTotal (r : Report) := r.allocs.fold (fun acc _ n => acc + n) 0
+  let allocRuns := reports.map allocTotal
+  let allocsStable := allocRuns.all (· == allocTotal last)
   let outputStable := hashes.all (· == hashes.back!)
   unless copiesStable do
     IO.eprintln "leanprof: copy counts differ between runs (threads?); using the last run's"
+  if o.allocs && !allocsStable then
+    IO.eprintln "leanprof: allocation counts differ between runs (threads?); judge compares their ranges"
   unless outputStable do
     IO.eprintln "leanprof: output differs between runs; judge will reject every change (use --check-output FILE)"
   -- compile cost per declaration, exact
@@ -888,6 +950,11 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("copies_total", toJson (copyTotal last)), ("copies_stable", Json.bool copiesStable),
     ("copies", keyedArr "copies" (last.copies.toList.map fun (k, n) => (k, toJson n))),
     ("calls", keyedArr "calls" (last.scopes.toList.map fun (k, (_, c)) => (k, toJson c))),
+    ("allocs_total", if o.allocs then toJson (allocTotal last) else Json.null),
+    ("allocs_runs", if o.allocs then toJson allocRuns else Json.null),
+    ("allocs_stable", if o.allocs then Json.bool allocsStable else Json.null),
+    ("alloc_bytes_total", if o.allocs then toJson (last.allocBytes) else Json.null),
+    ("allocs", if o.allocs then keyedArr "allocs" (last.allocs.toList.map fun (k, n) => (k, toJson n)) else Json.null),
     ("heartbeats_total", match hb with
       | some xs => toJson (xs.foldl (fun a (_, t) => a + t) (0 : Float))
       | none => Json.null),
@@ -900,112 +967,27 @@ def measureCmd (argv : List String) : IO UInt32 := do
   IO.println s!"\nleanprof measure: {exe}, {o.runs} runs"
   IO.println s!"  time     median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}"
   IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"
+  if o.allocs then
+    IO.println s!"  allocs   {allocTotal last} by compiled Lean code{if allocsStable then "" else s!" (runs: {allocRuns.toList})"}"
   IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD "stdout"}), exit code {codes.back!}"
   if let some xs := hb then
     IO.println s!"  compile  {fmt2 ((xs.foldl (fun a (_, t) => a + t) 0) / 1000)} kHB in {xs.length} declarations"
   IO.println s!"written to {o.out}"
   return 0
 
-/-- What `judge` reads back from a `measure` summary. -/
-structure Summary where
-  command : Json := Json.null
-  exitCode : Nat := 0
-  outputSource : String := ""
-  outputHash : String := ""
-  outputStable : Bool := true
-  median : Float := 0
-  min : Float := 0
-  max : Float := 0
-  copies : Nat := 0
-  sites : Std.HashMap String Nat := {}
-  calls : Std.HashMap String Nat := {}
-  heartbeats : Option (Std.HashMap String Float) := none
-
-/-- `[{"key": k, field: v}, ...]` back into a map. -/
-def keyedMap (j : Json) (field : String) : Std.HashMap String Float :=
-  (j.getArr?.toOption.getD #[]).foldl (fun m e => m.insert (str e "key") (num e field)) {}
-
-def loadSummary (path : String) : IO Summary := do
+def loadSummary (path : String) : IO Leanprof.Judge.Summary := do
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
-  unless str j "leanprof" == "measure" do
-    throw <| IO.userError s!"{path} is not a `leanprof measure` summary"
-  let out := (j.getObjVal? "output").toOption.getD Json.null
-  let time := (j.getObjVal? "time_ns").toOption.getD Json.null
-  let field (k : String) := (j.getObjVal? k).toOption.getD Json.null
-  let toNatMap (m : Std.HashMap String Float) := m.fold (fun acc k v => acc.insert k v.toUInt64.toNat) {}
-  return {
-    command := field "command", exitCode := (num j "exit_code").toUInt64.toNat
-    outputSource := str out "source", outputHash := str out "hash"
-    outputStable := (out.getObjValAs? Bool "stable").toOption.getD true
-    median := num time "median", min := num time "min", max := num time "max"
-    copies := (num j "copies_total").toUInt64.toNat
-    sites := toNatMap (keyedMap (field "copies") "copies")
-    calls := toNatMap (keyedMap (field "calls") "calls")
-    heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats") }
+  match Leanprof.Judge.Summary.ofJson j with
+  | .ok s => return s
+  | .error e => throw <| IO.userError s!"{path}: {e}"
 
-/-- KEEP or DISCARD a change, from the summaries before and after it.
-
-DISCARD when the command, exit code or output changed, the output was not
-the same on every run, copies went up, the compile heartbeats of the
-measured files went up by more than 1% and 1,000, or every new run was slower
-than every base run. Otherwise KEEP when copies or heartbeats went down (by the same
-margins) or every new run was faster than every base run (new max below
-base min: with 5 runs each, chance alone does that 1 time in 252). -/
+/-- KEEP or DISCARD a change, from the summaries before and after it (the
+rules are in `Leanprof.Judge`). Exits 0 for KEEP. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
   let [basePath, newPath] := argv | throw <| IO.userError (usageFor "judge")
-  let b ← loadSummary basePath
-  let n ← loadSummary newPath
-  let mut worse : Array String := #[]
-  let mut better : Array String := #[]
-  let mut notes : Array String := #[]
-  if b.command != n.command then
-    worse := worse.push s!"different commands measured: {b.command.compress} vs {n.command.compress}"
-  if b.exitCode != n.exitCode then
-    worse := worse.push s!"exit code changed: {b.exitCode} -> {n.exitCode}"
-  if b.outputSource != n.outputSource || b.outputHash != n.outputHash then
-    worse := worse.push s!"output changed ({n.outputSource}): {b.outputHash} -> {n.outputHash}"
-  if !b.outputStable || !n.outputStable then
-    worse := worse.push "output differs between runs, so changes to it cannot be detected (measure with --check-output)"
-  -- copies: exact
-  if n.copies > b.copies then worse := worse.push s!"copies: {b.copies} -> {n.copies}"
-  else if n.copies < b.copies then better := better.push s!"copies: {b.copies} -> {n.copies}"
-  for k in (b.sites.toList.map (·.1) ++ n.sites.toList.map (·.1)).eraseDups do
-    let (x, y) := (b.sites.getD k 0, n.sites.getD k 0)
-    if x != y then notes := notes.push s!"copies {k}: {x} -> {y}"
-  -- compile heartbeats: exact, but editing one declaration moves its
-  -- neighbours by a few, so only changes above 1% and 1,000 count. Judged
-  -- on the total, since experiments move code between declarations.
-  if let (some bh, some nh) := (b.heartbeats, n.heartbeats) then
-    let kHB (x : Float) := s!"{fmt2 (x / 1000)} kHB"
-    let (x, y) := (bh.fold (fun a _ v => a + v) 0, nh.fold (fun a _ v => a + v) 0)
-    let margin := max (x * 0.01) 1000
-    if y - x > margin then worse := worse.push s!"compile heartbeats: {kHB x} -> {kHB y}"
-    else if x - y > margin then better := better.push s!"compile heartbeats: {kHB x} -> {kHB y}"
-    for k in (bh.toList.map (·.1) ++ nh.toList.map (·.1)).eraseDups do
-      match bh.get? k, nh.get? k with
-      | some x, some y =>
-        if (y - x).abs > max (x * 0.01) 1000 then notes := notes.push s!"compile {k}: {kHB x} -> {kHB y}"
-      | some x, none => notes := notes.push s!"compile {k}: gone (was {kHB x})"
-      | none, some y => notes := notes.push s!"compile {k}: new, {kHB y}"
-      | none, none => pure ()
-  else if b.heartbeats.isSome != n.heartbeats.isSome then
-    notes := notes.push "compile heartbeats measured in only one summary; not compared"
-  -- calls: exact, but restructuring code changes them legitimately
-  for k in (b.calls.toList.map (·.1) ++ n.calls.toList.map (·.1)).eraseDups do
-    let (x, y) := (b.calls.getD k 0, n.calls.getD k 0)
-    if x != y then notes := notes.push s!"calls {k}: {x} -> {y}"
-  -- time: only when the runs do not overlap
-  let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median}"
-  if n.max < b.min then better := better.push s!"{t} (every new run faster than every base run)"
-  else if n.min > b.max then worse := worse.push s!"{t} (every new run slower than every base run)"
-  else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
-  let keep := worse.isEmpty && !better.isEmpty
-  IO.println (if keep then "KEEP" else "DISCARD")
-  for r in worse do IO.println s!"  - {r}"
-  for r in better do IO.println s!"  + {r}"
-  if worse.isEmpty && better.isEmpty then IO.println "  - no measurable improvement"
-  for r in notes do IO.println s!"    {r}"
-  return if keep then 0 else 1
+  let v := Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath)
+  IO.print v.render
+  return if v.keep then 0 else 1
 
 /-! ## report-md -/
 
@@ -1290,12 +1272,6 @@ def fmtBytes (b : Float) : String :=
   else if b < 1024 * 1024 * 1024 then s!"{fmt2 (b / 1048576)} MiB"
   else s!"{fmt2 (b / 1073741824)} GiB"
 
-def fmtTime (ns : Float) : String :=
-  if ns < 1e3 then s!"{ns.toUInt64} ns"
-  else if ns < 1e6 then s!"{fmt2 (ns / 1e3)} µs"
-  else if ns < 1e9 then s!"{fmt2 (ns / 1e6)} ms"
-  else s!"{fmt2 (ns / 1e9)} s"
-
 def statCmd (argv : List String) : IO UInt32 := do
   -- allocations and frees are on unless turned off
   let (offAllocs, argv) := (argv.contains "--no-allocs", argv.filter (· != "--no-allocs"))
@@ -1334,13 +1310,18 @@ def statCmd (argv : List String) : IO UInt32 := do
   if allocs then
     let n := allocSites.foldl (fun a s => a + num s "allocs") 0
     let b := allocSites.foldl (fun a s => a + num s "bytes") 0
-    row "allocations" s!"{withCommas n.toUInt64.toNat} objects, {fmtBytes b} (by compiled Lean code)"
+    let est := allocSites.foldl (fun a s => a + num s "est_ns") 0
+    let run := num j "run_ns"
+    row "allocations" (s!"{withCommas n.toUInt64.toNat} objects, {fmtBytes b} (by compiled Lean code)" ++
+      (if est > 0 then s!", est. {fmtTime est}{if run > 0 then s!" ({fmt2 (est / run * 100)}% of the run)" else ""}" else ""))
   else row "allocations" "not counted (--no-allocs)"
   let copies := (getArr j "copies").filter fun c => num c "shared" + num c "multi_threaded" > 0
   let nc := copies.foldl (fun a c => a + num c "shared" + num c "multi_threaded") 0
   let bc := copies.foldl (fun a c => a + num c "bytes") 0
   let tc := copies.foldl (fun a c => a + num c "copy_ns") 0
-  row "copies" s!"{withCommas nc.toUInt64.toNat} of shared values, {fmtBytes bc}, {fmtTime tc}"
+  let run := num j "run_ns"
+  row "copies" (s!"{withCommas nc.toUInt64.toNat} of shared values, {fmtBytes bc}, {fmtTime tc}" ++
+    (if run > 0 && nc > 0 then s!" ({fmt2 (tc / run * 100)}% of the run)" else ""))
   match j.getObjVal? "frees" with
   | .ok f =>
     row "frees" s!"{withCommas (num f "objects").toUInt64.toNat} objects in {withCommas (num f "cascades").toUInt64.toNat} cascades, {fmtTime (num f "free_ns")} (pause p99 {fmtTime (num f "p99_ns")}, max {fmtTime (num f "max_ns")})"
@@ -1360,7 +1341,7 @@ def statCmd (argv : List String) : IO UInt32 := do
       let pos := str s "pos"
       let pct := if jw > 0 then s!"  {fmt2 (num s "total_ns" / jw * 100)}%" else ""
       row (if i == 0 then "top scopes" else "")
-        s!"{fmtTime (num s "total_ns")}{pct}  {str s "name"}{if pos.isEmpty then "" else s!"  ({pos})"}"
+        s!"{if (getArr s "too_small").any (·.getStr?.toOption == some "total_ns") then tooSmallLabel else fmtTime (num s "total_ns")}{pct}  {str s "name"}{if pos.isEmpty then "" else s!"  ({pos})"}"
   if allocs || frees || opts.auto.isSome then
     IO.println "\n  times include the probes' cost; `leanprof run` and the JSON report have the details"
   IO.println s!"  report: {json}"
