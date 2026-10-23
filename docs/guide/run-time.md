@@ -139,24 +139,25 @@ with other jobs):
   leanprof measures each kind of entry when profiling starts and again at
   exit, and subtracts it from every enclosing scope; programs that never
   profile pay nothing. On lean-compiler-backend, `--auto` makes the whole
-  process 1.65 times slower, `--frees` 1.57 times.
+  process 1.52 times slower, `--frees` 1.40 times (both 3.7 and 2.3 times
+  before the changes in [the changelog](../../CHANGELOG.md)).
 - **Counts are exact** in every mode, including deep recursion.
 - **Times match the uninstrumented program** when each scope does real work
-  (0.95–1.04× on the allocation, copy and mixed workloads). When a scope
+  (0.95–1.03× on the allocation, copy and mixed workloads). When a scope
   does only a few nanoseconds of work, what the subtraction gets wrong (a
   nanosecond or two per scope, depending on what surrounds the probes and
   on how busy the machine is) is a large part of its time: loops of 1 ns
-  functions are reported 1.1–1.5 times too slow, and tiny scopes on 2 to 8
-  threads 1.2–1.5 times.
+  functions are reported at 0.5–1.4 times their time, and steps of a few
+  ns on 2 to 8 threads at 1.2–1.5 times.
 - **Such rows are marked.** A row whose probes (its own and those of the
   scopes inside it) cost at least 0.3 of the time left after subtracting
   them gets a `*` after its total, `"near_probe_cost": true` in the JSON,
   and the note "near the probe cost: use `leanprof sample` for this
   function's time" in the HTML report and the editor. That is a function
   of about three probe pairs per call (~25 ns) or less; in the benchmark,
-  unflagged rows were within 16% of the truth (median 4%), flagged ones
-  off by 15% in the median.
-- **`leanprof sample`** slows programs down 1.0–1.2× and is within 0.2–1.2
+  unflagged rows were within 14% of the truth (median 3%), flagged ones
+  off by 22% in the median.
+- **`leanprof sample`** slows programs down 1.0–1.3× and is within 0.1–1.9
   percentage points of each function's true share of time, like samply.
 
 So: take counts, copies, allocations and causes from the exact modes, and

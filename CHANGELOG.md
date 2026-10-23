@@ -86,6 +86,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   fixed at the first one, rounded separately. All three now come from the
   same weights, with inner + outside = pair exactly, and CI checks that
   `fib`'s self equals its total.
+- The test "scope total is reported" failed on busy CI runners: `fib`'s
+  calls take about what their probes cost, so what is left after
+  subtracting them can be 0. It now checks that the total is never
+  negative; a scope with real work checks that its time is inside it.
 - `bench/Main.lean` (the comparison with LeanProfiler) calibrates before
   its timed loops: the one-time calibration (about 10 ms) was counted as
   the cost of the first 1,000 actions (10 µs each).
