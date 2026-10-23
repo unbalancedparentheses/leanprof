@@ -17,3 +17,5 @@ race:lean_copy_
 # the object's finalizer on another thread, handed over through Lean objects
 race:lean::
 race:lean_io_prim_
+# mimalloc, inside Lean's runtime (its per-thread data torn down at thread exit)
+race:mi_

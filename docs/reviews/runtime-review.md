@@ -49,8 +49,10 @@ not rebuilt, so:
   them were reported, a false race in the Lean heap. `scripts/tsan.supp`
   suppresses races whose top frame is one of these three, or inside the
   runtime's `lean_copy_*`: leanprof shares no memory through them. It
-  also suppresses races inside Lean's C++ runtime (`lean::`) and its IO
-  primitives, seen in the `leanprof` command itself: a `FILE` buffer
+  also suppresses races inside Lean's C++ runtime (`lean::`), its IO
+  primitives and mimalloc (`mi_`), seen in the `leanprof` command itself
+  (linked with TSan when it builds a program): mimalloc's per-thread data
+  torn down at thread exit, and a `FILE` buffer
   allocated by one task's read and freed by the handle's finalizer on
   another thread.
 - **LeakSanitizer is off**: leanprof keeps its records until the exit
