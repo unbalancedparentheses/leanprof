@@ -148,7 +148,11 @@ the job lowers `kernel.perf_event_paranoid` to 1 for samply; if that fails,
 Extra cost of one profiled `IO` action (`IO.Ref.modify`), leanprof against
 [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) at commit `35e1899`.
 Each thread times its own loop of `n` actions, plain and profiled; the
-difference divided by `n` is the overhead.
+difference divided by `n` is the overhead. leanprof calibrates itself once,
+at its first scope (about 10 ms); the benchmark has it do that before the
+timed loops (`Leanprof.overheadNs`), since that is a cost per program, not
+per action. Before it did, the calibration landed in the first loop: about
+10 µs per action at n = 1,000.
 
 ```
 cd bench
@@ -160,14 +164,16 @@ LEAN_PROFILE=1 .lake/build/bin/bench leanprofiler 1 4000   # recording on
 
 ## Results
 
-Apple M5 Max, macOS, Lean 4.35.0, 2026-10-22. Three runs each; ranges shown.
+Apple M5 Max, macOS, Lean 4.35.0, 2026-10-23, shared with other jobs (load
+average 25). Three runs each; ranges shown.
 
 | | 1 thread, n=1M | 4 threads, n=1M each |
 |---|---|---|
-| leanprof (always recording) | 10.2–11.5 ns | 12.1–12.4 ns |
-| LeanProfiler, recording off | 22.6–26.0 ns | 363–391 ns |
+| leanprof (always recording) | 7.3–8.9 ns | 8.2–11.8 ns |
+| LeanProfiler, recording off | 24.7–26.8 ns | 419–495 ns |
 
-LeanProfiler with recording on (`LEAN_PROFILE=1`), one thread:
+LeanProfiler with recording on (`LEAN_PROFILE=1`), one thread
+(2026-10-22):
 
 | events | per span |
 |---|---|
@@ -175,7 +181,8 @@ LeanProfiler with recording on (`LEAN_PROFILE=1`), one thread:
 | 4,000 | 20.1 µs |
 | 16,000 | 88.5 µs |
 
-leanprof over the same event counts: 15.5, 12.2 and 11.5 ns.
+leanprof over the same event counts: 15.9–17.8, 8.9–17.0 and 10.0–11.6 ns
+(the first actions of a thread also pay for its tables).
 
 ## Why LeanProfiler's cost grows
 

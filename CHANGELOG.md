@@ -36,9 +36,51 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   categories.
 - The report's JSON has `probe_ns`, the probes' calibrated cost in the wall
   time.
+- Rows whose time is near the probes' own cost are marked: `*` after the
+  total in the terminal report, `near_probe_cost` (and `probes_ns`) in the
+  JSON, in the HTML report and in `#leanprof` hovers ("near the probe cost:
+  use `leanprof sample` for this function's time"). The threshold (probes
+  at least 0.3 of the time left) is calibrated on `bench/`: see
+  bench/RESULTS.md, "Per component".
+
+### Changed
+
+- **`profile!` on a pure term no longer builds a closure.** It compiles to
+  `Leanprof.enterPure` before the term and `Leanprof.exitPure` after it,
+  with a variant per scalar type, so nothing is allocated or boxed inside
+  the scope (a `UInt64` result was boxed through the closure; that, not the
+  probes, was most of what stayed in the times of tiny functions).
+  `Leanprof.scope` (the closure) is still there for direct use.
+- **The clock on Apple Silicon** is the counter itself (`CNTVCT_EL0`)
+  instead of `mach_absolute_time`, which reads a self-synchronizing copy
+  that waits for every earlier instruction: in real code that wait was
+  most of a probe's cost (`mach_absolute_time` was 40% of an `--auto` run
+  of lean-compiler-backend in samply). On an M5 the counter also runs at
+  1 GHz, so scopes are timed to the nanosecond instead of in 41.7 ns ticks.
+  `-DLEANPROF_SYNC_CLOCK` restores the old clock.
+- **Symbols are looked up in a sorted table** of the executable's symbols,
+  read once, instead of with `dladdr`, which scans every symbol on each
+  call (0.3 ms in an executable with Lean's 450,000 symbols). `--auto`
+  called it for every function it saw, inside the scope that called it, and
+  the report for every row: on lean-compiler-backend that was 0.2 s of
+  time inside the program's own scopes and 0.6 s of report.
+- `--frees`: a run of frees from one call site in one scope skips the site
+  table, and the "frees seen" flag is no longer written on every free (a
+  cache line all threads wrote to).
+- The fields of a scope that every enter and exit touches share two cache
+  lines.
 
 ### Fixed
 
+- `probe_ns` and the "without the probes" wall time counted 1,024 times
+  the probes' cost (descendants are counted in 1/1024 of a pair), so `%wall`
+  was taken against a wall time that was far too small: `copybug` showed
+  `buildWithHistory` at 100.0% and the column summed to more than 100%. CI
+  now checks that scopes that do not overlap add up to at most the wall
+  time without the probes.
+- `bench/Main.lean` (the comparison with LeanProfiler) calibrates before
+  its timed loops: the one-time calibration (about 10 ms) was counted as
+  the cost of the first 1,000 actions (10 µs each).
 - `leanprof run` on another checkout of leanprof itself no longer links the
   runtime twice on Linux (`scripts/leanprof-cc` skips `LEANPROF_RUNTIME`
   when the link already has leanprof's runtime library).

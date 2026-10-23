@@ -73,11 +73,18 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 ## JSON report
 
 `report.json` (version 3) has `wall_ns`, `probe_ns` (the probes' calibrated
-cost in it, on the busiest thread), `overhead_ns` (per scope) and arrays:
+cost in it, on the busiest thread), `overhead_ns` (per scope),
+`overhead_by_path_ns` (the calibrated cost of one scope entered each way:
+`direct`, `auto` (the `--auto` hooks), `pure` (`profile!` on a pure term),
+`closure` (`Leanprof.scope`), `monadic`) and arrays:
 
 - `scopes`: `name`, `pos`, `auto` (a function, not a `profile!` label),
   `calls`, `total_ns`, `self_ns`, `min_ns`, `max_ns`, `mean_ns`, `p50_ns`,
-  `p99_ns`, `allocs`, `alloc_bytes`, `allocs_self`, `alloc_bytes_self`;
+  `p99_ns`, `allocs`, `alloc_bytes`, `allocs_self`, `alloc_bytes_self`,
+  `probes_ns` (the probes' cost in and around its outermost calls, which
+  was subtracted from `total_ns`) and `near_probe_cost` (true when
+  `probes_ns` is at least 0.3 of `total_ns`: take this row's time from
+  `leanprof sample`, see [run time](run-time.md#overhead-and-accuracy));
 - `copies`: `function`, `symbol`, `scope`, `where`, `kind`, `copies`,
   `bytes`, `copy_ns`, `shared`, `multi_threaded`, `persistent`;
 - `allocations`: `function`, `scope`, `where`, `allocs`, `bytes`;

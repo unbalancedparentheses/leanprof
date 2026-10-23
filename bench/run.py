@@ -649,7 +649,7 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
                     f"`{t}` {v:.1f} pp" for t, v in lcb["agreement_mae"].items()) + "\n")
 
     if before:
-        L.append("## Before and after the runtime fixes\n")
+        L.append("## Before and after\n")
         L.append(before["note"] + "\n")
         L.append("| workload | config | metric | before | after |\n|---|---|---|---|---|")
         for row in before["rows"]:
@@ -709,8 +709,9 @@ def headline(L, res, configs):
         L.append("leanprof is within 0.5 pp of samply, or better, on every workload.\n")
 
 
-def before_after(before_json, res):
+def before_after(before_json, res, lcb_after=None):
     b = json.load(open(before_json))
+    lcb_after = (lcb_after or {}).get("configs", {})
     rows = []
     for w, wr in res.items():
         bw = b["results"].get(w)
@@ -729,9 +730,15 @@ def before_after(before_json, res):
             if bw_ is not None and aw_ is not None and (bw_ or aw_):
                 fmt = lambda d: "exact" if not d else ", ".join(f"{k} {g:,}/{n:,}" for k, (g, n) in d.items())
                 rows.append([f"`{w}`", f"`{cfg}`", "calls", fmt(bw_), fmt(aw_)])
-    note = (f"`before`: the same suite and machine with `c/leanprof.c` as it was before the fixes "
-            f"({b['meta']['reps']} runs, {b['meta']['machine']['date']}). Rows where something changed "
-            "beyond noise are the point; the rest show the fixes cost nothing.")
+    note = (f"`before`: the same suite on the same machine, run just before with leanprof at commit "
+            f"`{b['meta']['machine']['commit']}` ({b['meta']['reps']} runs, {b['meta']['machine']['date']}, "
+            f"load {b['meta']['load_start']} at start). Rows where something changed beyond noise are the "
+            "point; the rest show the changes cost nothing.")
+    if b.get("lcb") and b["lcb"].get("configs"):
+        note += "\n\nlean-compiler-backend, process wall time over plain (median), before → after: " + ", ".join(
+            f"`{c}` {o['slowdown']:.2f}× → " + (f"{lcb_after[c]['slowdown']:.2f}×" if c in lcb_after else "–")
+            for c, o in b["lcb"]["configs"].items() if c != "plain") + "."
+    return {"note": note, "rows": rows}
     return {"note": note, "rows": rows}
 
 
@@ -994,7 +1001,7 @@ def main():
     meta = {"quick": a.quick, "reps": reps, "scale": scale, "machine": machine(), "json": a.json,
             "load_start": load_start, "load_end": " ".join(f"{x:.1f}" for x in os.getloadavg()),
             "elapsed_s": time.time() - start, "noisy": a.noisy, "configs": configs_run}
-    before = before_after(a.before, res) if a.before else None
+    before = before_after(a.before, res, lcb) if a.before else None
     json.dump({"meta": meta, "skipped": skipped, "results": res, "lcb": lcb,
                "raw": {c: {w: [r for r in rs] for w, rs in ws.items()} for c, ws in runs.items()}},
               open(a.json, "w"), indent=1, default=str)
