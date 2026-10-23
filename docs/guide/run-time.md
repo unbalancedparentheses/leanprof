@@ -128,18 +128,25 @@ per thread (`LEANPROF_TRACE_MAX`).
 
 ## Overhead and accuracy
 
-About 11 ns per profiled `IO` action and 15 ns per pure `profile!` scope on
-an Apple M5 Max ([benchmark](../../bench/README.md)). leanprof measures its
-own cost the first time something is profiled and again at exit, and
-subtracts it from every enclosing scope: a 24 ms loop of 10 million tiny
-steps runs in 190 ms with profiling and is reported as 28–31 ms. Programs
-that never profile pay nothing. `LEANPROF_NO_CALIBRATION=1` shows raw times.
-The header gives the wall time with and without the probes' calibrated
-cost, and `%wall` is against the latter, like the times. The calibration
-runs with warm caches: in a large program under `--auto`, where every call
-also touches scope tables that do not stay in cache, the real cost per call
-can be several times higher (lambdaclass/concrete: 0.98 s normally, 2.47 s
-with `--auto`, of which the calibration accounts for 0.24 s). Call counts
-stay exact; take absolute times from `leanprof sample`.
-On Apple Silicon the clock ticks every 41.7 ns, so percentiles of very short
-scopes are coarse; totals and means over many calls are fine.
+Measured in [`bench/`](../../bench/RESULTS.md) on an Apple M5 Max:
+
+- **Cost per scope:** 11 ns for a monadic `profile!`, 21 ns for a pure one
+  (it allocates and applies a closure), 15 ns per call with `--auto`.
+  leanprof measures each kind of entry when profiling starts and again at
+  exit, and subtracts it from every enclosing scope; programs that never
+  profile pay nothing.
+- **Counts are exact** in every mode, including deep recursion.
+- **Times match the uninstrumented program** when each scope does real work
+  (0.98–1.06× on the allocation, copy and mixed workloads). When a scope does
+  only a few nanoseconds of work, some cost stays in the report (mostly Lean
+  boxing values that pass through `profile!`'s closure): a 1 ns function
+  shows up 3–4× too slow, and `--auto` is off by ±1–2 ns per call. With many
+  threads running tiny scopes the reported time also grows (1.6× on 2
+  threads, 3.1× on 8).
+- **`leanprof sample`** slows programs down 1.0–1.3× and is within 0.1–1.7
+  percentage points of each function's true share of time, like samply.
+
+So: take counts, copies, allocations and causes from the exact modes, and
+the time of very small functions from `sample`. `LEANPROF_NO_CALIBRATION=1`
+shows raw times. On Apple Silicon the clock ticks every 41.7 ns, so
+percentiles of very short scopes are coarse.

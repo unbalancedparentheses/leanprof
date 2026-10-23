@@ -92,37 +92,62 @@ The [getting started guide](docs/guide/getting-started.md) walks through it.
 
 ## On real code
 
+Profiled from outside, without changing the projects:
+
 - **[lean-compiler-backend](docs/case-studies/lean-compiler-backend.md)**, a
-  QBE-compatible compiler written in Lean. Its tokenizer made a third of the
+  QBE-compatible compiler written in Lean: its tokenizer made a third of the
   11.9 million allocations needed to compile zlib, seven per input byte. The
-  fix, now on its `main`, cut the whole run's allocations by 28% with byte-identical output. While
-  writing that fix, leanprof caught a 6.8 GiB copy the first attempt had
-  introduced. `leanprof explain` traced its 121,054 copies in `CFG.build` to
-  arrays pushed while still held by an outer array, and printed the fix
-  (`successors.modify i (·.push target)`). Other findings: one function was a
-  quarter of its compile cost, and 76% of closure calls went through one
-  non-specialized helper.
-- **[LeanProfiler](bench/README.md)**: leanprof found why its cost per span
-  grows with the number of events (its event array is copied on every span).
+  fix, now on its `main`, cut the whole run's allocations by 28% with
+  byte-identical output; while it was written, leanprof caught a 6.8 GiB copy
+  the first attempt had introduced. `leanprof explain` traced 121,054 copies
+  in `CFG.build` to arrays pushed while still held by an outer array, and
+  printed the fix.
+- **[doc-gen4](docs/case-studies/doc-gen4.md)**: one SQL query that grows with
+  the square of a module's declarations takes two thirds of the HTML pass;
+  12.7% of the time is threads waiting on SQLite's memory mutex.
+- **[verso](docs/case-studies/verso.md)**: about 23% of rendering is
+  pretty-printing JSON only to compare index entries; a three-line function
+  costs 125M heartbeats to compile.
+- **[lean-regex](docs/case-studies/lean-regex.md)**: 15 allocations per input
+  character in the ε-closure, and 13.7M closure calls through a function that
+  is not specialized.
+- **[concrete](docs/case-studies/concrete.md)**: linear list searches are a
+  quarter of the self time; one `mutual` block is 69% of a file's compile
+  cost.
+- **[Batteries](docs/case-studies/batteries.md)** at compile time:
+  termination and bounds proofs are about a quarter of all elaboration, and an
+  iterator definition is unfolded 24,369 times from ordinary RBTree proofs.
+- **[LeanProfiler](bench/README.md)**: why its cost per span grows with the
+  number of events (its event array is copied on every span).
 
 ## How it compares
 
 | | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler) | samply / perf |
 |---|---|---|---|---|
 | Run time | exact and sampled | manual spans | – | sampled |
-| Overhead while recording | ~11 ns per scope, constant, subtracted | 4.6 µs to 88 µs per span, growing | – | very low |
+| Overhead while recording | 11 ns per `IO` scope, 21 ns per pure one, 15 ns per call with `--auto`; constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low |
 | Works without changing the project | ✅ | – | ✅ | ✅ |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – |
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – |
 | Peak memory per scope, freeing pauses | ✅ | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads |
-| Compile time | per line and operation, repeated work | – | deeper (unfolded definitions, all of Mathlib) | – |
+| Compile time | per file, declaration and tactic line; the definitions unfolded behind it; repeated work; whole projects | – | exact term ranges, Mathlib-scale data ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – |
 | Exact regression checks, PR comments | ✅ | thresholded time | – | – |
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – |
 
-Overhead from [`bench/`](bench/README.md) on an Apple M5 Max.
+### Accuracy
+
+Measured against workloads with known answers ([results](bench/RESULTS.md)):
+call and copy counts are exact in every mode. For time, `leanprof sample` is
+as accurate as samply (within 0.1–1.7 percentage points of each function's
+true share) and adds Lean names, file:line and the runtime breakdown. The
+exact modes (`profile!`, `--auto`) report times that match the
+uninstrumented program when each scope does real work (0.98–1.06× on the
+allocation, copy and mixed workloads), but over-report functions that run
+for only a few nanoseconds (up to 4× for `fib`-sized calls): use them for
+counts, copies and causes, and `sample` for the time of tiny functions.
 
 ## Documentation
 
