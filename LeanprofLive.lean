@@ -237,7 +237,7 @@ structure TopOpts where
 
 def topUsage : String :=
   "usage: leanprof top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS]\n" ++
-  "                    [--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] EXE [-- ARGS...]\n" ++
+  "                    [--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--no-deps] EXE [-- ARGS...]\n" ++
   "       leanprof top [OPTIONS] --attach FILE | --pid PID"
 
 partial def parseTop (o : TopOpts) : List String → Except String TopOpts
@@ -252,7 +252,7 @@ partial def parseTop (o : TopOpts) : List String → Except String TopOpts
   | "--slow-ms" :: v :: rest => parseTop { o with slowMs := some v } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: rest =>
-    if ["--auto", "--auto-all", "--allocs", "--counters", "--frees", "--core"].contains a then
+    if ["--auto", "--auto-all", "--allocs", "--counters", "--frees", "--core", "--no-deps"].contains a then
       parseTop { o with runFlags := o.runFlags.push a } rest
     else if a.startsWith "--" then .error s!"unknown option {a}\n{topUsage}"
     else if o.exe.isNone then parseTop { o with exe := some a } rest

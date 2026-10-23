@@ -30,17 +30,19 @@ open Lean System
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
     ".lake/leanprof/report.json. Memory (peak, per scope) is always sampled.\n" ++
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
+    "Dependencies are rebuilt with the probes too (their normal build is put back afterwards, so\n" ++
+    "nothing is recompiled after); --no-deps rebuilds only this package (faster with large ones).\n" ++
     "--core also sees copies, tasks (and with --allocs, allocations) inside Lean's precompiled\n" ++
     "libraries, by linking against copies rewritten with llvm-objcopy (cached in .lake/leanprof/core).\n" ++
     "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
     "--cwd DIR runs EXE in DIR (for programs that read the current directory)."),
-  ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
     "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
     "unless turned off (they slow the program down); --auto times every function."),
@@ -60,7 +62,7 @@ def commands : List (String × String × String) := [
   ("compare", "[--threshold PCT] [--min-ms MS] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, changed call counts, compile heartbeats up by more than\n" ++
     "1% and 1,000, or a scope slower by more than PCT% (default 10) and MS ms (default 1)."),
-  ("measure", "[--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS...]",
+  ("measure", "[--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies, calls,\n" ++
     "compile heartbeats, exit code and an output hash. For `judge` and autoresearch loops."),
   ("judge", "BASE.json NEW.json",
@@ -147,14 +149,68 @@ partial def removeObjects (dir : FilePath) : IO Nat := do
       n := n + 1
   return n
 
-/-- Objects of this workspace: the root package's and each dependency's. -/
-def removeWorkspaceObjects : IO Nat := do
-  let mut n ← removeObjects ((".lake" : FilePath) / "build" / "ir")
-  let pkgs : FilePath := ".lake" / "packages"
-  if ← pkgs.isDir then
-    for e in ← pkgs.readDir do
-      n := n + (← removeObjects (e.path / ".lake" / "build" / "ir"))
+/-- The directories of the workspace's packages: the root, and with `deps`
+each dependency from `lake-manifest.json` (git packages under its
+`packagesDir`, path packages where they are). -/
+def workspacePackages (deps : Bool := true) : IO (Array FilePath) := do
+  let mut dirs : Array FilePath := #["."]
+  unless deps do return dirs
+  let manifest : FilePath := "lake-manifest.json"
+  unless ← manifest.pathExists do return dirs
+  let some j := (Json.parse (← IO.FS.readFile manifest)).toOption | return dirs
+  let pkgsDir : FilePath := ((j.getObjValAs? String "packagesDir").toOption.getD ".lake/packages")
+  for p in (j.getObjVal? "packages" >>= Json.getArr?).toOption.getD #[] do
+    let name := (p.getObjValAs? String "name").toOption.getD ""
+    let dir : FilePath := match (p.getObjValAs? String "type").toOption with
+      | some "path" => (p.getObjValAs? String "dir").toOption.getD name
+      | _ => match (p.getObjValAs? String "subDir").toOption with
+        | some sub => pkgsDir / name / sub
+        | none => pkgsDir / name
+    if ← dir.isDir then dirs := dirs.push dir
+  return dirs
+
+/-- Where a package's normal objects wait while an instrumented build uses
+its `.lake/build/ir`. -/
+def stashDir (pkg : FilePath) : FilePath := pkg / ".lake" / "leanprof" / "normal-objects"
+
+/-- Move compiled C objects (`*.c.o*`, with Lake's trace files) from `src`
+to the same place under `dst`; returns how many. -/
+partial def moveObjects (src dst : FilePath) : IO Nat := do
+  unless ← src.isDir do return 0
+  let mut n := 0
+  for e in ← src.readDir do
+    if ← e.path.isDir then
+      n := n + (← moveObjects e.path (dst / e.fileName))
+    else if (e.fileName.splitOn ".c.o").length > 1 then
+      IO.FS.createDirAll dst
+      IO.FS.rename e.path (dst / e.fileName)
+      n := n + 1
   return n
+
+/-- Put back the normal objects of every package a previous instrumented
+build set aside (none if there was none): the instrumented ones go. Run
+after profiling, and before, in case a run was interrupted or used `--keep`. -/
+def restoreObjects : IO Unit := do
+  for pkg in ← workspacePackages do
+    let stash := stashDir pkg
+    unless ← stash.isDir do continue
+    discard <| removeObjects (pkg / ".lake" / "build" / "ir")
+    discard <| moveObjects stash (pkg / ".lake" / "build" / "ir")
+    IO.FS.removeDirAll stash
+
+/-- Set aside the compiled objects of the root package and, with `deps`, of
+every dependency, so Lake recompiles them through the wrapper (it does not
+notice a new `LEAN_CC`) and `restoreObjects` can put the normal build back
+without recompiling. Returns how many objects and packages. -/
+def stashObjects (deps : Bool) : IO (Nat × Nat) := do
+  restoreObjects
+  let mut n := 0
+  let mut pkgs := 0
+  for pkg in ← workspacePackages deps do
+    let moved ← moveObjects (pkg / ".lake" / "build" / "ir") (stashDir pkg)
+    n := n + moved
+    if moved > 0 then pkgs := pkgs + 1
+  return (n, pkgs)
 
 def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String))
     (cwd : Option FilePath := none) : IO UInt32 := do
@@ -170,6 +226,7 @@ structure RunOpts where
   counters : Bool := false
   frees : Bool := false
   core : Bool := false
+  deps : Bool := true
   cwd : Option String := none
   exe : Option String := none
   args : Array String := #[]
@@ -185,6 +242,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--counters" :: rest => parseRun { opts with counters := true } rest
   | "--frees" :: rest => parseRun { opts with frees := true } rest
   | "--core" :: rest => parseRun { opts with core := true } rest
+  | "--no-deps" :: rest => parseRun { opts with deps := false } rest
   | "--cwd" :: d :: rest => parseRun { opts with cwd := some d } rest
   | "--" :: rest => .ok { opts with args := opts.args ++ rest.toArray }
   | a :: rest =>
@@ -208,17 +266,22 @@ def saveExe (exe : String) : IO Unit := do
     if ← f.pathExists then
       discard <| IO.Process.output { cmd := "cp", args := #["-p", f.toString, (savedDir / f.fileName.get!).toString] }
 
-/-- Put the normal build back, so running `exe` afterwards does not profile it. -/
-def restoreExe (exe : String) : IO Unit := do
+/-- Put the normal build back, so running `exe` afterwards does not profile
+it; with no normal build to put back, remove the instrumented one (Lake
+builds a normal one next time). -/
+def restoreExe (exe : String) (removeUnsaved := true) : IO Unit := do
   for f in exeFiles exe do
     let saved := savedDir / f.fileName.get!
     if ← saved.pathExists then
       discard <| IO.Process.output { cmd := "mv", args := #[saved.toString, f.toString] }
+    else if removeUnsaved && (← f.pathExists) then
+      IO.FS.removeFile f
 
-/-- Undo an instrumented build: its objects (Lake does not notice a new
-`LEAN_CC`) and its executable. -/
+/-- Undo an instrumented build: the normal objects of every package come
+back (Lake does not notice a new `LEAN_CC`, and nothing is recompiled), and
+so does the executable. -/
 def cleanupInstrumented (exe : String) : IO Unit := do
-  discard <| removeWorkspaceObjects
+  restoreObjects
   restoreExe exe
 /-! ## Core-library coverage (`run --core`)
 
@@ -342,13 +405,13 @@ def selfCheckProbe (root : FilePath) : IO (Except String (String × String)) := 
   finally
     discard <| IO.Process.output { cmd := "rm", args := #["-rf", dir.toString] }
 
-/-- Build `exe` with the copy shims in every package (and, with `auto`, every
-function timed). A project that does not depend on leanprof gets leanprof's
+/-- Build `exe` with the copy shims in every package (with `deps := false`,
+only the root package; and, with `auto`, every function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
 build removes the instrumented objects again. -/
 def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false)
-    (counters : Bool := false) (frees : Bool := false) (extraEnv : Array (String × Option String) := #[]) :
-    IO UInt32 := do
+    (counters : Bool := false) (frees : Bool := false) (extraEnv : Array (String × Option String) := #[])
+    (deps : Bool := true) : IO UInt32 := do
   let root ← packageRoot
   let wrapper := root / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
@@ -358,6 +421,8 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
   unless leanOk do
     throw <| IO.userError ("`lean` was not found on PATH: add elan's bin directory " ++
       "(export PATH=$HOME/.elan/bin:$PATH); `leanprof doctor` checks the setup")
+  -- a normal executable kept aside by an interrupted or `--keep` run comes back first
+  restoreExe exe (removeUnsaved := false)
   saveExe exe
   -- Lake would keep an executable linked against an older leanprof runtime
   -- (the rebuilt objects hash the same): make it relink
@@ -385,9 +450,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
       if out.exitCode != 0 then
         throw <| IO.userError s!"compiling leanprof's runtime failed ({cmd}):\n{out.stderr}"
     runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
-  -- Lake does not notice a new LEAN_CC, so objects built without it must go.
-  let removed ← removeWorkspaceObjects
-  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if counters then " and reuse/closure counters" else ""}{if frees then " and frees timed" else ""} ({removed} stale objects removed)"
+  -- Lake does not notice a new LEAN_CC, so objects built without it must go:
+  -- they wait in .lake/leanprof/normal-objects and come back afterwards
+  let (stashed, pkgs) ← stashObjects deps
+  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if counters then " and reuse/closure counters" else ""}{if frees then " and frees timed" else ""} in {if deps then "every package" else "the root package only"} ({stashed} normal objects of {pkgs} package{if pkgs == 1 then "" else "s"} set aside)"
   let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
     ("LEANPROF_ALLOCS", if allocs then some "1" else none),
     ("LEANPROF_COUNTERS", if counters then some "1" else none),
@@ -425,7 +491,7 @@ def run (argv : List String) : IO UInt32 := do
   let coreEnv ← if opts.core then
       pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees).toString)]
     else pure #[]
-  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees coreEnv
+  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees coreEnv opts.deps
   if rc != 0 then return rc
   -- the report `#leanprof` reads, unless another path was asked for
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
@@ -844,6 +910,7 @@ structure MeasureOpts where
   hbFiles : Array String := #[]
   checkOutput : Option String := none
   out : String := ".lake/leanprof/measure.json"
+  deps : Bool := true
   exe : Option String := none
   args : Array String := #[]
 
@@ -853,6 +920,7 @@ partial def parseMeasure (o : MeasureOpts) : List String → Except String Measu
   | "--warmup" :: v :: rest => parseMeasure { o with warmup := v.toNat! } rest
   | "--out" :: f :: rest => parseMeasure { o with out := f } rest
   | "--check-output" :: f :: rest => parseMeasure { o with checkOutput := some f } rest
+  | "--no-deps" :: rest => parseMeasure { o with deps := false } rest
   | "--heartbeats-files" :: rest =>
     -- every `.lean` argument that follows
     let fs := rest.takeWhile (·.endsWith ".lean")
@@ -884,7 +952,7 @@ def keyedArr (field : String) (xs : List (String × Json)) : Json :=
 def measureCmd (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseMeasure {} argv)
   let some exe := o.exe | throw <| IO.userError (usageFor "measure")
-  let rc ← buildWithShims exe none
+  let rc ← buildWithShims exe none (deps := o.deps)
   if rc != 0 then return rc
   let dir : FilePath := ".lake" / "leanprof"
   IO.FS.createDirAll dir
@@ -1372,7 +1440,7 @@ def statCmd (argv : List String) : IO UInt32 := do
   let some exe := opts.exe | throw <| IO.userError (usageFor "stat")
   let allocs := !offAllocs
   let frees := !offFrees
-  let rc ← buildWithShims exe opts.auto allocs (frees := frees)
+  let rc ← buildWithShims exe opts.auto allocs (frees := frees) (deps := opts.deps)
   if rc != 0 then return rc
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
   let json := opts.json.getD ".lake/leanprof/report.json"
