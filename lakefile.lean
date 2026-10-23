@@ -14,6 +14,12 @@ def copyFlags : Array String :=
     "task_spawn_core", "io_as_task", "io_wait", "task_get"].map
     fun f => s!"-Dlean_{f}=leanprof_{f}"
 
+/-- Opt-in allocation counting: route compiled code's allocations through
+leanprof (every allocation pays a small cost). -/
+def allocFlags : Array String :=
+  #["alloc_small_object_core", "alloc_object"].map (fun f => s!"-Dlean_{f}=leanprof_{f}") ++
+  #["mi_malloc", "mi_malloc_small"].map (fun f => s!"-D{f}=leanprof_{f}")
+
 /-- Link flags so the report can name the functions that copied. -/
 def linkFlags : Array String := #["-rdynamic"]
 
@@ -26,7 +32,7 @@ lean_exe copybug where
 
 @[test_driver] lean_exe tests where
   root := `Tests.Main
-  moreLeancArgs := copyFlags
+  moreLeancArgs := copyFlags ++ allocFlags
   moreLinkArgs := linkFlags
 
 target leanprof_o pkg : FilePath := do

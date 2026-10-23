@@ -19,7 +19,7 @@ import Leanprof.Core
 open Lean System
 
 def usage : String := "usage:
-  lake exe leanprof run [--auto | --auto-all] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]
+  lake exe leanprof run [--auto | --auto-all] [--allocs] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]
   lake exe leanprof sample [--rate HZ] [--out FILE] [--top N] EXE [-- ARGS...]
   lake exe leanprof elab [--top N] FILE.lean...
   lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json"
@@ -61,6 +61,7 @@ structure RunOpts where
   trace : Option String := none
   json : Option String := none
   keep : Bool := false
+  allocs : Bool := false
   exe : Option String := none
   args : Array String := #[]
 
@@ -71,6 +72,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--trace" :: f :: rest => parseRun { opts with trace := some f } rest
   | "--json" :: f :: rest => parseRun { opts with json := some f } rest
   | "--keep" :: rest => parseRun { opts with keep := true } rest
+  | "--allocs" :: rest => parseRun { opts with allocs := true } rest
   | "--" :: rest => .ok { opts with args := opts.args ++ rest.toArray }
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
@@ -102,7 +104,8 @@ def run (argv : List String) : IO UInt32 := do
   -- Lake does not notice a new LEAN_CC, so objects built without it must go.
   let removed ← removeWorkspaceObjects
   IO.eprintln s!"leanprof: building {exe} with copy shims{if opts.auto.isSome then " and every function timed" else ""} ({removed} stale objects removed)"
-  let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", opts.auto)] ++ runtimeEnv
+  let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", opts.auto),
+    ("LEANPROF_ALLOCS", if opts.allocs then some "1" else none)] ++ runtimeEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
     discard <| removeWorkspaceObjects

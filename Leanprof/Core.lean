@@ -88,3 +88,21 @@ initializers say which modules it links), instead of this process's. -/
 opaque setSymbols (names : @& Array String) : BaseIO Unit
 
 end Leanprof
+
+namespace Leanprof
+
+/-- Allocations made by compiled Lean code so far, on all threads. Counted
+only in builds with `allocFlags` (or `LEANPROF_ALLOCS=1` through the
+wrapper); otherwise 0. -/
+@[extern "leanprof_allocs"]
+opaque allocs : BaseIO Nat
+
+/-- Run `x` and fail if it made more than `n` allocations. -/
+def expectAllocsAtMost (n : Nat) (x : IO α) : IO α := do
+  let before ← allocs
+  let r ← x
+  let made := (← allocs) - before
+  if made > n then throw <| IO.userError s!"leanprof: expected at most {n} allocations, got {made}"
+  return r
+
+end Leanprof

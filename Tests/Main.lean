@@ -32,6 +32,11 @@ def strings (n : Nat) : String × Array String := Id.run do
     s := s.push 'a'
   return (s, seen)
 
+/-- Allocates in this module's compiled code: a pair and a list cell per step. -/
+def mkPairs : Nat → List (Nat × Nat)
+  | 0 => []
+  | n + 1 => (n, n) :: mkPairs n
+
 def fib : Nat → Nat
   | 0 => 0
   | 1 => 1
@@ -99,6 +104,15 @@ def tests : StateT Nat IO Unit := do
     ((r matches .error _) && (← depth) == d && (← calls "test.throws") == 1)
   let x ← profile! "test.io" (pure 41 : IO Nat)
   check "monadic scope returns the value" (x == 41 && (← calls "test.io") == 1)
+  -- allocations (the test executable is built with allocFlags)
+  let a0 ← allocs
+  let xs ← IO.lazyPure fun _ => mkPairs n500
+  let made := (← allocs) - a0
+  check "allocations are counted" (made ≥ 1000 && xs.length == 500) s!"allocs={made}"
+  let r ← (expectAllocsAtMost 10 (IO.lazyPure fun _ => (mkPairs n500).length)).toBaseIO
+  check "expectAllocsAtMost rejects allocating code" (r matches .error _)
+  let r ← (expectAllocsAtMost 1000000 (pure 1)).toBaseIO
+  check "expectAllocsAtMost passes" (r matches .ok _)
   -- positions
   check "copy sites resolve to their declaration" ((← whereIs "withHistory") == "Tests/Main.lean:13")
   check "specializations resolve to the caller"

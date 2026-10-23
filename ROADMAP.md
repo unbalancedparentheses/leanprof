@@ -74,10 +74,10 @@ benchmark measures them.
 
 ## M5: allocations
 
-- [ ] Allocations and bytes per scope, via the same symbol redirection on the
-  runtime's allocation entry points (to verify which are reachable).
+- [x] Allocations and bytes per scope and per call site, via redirection of
+  the runtime's allocation entry points (opt-in `--allocs`).
 - [ ] Peak live memory per scope.
-- [ ] `expectAllocs` for tests.
+- [x] `expectAllocsAtMost` for tests.
 
 ## M6: explanations
 

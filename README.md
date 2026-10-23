@@ -34,6 +34,7 @@ nothing.
 | Source positions | ✅ scopes (line), copies (declaration) | – | C lines with debug info | – |
 | **Copies of shared values, per function** | ✅ count, bytes, time, share of scope | – | – | – |
 | **Copy assertions in tests** (`expectNoCopies`) | ✅ | – | – | – |
+| Allocations per scope and call site | ✅ `--allocs` (opt-in), `expectAllocsAtMost` | – | – | – |
 | Overhead per event, recording | **~11 ns**, flat; 4 threads ~12 ns; measured and subtracted from reported times | 4.6 µs at 1k events, 88 µs at 16k (grows with events) | sampling, very low | – |
 | Overhead, recording off | compiles away | ~23 ns; 4 threads ~370 ns | – | – |
 | No annotations needed | ✅ sampled (`leanprof sample`) or exact (`--auto`) | – | ✅ sampled | – |
@@ -56,8 +57,9 @@ same page shows leanprof finding the cause of LeanProfiler's growing cost:
 its event array is copied on every span.
 
 Real use: [lean-compiler-backend case study](docs/case-studies/lean-compiler-backend.md),
-profiled without adding a dependency: where its run time goes, 121,054 array
-copies in one loop, and one function that is a quarter of its compile cost.
+profiled without adding a dependency: where its run time goes, a tokenizer
+that makes a third of its 11.9 million allocations, 121,054 array copies in
+one loop, and one function that is a quarter of its compile cost.
 
 Status: early. Tested with Lean 4.35.0 on macOS arm64; CI also runs Linux.
 See [ROADMAP.md](ROADMAP.md).
@@ -291,6 +293,16 @@ LEAN_CC=$PWD/.lake/packages/leanprof/scripts/leanprof-cc lake build
 It forwards to the system `clang` (or `cc`; override with
 `LEANPROF_REAL_CC`), since `leanc` stops passing its bundled clang's sysroot
 once `LEAN_CC` is set.
+
+### Allocations
+
+`lake exe leanprof run --allocs EXE` (or `LEANPROF_ALLOCS=1` with the
+wrapper, or `allocFlags` in the lakefile) also counts every allocation made
+by compiled Lean code: allocations and bytes per scope (with and without
+children) and a table of allocation sites with file:line. Frees happen inside
+the runtime and are not seen, so this is allocation volume, not live memory.
+In tests, `Leanprof.expectAllocsAtMost n x` fails when `x` allocates more.
+Off by default, because every allocation then pays a small cost.
 
 ### Tasks
 

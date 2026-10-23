@@ -32,6 +32,15 @@ set -- \
   -Dlean_io_wait=leanprof_io_wait \
   -Dlean_task_get=leanprof_task_get \
   "$@"
+# LEANPROF_ALLOCS=1 also counts allocations made by compiled Lean code.
+if [ "${LEANPROF_ALLOCS:-}" = 1 ]; then
+  set -- \
+    -Dlean_alloc_small_object_core=leanprof_alloc_small_object_core \
+    -Dlean_alloc_object=leanprof_alloc_object \
+    -Dmi_malloc=leanprof_mi_malloc \
+    -Dmi_malloc_small=leanprof_mi_malloc_small \
+    "$@"
+fi
 # LEANPROF_AUTO=1 also times every function of this package (no `profile!`
 # needed); LEANPROF_AUTO=all includes dependencies.
 case " $* " in

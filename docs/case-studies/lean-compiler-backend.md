@@ -39,6 +39,25 @@ Together about 3 ms of a 575 ms run: real non-linear updates, worth fixing
 for hygiene (`CFG.build` copies an array on almost every iteration), but not
 the bottleneck.
 
+## Allocations (`leanprof run --allocs`)
+
+11,946,202 allocations, 266.6 MiB, to compile 562 KB of input (output again
+identical to the normal build):
+
+| allocations | bytes | share | function | where |
+|---|---|---|---|---|
+| 4,066,775 | 88.8 MiB | 33.3% | `Parser.tokenize` | `Parser.lean:20` |
+| 415,067 | 22.3 MiB | 8.4% | `validateFunction` (range loop) | `Validate.lean:126` |
+| 910,550 | 16.2 MiB | 6.1% | `Parser.peek` | `Parser.lean:79` |
+| 992,116 | 15.1 MiB | 5.7% | hash-map lookups (`Std.DHashMap` `get?`) | |
+| 615,346 | 11.7 MiB | 4.4% | `Statement.definition` | `IR.lean:228` |
+| 560,981 | 11.2 MiB | 4.2% | `Optimize.Cleanup.copies` | `Optimize/Cleanup.lean:51` |
+
+The tokenizer makes about 7 allocations per input byte and is a third of all
+allocation; `Parser.peek`, which should not need to allocate, allocates
+910,550 times. Both are cheap to fix and would also cut the time spent
+freeing objects (9% of CPU in the sampled profile).
+
 ## Compile time (`leanprof elab --heartbeats`)
 
 Six large or proof-heavy files: 296M heartbeats in total (2 min 38 s).
