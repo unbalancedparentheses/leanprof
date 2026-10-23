@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import Leanprof.Core
+import LeanprofHtml
 
 /-!
 # `lake exe leanprof`
@@ -59,6 +60,13 @@ def commands : List (String × String × String) := [
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
     "with pass/fail per exact metric. Exit 1 if a metric named by --fail-on (default: copies) regressed."),
+  ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [REPORT.json...]",
+    "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
+    "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++
+    "summary, flame graph, sortable tables, source lines with hints, and a comparison when given\n" ++
+    "two reports of a kind (base, then new; regressions as `compare` counts them). The flame graph\n" ++
+    "of a sampled report reads samply's profile next to it (or --profile FILE); for a run report,\n" ++
+    "pass the timeline of `run --trace FILE` as --trace FILE."),
   ("doctor", "",
     "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
   ("help", "[COMMAND]", "Show this overview, or one command's options.")]
@@ -73,6 +81,7 @@ def summary : String → String
   | "measure" => "run a program several times into one summary (for judge / autoresearch)"
   | "judge" => "KEEP or DISCARD a change from two measure summaries"
   | "report-md" => "Markdown summary of base and head reports, for pull-request comments"
+  | "html" => "one self-contained HTML report: flame graph, tables, source, comparison"
   | "doctor" => "check that leanprof's tools and the project are set up"
   | "help" => "this overview, or one command's options"
   | _ => ""
@@ -850,7 +859,9 @@ def elabCmd (argv : List String) : IO UInt32 := do
   IO.FS.writeFile outPath
     (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true),
       ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
-      ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("copies", Json.arr #[])]).compress
+      ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("copies", Json.arr #[]),
+      ("kinds", Json.arr ((byClass.toArray.qsort (fun a b => a.2 > b.2)).map fun (cls, x) =>
+        Json.mkObj [("class", Json.str cls), ("total", toJson x)]))]).compress
   IO.println s!"\nwritten to {outPath}; `#leanprof` shows it next to the code"
   return 0
 
@@ -1463,6 +1474,7 @@ def main (argv : List String) : IO UInt32 := do
     | "report-md" :: rest => reportMd rest
     | "sample" :: rest => sample rest
     | "elab" :: rest => elabCmd rest
+    | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
     | _ =>
       IO.eprintln usage
       return 2

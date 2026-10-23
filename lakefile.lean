@@ -72,6 +72,20 @@ extern_lib leanprof_c pkg := do
 lean_exe overhead where
   root := `Examples.Overhead
 
+/-- The page `leanprof html` writes, compiled in with `include_str`. -/
+input_file htmlCss where
+  path := "LeanprofHtml" / "report.css"
+  text := true
+
+input_file htmlJs where
+  path := "LeanprofHtml" / "report.js"
+  text := true
+
+/-- `leanprof html`'s page generator, a library so the command can import it;
+`needs` rebuilds it when the page's CSS or script changes. -/
+lean_lib LeanprofHtml where
+  needs := #[htmlCss, htmlJs]
+
 /-- `lake exe leanprof run|compare`. -/
 lean_exe leanprof where
   root := `LeanprofCli

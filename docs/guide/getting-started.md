@@ -88,7 +88,8 @@ public def main : IO Unit := profile! "main" do
 
 Run the program as usual and the report appears on stderr when it exits. Add
 `#leanprof` to a file to see the last report next to the code in your
-editor.
+editor. `leanprof html` puts the reports in one page you can open offline
+and share ([HTML report](html-report.md)).
 
 Next: [run time](run-time.md), [copies and allocations](copies-and-allocations.md),
 [memory, frees and `leanprof stat`](memory.md),
