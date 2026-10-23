@@ -63,6 +63,16 @@ async function run() {
     assert.ok(frame.includes("handle"), frame);
     panel.dispose();
   });
+
+  await step("leanprof: Live view stops the program when its tab is closed", async () => {
+    // a server that runs until stopped
+    const { panel, finished } = await vscode.commands.executeCommand("leanprof.live", "server -- 0 20");
+    await new Promise((r) => setTimeout(r, 4000));
+    panel.dispose();
+    const timeout = new Promise((r) => setTimeout(() => r("still running"), 10000));
+    const r = await Promise.race([finished, timeout]);
+    assert.notStrictEqual(r, "still running");
+  });
 }
 
 module.exports = { run };

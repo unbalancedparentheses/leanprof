@@ -262,7 +262,7 @@ async function liveCmd(context, given) {
   live = state;
   // the panel asks for everything again when its page (re)loads
   const shown = () => ({ frame: state.frame.join("\n").trimEnd(), log: state.log, status: state.status });
-  const post = (m) => panel.webview.postMessage(m);
+  const post = (m) => state.disposed || panel.webview.postMessage(m);
   panel.webview.onDidReceiveMessage((m) => m === "ready" && post(shown()));
   const command = `leanprof ${args.join(" ")}`;
   const setStatus = (s) => post({ status: (state.status = s) });
@@ -298,9 +298,11 @@ async function liveCmd(context, given) {
     });
   });
   panel.onDidDispose(() => {
+    state.disposed = true;
     if (!state.exited) {
+      // leanprof top and the program it started, which share its process group
       try {
-        if (process.platform !== "win32") process.kill(-child.pid, "SIGINT");
+        if (process.platform !== "win32") process.kill(-child.pid, "SIGTERM");
         else child.kill();
       } catch (e) {
         child.kill();

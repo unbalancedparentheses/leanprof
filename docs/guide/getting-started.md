@@ -10,17 +10,57 @@ leanprof works in two ways, and you can use both:
 
 ## Install the command
 
-You need Lean (through [elan](https://github.com/leanprover/elan)) and, for
-sampling, [samply](https://github.com/mstange/samply)
-(`brew install samply` or `cargo install samply`).
+You need Lean (through [elan](https://github.com/leanprover/elan)), a C
+compiler, and, for sampling, [samply](https://github.com/mstange/samply)
+(`brew install samply` or `cargo install samply`). Then one command:
 
 ```
-git clone https://github.com/unbalancedparentheses/leanprof
-sh leanprof/scripts/install.sh          # puts `leanprof` in ~/.local/bin
+curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | sh
 ```
+
+It puts `leanprof` in `~/.local/bin`: the prebuilt command of the latest
+[release](https://github.com/unbalancedparentheses/leanprof/releases) for
+macOS arm64 or Linux x86-64, checked against the release's `SHA256SUMS`, or,
+when there is no release for your platform yet, the command built from
+source (in `~/.local/share/leanprof/src`). Options go after `sh -s --`:
+
+```
+curl -sSfL .../install.sh | sh -s -- --release v0.1.0   # a given version
+curl -sSfL .../install.sh | sh -s -- --source           # always build from source
+curl -sSfL .../install.sh | sh -s -- --bin ~/bin        # somewhere else
+```
+
+From a clone, `sh scripts/install.sh` builds that clone instead. Run the
+installer again to update.
 
 Run `leanprof doctor` inside a project to check that everything it needs is
-there.
+there. For the editor, see also the [VS Code extension](vscode.md).
+
+### Supported platforms
+
+| | |
+|---|---|
+| macOS arm64 | supported; prebuilt command |
+| Linux x86-64 | supported; prebuilt command (glibc 2.35 or newer, e.g. Ubuntu 22.04; older systems build from source) |
+| macOS x86-64, Linux arm64 | not tested; the installer builds from source |
+| Windows | not supported; WSL 2 with Linux is the way to use it |
+
+Lean 4.34 and later. CI runs the test suite and `leanprof run`, `sample` and
+`elab` on a project for Lean 4.34.1 and 4.35.0 (required to pass), and for
+the newest release candidate and the latest nightly, daily, so a Lean
+release that breaks leanprof shows up before it is out
+([lean-versions.yml](../../.github/workflows/lean-versions.yml)).
+`leanprof sample` is checked on macOS; on Linux, samply needs perf events
+(`sudo sysctl kernel.perf_event_paranoid=1`).
+
+Windows is unsupported because every part of leanprof that touches a program
+assumes a POSIX system: `leanprof run` builds through a `sh` compiler
+wrapper (`scripts/leanprof-cc`) that redirects Lean's runtime functions
+with clang flags and links with `-rdynamic`; the runtime uses pthreads,
+`dladdr` to name the code that copied, `getrusage` and `/proc` for
+memory, and signals (`SIGUSR1` for `leanprof dump`); and sampling
+relies on samply's macOS and Linux backends and on ELF or Mach-O symbol
+names. A Windows port would need each of these replaced.
 
 ## First profile of an existing project
 
@@ -93,5 +133,5 @@ and share ([HTML report](html-report.md)).
 
 Next: [run time](run-time.md), [copies and allocations](copies-and-allocations.md),
 [memory, frees and `leanprof stat`](memory.md),
-[compile time](compile-time.md), [editor](editor.md),
+[compile time](compile-time.md), [editor](editor.md), [VS Code](vscode.md),
 [CI and regressions](ci-and-regressions.md).
