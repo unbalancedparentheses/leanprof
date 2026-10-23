@@ -500,6 +500,7 @@ def compare (argv : List String) : IO UInt32 := do
   let mut regressions := 0
   IO.println s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
   let keys := (base.scopes.toList.map (·.1) ++ new.scopes.toList.map (·.1)).eraseDups
+  let amt (x : Float) := if base.exact then s!"{fmt2 (x / 1000)} kHB" else fmtTime x
   -- the largest changes first (a project report has thousands of scopes)
   let change (k : String) : Float :=
     ((new.scopes.get? k).map (·.1)).getD 0 - ((base.scopes.get? k).map (·.1)).getD 0
