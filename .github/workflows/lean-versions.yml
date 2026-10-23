@@ -1,0 +1,85 @@
+# leanprof on every Lean version it supports, and on the next ones: the test
+# suite built with each version, and `leanprof run`, `sample` and `elab` on a
+# project that uses it (Tests/Smoke, profiled from outside by the command as
+# released, which is built with lean-toolchain's version).
+#
+# 4.34.x and 4.35.0 must pass. The newest release candidate and the latest
+# nightly may fail without failing the workflow, but a failure is reported as
+# a warning on the run and in its summary, so a Lean release that breaks
+# leanprof is noticed before users meet it. Runs daily as well as on pushes,
+# since a new nightly or release candidate changes nothing in this repository.
+name: Lean versions
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lean:
+    name: Lean ${{ matrix.lean }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        lean: ["v4.34.1", "v4.35.0", "newest-rc", "nightly"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    continue-on-error: ${{ matrix.lean == 'newest-rc' || matrix.lean == 'nightly' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Choose the toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEAN: ${{ matrix.lean }}
+        run: |
+          case "$LEAN" in
+            newest-rc)
+              # the most recently published release candidate of Lean
+              tag=$(gh release list -R leanprover/lean4 --limit 30 --json tagName,publishedAt \
+                --jq '[.[] | select(.tagName | test("-rc"))] | sort_by(.publishedAt) | last | .tagName')
+              tc="leanprover/lean4:$tag" ;;
+            nightly) tc="leanprover/lean4:nightly" ;;
+            *) tc="leanprover/lean4:$LEAN" ;;
+          esac
+          echo "TOOLCHAIN=$tc" >> "$GITHUB_ENV"
+          echo "toolchain: $tc"
+      - name: Test suite built with this Lean
+        run: |
+          echo "$TOOLCHAIN" > lean-toolchain
+          lean --version
+          LEANPROF_QUIET=1 lake test
+          git checkout lean-toolchain
+      - name: Build the command (with lean-toolchain's Lean, as released)
+        run: lake build leanprof
+      - name: Install samply (macOS)
+        if: runner.os == 'macOS'
+        run: brew install samply
+      - name: leanprof run, sample and elab on a project using this Lean
+        run: |
+          # sampling is checked on macOS; Linux runners have no samply here
+          sample=""
+          if [ "$RUNNER_OS" = macOS ]; then sample=--sample; fi
+          sh scripts/version-smoke.sh .lake/build/bin/leanprof "$TOOLCHAIN" $sample
+      - name: Report
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+          OPTIONAL: ${{ matrix.lean == 'newest-rc' || matrix.lean == 'nightly' }}
+          OS: ${{ matrix.os }}
+        run: |
+          lean_version=$(cd Tests/Smoke && echo "$TOOLCHAIN" > lean-toolchain && lake env lean --version 2>/dev/null | head -1 || echo "$TOOLCHAIN")
+          git checkout Tests/Smoke/lean-toolchain
+          if [ "$OUTCOME" = success ]; then mark="✅ passes"; else mark="❌ fails"; fi
+          echo "| $TOOLCHAIN | $OS | $mark | $lean_version |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$OUTCOME" != success ] && [ "$OPTIONAL" = true ]; then
+            echo "::warning title=leanprof fails on $TOOLCHAIN ($OS)::the test suite or the run/sample/elab smoke test fails on $lean_version; allowed for now, but this is what the next Lean release will break"
+          fi

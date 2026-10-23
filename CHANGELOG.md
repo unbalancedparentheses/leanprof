@@ -6,150 +6,155 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
-### Added
-
-- **GitHub Action** (`action.yml`): profiles a pull request's base and head
-  commits (`leanprof run --json`, optionally `--allocs`, and
-  `leanprof elab --heartbeats`), compares them, and posts or updates one
-  comment per pull request with the changes in copies, allocations, calls,
-  compile heartbeats and time, with pass/fail per exact metric. Pull
-  requests from forks get the report in the job summary instead.
-- `leanprof report-md BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]`:
-  the comment as Markdown, testable locally; exits 1 when a metric named by
-  `--fail-on` regressed.
-- Reservoir metadata in the lakefile (description, keywords, license,
-  homepage), this changelog, and a release workflow that attaches the
-  command for macOS arm64 and Linux x86-64 to version tags.
-- Case studies of [lean-regex](docs/case-studies/lean-regex.md),
-  [doc-gen4](docs/case-studies/doc-gen4.md),
-  [verso](docs/case-studies/verso.md) and
-  [concrete](docs/case-studies/concrete.md), and a CI job that runs
-  `run --auto`, `--allocs --counters --frees`, `sample` and
-  `elab --heartbeats` on lean-regex's benchmark and checks the reports.
-- `run`, `stat` and `sample` take `--cwd DIR`, for programs that read the
-  current directory (a compiler run in its project); positions still come
-  from the project (`LEANPROF_PROJECT`).
-- `sample` says which declaration calls a specialization when it is not the
-  one it is named after (the compiler reuses specializations), names
-  `tlv_get_addr` in libdyld (from `dyld_info`) and counts thread-local
-  lookups and Lean's C++ expression and kernel code as their own
-  categories.
-- The report's JSON has `probe_ns`, the probes' calibrated cost in the wall
-  time.
-
-### Fixed
-
-- `leanprof run` on another checkout of leanprof itself no longer links the
-  runtime twice on Linux (`scripts/leanprof-cc` skips `LEANPROF_RUNTIME`
-  when the link already has leanprof's runtime library).
-
-Found on real projects (see the case studies):
-
-- `--auto`: a declaration's compiled parts (`f`, `f._redArg`, `f._boxed`,
-  lambdas) were separate scopes with one name, nested in each other, and
-  their totals were added: 281% of the wall time for doc-gen4's `process`,
-  calls counted twice. They are one scope now; a lambda, `_redArg` or join
-  point called by its own declaration is not a new call, and `_boxed`
-  wrappers are not timed.
-- `%wall` divided totals without the probes' cost by a wall time with it
-  (`main` at 17.7% of lean-regex's run). It now uses the wall time without
-  the probes' calibrated cost, which the header shows.
-- `--frees` cleared an 8 KiB table after every freeing cascade that met a
-  shared object: lean-regex ran 6.3 times slower (13.0 s), now 1.8 times
-  (3.6 s).
-- Positions of modules in a `srcDir` (`scripts/Bench.lean`) were given as
-  if the module were at the package root (`Bench.lean`).
-- A specialization made inside another one
-  (`g._at_.(h._at_.f.spec_1).spec_2`) was reported under `h` instead of
-  `f`; long symbols (over 96 components or 1,024 characters) were cut
-  before demangling. `demangle-check` now passes on concrete's 192,087
-  symbols.
-- `leanprof elab` ran `lake env lean`, which cannot load plugins or the
-  shared libraries of precompiled modules: on Verso's documents Lean
-  aborted and the files were reported as nearly free. It runs `lake lean`
-  now, and says when Lean fails on a file. Lines are named by their source
-  instead of the trace's pretty-printed command (which can be `failed to
-  pretty print term`), and the header says what a kHB is.
-- `leanprof elab` read each of Lean's messages whole and then parsed it:
-  concrete's `Check.lean` prints its whole trace (1.3 to 2.4 GB, depending
-  on the Lean version) in one message, and leanprof needed 7.5 to 15.5 GB.
-  Messages are now decoded a line at a time as they arrive, and only the
-  descriptions the report reads are kept (the command's, repeated
-  operations', tactics' and those naming a constant): 57 MB for the same
-  report, single files and `--project` alike. (This was first fixed in the
-  elab code that the definitions, tactics and `--project` rewrite replaced,
-  and lost with it.)
-- Building with probes printed a report from every `lean` process that
-  loaded an instrumented precompiled module (doc-gen4's dependencies); the
-  build now runs with reports off and without the user's `LEANPROF_JSON`
-  and `LEANPROF_TRACE`.
-- `sample` said "is samply installed?" when the program exited with an
-  error; it now reports the profile and exits with the program's code.
-  Code the linker outlined (`OUTLINED_FUNCTION_N`) counts in its caller,
-  `lean_inc_heartbeat` counts as allocation, and C++ names are shown
-  without template arguments instead of cut at 512 characters.
-- Memory per scope: a call shorter than the time since the last reading
-  before it no longer gets a "max rise" (it included what was allocated
-  before the call: 9.5 MiB for a parser of ten characters).
-- The scope table was printed with a header and no rows when the only
-  scopes were tasks.
-
 ## [0.1.0] - 2026-10-23
 
-The first version, not tagged.
+The first release: a profiler for Lean 4 programs and their compile times,
+for Lean 4.34 and later on macOS arm64 and Linux x86-64.
 
-### Profiling running programs
+### Install
 
-- `profile! "label"` scopes on pure terms and monadic actions: calls, total
-  and self time, mean, p50/p99, source position. Report on stderr at exit,
-  JSON with `LEANPROF_JSON`.
-- leanprof measures its own cost per scope (lazily, on first use) and
-  subtracts it from every enclosing scope (`LEANPROF_NO_CALIBRATION=1` for
-  raw times); about 11 ns per `IO` scope and 15 ns per pure scope.
-- **Copies of non-exclusive values**: every `Array`, `ByteArray` or `String`
-  copied because another reference was alive, per compiled function and
-  scope, with bytes, time, share of the scope, declaration file:line (from
-  `.ilean` files) and why (`shared`, `multi-threaded`, `persistent`).
-- `Leanprof.expectNoCopies`, `copies`, `calls`, `totalNs`, `overheadNs`,
-  `depth` and `whereIs` for tests.
-- **Allocations** (opt-in, `--allocs` or `allocFlags`): per scope and call
-  site, with `Leanprof.expectAllocsAtMost`.
-- **Tasks**: `Task.spawn` and `IO.asTask` linked to their spawning scope
-  with run time and queue wait; `IO.wait` and `Task.get` timed per call
-  site.
-- **Automatic mode** (`LEANPROF_AUTO=1` / `all`): every function timed with
-  no annotations, specializations reported under the function that caused
-  them.
-- **Timeline** for Perfetto (`LEANPROF_TRACE`), with copies as markers.
-- `scripts/leanprof-cc`, a `LEAN_CC` wrapper that adds copy detection to
-  every package, dependencies included.
-- Modules: with `module` and `public import Leanprof`, programs do not link
-  Lean's front end.
+- One command: `curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | sh`
+  installs the prebuilt command for macOS arm64 or Linux x86-64 from the
+  latest release (checked against `SHA256SUMS`), or builds from source when
+  there is none for the platform. `--release VERSION`, `--source`, `--bin
+  DIR`; from a clone it builds the clone.
+- Release archives of the command for both platforms, and the VS Code
+  extension as a `.vsix`, attached to each version tag.
+- `leanprof doctor` checks Lean, the C compiler, samply and the project;
+  `leanprof help [COMMAND]`.
+- Reservoir metadata in the lakefile (description, keywords, homepage,
+  license); use as a library with
+  `require leanprof from git "https://github.com/unbalancedparentheses/leanprof" @ "v0.1.0"`.
 
-### The `leanprof` command
+### Any Lake project, unchanged
 
-- `run`: build any Lake project's executable with probes, run it, clean up.
-  Projects need no dependency on leanprof: its runtime is compiled for the
-  project's Lean version (4.34 and later).
-- `sample`: samply underneath, CPU time per Lean declaration with file:line,
-  specializations merged, a breakdown of the Lean runtime's own time, and a
-  profile that opens in Firefox Profiler with Lean names.
-- `elab`: compile cost per line and declaration from full
-  `trace.profiler` trees, by kind of operation, with the costliest nested
-  operations and repeated work; `--heartbeats` for exact counts.
-- `compare`: exit 1 on regressions; copies and calls exact, compile
-  heartbeats above 1% and 1,000, time thresholded.
-- `measure` and `judge`: repeated runs into one summary and a KEEP/DISCARD
-  verdict, for autoresearch loops (`research/program.md`,
-  `research/demo/run.sh`).
-- `doctor` and `help`; `scripts/install.sh` puts `leanprof` on `PATH`.
+- `leanprof run`, `sample`, `stat`, `top`, `elab` and `measure` work on any
+  Lake project with no dependency on leanprof: its runtime is compiled for
+  the project's own Lean version and linked in, instrumented objects are
+  removed afterwards, and the normal executable is restored.
+- `--cwd DIR` for programs that read the current directory; positions still
+  come from the project.
+- Names are demangled like Lean's own demangler (checked against it by
+  `demangle-check` on hundreds of thousands of symbols: escapes, private and
+  hygienic names, nested specializations, package names), and given
+  `File.lean:line` from `.ilean` files, including modules in a `srcDir`.
 
-### Editor
+### Run time
 
-- `#leanprof`: the last report as inlay hints (run time, copies, compile
-  cost), with details on hover.
+- `leanprof sample`: CPU time per Lean declaration with file:line, through
+  samply and with no probes; specializations reported under the declaration
+  that caused them (and their real caller when the compiler reuses one); a
+  breakdown of the Lean runtime's own time (copying, freeing, allocation,
+  thread-local lookups, Lean's C++ code); a profile with Lean names for
+  Firefox Profiler.
+- `leanprof run`: exact time and calls per `profile!` scope, total and self,
+  mean, p50/p99. leanprof measures its own cost per scope and per path
+  (about 11 ns per `IO` scope, 21 ns per pure one) and subtracts it.
+- `--auto`: every function timed with no annotations (about 15 ns per call),
+  a declaration's compiled parts (`_redArg`, `_boxed`, lambdas) counted as
+  one; exact counts in deep recursion.
+- `profile! "label"` on pure terms and monadic actions; report on stderr at
+  exit, JSON with `LEANPROF_JSON`. With `module` and
+  `public import Leanprof`, programs do not link Lean's front end.
+- Tasks: `Task.spawn`, `IO.asTask`, `Task.map/bind`, `IO.mapTask/bindTask`
+  linked to the spawning scope with run time and queue wait; `IO.wait` and
+  `Task.get` timed per call site.
+- Timelines for Perfetto (`--trace FILE`, `LEANPROF_TRACE`), with copies as
+  markers.
+
+### Copies, allocations, memory
+
+- Copies of non-exclusive `Array`, `ByteArray`, `FloatArray` and `String`
+  values: per function and scope, with bytes, time, share of the scope,
+  file:line and why (`shared`, `multi-threaded`, `persistent`).
+- `leanprof explain`: why each copy happened (where the second reference
+  comes from, from the compiler's IR) and how to fix it; `--why` confirms it
+  at run time from the reference increments.
+- `--allocs`: allocations per scope and call site; `--counters`: failed
+  constructor reuse and closure applications per function; `--frees`:
+  freeing pauses per call site.
+- Peak memory per scope and memory over time; `leanprof stat`, a one-screen
+  summary (time, memory, allocations, copies, frees, tasks, top scopes).
+- `--core`: copies, tasks and allocations inside Lean's own libraries, by
+  linking against copies rewritten with llvm-objcopy (cached).
+- `scripts/leanprof-cc`, a `LEAN_CC` wrapper that adds the probes to every
+  package, dependencies included.
+
+### Compile time
+
+- `leanprof elab FILE...`: compile cost per line and declaration from
+  Lean's full `trace.profiler` trees, by kind of operation (elaboration,
+  kernel, compiler, linters), repeated work, and tactic lines.
+- The definitions behind the work, each with its own file:line: what
+  `isDefEq` and `whnf` unfolded, instances tried, simp lemmas used.
+- `--heartbeats` for exact counts that repeat across runs; `--counts` for
+  Lean's exact unfold counts; `--project` (or `--module-glob`) for every
+  module of a package, in parallel.
+- Lean's messages are decoded a line at a time as they arrive (57 MB of
+  memory for a 2.4 GB trace); files Lean fails on are reported.
+
+### Live
+
+- `leanprof top`: a running program, refreshed like top: hottest scopes,
+  copy and allocation sites, tasks and waits, with rates per second, memory,
+  CPU and what each thread is inside. `--attach FILE` and `--pid PID` for
+  programs started with `LEANPROF_LIVE`.
+- Flight recorder: the last seconds as a Perfetto trace when a scope is
+  slower than `LEANPROF_SLOW_MS`, or on demand with `leanprof dump PID`.
+- `leanprof mcp`: an MCP server with profiling tools for AI agents.
+
+### Reports, CI and regressions
+
+- `leanprof html`: one self-contained page (no network) with a flame graph,
+  sortable tables, source lines with the findings, and a base-versus-new
+  comparison.
+- `leanprof compare`: exit 1 on regressions; copies, calls and compile
+  heartbeats exact, time thresholded; per declaration and per module.
+- GitHub Action (`action.yml`): profiles a pull request's base and head,
+  and posts one comment with the changes in copies, allocations, calls,
+  compile heartbeats and time, pass/fail per exact metric; `leanprof
+  report-md` makes the comment locally.
+- `leanprof measure` and `judge`: repeated runs into one summary and a
+  KEEP/DISCARD verdict, for autoresearch loops (`research/`).
+- Lean API for tests: `Leanprof.expectNoCopies`, `expectAllocsAtMost`,
+  `expectNoReuseFailures`, `expectClosureApplicationsAtMost`, and
+  `copies`, `calls`, `totalNs`, `overheadNs`, `depth`, `whereIs`.
+
+### Editors
+
+- `#leanprof`: the last reports as inlay hints next to the code (run time,
+  sampled time, copies, compile cost, tactic steps), with details on hover
+  and in the infoview.
+- VS Code extension (`editors/vscode`, `.vsix` on the release): **Run…**,
+  **Sample…**, **Compile cost of this file**, **Open report** (the HTML
+  report in a tab) and **Live view** (`leanprof top` in a panel), all
+  through the command; `leanprof.path` setting.
+
+### Lean versions
+
+- Lean 4.34 and later. CI runs the test suite and `run`, `sample` and
+  `elab` on a project with Lean 4.34.1 and 4.35.0, and daily with the
+  newest release candidate and the latest nightly.
+- Copies of `String` values on Lean 4.36, where `String.push` is inline
+  and copies in `lean_string_push_cold`.
+
+### Accuracy and real projects
+
+- A benchmark and accuracy suite (`bench/`) against workloads with known
+  answers, samply and LeanProfiler: call and copy counts exact in every
+  mode, sampled time within 0.1 to 1.7 points of the true share.
+- Case studies, each with the fixes leanprof needed to handle the project:
+  [lean-compiler-backend](docs/case-studies/lean-compiler-backend.md),
+  [doc-gen4](docs/case-studies/doc-gen4.md),
+  [verso](docs/case-studies/verso.md),
+  [lean-regex](docs/case-studies/lean-regex.md),
+  [concrete](docs/case-studies/concrete.md) and
+  [Batteries](docs/case-studies/batteries.md) at compile time; CI profiles
+  leanprover-community/repl and lean-regex from outside.
 
 ### Documentation
 
-- The guide in `docs/guide/`, benchmarks against LeanProfiler in `bench/`,
-  and a case study on lean-compiler-backend.
+- The guide in [docs/guide](docs/guide/getting-started.md): getting
+  started, run time, copies and allocations, memory, compile time, editor,
+  VS Code, HTML report, CI and regressions, live view, Lean API, reference,
+  how it works and its limits.

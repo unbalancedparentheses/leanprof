@@ -16,7 +16,7 @@ copies and tasks you want observed. -/
 def copyFlags : Array String :=
   #["copy_expand_array_nonlinear", "copy_sarray_nonlinear", "copy_string_nonlinear",
     "array_push", "byte_array_push", "float_array_push",
-    "string_push", "string_append", "string_utf8_set",
+    "string_push", "string_push_cold", "string_append", "string_utf8_set",
     "task_spawn_core", "io_as_task", "io_wait", "task_get",
     "task_map_core", "task_bind_core", "io_map_task", "io_bind_task"].map
     fun f => s!"-Dlean_{f}=leanprof_{f}"

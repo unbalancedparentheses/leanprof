@@ -48,7 +48,9 @@ def plain : Nat → Nat := fun n =>
 /-- Counted delta of `copies` around `x`. -/
 def copiesIn (x : Unit → α) : IO (α × Nat) := do
   let before ← copies
-  let r := x ()
+  -- evaluated here, between the two readings: a `let` of a pure value may be
+  -- moved to its first use by the compiler (Lean 4.34 does)
+  let r ← IO.lazyPure x
   let after ← copies
   return (r, after - before)
 
@@ -141,7 +143,7 @@ def tests : StateT Nat IO Unit := do
   check "expectNoCopies rejects shared code" (r matches .error _)
   -- scopes
   let before ← calls "test.fib"
-  let v := fib n20
+  let v ← IO.lazyPure fun _ => fib n20
   let after ← calls "test.fib"
   check "pure scope counts every call" (v == 6765 && after - before == 10945) s!"calls={after - before}"
   let ov ← overheadNs

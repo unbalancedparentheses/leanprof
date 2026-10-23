@@ -132,4 +132,6 @@ from its JSON messages.
   work in `do` blocks can run before the action (use `IO.lazyPure`).
 - **Apple Silicon's clock ticks every 41.7 ns**, so percentiles of very short
   scopes are coarse.
-- Tested with Lean 4.34.1 and 4.35.0 on macOS arm64 and Linux x86-64.
+- Tested with Lean 4.34.1 and 4.35.0 on macOS arm64 and Linux x86-64, and
+  daily with the newest Lean release candidate and nightly; not on Windows
+  ([supported platforms](getting-started.md#supported-platforms)).

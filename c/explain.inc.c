@@ -163,6 +163,9 @@ LEAN_EXPORT lean_object *leanprof_array_push(lean_obj_arg a, lean_obj_arg v) LP_
 LEAN_EXPORT lean_obj_res leanprof_byte_array_push(lean_obj_arg a, uint8_t b) LP_NOSPLIT;
 LEAN_EXPORT lean_obj_res leanprof_float_array_push(lean_obj_arg a, double d) LP_NOSPLIT;
 LEAN_EXPORT lean_obj_res leanprof_string_push(lean_obj_arg s, uint32_t c) LP_NOSPLIT;
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 36)
+LEAN_EXPORT lean_obj_res leanprof_string_push_cold(lean_obj_arg s, uint32_t c) LP_NOSPLIT;
+#endif
 LEAN_EXPORT lean_obj_res leanprof_string_append(lean_obj_arg s1, b_lean_obj_arg s2) LP_NOSPLIT;
 LEAN_EXPORT lean_obj_res leanprof_string_utf8_set(lean_obj_arg s, b_lean_obj_arg i, uint32_t c) LP_NOSPLIT;
 

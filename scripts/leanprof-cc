@@ -25,6 +25,7 @@ set -- \
   -Dlean_byte_array_push=leanprof_byte_array_push \
   -Dlean_float_array_push=leanprof_float_array_push \
   -Dlean_string_push=leanprof_string_push \
+  -Dlean_string_push_cold=leanprof_string_push_cold \
   -Dlean_string_append=leanprof_string_append \
   -Dlean_string_utf8_set=leanprof_string_utf8_set \
   -Dlean_task_spawn_core=leanprof_task_spawn_core \

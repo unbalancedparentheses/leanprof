@@ -30,3 +30,6 @@ from 40 call sites"). The infoview at
 
 The hints describe the code as it was when the report was made; rerun after
 editing.
+
+To run leanprof itself from VS Code (profile, compile cost of a file, the
+HTML report and a live view in tabs), see the [VS Code extension](vscode.md).

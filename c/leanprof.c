@@ -717,6 +717,15 @@ LEAN_EXPORT lean_obj_res leanprof_string_push(lean_obj_arg s, uint32_t c) {
     LP_MAYBE_COPY(LP_STRING, s, lean_string_size(s), lean_string_push(s, c));
 }
 
+/* Lean 4.36 made lean_string_push inline: the in-place case is in the header
+ * (renamed by the flag above, but no longer a call), and growing or copying is
+ * in lean_string_push_cold. */
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 36)
+LEAN_EXPORT lean_obj_res leanprof_string_push_cold(lean_obj_arg s, uint32_t c) {
+    LP_MAYBE_COPY(LP_STRING, s, lean_string_size(s), lean_string_push_cold(s, c));
+}
+#endif
+
 LEAN_EXPORT lean_obj_res leanprof_string_append(lean_obj_arg s1, b_lean_obj_arg s2) {
     LP_MAYBE_COPY(LP_STRING, s1, lean_string_size(s1), lean_string_append(s1, s2));
 }
