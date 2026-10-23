@@ -14,3 +14,25 @@ rev = "35e1899e78c75ceb975180cbd43e5ea68ad07fff"
 [[lean_exe]]
 name = "bench"
 root = "Main"
+
+# Benchmark and accuracy suite (run.py): one workload program built three
+# ways, see BenchScope.lean.
+[[lean_lib]]
+name = "BenchLib"
+roots = ["BenchScope", "BenchKernels"]
+
+[[lean_exe]]
+name = "wl"
+root = "WlPlain"
+
+[[lean_exe]]
+name = "wlp"
+root = "WlProf"
+
+[[lean_exe]]
+name = "wls"
+root = "WlSpans"
+
+[[lean_exe]]
+name = "demangle"
+root = "Demangle"
