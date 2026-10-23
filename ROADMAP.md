@@ -13,6 +13,68 @@ Neighbours, and how leanprof should compare with each:
 | [LeanBench](https://github.com/alok/LeanBench) | benchmark harness, saved baselines | report copies and allocations per bench, compare by interleaved runs |
 | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler), `trace.profiler` | elaboration time | not compete; running programs only |
 
+Status (2026-10-23): M1–M9 are largely done; what remains before and after
+the first releases is in the next two sections, which come from profiling
+real projects with leanprof (see [case studies](docs/case-studies/)).
+
+## v0.1.0: honest numbers, installable
+
+- [ ] Merge the open work: accuracy (probe-cost flags, `%wall`, recursive
+  self time), hardening (sanitizers in CI), exact compile-time ranges, Lake
+  and language-server and Mathlib case studies, the website.
+- [ ] Allocations judged exactly: `judge` and `compare` count allocations
+  (exact, like copies), and the default report shows them next to copies.
+  The first `CFG.build` fix in lean-compiler-backend cut copies but added
+  59,514 allocations; today's `judge` would have kept it.
+- [ ] Each finding states its share of the run (`these copies took 0.4% of
+  the run`), and reports and `explain` rank by that, not by counts: a 10%
+  cut in allocations there did not change wall time.
+- [ ] Copies of empty or tiny values (the first push into an empty slot)
+  grouped or hidden; tables sorted by bytes and time.
+- [ ] Self-check on every run: one known copy must be detected, otherwise
+  warn that copies may be undercounted on this Lean version (Lean 4.36
+  inlined `lean_string_push` and String copies silently went uncounted).
+- [ ] The smoke check profiles a project other than leanprof (the release
+  package once lacked runtime files and the check, run on leanprof itself,
+  passed).
+- [ ] Times too small to measure are reported as such, never as 0.
+- [ ] Release binaries for Linux arm64 and macOS x86-64; Windows documented
+  as unsupported.
+- [ ] Security review of the MCP server, the GitHub Action and the install
+  script.
+- [ ] Issue and PR templates, `SECURITY.md`, a Lean version support policy,
+  `CONTRIBUTING.md`.
+- [ ] Easier first run: the installer checks `PATH`, errors say how to fix
+  them, CI installs from scratch on a project leanprof has never seen.
+- [ ] Consolidation: command modules in `LeanprofCli/`, one typed report
+  module, `c/` split behind `c/internal.h`, CI checks as local scripts,
+  formatters and linters, `research/` renamed `autoresearch/`.
+
+## v0.2.0: make any Lean project faster
+
+- [ ] `leanprof` with no arguments in any project: finds the executable (or
+  the tests, or compile time for a library), profiles it and prints the top
+  problems with fixes.
+- [ ] `leanprof autoresearch`: sets the project up (workload, tests, output
+  check) and starts the loop in Claude Code, or prints the next steps.
+- [ ] A stricter verdict: interleaved base and candidate runs, more runs only
+  when unclear, a statistical test with a confidence interval; exact
+  allocation counts and, on Linux, instruction counts.
+- [ ] Correctness beyond one output file: base and candidate run on many
+  inputs and must agree (as the 160-combination check did for
+  lean-compiler-backend); several workload sizes, and a final check of the
+  whole branch on inputs the loop never saw.
+- [ ] `explain` prints the concrete fix for each cause: `Array.modify` or
+  swapping out an element held by an outer array, `alter` or erasing a
+  value read from a hash map, keeping data out of a shared `IO.Ref` for
+  multi-threaded copies; machine-readable ranked suggestions for agents.
+- [ ] Profiling dependencies rebuilds them with copy counting automatically
+  (no deleting compiled files by hand).
+- [ ] `measure` and `judge` through the MCP server; the loop shipped as a
+  Claude Code command; the results log used as memory of tried ideas.
+- [ ] Evidence: a benchmark of seeded slowdowns the loop must find, a run on
+  leanprof itself, and runs on projects it has never seen.
+
 Claims about overhead and accuracy are only made after M2's head-to-head
 benchmark measures them.
 
@@ -95,12 +157,12 @@ keeps only improvements ([research/program.md](research/program.md)).
 
 - [x] Allocations and bytes per scope and per call site, via redirection of
   the runtime's allocation entry points (opt-in `--allocs`).
-- [ ] Peak live memory per scope.
+- [x] Peak live memory per scope.
 - [x] `expectAllocsAtMost` for tests.
 
 ## M6: explanations
 
-- [ ] For each copy site, read the compiler's IR to show where the extra
+- [x] For each copy site, read the compiler's IR to show where the extra
   reference comes from ("`acc` is stored in `history` at line 20, so the
   push at line 21 copies").
 - [ ] Integrate Lean's linearity markers (`lean_array_mark_linear` and
@@ -120,7 +182,7 @@ keeps only improvements ([research/program.md](research/program.md)).
 - [ ] `Task.map`/`bind`, `IO.mapTask`/`bindTask`; `Std.Channel` throughput.
 - [ ] One Firefox Profiler file merging samply's sampled stacks, exact scope
   timings and copies as markers.
-- [ ] Live terminal view and an MCP server so agents can query a running
+- [x] Live terminal view and an MCP server so agents can query a running
   program.
 
 ## M8: editor
@@ -138,8 +200,8 @@ keeps only improvements ([research/program.md](research/program.md)).
   their heaviest nested operations, repeated identical operations.
 - [x] `--heartbeats`: deterministic compile cost; `compare` flags increases
   above 1% and 1,000 heartbeats, matched by declaration name.
-- [ ] Links from slow operations to the definitions they unfold.
-- [ ] Whole-project runs (every module of a package) with a summary.
+- [x] Links from slow operations to the definitions they unfold.
+- [x] Whole-project runs (every module of a package) with a summary.
 
 ## Upstream
 
