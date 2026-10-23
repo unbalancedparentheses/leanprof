@@ -14,6 +14,10 @@ import Leanprof.Core
   declaration (elaboration, kernel, compiler, linters), for `#leanprof` too.
 * `compare`: compare two JSON reports. Copies and call counts are exact, so
   any increase is a regression; times use a relative threshold.
+* `measure` and `judge`: the harness of an autoresearch loop. `measure` runs
+  an executable several times with copy detection and writes one summary
+  (time spread, copies, calls, compile heartbeats, exit code, output hash);
+  `judge` compares two summaries and prints KEEP or DISCARD.
 -/
 
 open Lean System
@@ -21,8 +25,10 @@ open Lean System
 def usage : String := "usage:
   lake exe leanprof run [--auto | --auto-all] [--allocs] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]
   lake exe leanprof sample [--rate HZ] [--out FILE] [--top N] EXE [-- ARGS...]
-  lake exe leanprof elab [--top N] FILE.lean...
-  lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json"
+  lake exe leanprof elab [--heartbeats] [--top N] [--out FILE] FILE.lean...
+  lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
+  lake exe leanprof measure [--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS...]
+  lake exe leanprof judge BASE.json NEW.json"
 
 /-- leanprof's package directory: this executable is `<root>/.lake/build/bin/leanprof`. -/
 def packageRoot : IO FilePath := do
@@ -79,15 +85,15 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
     else if opts.exe.isNone then parseRun { opts with exe := some a } rest
     else parseRun { opts with args := opts.args.push a } rest
 
-def run (argv : List String) : IO UInt32 := do
-  let opts ← IO.ofExcept (parseRun {} argv)
-  let some exe := opts.exe | throw <| IO.userError usage
-  let wrapper := (← packageRoot) / "scripts" / "leanprof-cc"
+/-- Build `exe` with the copy shims in every package (and, with `auto`, every
+function timed). A project that does not depend on leanprof gets leanprof's
+runtime compiled for its own Lean version, linked in by the wrapper. A failed
+build removes the instrumented objects again. -/
+def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false) : IO UInt32 := do
+  let root ← packageRoot
+  let wrapper := root / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
     throw <| IO.userError s!"compiler wrapper not found at {wrapper}"
-  -- A project that does not depend on leanprof gets leanprof's runtime
-  -- compiled for its own Lean version, linked in by the wrapper.
-  let root ← packageRoot
   let cwd ← IO.currentDir
   let linked := (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) ||
     (← IO.FS.realPath root) == (← IO.FS.realPath cwd)
@@ -103,18 +109,27 @@ def run (argv : List String) : IO UInt32 := do
     runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
   -- Lake does not notice a new LEAN_CC, so objects built without it must go.
   let removed ← removeWorkspaceObjects
-  IO.eprintln s!"leanprof: building {exe} with copy shims{if opts.auto.isSome then " and every function timed" else ""} ({removed} stale objects removed)"
-  let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", opts.auto),
-    ("LEANPROF_ALLOCS", if opts.allocs then some "1" else none)] ++ runtimeEnv
+  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""} ({removed} stale objects removed)"
+  let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
+    ("LEANPROF_ALLOCS", if allocs then some "1" else none)] ++ runtimeEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
     discard <| removeWorkspaceObjects
-    return rc
+  return rc
+
+/-- The executable Lake builds for `exe`. -/
+def exePath (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
+
+def run (argv : List String) : IO UInt32 := do
+  let opts ← IO.ofExcept (parseRun {} argv)
+  let some exe := opts.exe | throw <| IO.userError usage
+  let rc ← buildWithShims exe opts.auto opts.allocs
+  if rc != 0 then return rc
   -- the report `#leanprof` reads, unless another path was asked for
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
   let json := opts.json.getD ".lake/leanprof/report.json"
   let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)]
-  let rc ← spawnWait ((".lake" : FilePath) / "build" / "bin" / exe).toString opts.args runEnv
+  let rc ← spawnWait (exePath exe).toString opts.args runEnv
   unless opts.keep do
     discard <| removeWorkspaceObjects
   return rc
@@ -139,7 +154,9 @@ def loadReport (path : String) : IO Report := do
   let mut r : Report := { exact := str j "unit" == "heartbeats" }
   for s in (j.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[] do
     let key := if (str s "key").isEmpty then s!"{str s "name"} {str s "pos"}" else str s "key"
-    r := { r with scopes := r.scopes.insert key (num s "total_ns", (num s "calls").toUInt64.toNat) }
+    -- a declaration's elaboration, kernel and compiler lines share its key
+    let (t, c) := r.scopes.getD key (0, 0)
+    r := { r with scopes := r.scopes.insert key (t + num s "total_ns", c + (num s "calls").toUInt64.toNat) }
   for c in (j.getObjVal? "copies" >>= Json.getArr?).toOption.getD #[] do
     let n := (num c "shared").toUInt64.toNat + (num c "multi_threaded").toUInt64.toNat
     if n > 0 then
@@ -506,6 +523,15 @@ def declName (text : String) : Option String := Id.run do
       return none
   return none
 
+/-- A command's text without its leading doc comment, so a documented
+declaration is named after the declaration. -/
+def dropDocComment (text : String) : String :=
+  if text.startsWith "/--" then
+    match text.splitOn "-/" with
+    | _ :: rest@(_ :: _) => ("-/".intercalate rest).trimAscii.toString
+    | _ => text
+  else text
+
 /-- `File.lean:12` as (file, line). -/
 def splitPos (k : String) : String × Nat :=
   match k.splitOn ":" with
@@ -531,12 +557,14 @@ structure OpCost where
   firstAt : String := ""
 
 def elabCmd (argv : List String) : IO UInt32 := do
-  let rec parse (top : Nat) (hb : Bool) (files : List String) : List String → Nat × Bool × List String
-    | [] => (top, hb, files.reverse)
-    | "--top" :: v :: rest => parse v.toNat! hb files rest
-    | "--heartbeats" :: rest => parse top true files rest
-    | f :: rest => parse top hb (f :: files) rest
-  let (top, hb, files) := parse 15 false [] argv
+  let rec parse (top : Nat) (hb : Bool) (out : String) (files : List String) :
+      List String → Nat × Bool × String × List String
+    | [] => (top, hb, out, files.reverse)
+    | "--top" :: v :: rest => parse v.toNat! hb out files rest
+    | "--heartbeats" :: rest => parse top true out files rest
+    | "--out" :: f :: rest => parse top hb f files rest
+    | f :: rest => parse top hb out (f :: files) rest
+  let (top, hb, outPath, files) := parse 15 false ".lake/leanprof/elab.json" [] argv
   if files.isEmpty then throw <| IO.userError usage
   -- amounts: nanoseconds, or heartbeats (exact, the same on every run)
   let scale : Float := if hb then 1 else 1e9
@@ -568,7 +596,8 @@ def elabCmd (argv : List String) : IO UInt32 := do
         | _ => c := { c with elaboration := c.elaboration + rootAmt }
       else
         c := { c with elaboration := c.elaboration + rootAmt }
-        if root.cls == "Elab.command" && c.name.isEmpty then c := { c with name := String.ofList (root.text.toList.take 60) }
+        if root.cls == "Elab.command" && c.name.isEmpty then
+          c := { c with name := String.ofList ((dropDocComment root.text).toList.take 60) }
       -- self time per class; repeated operations; the line's heaviest nested operations
       for i in [0:nodes.size] do
         let n := nodes[i]!
@@ -629,18 +658,251 @@ def elabCmd (argv : List String) : IO UInt32 := do
     ("top", Json.arr (c.top.map fun (a, op) => Json.mkObj [("amount", toJson a), ("op", Json.str op)]))]
   let repeated := reps.map fun ((cls, op), o) => Json.mkObj [("class", Json.str cls), ("op", Json.str op),
     ("count", toJson o.count), ("total", toJson o.total), ("first_at", Json.str o.firstAt)]
-  IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
-  IO.FS.writeFile ".lake/leanprof/elab.json"
+  if let some dir := (outPath : FilePath).parent then IO.FS.createDirAll dir
+  IO.FS.writeFile outPath
     (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true),
       ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
       ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("copies", Json.arr #[])]).compress
-  IO.println "\nwritten to .lake/leanprof/elab.json; `#leanprof` shows it next to the code"
+  IO.println s!"\nwritten to {outPath}; `#leanprof` shows it next to the code"
   return 0
+
+/-! ## measure and judge
+
+The harness of an autoresearch loop (an agent edits code, measures, and keeps
+the change only if it is better): `measure` builds a program with copy
+detection, runs it several times and writes one summary; `judge` compares two
+summaries and says KEEP or DISCARD.
+-/
+
+structure MeasureOpts where
+  runs : Nat := 5
+  warmup : Nat := 1
+  hbFiles : Array String := #[]
+  checkOutput : Option String := none
+  out : String := ".lake/leanprof/measure.json"
+  exe : Option String := none
+  args : Array String := #[]
+
+partial def parseMeasure (o : MeasureOpts) : List String → Except String MeasureOpts
+  | [] => .ok o
+  | "--runs" :: v :: rest => parseMeasure { o with runs := max 1 v.toNat! } rest
+  | "--warmup" :: v :: rest => parseMeasure { o with warmup := v.toNat! } rest
+  | "--out" :: f :: rest => parseMeasure { o with out := f } rest
+  | "--check-output" :: f :: rest => parseMeasure { o with checkOutput := some f } rest
+  | "--heartbeats-files" :: rest =>
+    -- every `.lean` argument that follows
+    let fs := rest.takeWhile (·.endsWith ".lean")
+    parseMeasure { o with hbFiles := o.hbFiles ++ fs.toArray } (rest.drop fs.length)
+  | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
+  | a :: rest =>
+    if a.startsWith "--" then .error s!"unknown option {a}"
+    else if o.exe.isNone then parseMeasure { o with exe := some a } rest
+    else parseMeasure { o with args := o.args.push a } rest
+
+/-- 64-bit FNV-1a of `b` as 16 hex digits: a stable fingerprint of a
+program's output (not cryptographic). -/
+def fnv1a (b : ByteArray) : String := Id.run do
+  let mut h : UInt64 := 14695981039346656037
+  for x in b do
+    h := (h ^^^ x.toUInt64) * 1099511628211
+  let hex := Nat.toDigits 16 h.toNat
+  return "fnv1a64:" ++ String.ofList (List.replicate (16 - hex.length) '0' ++ hex)
+
+/-- Median of a non-empty array. -/
+def median (xs : Array Nat) : Nat :=
+  let s := xs.qsort (· < ·)
+  if s.size % 2 == 1 then s[s.size / 2]! else (s[s.size / 2 - 1]! + s[s.size / 2]!) / 2
+
+/-- `[{"key": k, field: v}, ...]`, sorted by key so summaries diff cleanly. -/
+def keyedArr (field : String) (xs : List (String × Json)) : Json :=
+  Json.arr ((xs.toArray.qsort (·.1 < ·.1)).map fun (k, v) => Json.mkObj [("key", Json.str k), (field, v)])
+
+def measureCmd (argv : List String) : IO UInt32 := do
+  let o ← IO.ofExcept (parseMeasure {} argv)
+  let some exe := o.exe | throw <| IO.userError usage
+  let rc ← buildWithShims exe none
+  if rc != 0 then return rc
+  let dir : FilePath := ".lake" / "leanprof"
+  IO.FS.createDirAll dir
+  let reportPath := dir / "report.json"  -- the last run's stays, for `#leanprof`
+  let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", some reportPath.toString)]
+  let mut times : Array Nat := #[]
+  let mut hashes : Array String := #[]
+  let mut codes : Array UInt32 := #[]
+  let mut reports : Array Report := #[]
+  try
+    for i in [0:o.warmup + o.runs] do
+      if ← reportPath.pathExists then IO.FS.removeFile reportPath
+      -- a stale output file must not pass for this run's
+      if let some f := o.checkOutput then
+        if ← (f : FilePath).pathExists then IO.FS.removeFile f
+      let t0 ← IO.monoNanosNow
+      let out ← IO.Process.output { cmd := (exePath exe).toString, args := o.args, env }
+      let t1 ← IO.monoNanosNow
+      if i < o.warmup then continue
+      times := times.push (t1 - t0)
+      codes := codes.push out.exitCode
+      if out.exitCode != 0 && codes.size == 1 then
+        IO.eprintln s!"leanprof: {exe} exited with {out.exitCode}:\n{out.stderr}"
+      hashes := hashes.push <| ← match o.checkOutput with
+        | some f => do
+          if ← (f : FilePath).pathExists then pure (fnv1a (← IO.FS.readBinFile f)) else pure "missing"
+        | none => pure (fnv1a out.stdout.toUTF8)
+      reports := reports.push <| ← if ← reportPath.pathExists then loadReport reportPath.toString else pure {}
+  finally
+    discard <| removeWorkspaceObjects
+  -- copies and calls are exact: take the last run's, and say if runs disagree
+  let last := reports.back?.getD {}
+  let copyTotal (r : Report) := r.copies.fold (fun acc _ n => acc + n) 0
+  let copiesStable := reports.all (copyTotal · == copyTotal last)
+  let outputStable := hashes.all (· == hashes.back!)
+  unless copiesStable do
+    IO.eprintln "leanprof: copy counts differ between runs (threads?); using the last run's"
+  unless outputStable do
+    IO.eprintln "leanprof: output differs between runs; judge will reject every change (use --check-output FILE)"
+  -- compile cost per declaration, exact
+  let mut hb : Option (List (String × Float)) := none
+  if !o.hbFiles.isEmpty then
+    let hbPath := dir / "measure-elab.json"
+    discard <| IO.FS.withIsolatedStreams
+      (elabCmd (["--heartbeats", "--out", hbPath.toString] ++ o.hbFiles.toList))
+    hb := some ((← loadReport hbPath.toString).scopes.toList.map fun (k, (t, _)) => (k, t))
+  let summary := Json.mkObj [
+    ("version", toJson (1 : Nat)), ("leanprof", Json.str "measure"),
+    ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs),
+    ("exit_code", toJson codes.back!.toNat),
+    ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD "stdout")),
+      ("hash", Json.str hashes.back!), ("stable", Json.bool outputStable)]),
+    ("time_ns", Json.mkObj [("median", toJson (median times)), ("min", toJson (times.foldl min times[0]!)),
+      ("max", toJson (times.foldl max 0)), ("runs", toJson times)]),
+    ("copies_total", toJson (copyTotal last)), ("copies_stable", Json.bool copiesStable),
+    ("copies", keyedArr "copies" (last.copies.toList.map fun (k, n) => (k, toJson n))),
+    ("calls", keyedArr "calls" (last.scopes.toList.map fun (k, (_, c)) => (k, toJson c))),
+    ("heartbeats_total", match hb with
+      | some xs => toJson (xs.foldl (fun a (_, t) => a + t) (0 : Float))
+      | none => Json.null),
+    ("heartbeats", match hb with
+      | some xs => keyedArr "heartbeats" (xs.map fun (k, t) => (k, toJson t))
+      | none => Json.null)]
+  if let some d := (o.out : FilePath).parent then
+    if !d.toString.isEmpty then IO.FS.createDirAll d
+  IO.FS.writeFile o.out (summary.pretty ++ "\n")
+  IO.println s!"\nleanprof measure: {exe}, {o.runs} runs"
+  IO.println s!"  time     median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}"
+  IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"
+  IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD "stdout"}), exit code {codes.back!}"
+  if let some xs := hb then
+    IO.println s!"  compile  {fmt2 ((xs.foldl (fun a (_, t) => a + t) 0) / 1000)} kHB in {xs.length} declarations"
+  IO.println s!"written to {o.out}"
+  return 0
+
+/-- What `judge` reads back from a `measure` summary. -/
+structure Summary where
+  command : Json := Json.null
+  exitCode : Nat := 0
+  outputSource : String := ""
+  outputHash : String := ""
+  outputStable : Bool := true
+  median : Float := 0
+  min : Float := 0
+  max : Float := 0
+  copies : Nat := 0
+  sites : Std.HashMap String Nat := {}
+  calls : Std.HashMap String Nat := {}
+  heartbeats : Option (Std.HashMap String Float) := none
+
+/-- `[{"key": k, field: v}, ...]` back into a map. -/
+def keyedMap (j : Json) (field : String) : Std.HashMap String Float :=
+  (j.getArr?.toOption.getD #[]).foldl (fun m e => m.insert (str e "key") (num e field)) {}
+
+def loadSummary (path : String) : IO Summary := do
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
+  unless str j "leanprof" == "measure" do
+    throw <| IO.userError s!"{path} is not a `leanprof measure` summary"
+  let out := (j.getObjVal? "output").toOption.getD Json.null
+  let time := (j.getObjVal? "time_ns").toOption.getD Json.null
+  let field (k : String) := (j.getObjVal? k).toOption.getD Json.null
+  let toNatMap (m : Std.HashMap String Float) := m.fold (fun acc k v => acc.insert k v.toUInt64.toNat) {}
+  return {
+    command := field "command", exitCode := (num j "exit_code").toUInt64.toNat
+    outputSource := str out "source", outputHash := str out "hash"
+    outputStable := (out.getObjValAs? Bool "stable").toOption.getD true
+    median := num time "median", min := num time "min", max := num time "max"
+    copies := (num j "copies_total").toUInt64.toNat
+    sites := toNatMap (keyedMap (field "copies") "copies")
+    calls := toNatMap (keyedMap (field "calls") "calls")
+    heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats") }
+
+/-- KEEP or DISCARD a change, from the summaries before and after it.
+
+DISCARD when the command, exit code or output changed, the output was not
+the same on every run, copies went up, the compile heartbeats of the
+measured files went up by more than 1% and 1,000, or every new run was slower
+than every base run. Otherwise KEEP when copies or heartbeats went down (by the same
+margins) or every new run was faster than every base run (new max below
+base min: with 5 runs each, chance alone does that 1 time in 252). -/
+def judgeCmd (argv : List String) : IO UInt32 := do
+  let [basePath, newPath] := argv | throw <| IO.userError usage
+  let b ← loadSummary basePath
+  let n ← loadSummary newPath
+  let mut worse : Array String := #[]
+  let mut better : Array String := #[]
+  let mut notes : Array String := #[]
+  if b.command != n.command then
+    worse := worse.push s!"different commands measured: {b.command.compress} vs {n.command.compress}"
+  if b.exitCode != n.exitCode then
+    worse := worse.push s!"exit code changed: {b.exitCode} -> {n.exitCode}"
+  if b.outputSource != n.outputSource || b.outputHash != n.outputHash then
+    worse := worse.push s!"output changed ({n.outputSource}): {b.outputHash} -> {n.outputHash}"
+  if !b.outputStable || !n.outputStable then
+    worse := worse.push "output differs between runs, so changes to it cannot be detected (measure with --check-output)"
+  -- copies: exact
+  if n.copies > b.copies then worse := worse.push s!"copies: {b.copies} -> {n.copies}"
+  else if n.copies < b.copies then better := better.push s!"copies: {b.copies} -> {n.copies}"
+  for k in (b.sites.toList.map (·.1) ++ n.sites.toList.map (·.1)).eraseDups do
+    let (x, y) := (b.sites.getD k 0, n.sites.getD k 0)
+    if x != y then notes := notes.push s!"copies {k}: {x} -> {y}"
+  -- compile heartbeats: exact, but editing one declaration moves its
+  -- neighbours by a few, so only changes above 1% and 1,000 count. Judged
+  -- on the total, since experiments move code between declarations.
+  if let (some bh, some nh) := (b.heartbeats, n.heartbeats) then
+    let kHB (x : Float) := s!"{fmt2 (x / 1000)} kHB"
+    let (x, y) := (bh.fold (fun a _ v => a + v) 0, nh.fold (fun a _ v => a + v) 0)
+    let margin := max (x * 0.01) 1000
+    if y - x > margin then worse := worse.push s!"compile heartbeats: {kHB x} -> {kHB y}"
+    else if x - y > margin then better := better.push s!"compile heartbeats: {kHB x} -> {kHB y}"
+    for k in (bh.toList.map (·.1) ++ nh.toList.map (·.1)).eraseDups do
+      match bh.get? k, nh.get? k with
+      | some x, some y =>
+        if (y - x).abs > max (x * 0.01) 1000 then notes := notes.push s!"compile {k}: {kHB x} -> {kHB y}"
+      | some x, none => notes := notes.push s!"compile {k}: gone (was {kHB x})"
+      | none, some y => notes := notes.push s!"compile {k}: new, {kHB y}"
+      | none, none => pure ()
+  else if b.heartbeats.isSome != n.heartbeats.isSome then
+    notes := notes.push "compile heartbeats measured in only one summary; not compared"
+  -- calls: exact, but restructuring code changes them legitimately
+  for k in (b.calls.toList.map (·.1) ++ n.calls.toList.map (·.1)).eraseDups do
+    let (x, y) := (b.calls.getD k 0, n.calls.getD k 0)
+    if x != y then notes := notes.push s!"calls {k}: {x} -> {y}"
+  -- time: only when the runs do not overlap
+  let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median}"
+  if n.max < b.min then better := better.push s!"{t} (every new run faster than every base run)"
+  else if n.min > b.max then worse := worse.push s!"{t} (every new run slower than every base run)"
+  else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
+  let keep := worse.isEmpty && !better.isEmpty
+  IO.println (if keep then "KEEP" else "DISCARD")
+  for r in worse do IO.println s!"  - {r}"
+  for r in better do IO.println s!"  + {r}"
+  if worse.isEmpty && better.isEmpty then IO.println "  - no measurable improvement"
+  for r in notes do IO.println s!"    {r}"
+  return if keep then 0 else 1
 
 def main (argv : List String) : IO UInt32 := do
   try
     match argv with
     | "run" :: rest => run rest
+    | "measure" :: rest => measureCmd rest
+    | "judge" :: rest => judgeCmd rest
     | "compare" :: rest => compare rest
     | "sample" :: rest => sample rest
     | "elab" :: rest => elabCmd rest
