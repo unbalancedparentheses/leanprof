@@ -450,16 +450,20 @@ def findTactic (src : Array String) (t : String) (from_ : Nat) : Option Nat := I
   for i in [from_ - 1:min src.size (from_ - 1 + 400)] do
     if (src[i]!.splitOn key).length > 1 then return some (i + 1)
   return none
+-- `alter`, not `getD` then `insert`: the constant's entry is updated in place (with
+-- `getD` it is still in the map, so inserting into its `sites` copied them)
 def Acc.addConst (a : Acc) (name kind : String) (cost : Option Float) (site : String) : Acc :=
-  let c := a.consts.getD name {}
-  let c := { c with kind := if c.kind.isEmpty then kind else c.kind, cost := c.cost + cost.getD 0,
-                    count := c.count + 1, sites := c.sites.insert site }
-  { a with consts := a.consts.insert name c }
+  let upd (c? : Option ConstCost) : Option ConstCost :=
+    let c := c?.getD {}
+    some { c with kind := if c.kind.isEmpty then kind else c.kind, cost := c.cost + cost.getD 0,
+                  count := c.count + 1, sites := c.sites.insert site }
+  { a with consts := a.consts.alter name upd }
 
 def Acc.addDiag (a : Acc) (name ctr : String) (n : Nat) (site : String) : Acc :=
-  let c := a.consts.getD name {}
-  let c := { c with diag := c.diag.insert ctr (c.diag.getD ctr 0 + n), sites := c.sites.insert site }
-  { a with consts := a.consts.insert name c }
+  let upd (c? : Option ConstCost) : Option ConstCost :=
+    let c := c?.getD {}
+    some { c with diag := c.diag.insert ctr (c.diag.getD ctr 0 + n), sites := c.sites.insert site }
+  { a with consts := a.consts.alter name upd }
 
 /-- The source nodes of one trace: each range's inclusive cost (a node inside one with
 the same range, a macro's expansion, is not counted again), and the tactics by
