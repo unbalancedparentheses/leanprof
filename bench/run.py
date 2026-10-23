@@ -553,8 +553,20 @@ def load_sources(specs):
         # its governor, boost, pinning and load lines become the source's note
         mt = os.path.join(os.path.dirname(os.path.abspath(path)), "machine.txt")
         if os.path.exists(mt) and not meta.get("note"):
-            keep = [l.strip() for l in open(mt, errors="replace")
-                    if re.search(r"governor|boost|turbo|pinn|taskset|isolat|load", l, re.I) and l.strip()]
+            keep = []
+            for l in open(mt, errors="replace"):
+                l = l.strip()
+                g = re.search(r"scaling_governor:\s*(\S+)", l)
+                b = re.search(r"(boost|no_turbo):\s*(\d)", l)
+                if g:
+                    keep.append(f"governor {g.group(1)}")
+                elif b:
+                    on = (b.group(2) == "1") == (b.group(1) == "boost")
+                    keep.append("boost " + ("on" if on else "off"))
+                elif re.match(r"cores\s+\S", l):
+                    keep.append("pinned to " + l)
+                elif re.search(r"pinn|taskset|isolat|load", l, re.I):
+                    keep.append(l)
             if keep:
                 meta["note"] = "; ".join(dict.fromkeys(keep))[:600]
         out.append((label or meta.get("label") or meta["machine"]["cpu"], meta, d["results"]))
