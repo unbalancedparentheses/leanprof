@@ -73,7 +73,7 @@ print('self-check', d['self_check'])
 sys.exit(0 if d['self_check']['ok'] and d['self_check']['warning'] == '' else 1)
 PY
 "$broken/.lake/build/bin/leanprof" run --json broken.json smoke -- 200 > broken.out 2> broken.err || true
-grep -q "warning: copies of String may be undercounted with Lean" broken.err
+grep -q "warning: copies of String may be undercounted with Lean" broken.err || { tail -40 broken.err; exit 1; }
 python3 - <<'PY'
 import json, sys
 d = json.load(open('broken.json'))
@@ -83,7 +83,7 @@ strings = sum(c.get('shared', 0) for c in d['copies'] if c['kind'] == 'String')
 sys.exit(0 if not sc['ok'] and 'copies of String may be undercounted' in sc['warning'] and 'Array' not in sc['warning'] and strings == 0 else 1)
 PY
 "$broken/.lake/build/bin/leanprof" doctor > broken-doctor.txt || true
-grep -q "!!  copies of String may be undercounted" broken-doctor.txt
+grep -q "!!  copies of String may be undercounted" broken-doctor.txt || { cat broken-doctor.txt; exit 1; }
 "$lp" doctor | grep "copy detection works"
 rm -rf "$broken"
 
