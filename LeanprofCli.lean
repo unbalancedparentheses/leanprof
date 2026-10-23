@@ -83,10 +83,26 @@ def run (argv : List String) : IO UInt32 := do
   let wrapper := (← packageRoot) / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
     throw <| IO.userError s!"compiler wrapper not found at {wrapper}"
+  -- A project that does not depend on leanprof gets leanprof's runtime
+  -- compiled for its own Lean version, linked in by the wrapper.
+  let root ← packageRoot
+  let cwd ← IO.currentDir
+  let linked := (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) ||
+    (← IO.FS.realPath root) == (← IO.FS.realPath cwd)
+  let mut runtimeEnv : Array (String × Option String) := #[]
+  unless linked do
+    let leanPrefix := (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
+    IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
+    let obj := cwd / ".lake" / "leanprof" / "runtime.o"
+    let out ← IO.Process.output { cmd := "cc", args := #["-O2", "-fPIC", "-I", leanPrefix ++ "/include", "-c",
+      (root / "c" / "leanprof.c").toString, "-o", obj.toString] }
+    if out.exitCode != 0 then
+      throw <| IO.userError s!"compiling leanprof's runtime failed:\n{out.stderr}"
+    runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
   -- Lake does not notice a new LEAN_CC, so objects built without it must go.
   let removed ← removeWorkspaceObjects
   IO.eprintln s!"leanprof: building {exe} with copy shims{if opts.auto.isSome then " and every function timed" else ""} ({removed} stale objects removed)"
-  let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", opts.auto)]
+  let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", opts.auto)] ++ runtimeEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
     discard <| removeWorkspaceObjects

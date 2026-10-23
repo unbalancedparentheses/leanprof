@@ -444,6 +444,8 @@ LEAN_EXPORT lean_obj_res leanprof_copy_expand_array_nonlinear(lean_obj_arg a, bo
     LP_COPY(LP_ARRAY, a, lean_array_size(a) * sizeof(void *), lean_copy_expand_array_nonlinear(a, expand));
 }
 
+/* Lean 4.35 added non-linear copy gadgets for scalar arrays and strings. */
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 35)
 LEAN_EXPORT lean_obj_res leanprof_copy_sarray_nonlinear(lean_obj_arg a, size_t cap) {
     LP_COPY(LP_SCALAR_ARRAY, a, lpf_sarray_bytes(a), lean_copy_sarray_nonlinear(a, cap));
 }
@@ -451,6 +453,7 @@ LEAN_EXPORT lean_obj_res leanprof_copy_sarray_nonlinear(lean_obj_arg a, size_t c
 LEAN_EXPORT lean_obj_res leanprof_copy_string_nonlinear(lean_obj_arg s, size_t cap) {
     LP_COPY(LP_STRING, s, lean_string_size(s), lean_copy_string_nonlinear(s, cap));
 }
+#endif
 
 LEAN_EXPORT lean_object *leanprof_array_push(lean_obj_arg a, lean_obj_arg v) {
     LP_MAYBE_COPY(LP_ARRAY, a, lean_array_size(a) * sizeof(void *), lean_array_push(a, v));
@@ -706,9 +709,41 @@ static void lpf_clean(char *name, size_t cap) {
 
 /* `lp_<pkg>_<body>`: the package is the shortest prefix whose underscore
  * runs are all escapes (even length) and whose remainder can start a body. */
+static void lpf_find_root_pkg(void);
+static void lpf_mangle_module(const char *m, char *out, size_t cap);
+static char lpf_root_pkg[256];
+
+/* Mangled names of the packages this project knows (its own, from the
+ * lakefile, and each in .lake/packages): `lp_<pkg>_` is ambiguous when a
+ * package name has escapes (`lean-compiler-backend` is `lean_x2dcompiler_x2dbackend`). */
+static char lpf_pkgs[64][256];
+static int lpf_npkgs = -1;
+
+static void lpf_load_pkgs(void) {
+    lpf_npkgs = 0;
+    if (lpf_root_pkg[0] == 0) lpf_find_root_pkg();
+    if (lpf_root_pkg[0]) lpf_mangle_module(lpf_root_pkg, lpf_pkgs[lpf_npkgs++], 256);
+    DIR *d = opendir(".lake/packages");
+    struct dirent *e;
+    while (d != NULL && (e = readdir(d)) != NULL && lpf_npkgs < 64) {
+        if (e->d_name[0] == '.') continue;
+        lpf_mangle_module(e->d_name, lpf_pkgs[lpf_npkgs++], 256);
+    }
+    if (d != NULL) closedir(d);
+}
+
+static int lpf_is_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }
+
 static const char *lpf_skip_package(const char *s) {
+    if (lpf_npkgs < 0) lpf_load_pkgs();
+    for (int i = 0; i < lpf_npkgs; i++) {
+        size_t n = strlen(lpf_pkgs[i]);
+        if (n > 0 && strncmp(s, lpf_pkgs[i], n) == 0 && s[n] == '_') return s + n + 1;
+    }
     for (const char *p = s; *p; p++) {
         if (*p != '_') continue;
+        /* `_xHH` inside a package name is an escaped character, not the end */
+        if (p[1] == 'x' && lpf_is_hex(p[2]) && lpf_is_hex(p[3])) continue;
         int run = 0;
         const char *q = p;
         while (q > s && q[-1] == '_') q--;
@@ -831,7 +866,6 @@ static void lpf_mangle_module(const char *m, char *out, size_t cap) {
 
 /* Package names whose modules may be linked into this program: the root
  * package (from its lakefile) and each checked-out dependency. */
-static char lpf_root_pkg[256];
 
 static void lpf_find_root_pkg(void) {
     FILE *f = fopen("lakefile.toml", "r");

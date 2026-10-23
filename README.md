@@ -148,7 +148,11 @@ lake exe leanprof run [--auto | --auto-all] [--trace FILE] [--json FILE] EXE [--
 
 builds `EXE` with copy detection in every package (and, with `--auto`,
 every function timed), runs it, and removes the instrumented objects again
-so a later plain `lake build` does not reuse them.
+so a later plain `lake build` does not reuse them. The project does not need
+to depend on leanprof: `run` compiles leanprof's runtime for the project's
+own Lean version and links it in (tested with Lean 4.34.1 and 4.35.0), so
+`/path/to/leanprof/.lake/build/bin/leanprof run EXE` works in any Lake
+project.
 
 ```
 lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
