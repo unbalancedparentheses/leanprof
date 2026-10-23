@@ -111,3 +111,73 @@ jobs:
           lake exe leanprof sample --top 5 copybug -- 15000 | tee sample.txt
           grep -q "copying non-exclusive values" sample.txt
           grep -q "buildWithHistory  (Examples/CopyBug.lean:17)" sample.txt
+
+  # leanprof used from outside on real projects that do not depend on it.
+  # leanprover-community/repl, pinned to its v4.35.0 tag (the Lean version
+  # leanprof is built with): an executable that depends only on Lean core
+  # (no Mathlib), builds in about a minute, has inputs that make it do real
+  # work (elaborating Lean code), and links all of Lean, so its ~400k symbols
+  # cover escapes, private and hygienic names, instances and specializations.
+  # Tests/OddNames adds what it lacks: a package name with escapes
+  # (`odd-names_v2`) and declarations with unusual names.
+  real-projects:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build leanprof and demangle-check
+        run: |
+          lake build leanprof demangle-check tests
+          echo "LP=$PWD/.lake/build/bin" >> "$GITHUB_ENV"
+          echo "CHECK=$PWD/scripts/check-report.py" >> "$GITHUB_ENV"
+      - name: Demangler against Lean's on leanprof's binaries
+        run: $LP/demangle-check $LP/leanprof $LP/tests
+      - name: Unusual names (Tests/OddNames)
+        working-directory: Tests/OddNames
+        run: |
+          lake build odd
+          $LP/demangle-check .lake/build/bin/odd
+          $LP/leanprof run --auto --json odd.json odd -- 10
+          python3 $CHECK odd.json --min-pos 5 --expect "«top level»=OddNames/Basic.lean" \
+            --expect "«ελ»=OddNames/Basic.lean" --expect Odd.callAll=OddNames/Basic.lean \
+            --expect Odd.secretSum=OddNames/Basic.lean
+      - name: Clone and build leanprover-community/repl
+        run: |
+          git clone --depth 1 --branch v4.35.0 https://github.com/leanprover-community/repl.git "$RUNNER_TEMP/repl"
+          cd "$RUNNER_TEMP/repl"
+          lake build repl
+      - name: Demangler against Lean's on repl
+        working-directory: ${{ runner.temp }}/repl
+        run: $LP/demangle-check .lake/build/bin/repl
+      - name: leanprof run on repl
+        working-directory: ${{ runner.temp }}/repl
+        run: |
+          $LP/leanprof run --auto --json run.json repl < test/all_tactics.in > run.out
+          python3 $CHECK run.json --min-pos 10 --expect repl=REPL/Main.lean \
+            --expect REPL.runCommand=REPL/Main.lean
+      - name: leanprof sample on repl (macOS)
+        if: runner.os == 'macOS'
+        working-directory: ${{ runner.temp }}/repl
+        run: |
+          brew install samply
+          $LP/leanprof sample --top 15 repl < test/all_tactics.in > sample.txt
+          sed -n '/^leanprof sample/,$p' sample.txt
+          grep -q "repl  (REPL/Main.lean:" sample.txt
+          python3 $CHECK .lake/leanprof/report.json --min-pos 3 --expect repl=REPL/Main.lean
+      - name: leanprof elab on repl
+        working-directory: ${{ runner.temp }}/repl
+        run: |
+          $LP/leanprof elab --heartbeats REPL/JSON.lean REPL/Main.lean > elab.txt
+          head -30 elab.txt
+          python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 5
+          grep -q '"pos":"REPL/Main.lean:' .lake/leanprof/elab.json

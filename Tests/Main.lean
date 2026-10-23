@@ -62,7 +62,47 @@ def demangleCases : List (String × String) := [
   ("lp_leanprof___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00buildWithHistory_spec__0___redArg",
    "buildWithHistory (in Std.Legacy.Range.forIn'.loop)"),
   ("lean_main", "main"),
-  ("lean_array_push", "lean_array_push")
+  ("lean_array_push", "lean_array_push"),
+  -- found by `demangle-check` (Tests/DemangleCheck.lean) against Lean's demangler:
+  -- a name whose first component needs the `00` disambiguation
+  ("l_00_u03b5_u03bb", "«ελ»"),
+  ("l_Odd_001st", "Odd.«1st»"),
+  -- names are shown like `Name.toString`, which is how .ilean files key them
+  ("l_Odd_weird_x20name___boxed", "Odd.«weird name»"),
+  ("l_Odd_a_x2eb", "Odd.«a.b»"),
+  ("l_Odd_emoji_U0001f389", "Odd.«emoji🎉»"),
+  ("l_Odd_x_u2081", "Odd.x₁"),
+  ("l_Odd_get_x21", "Odd.get!"),
+  ("l_Array___aux__Init__Data__Array__Perm______macroRules__Array__term___x7e____1",
+   "Array.«_aux_Init_Data_Array_Perm___macroRules_Array_term_~__1»"),
+  -- user components starting with `_` are not compiler suffixes
+  ("l_Odd___under", "Odd._under"),
+  ("l_Odd_00____", "Odd.__"),
+  ("l_Odd_00_____00__boxed", "Odd.__"),
+  ("l_Odd_00__x41", "Odd._x41"),
+  ("l_Odd_foo___00bar", "Odd.foo_.bar"),
+  ("l_a___00__b", "a_._b"),
+  -- numeric components
+  ("l_foo___1_", "foo_.1"),
+  ("l_foo_1__bar", "foo.1.bar"),
+  -- compiler parts inside the name, and the C compiler's outlined parts
+  ("l_Foo_bar___closed__3_value_aux_0", "Foo.bar"),
+  ("l_Foo_bar.cold.1", "Foo.bar"),
+  -- macro scopes: dropped, also inside a name and before a specialization
+  ("l_Odd_helper_00___x40_OddNames_Basic_28371510____hygCtx___hyg_3_", "Odd.helper"),
+  ("l_Lean_Widget_RpcEncodablePacket_00___x40_Lean_Server_FileWorker_WidgetRequests_2377472685____hygCtx___hyg_1__ctorElim___redArg",
+   "Lean.Widget.RpcEncodablePacket.ctorElim"),
+  ("l_Lean_Widget_instRpcEncodableDiagnosticWith_enc_00___x40_Lean_Widget_InteractiveDiagnostic_2989700264____hygCtx___hyg_2____at___00Lean_Server_FileWorker_handlePreRequestSpecialCases_x3f_spec__4",
+   "Lean.Server.FileWorker.handlePreRequestSpecialCases? (in Lean.Widget.instRpcEncodableDiagnosticWith.enc)"),
+  -- private callers, and private names inside a name
+  ("lp_leanprof___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_OddNames_Basic_0__Odd_secretSum_spec__0___redArg",
+   "Odd.secretSum (in Std.Legacy.Range.forIn'.loop)"),
+  ("l___private_Lean_Elab_PreDefinition_WF_Unfold_0____regBuiltin___private_Lean_Elab_PreDefinition_WF_Unfold_0__Lean_Elab_WF_matcherPushArg_declare__19_00___x40_Lean_Elab_PreDefinition_WF_Unfold_300889135____hygCtx___hyg_10_",
+   "_regBuiltin.Lean.Elab.WF.matcherPushArg.declare_19"),
+  -- packages this project does not know: escapes in the package name
+  ("lp_lean_x2dcompiler_x2dbackend_LeanCompilerBackend_Memory_blit.cold.2", "LeanCompilerBackend.Memory.blit"),
+  ("lp_odd_x2dnames__v2_Odd_callAll", "Odd.callAll"),
+  ("lp_caf_u00e9_Foo_bar", "Foo.bar")
 ]
 
 /-- `n`, but unknown to the compiler, so calls using it are not hoisted into

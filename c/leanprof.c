@@ -646,11 +646,11 @@ LEAN_EXPORT void *leanprof_mi_malloc_small(size_t sz) {
 #include "counters.inc.c"
 
 /* ---------- symbol names ----------
- * Inverse of Lean.Name.mangle for the common cases: `l_` and `lp_<pkg>_`
- * prefixes, `__` for `_`, `_x`/`_u`/`_U` escapes, `_00` disambiguation and
- * `_N_` numeric components. Compiler-generated suffixes (`_lam_0`,
- * `_boxed`, `_closed_1`, `_redArg`, ...) are dropped so copies group by the
- * user declaration.
+ * Inverse of Lean.Name.mangle: `l_` and `lp_<pkg>_` prefixes, then Lean's
+ * Name.demangle, shown like Name.toString. Compiler-generated parts
+ * (`_lam_0`, `_boxed`, `_closed_1`, `_redArg`, ...) are dropped so copies
+ * group by the user declaration. `demangle-check` (Tests/DemangleCheck.lean)
+ * compares this with Lean's own demangler on whole binaries.
  */
 
 static void lpf_put_utf8(char **o, char *end, uint32_t c) {
@@ -680,55 +680,246 @@ static int lpf_hex(const char *s, int n, uint32_t *out) {
     return 1;
 }
 
-/* Decode a mangled body into `out` with components separated by '.'.
- * A run of k underscores is k/2 escaped '_' when k is even. When k is odd one
- * of them is a separator: before the escapes for a component starting with
- * '_' (`___at` is `._at`), or after them for `_00` and `_x..` escapes, which
- * the mangler only emits inside a component or after one ending in '_'. */
-static void lpf_decode(const char *s, char *out, size_t cap) {
-    char *o = out, *end = out + cap - 1;
-    int at_sep = 1; /* at the start of a component */
-    while (*s && o < end) {
-        if (at_sep && *s >= '0' && *s <= '9') {
-            /* numeric component `N_`; the trailing '_' ends it */
-            while (*s >= '0' && *s <= '9' && o < end) *o++ = *s++;
-            if (*s == '_') s++;
-            at_sep = 0;
-            continue;
-        }
-        at_sep = 0;
-        if (*s != '_') { *o++ = *s++; continue; }
-        size_t k = 0;
-        while (s[k] == '_') k++;
-        const char *next = s + k;
-        uint32_t c;
-        if (k % 2 == 0) {
-            for (size_t i = 0; i < k / 2 && o < end; i++) *o++ = '_';
-            s = next;
-            continue;
-        }
-        size_t esc = (k - 1) / 2;
-        int hex = (next[0] == 'x' && lpf_hex(next + 1, 2, &c)) || (next[0] == 'u' && lpf_hex(next + 1, 4, &c)) ||
-                  (next[0] == 'U' && lpf_hex(next + 1, 8, &c));
-        if (next[0] == '0' && next[1] == '0') {
-            for (size_t i = 0; i < esc && o < end; i++) *o++ = '_';
-            if (o < end) *o++ = '.';
-            s = next + 2;
-        } else if (hex) {
-            for (size_t i = 0; i < esc && o < end; i++) *o++ = '_';
-            lpf_put_utf8(&o, end, c);
-            s = next + 1 + (next[0] == 'x' ? 2 : next[0] == 'u' ? 4 : 8);
-        } else {
-            if (o < end) *o++ = '.';
-            for (size_t i = 0; i < esc && o < end; i++) *o++ = '_';
-            s = next;
-            at_sep = esc == 0;
-        }
-    }
-    *o = 0;
+/* A decoded name: its components, each a string or a number. */
+#define LPF_NAME_MAX 96
+typedef struct {
+    char text[1024];
+    size_t len;
+    unsigned short off[LPF_NAME_MAX];
+    unsigned char num[LPF_NAME_MAX];
+    int n;
+} lpf_name;
+
+typedef struct {
+    char s[512];
+    size_t n;
+} lpf_acc;
+
+static void lpf_acc_put(lpf_acc *a, char c) {
+    if (a->n + 1 < sizeof a->s) a->s[a->n++] = c;
 }
 
-/* Drop `_private.<Module>.<N>.` prefixes and compiler suffixes like `._lam_0`. */
+static void lpf_acc_unders(lpf_acc *a, size_t k) {
+    while (k-- > 0) lpf_acc_put(a, '_');
+}
+
+static void lpf_name_add(lpf_name *nm, const char *s, size_t n, int num) {
+    if (nm->n >= LPF_NAME_MAX || nm->len + n + 1 > sizeof nm->text) return;
+    nm->off[nm->n] = (unsigned short)nm->len;
+    nm->num[nm->n++] = (unsigned char)num;
+    memcpy(nm->text + nm->len, s, n);
+    nm->len += n;
+    nm->text[nm->len++] = 0;
+}
+
+static const char *lpf_comp(const lpf_name *nm, int i) { return nm->text + nm->off[i]; }
+
+static int lpf_digit(char c) { return c >= '0' && c <= '9'; }
+
+/* A numeric component `N_`, then the '_' before the next component. */
+static const char *lpf_decode_num(const char *s, lpf_name *nm) {
+    const char *b = s;
+    while (lpf_digit(*s)) s++;
+    lpf_name_add(nm, b, (size_t)(s - b), 1);
+    for (int k = 0; k < 2 && *s; k++) s++;
+    return s;
+}
+
+/* Lean's Name.demangle (Lean/Compiler/NameMangling.lean), step for step: a
+ * run of k underscores is k/2 escaped '_'; when k is odd the last one starts
+ * a `_xHH`/`_uHHHH`/`_UHHHHHHHH` escape, a numeric component (`_N_`), a
+ * component that would otherwise read as one of those (`_00`), or else
+ * separates components (the escaped underscores then begin the next one). */
+static void lpf_decode(const char *s, lpf_name *nm) {
+    lpf_acc a;
+    nm->n = 0;
+    nm->len = 0;
+    while (*s) { /* start of a component */
+        char ch = *s++;
+        size_t u = 0;
+        a.n = 0;
+        if (lpf_digit(ch)) {
+            if (ch == '0' && *s == '0') {
+                s++;
+            } else {
+                s = lpf_decode_num(s - 1, nm);
+                continue;
+            }
+        } else if (ch == '_') {
+            u = 1;
+        } else {
+            lpf_acc_put(&a, ch);
+        }
+        for (;;) {
+            if (*s == 0) {
+                lpf_acc_unders(&a, u / 2);
+                lpf_name_add(nm, a.s, a.n, 0);
+                return;
+            }
+            ch = *s++;
+            if (ch == '_') {
+                u++;
+                continue;
+            }
+            if (u % 2 == 0) {
+                lpf_acc_unders(&a, u / 2);
+                lpf_acc_put(&a, ch);
+                u = 0;
+                continue;
+            }
+            if (lpf_digit(ch)) {
+                lpf_acc_unders(&a, u / 2);
+                lpf_name_add(nm, a.s, a.n, 0);
+                a.n = 0;
+                u = 0;
+                if (ch == '0' && *s == '0') {
+                    s++;
+                    continue;
+                }
+                s = lpf_decode_num(s - 1, nm);
+                break;
+            }
+            uint32_t c;
+            int w = ch == 'x' ? 2 : ch == 'u' ? 4 : ch == 'U' ? 8 : 0;
+            if (w && lpf_hex(s, w, &c)) {
+                char buf[4], *o = buf;
+                lpf_acc_unders(&a, u / 2);
+                lpf_put_utf8(&o, buf + 4, c);
+                for (char *p = buf; p < o; p++) lpf_acc_put(&a, *p);
+                s += w;
+                u = 0;
+                continue;
+            }
+            lpf_name_add(nm, a.s, a.n, 0);
+            a.n = 0;
+            lpf_acc_unders(&a, u / 2);
+            lpf_acc_put(&a, ch);
+            u = 0;
+        }
+    }
+}
+
+/* Name.toString's escaping: a component that is not an identifier is
+ * shown as «...», which is also how .ilean files spell declarations. */
+static uint32_t lpf_utf8_next(const unsigned char **p) {
+    const unsigned char *s = *p;
+    uint32_t c = s[0];
+    int n = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+    if (n > 1) c &= 0x3f >> (n - 1);
+    for (int k = 1; k < n; k++) {
+        if ((s[k] & 0xc0) != 0x80) {
+            *p = s + k;
+            return 0xfffd;
+        }
+        c = c << 6 | (s[k] & 0x3f);
+    }
+    *p = s + n;
+    return c;
+}
+
+static int lpf_letter_like(uint32_t c) {
+    return (c >= 0x3b1 && c <= 0x3c9 && c != 0x3bb) || (c >= 0x391 && c <= 0x3a9 && c != 0x3a0 && c != 0x3a3) ||
+           (c >= 0x3ca && c <= 0x3fb) || (c >= 0x1f00 && c <= 0x1ffe) || (c >= 0x2100 && c <= 0x214f) ||
+           (c >= 0x1d49c && c <= 0x1d59f) || (c >= 0xc0 && c <= 0xff && c != 0xd7 && c != 0xf7) ||
+           (c >= 0x100 && c <= 0x17f);
+}
+
+static int lpf_id_first(uint32_t c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || lpf_letter_like(c);
+}
+
+static int lpf_id_rest(uint32_t c) {
+    return lpf_id_first(c) || (c >= '0' && c <= '9') || c == '\'' || c == '!' || c == '?' ||
+           (c >= 0x2080 && c <= 0x2089) || (c >= 0x2090 && c <= 0x209c) || (c >= 0x1d62 && c <= 0x1d6a) ||
+           c == 0x2c7c;
+}
+
+static int lpf_needs_escape(const char *s) {
+    const unsigned char *p = (const unsigned char *)s;
+    if (*p == 0 || !lpf_id_first(lpf_utf8_next(&p))) return 1;
+    while (*p)
+        if (!lpf_id_rest(lpf_utf8_next(&p))) return 1;
+    return 0;
+}
+
+/* Components the compiler adds to a declaration's name (`f._lam_0`,
+ * `f._closed_3`, `f._redArg._boxed`, macro scopes `f._@.M._hyg.4`, ...).
+ * Other components starting with '_' are user names (`Foo._bar`). */
+static int lpf_compiler_part(const char *s) {
+    static const char *const pre[] = {"_lam",     "_elam",        "_closed",     "_boxed", "_redArg",
+                                      "_impl",    "_jp",          "_override",   "_spec",  "_unsafe_rec",
+                                      "_regBuiltin", "_auto",     "_private",    "_@",     "_at_"};
+    if (s[0] != '_') return 0;
+    for (size_t i = 0; i < sizeof pre / sizeof pre[0]; i++)
+        if (strncmp(s, pre[i], strlen(pre[i])) == 0) return 1;
+    return 0;
+}
+
+/* Show components [a, b) of `nm` like Name.toString, without
+ * `_private.<Module>.0.` prefixes and from the first compiler part on. */
+static void lpf_show(const lpf_name *nm, int a, int b, char *out, size_t cap) {
+    int idx[LPF_NAME_MAX], k = 0;
+    for (int i = a; i < b; i++) {
+        const char *s = lpf_comp(nm, i);
+        if (!nm->num[i] && strcmp(s, "_private") == 0) {
+            int j = i + 1;
+            while (j < b && !(nm->num[j] && strcmp(lpf_comp(nm, j), "0") == 0)) j++;
+            if (j + 1 < b) {
+                i = j;
+                continue;
+            }
+        }
+        if (!nm->num[i] && strcmp(s, "_@") == 0) {
+            /* a macro scope `_@.<Module>._hyg.<N>`, inside hygienic names
+             * such as `Foo._@.M._hyg.1.ctorElim` */
+            int j = i + 1;
+            while (j < b && (nm->num[j] || strcmp(lpf_comp(nm, j), "_hyg") != 0)) j++;
+            if (j + 1 < b && nm->num[j + 1]) {
+                i = j + 1;
+                while (i + 1 < b && nm->num[i + 1]) i++; /* `_hyg.3.5`: several scopes */
+                continue;
+            }
+        }
+        if (k > 0 && !nm->num[i] && lpf_compiler_part(s)) break;
+        idx[k++] = i;
+    }
+    if (k == 0) {
+        snprintf(out, cap, "?");
+        return;
+    }
+    /* Name.toString does not escape names that may be pseudo-syntax
+     * (`#0`, `?u`, `_`) or inaccessible (`x✝`) */
+    int esc = 1;
+    const char *root = lpf_comp(nm, idx[0]);
+    if (!nm->num[idx[0]] && (root[0] == '#' || root[0] == '?' || (k == 1 && strcmp(root, "_") == 0))) esc = 0;
+    for (int i = k - 1; i >= 0; i--) {
+        if (nm->num[idx[i]]) continue;
+        const char *s = lpf_comp(nm, idx[i]);
+        if (strstr(s, "\xe2\x9c\x9d") != NULL || strcmp(s, "_inaccessible") == 0) esc = 0;
+        break;
+    }
+    size_t n = 0;
+    out[0] = 0;
+    for (int i = 0; i < k && n < cap; i++) {
+        const char *s = lpf_comp(nm, idx[i]);
+        int wrap = esc && !nm->num[idx[i]] && lpf_needs_escape(s) && strstr(s, "\xc2\xbb") == NULL;
+        int w = snprintf(out + n, cap - n, "%s%s%s%s", i > 0 ? "." : "", wrap ? "\xc2\xab" : "", s,
+                         wrap ? "\xc2\xbb" : "");
+        n += w > 0 ? (size_t)w : 0;
+    }
+}
+
+/* `spec_N`, `_spec...` or another `_at_` ends a specialization's caller. */
+static int lpf_spec_end(const char *s) {
+    if (strncmp(s, "spec_", 5) == 0 && lpf_digit(s[5])) {
+        const char *p = s + 5;
+        while (lpf_digit(*p)) p++;
+        if (*p == 0) return 1;
+    }
+    return strncmp(s, "_spec", 5) == 0 || strcmp(s, "_at_") == 0;
+}
+
+/* Drop `_private.<Module>.<N>.` prefixes of a name from an .ilean file. */
 static void lpf_strip(char *name) {
     char *p;
     while ((p = strstr(name, "_private.")) != NULL) {
@@ -744,30 +935,29 @@ static void lpf_strip(char *name) {
         }
         memmove(p, q, strlen(q) + 1);
     }
-    for (char *q = name; *q; q++) {
-        if (q[0] == '.' && q[1] == '_') { *q = 0; break; }
-    }
 }
 
-/* Turn a decoded name into what we show. A specialization
+/* What we show for a decoded name. A specialization
  * `Callee._at_.Caller.spec_N` is reported under the caller, because that is
- * the user code whose values were copied. */
-static void lpf_clean(char *name, size_t cap) {
-    char *at = strstr(name, "._at_.");
-    if (at != NULL) {
-        char callee[256], caller[256];
-        size_t n = (size_t)(at - name) < sizeof callee - 1 ? (size_t)(at - name) : sizeof callee - 1;
-        memcpy(callee, name, n);
-        callee[n] = 0;
-        snprintf(caller, sizeof caller, "%s", at + 6);
-        char *spec = strstr(caller, ".spec_");
-        if (spec != NULL) *spec = 0;
-        lpf_strip(callee);
-        lpf_strip(caller);
-        snprintf(name, cap, "%s (in %s)", caller, callee);
+ * the user code whose values were copied: `Caller (in Callee)`. */
+static void lpf_name_show(const lpf_name *nm, char *out, size_t cap) {
+    int at = -1;
+    for (int i = 0; i < nm->n && at < 0; i++)
+        if (!nm->num[i] && strcmp(lpf_comp(nm, i), "_at_") == 0) at = i;
+    if (at < 0) {
+        lpf_show(nm, 0, nm->n, out, cap);
         return;
     }
-    lpf_strip(name);
+    int e = at + 1;
+    while (e < nm->n && (nm->num[e] || !lpf_spec_end(lpf_comp(nm, e)))) e++;
+    if (e == at + 1) {
+        lpf_show(nm, 0, at, out, cap);
+        return;
+    }
+    char callee[512], caller[512];
+    lpf_show(nm, 0, at, callee, sizeof callee);
+    lpf_show(nm, at + 1, e, caller, sizeof caller);
+    snprintf(out, cap, "%s (in %s)", caller, callee);
 }
 
 /* `lp_<pkg>_<body>`: the package is the shortest prefix whose underscore
@@ -782,31 +972,52 @@ static char lpf_root_pkg[256];
 static char lpf_pkgs[64][256];
 static int lpf_npkgs = -1;
 
+/* String.Internal.mangle: a package name is mangled as one string, so a '.'
+ * in it is an escape, not a separator. */
+static void lpf_mangle_pkg(const char *m, char *out, size_t cap) {
+    size_t n = 0;
+    const unsigned char *p = (const unsigned char *)m;
+    while (*p && n + 12 < cap) {
+        uint32_t c = lpf_utf8_next(&p);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) out[n++] = (char)c;
+        else if (c == '_') { out[n++] = '_'; out[n++] = '_'; }
+        else if (c < 0x100) n += (size_t)snprintf(out + n, cap - n, "_x%02x", c);
+        else if (c < 0x10000) n += (size_t)snprintf(out + n, cap - n, "_u%04x", c);
+        else n += (size_t)snprintf(out + n, cap - n, "_U%08x", c);
+    }
+    out[n] = 0;
+}
+
 static void lpf_load_pkgs(void) {
     lpf_npkgs = 0;
     if (lpf_root_pkg[0] == 0) lpf_find_root_pkg();
-    if (lpf_root_pkg[0]) lpf_mangle_module(lpf_root_pkg, lpf_pkgs[lpf_npkgs++], 256);
+    if (lpf_root_pkg[0]) lpf_mangle_pkg(lpf_root_pkg, lpf_pkgs[lpf_npkgs++], 256);
     DIR *d = opendir(".lake/packages");
     struct dirent *e;
     while (d != NULL && (e = readdir(d)) != NULL && lpf_npkgs < 64) {
         if (e->d_name[0] == '.') continue;
-        lpf_mangle_module(e->d_name, lpf_pkgs[lpf_npkgs++], 256);
+        lpf_mangle_pkg(e->d_name, lpf_pkgs[lpf_npkgs++], 256);
     }
     if (d != NULL) closedir(d);
 }
 
-static int lpf_is_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }
-
 static const char *lpf_skip_package(const char *s) {
     if (lpf_npkgs < 0) lpf_load_pkgs();
+    /* the longest known package: `foo__bar` before `foo` */
+    size_t best = 0;
     for (int i = 0; i < lpf_npkgs; i++) {
         size_t n = strlen(lpf_pkgs[i]);
-        if (n > 0 && strncmp(s, lpf_pkgs[i], n) == 0 && s[n] == '_') return s + n + 1;
+        if (n > best && strncmp(s, lpf_pkgs[i], n) == 0 && s[n] == '_') best = n;
     }
+    if (best > 0) return s + best + 1;
     for (const char *p = s; *p; p++) {
         if (*p != '_') continue;
-        /* `_xHH` inside a package name is an escaped character, not the end */
-        if (p[1] == 'x' && lpf_is_hex(p[2]) && lpf_is_hex(p[3])) continue;
+        /* `_xHH`, `_uHHHH`, `_UHHHHHHHH` inside a package name are escaped
+         * characters, not the end */
+        uint32_t c;
+        if ((p[1] == 'x' && lpf_hex(p + 2, 2, &c)) || (p[1] == 'u' && lpf_hex(p + 2, 4, &c)) ||
+            (p[1] == 'U' && lpf_hex(p + 2, 8, &c)))
+            continue;
         int run = 0;
         const char *q = p;
         while (q > s && q[-1] == '_') q--;
@@ -825,6 +1036,16 @@ static void lpf_demangle(const char *s, char *out, size_t cap) {
 #ifdef __APPLE__
     if (s[0] == '_') s++; /* Mach-O leading underscore */
 #endif
+    /* `f.cold.1`, `f.isra.0`, `f.llvm.42`: parts of `f` the C compiler split
+     * off (mangled Lean names have no '.') */
+    char sym[1024];
+    const char *dot = strchr(s, '.');
+    if (dot != NULL && dot > s) {
+        size_t n = (size_t)(dot - s) < sizeof sym - 1 ? (size_t)(dot - s) : sizeof sym - 1;
+        memcpy(sym, s, n);
+        sym[n] = 0;
+        s = sym;
+    }
     if (strcmp(s, "_lean_main") == 0 || strcmp(s, "lean_main") == 0) {
         snprintf(out, cap, "main");
         return;
@@ -837,8 +1058,9 @@ static void lpf_demangle(const char *s, char *out, size_t cap) {
         snprintf(out, cap, "%s", s);
         return;
     }
-    lpf_decode(s, out, cap);
-    lpf_clean(out, cap);
+    lpf_name nm;
+    lpf_decode(s, &nm);
+    lpf_name_show(&nm, out, cap);
 }
 
 static void lpf_symbol_raw(void *pc, char *out, size_t cap) {
@@ -950,6 +1172,14 @@ static void lpf_find_root_pkg(void) {
         if (strncmp(line, "package ", 8) == 0) {
             /* not sscanf: newer glibc renames it, and Lean links an older one */
             size_t n = 0;
+            const char *esc = strstr(line + 8, "\xc2\xbb");
+            if (strncmp(line + 8, "\xc2\xab", 2) == 0 && esc != NULL) { /* package «lean-compiler-backend» */
+                n = (size_t)(esc - (line + 10)) < sizeof lpf_root_pkg - 1 ? (size_t)(esc - (line + 10))
+                                                                          : sizeof lpf_root_pkg - 1;
+                memcpy(lpf_root_pkg, line + 10, n);
+                lpf_root_pkg[n] = 0;
+                break;
+            }
             for (const char *q = line + 8; n + 1 < sizeof lpf_root_pkg; q++) {
                 char c = *q;
                 if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||

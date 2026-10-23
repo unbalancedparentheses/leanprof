@@ -74,3 +74,8 @@ lean_exe tasks where
 
 lean_exe minimal where
   root := `Examples.Minimal
+
+/-- Compares leanprof's demangler with Lean's on a binary's symbols:
+`demangle-check BINARY...`, run from that binary's project directory. -/
+lean_exe «demangle-check» where
+  root := `Tests.DemangleCheck

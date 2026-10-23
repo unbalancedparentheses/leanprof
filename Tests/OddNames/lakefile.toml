@@ -1,0 +1,14 @@
+# A package whose name, module and declarations exercise the corners of Lean's
+# name mangling (escapes, unicode, `«»`, private names, instances,
+# specializations). CI profiles it with leanprof from outside and runs
+# `demangle-check` on its symbols.
+name = "odd-names_v2"
+defaultTargets = ["odd"]
+
+[[lean_lib]]
+name = "OddNames"
+
+[[lean_exe]]
+name = "odd"
+root = "Main"
+moreLinkArgs = ["-rdynamic"]
