@@ -46,6 +46,15 @@ function change(b, n, f) {
   const pct = b > 0 ? " (" + (d > 0 ? "+" : "−") + sig(Math.abs(d / b * 100)) + "%)" : "";
   return (d > 0 ? "+" : "−") + f(Math.abs(d)) + pct;
 }
+// times too small to measure (listed in a row's `too_small`) are shown as such, never as 0
+const SMALL_SCOPE = "< probe cost", SMALL_TICK = "< 1 clock tick";
+const isSmall = (r, k) => !!r && Array.isArray(r.too_small) && r.too_small.includes(k);
+const fScope = (k) => (v, r) => (isSmall(r, k) ? h("span", { title: "less than the probes' own cost: too small to measure" }, SMALL_SCOPE) : fNs(v));
+const fTick = (k) => (v, r) => (isSmall(r, k) ? h("span", { title: "shorter than one tick of the clock: too small to measure" }, SMALL_TICK) : fNs(v));
+const tScope = (r, k) => (isSmall(r, k) ? SMALL_SCOPE : fNs(num(r, k)));
+const tTick = (r, k) => (isSmall(r, k) ? SMALL_TICK : fNs(num(r, k)));
+// a row's share of the run: `pct_run`, or (older reports) against the wall time
+const pctRun = (d, r, k) => (typeof r.pct_run === "number" ? r.pct_run : num(d, "wall_ns") > 0 ? num(r, k) / num(d, "wall_ns") * 100 : 0);
 const isPos = (s) => typeof s === "string" && /\.lean:\d+$/.test(s);
 // `File.lean:12:3-12:40` as `12:3-12:40`
 const rangeCols = (s) => s.split(":").slice(-3).join(":");
@@ -81,10 +90,10 @@ if (run) {
     if (!isPos(s.pos)) continue;
     const t = num(s, "total_ns"), pct = wall > 0 ? t / wall * 100 : 0;
     const near = !sampled && s.near_probe_cost === true;
-    const label = sampled ? "≈ " + fNs(t) + " CPU · " + fPct(pct) : "⏱ " + fNs(t) + (near ? "*" : "") + " · " + fPct(pct) + " · " + fN(num(s, "calls")) + "×";
+    const label = sampled ? "≈ " + fNs(t) + " CPU · " + fPct(pct) : "⏱ " + tScope(s, "total_ns") + (near ? "*" : "") + " · " + fPct(pct) + " · " + fN(num(s, "calls")) + "×";
     const tip = sampled ? s.name + ": " + fNs(t) + " CPU inclusive (sampled)"
-      : s.name + ": " + fN(num(s, "calls")) + " calls, total " + fNs(t) + ", self " + fNs(num(s, "self_ns")) +
-        ", mean " + fNs(num(s, "mean_ns")) + ", p50 " + fNs(num(s, "p50_ns")) + ", p99 " + fNs(num(s, "p99_ns")) +
+      : s.name + ": " + fN(num(s, "calls")) + " calls, total " + tScope(s, "total_ns") + ", self " + tScope(s, "self_ns") +
+        ", mean " + tScope(s, "mean_ns") + ", p50 " + tScope(s, "p50_ns") + ", p99 " + tScope(s, "p99_ns") +
         (near ? "\n* " + NEAR_PROBE : "");
     const b = best.get(s.pos);
     if (!b || b.t < t) best.set(s.pos, { t, label, tip });
@@ -92,9 +101,9 @@ if (run) {
   for (const [p, b] of best) addHint(p, b.label, b.tip, "time");
   for (const c of arr(d, "copies")) {
     const n = num(c, "shared") + num(c, "multi_threaded");
-    if (n > 0) addHint(c.where, "⚠ " + fN(n) + " copies · " + fBytes(num(c, "bytes")) + " · " + fNs(num(c, "copy_ns")),
+    if (n > 0 && c.tiny !== true) addHint(c.where, "⚠ " + fN(n) + " copies · " + fBytes(num(c, "bytes")) + " · " + tTick(c, "copy_ns") + " · " + fPct(pctRun(d, c, "copy_ns")),
       c.function + " copied a " + (num(c, "multi_threaded") > 0 ? "multi-threaded" : "shared") + " " + c.kind + " " + fN(n) +
-      " times in scope " + c.scope + ": another reference was still alive, so it could not be updated in place.", "copy");
+      " times in scope " + c.scope + " (" + fPct(pctRun(d, c, "copy_ns")) + " of the run): another reference was still alive, so it could not be updated in place.", "copy");
   }
   const allocs = new Map();
   for (const a of arr(d, "allocations")) if (isPos(a.where)) {
@@ -377,8 +386,8 @@ function scopeMap(rep) {
   const m = new Map();
   for (const s of arr(rep.data, "scopes")) {
     const k = s.key || s.name + " " + s.pos;
-    const e = m.get(k) || { t: 0, c: 0 };
-    e.t += num(s, "total_ns"); e.c += num(s, "calls"); m.set(k, e);
+    const e = m.get(k) || { t: 0, c: 0, small: false };
+    e.t += num(s, "total_ns"); e.c += num(s, "calls"); e.small = e.small || isSmall(s, "total_ns"); m.set(k, e);
   }
   return m;
 }
@@ -405,10 +414,10 @@ function comparePair(b, n) {
       const pct = x.t > 0 ? (y.t - x.t) / x.t * 100 : 0;
       const slower = exact ? y.t - x.t > Math.max(x.t * 0.01, 1000) : pct > thr && (y.t - x.t) / 1e6 > minMs;
       const calls = x.c !== y.c;
-      scopes.push({ k, b: x.t, n: y.t, pct, bc: x.c, nc: y.c, st: slower || calls ? "regression" : pct < -thr ? "faster" : "ok",
+      scopes.push({ k, b: x.t, n: y.t, pct, bc: x.c, nc: y.c, bs: x.small, ns: y.small, st: slower || calls ? "regression" : pct < -thr ? "faster" : "ok",
         why: slower && calls ? "slower, calls changed" : slower ? "slower" : calls ? "calls changed" : "" });
-    } else if (y) scopes.push({ k, b: 0, n: y.t, pct: NaN, bc: 0, nc: y.c, st: "new", why: "" });
-    else scopes.push({ k, b: x.t, n: 0, pct: NaN, bc: x.c, nc: 0, st: "gone", why: "" });
+    } else if (y) scopes.push({ k, b: 0, n: y.t, pct: NaN, bc: 0, nc: y.c, ns: y.small, st: "new", why: "" });
+    else scopes.push({ k, b: x.t, n: 0, pct: NaN, bc: x.c, nc: 0, bs: x.small, st: "gone", why: "" });
   }
   const bc = copyMap(b), nc = copyMap(n), copies = [];
   for (const k of new Set([...bc.keys(), ...nc.keys()])) {
@@ -420,8 +429,11 @@ function comparePair(b, n) {
     const x = ba.get(k) || 0, y = na.get(k) || 0;
     if (x !== y) allocs.push({ k, b: x, n: y, st: y > x ? "more" : "fewer" });
   }
-  const regressions = scopes.filter((s) => s.st === "regression").length + copies.filter((c) => c.st === "regression").length;
-  return { exact, scopes, copies, allocs, regressions };
+  // allocations: the total, when both reports counted them
+  const tot = (m) => [...m.values()].reduce((a, x) => a + x, 0);
+  const moreAllocs = ba.size > 0 && na.size > 0 && tot(na) > tot(ba);
+  const regressions = scopes.filter((s) => s.st === "regression").length + copies.filter((c) => c.st === "regression").length + (moreAllocs ? 1 : 0);
+  return { exact, scopes, copies, allocs, moreAllocs, regressions };
 }
 const pairs = [];
 if (run && runB) pairs.push({ name: "run", b: runB, n: run, r: comparePair(runB, run) });
@@ -433,6 +445,8 @@ function judgeWorse(b, n) {
   if (num(b, "exit_code") !== num(n, "exit_code")) out.push("exit code changed");
   if ((b.output || {}).hash !== (n.output || {}).hash) out.push("output changed");
   if (num(n, "copies_total") > num(b, "copies_total")) out.push("more copies");
+  if (b.allocs_runs != null && n.allocs_runs != null &&
+      Math.min(...arr(n, "allocs_runs"), num(n, "allocs_total")) > Math.max(...arr(b, "allocs_runs"), num(b, "allocs_total"))) out.push("more allocations");
   if (b.heartbeats_total != null && n.heartbeats_total != null &&
       num(n, "heartbeats_total") - num(b, "heartbeats_total") > Math.max(num(b, "heartbeats_total") * 0.01, 1000)) out.push("more heartbeats");
   if (num(n.time_ns, "min") > num(b.time_ns, "max")) out.push("every run slower");
@@ -529,8 +543,8 @@ if (run) {
   if (arr(d, "scopes").length) addTab("scopes", sampled ? "Declarations" : "Scopes", arr(d, "scopes").length, () => panel(null,
     sampled ? "Sampled CPU time per Lean declaration, inclusive of what it calls." : "Exact time and calls per scope (profile! labels and, with --auto, functions), leanprof's own cost subtracted. * " + NEAR_PROBE + ".",
     table(arr(d, "scopes"), sampled ? [col("declaration", "name"), pcol("where", "pos"), ncol("CPU (incl.)", "total_ns", fNs, { bar: true }), { t: "% CPU", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }]
-      : [col("scope", "name"), pcol("where", "pos"), { t: "kind", v: (r) => (r.auto ? "function" : "profile!") }, ncol("calls", "calls"), ncol("total", "total_ns", (v, r) => r && r.near_probe_cost === true ? h("span", { title: NEAR_PROBE }, fNs(v) + "*") : fNs(v), { bar: true }), ncol("self", "self_ns", fNs),
-        { t: "% wall", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }, ncol("mean", "mean_ns", fNs), ncol("p50", "p50_ns", fNs), ncol("p99", "p99_ns", fNs), ncol("max", "max_ns", fNs),
+      : [col("scope", "name"), pcol("where", "pos"), { t: "kind", v: (r) => (r.auto ? "function" : "profile!") }, ncol("calls", "calls"), ncol("total", "total_ns", (v, r) => r && r.near_probe_cost === true ? h("span", { title: NEAR_PROBE }, tScope(r, "total_ns") + "*") : fScope("total_ns")(v, r), { bar: true }), ncol("self", "self_ns", fScope("self_ns")),
+        { t: "% wall", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }, ncol("mean", "mean_ns", fScope("mean_ns")), ncol("p50", "p50_ns", fScope("p50_ns")), ncol("p99", "p99_ns", fScope("p99_ns")), ncol("max", "max_ns", fNs),
         ncol("allocs", "allocs"), ncol("alloc bytes", "alloc_bytes", fBytes)], { what: "scopes" })));
   if (sampled && run.flame) addTab("self", "Self time", null, () => {
     const self = new Map(), incl = new Map(), pos = new Map();
@@ -553,13 +567,15 @@ if (run) {
   const scopeTotal = new Map();
   for (const s of arr(d, "scopes")) scopeTotal.set(s.name, Math.max(scopeTotal.get(s.name) || 0, num(s, "total_ns")));
   if (arr(d, "copies").length) addTab("copies", "Copies", arr(d, "copies").length, () => panel(null,
-    "Copies of arrays, strings and byte arrays that were not exclusive. Shared: another reference was alive; multi-threaded: the value was shared between threads; persistent: a compile-time constant (not counted as a regression).",
-    table(arr(d, "copies"), [col("function", "function", null, { wrap: true }), col("kind", "kind"), { t: "why", v: whyOf }, ncol("copies", "copies", null, { bar: true }),
-      ncol("shared", "shared"), ncol("multi-thr.", "multi_threaded"), ncol("persistent", "persistent"), ncol("bytes", "bytes", fBytes), ncol("time", "copy_ns", fNs),
+    "Copies of arrays, strings and byte arrays that were not exclusive, costliest first. Shared: another reference was alive; multi-threaded: the value was shared between threads; persistent: a compile-time constant (not counted as a regression); tiny: only empty or tiny values (at most 16 bytes each, under 1% of the run), summarized in the text report.",
+    table(arr(d, "copies"), [col("function", "function", null, { wrap: true }), col("kind", "kind"), { t: "why", v: (r) => whyOf(r) + (r.tiny === true ? " (tiny)" : "") }, ncol("copies", "copies"),
+      ncol("shared", "shared"), ncol("multi-thr.", "multi_threaded"), ncol("persistent", "persistent"), ncol("bytes", "bytes", fBytes), ncol("time", "copy_ns", fTick("copy_ns"), { bar: true }),
+      { t: "% run", v: (r) => pctRun(d, r, "copy_ns"), f: fPct, num: true, tip: "copy time as a share of the run" },
       { t: "% scope", v: (r) => (scopeTotal.get(r.scope) ? num(r, "copy_ns") / scopeTotal.get(r.scope) * 100 : NaN), f: fPct, num: true, tip: "copy time as a share of the scope's time" },
       col("scope", "scope"), pcol("where", "where")], { what: "copies", rowClass: (r) => (num(r, "shared") + num(r, "multi_threaded") > 0 ? "" : null) })));
-  if (arr(d, "allocations").length) addTab("allocs", "Allocations", arr(d, "allocations").length, () => panel(null, "Objects allocated by compiled Lean code, per function and scope.",
+  if (arr(d, "allocations").length) addTab("allocs", "Allocations", arr(d, "allocations").length, () => panel(null, "Objects allocated by compiled Lean code, per function and scope, costliest first. Estimated time: the count times the calibrated cost of one small allocation and its free" + (num(d, "alloc_ns") > 0 ? " (" + sig(num(d, "alloc_ns")) + " ns)" : "") + ", a lower bound.",
     table(arr(d, "allocations"), [col("function", "function", null, { wrap: true }), col("scope", "scope"), pcol("where", "where"), ncol("allocations", "allocs", null, { bar: true }), ncol("bytes", "bytes", fBytes),
+      ncol("est. time", "est_ns", fNs), { t: "% run", v: (r) => num(r, "pct_run"), f: fPct, num: true, tip: "estimated time as a share of the run" },
       { t: "mean size", v: (r) => (num(r, "allocs") ? num(r, "bytes") / num(r, "allocs") : 0), f: fBytes, num: true }], { what: "allocations" })));
   if (arr(d, "reuse").length) addTab("reuse", "Reuse failures", arr(d, "reuse").length, () => panel(null, "Constructor cells that could not be updated in place because they were not exclusive (with --counters).",
     table(arr(d, "reuse"), [col("function", "function", null, { wrap: true }), pcol("where", "where"), ncol("checks", "checks"), ncol("failures", "failures", null, { bar: true }),
@@ -649,7 +665,7 @@ if (pairs.length || (meas && measB)) addTab("diff", "Comparison", totalRegressio
       metrics.push(["copies", fN(bc), fN(nc), change(bc, nc, fN), r.copies.some((c) => c.st === "regression") ? "fail" : "pass"]);
       if (arr(p.b.data, "allocations").length + arr(p.n.data, "allocations").length) {
         const ba = total(allocMap(p.b)), na = total(allocMap(p.n));
-        metrics.push(["allocations", fN(ba), fN(na), change(ba, na, fN), na > ba ? "worse" : "pass"]);
+        metrics.push(["allocations", fN(ba), fN(na), change(ba, na, fN), r.moreAllocs ? "fail" : "pass"]);
       }
       const bcl = total(scopeMap(p.b)), ncl = total(scopeMap(p.n));
       metrics.push(["calls", fN(bcl), fN(ncl), change(bcl, ncl, fN), r.scopes.some((s) => s.bc !== s.nc && s.st !== "new" && s.st !== "gone") ? "fail" : "pass"]);
@@ -660,19 +676,19 @@ if (pairs.length || (meas && measB)) addTab("diff", "Comparison", totalRegressio
     }
     const tag = (c) => h("span", { class: "tag " + (c === "fail" ? "bad" : c === "pass" ? "good" : c === "worse" ? "warn" : "muted") }, c);
     out.push(panel((p.name === "run" ? "Run" : "Compile") + ": " + p.b.path + " → " + p.n.path,
-      "Regressions as `leanprof compare` counts them: " + (p.name === "run" ? "more copies of shared values at a site, changed call counts, " : "") +
+      "Regressions as `leanprof compare` counts them: " + (p.name === "run" ? "more copies of shared values at a site, more allocations in total (when both reports counted them), changed call counts, " : "") +
       (r.exact ? "a declaration's heartbeats up by more than 1% and 1,000" : "a " + (p.name === "run" ? "scope" : "declaration") + " slower by more than " + D.threshold + "% and " + D.min_ms + " ms") + ".",
       h("div", { class: "tw" }, h("table", null, h("thead", null, h("tr", null, ["metric", "base", "new", "change", "check"].map((t, i) => h("th", { class: i && i < 4 ? "num" : "" }, t)))),
         h("tbody", null, metrics.map((m) => h("tr", null, h("td", null, m[0]), h("td", { class: "num" }, m[1]), h("td", { class: "num" }, m[2]), h("td", { class: "num" }, m[3]), h("td", null, tag(m[4])))))))));
     out.push(panel(p.name === "run" ? "Scopes" : "Declarations", null, table(r.scopes, [{ t: "status", v: (x) => rank[x.st], f: (v, x) => [st(x.st), x.why ? " " + x.why : ""] },
-      col(p.name === "run" ? "scope" : "declaration", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f, num: true }, { t: "new", v: (x) => x.n, f, num: true },
-      { t: "change", v: (x) => x.n - x.b, f: (v, x) => change(x.b, x.n, f), num: true }, { t: "%", v: (x) => x.pct, f: (v) => (v > 0 ? "+" : "") + fPct(v), num: true },
+      col(p.name === "run" ? "scope" : "declaration", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: (v, x) => (x.bs ? SMALL_SCOPE : f(v)), num: true }, { t: "new", v: (x) => x.n, f: (v, x) => (x.ns ? SMALL_SCOPE : f(v)), num: true },
+      { t: "change", v: (x) => x.n - x.b, f: (v, x) => (x.bs || x.ns ? "–" : change(x.b, x.n, f)), num: true }, { t: "%", v: (x) => x.pct, f: (v, x) => (x.bs || x.ns ? "–" : (v > 0 ? "+" : "") + fPct(v)), num: true },
       ...(p.name === "run" ? [{ t: "calls base", v: (x) => x.bc, f: fN, num: true }, { t: "calls new", v: (x) => x.nc, f: fN, num: true }] : [])],
       { sort: 0, asc: true, rowClass: rowCls, what: "scopes" })));
     if (r.copies.length) out.push(panel("Copies of shared values", "Any increase at a site is a regression.", table(r.copies, [{ t: "status", v: (x) => rank[x.st], f: (v, x) => st(x.st) },
       col("site", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: fN, num: true }, { t: "new", v: (x) => x.n, f: fN, num: true }, { t: "change", v: (x) => x.n - x.b, f: (v, x) => change(x.b, x.n, fN), num: true }],
       { sort: 0, asc: true, rowClass: rowCls, what: "sites" })));
-    if (r.allocs.length) out.push(panel("Allocations that changed", "Shown for information; `report-md --fail-on allocs` checks the total.", table(r.allocs, [{ t: "", v: (x) => rank[x.st], f: (v, x) => st(x.st) },
+    if (r.allocs.length) out.push(panel("Allocations that changed", "Per site for information; an increase of the total is a regression.", table(r.allocs, [{ t: "", v: (x) => rank[x.st], f: (v, x) => st(x.st) },
       col("site", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: fN, num: true }, { t: "new", v: (x) => x.n, f: fN, num: true }, { t: "change", v: (x) => x.n - x.b, f: (v, x) => change(x.b, x.n, fN), num: true }],
       { sort: 4, what: "sites" })));
   }
@@ -680,9 +696,10 @@ if (pairs.length || (meas && measB)) addTab("diff", "Comparison", totalRegressio
     const b = measB.data, n = meas.data;
     const rows = [["median time", num(b.time_ns, "median"), num(n.time_ns, "median"), fNs], ["min time", num(b.time_ns, "min"), num(n.time_ns, "min"), fNs], ["max time", num(b.time_ns, "max"), num(n.time_ns, "max"), fNs],
       ["copies", num(b, "copies_total"), num(n, "copies_total"), fN]];
+    if (b.allocs_total != null && n.allocs_total != null) rows.push(["allocations", num(b, "allocs_total"), num(n, "allocs_total"), fN]);
     if (b.heartbeats_total != null && n.heartbeats_total != null) rows.push(["compile heartbeats", num(b, "heartbeats_total"), num(n, "heartbeats_total"), fHB]);
     const same = (b.output || {}).hash === (n.output || {}).hash && num(b, "exit_code") === num(n, "exit_code");
-    out.push(panel("Measure: " + measB.path + " → " + meas.path, "`leanprof judge` decides KEEP or DISCARD from these: output and exit code must match, copies and heartbeats must not grow, and time counts only when the runs do not overlap.",
+    out.push(panel("Measure: " + measB.path + " → " + meas.path, "`leanprof judge` decides KEEP or DISCARD from these: output and exit code must match, copies, allocations and heartbeats must not grow, and time counts only when the runs do not overlap.",
       measWorse.length ? h("p", null, h("span", { class: "tag bad" }, "worse"), " " + measWorse.join(", ")) : null,
       h("div", { class: "tw" }, h("table", null, h("thead", null, h("tr", null, ["", "base", "new", "change"].map((t, i) => h("th", { class: i ? "num" : "" }, t)))), h("tbody", null, rows.map(([k, x, y, f]) => h("tr", null, h("td", null, k), h("td", { class: "num" }, f(x)), h("td", { class: "num" }, f(y)), h("td", { class: "num" }, change(x, y, f)))),
         h("tr", null, h("td", null, "output and exit code"), h("td", { colspan: 3 }, same ? h("span", { class: "tag good" }, "same") : h("span", { class: "tag bad" }, "changed"))))))));
