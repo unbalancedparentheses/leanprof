@@ -5,7 +5,10 @@ leanprof elab [--heartbeats] [--top N] [--out FILE] FILE.lean...
 leanprof elab --project [--module-glob GLOB] [--jobs N] [--heartbeats]
 ```
 
-elaborates the files with Lean's `trace.profiler`, reads the full trace
+elaborates the files with Lean's `trace.profiler` (through `lake lean`, so
+plugins and the shared libraries of precompiled modules load as in the
+build; if Lean fails on a file, leanprof says so and shows the error),
+reads the full trace
 trees (every `isDefEq`, `whnf`, instance search, tactic step, kernel check
 and compiler pass, with its own and total cost) and reports:
 
@@ -142,7 +145,8 @@ counts it once. Each file's `wall_ns` in `elab.json` is the wall time of its
 ## Heartbeats: exact compile cost
 
 With `--heartbeats` the numbers are Lean heartbeats (a count of allocations
-during elaboration) instead of time. They do not depend on the machine or
+during elaboration) instead of time, shown in kHB: 1 kHB is the unit of
+`maxHeartbeats`, whose default limit is 200,000 per declaration. They do not depend on the machine or
 its load, so they can be compared without noise, and in parallel. They are
 nearly the same on every run: on all of Batteries two runs differ by 2 in
 a million (no declaration by more than 290 heartbeats); Lean itself varies

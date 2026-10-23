@@ -8,9 +8,9 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries |
-| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
-| `sample [--rate HZ] [--top N] [--out F] EXE [-- ARGS]` | sample with samply, report per Lean declaration |
+| `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries; `--cwd` runs EXE in DIR |
+| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
+| `sample [--rate HZ] [--top N] [--out F] [--cwd DIR] EXE [-- ARGS]` | sample with samply, report per Lean declaration; exits with the program's exit code |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--out F] EXE [-- ARGS]` | repeated runs into one summary |
@@ -49,6 +49,7 @@ For programs that link leanprof:
 | `LEANPROF_SLOW_MS=ms` | also dump when a scope takes `ms` or more (turns the recorder on) |
 | `LEANPROF_SLOW_SCOPE=name` | only scopes with this name trigger slow dumps |
 | `LEANPROF_SLOW_MAX=n` | at most `n` slow dumps (default 10) |
+| `LEANPROF_PROJECT=dir` | the project, when the program runs elsewhere (set by `--cwd`): where `.ilean` files and packages are found |
 
 For `leanprof run --core`:
 
@@ -71,7 +72,8 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 
 ## JSON report
 
-`report.json` (version 3) has `wall_ns`, `overhead_ns` and arrays:
+`report.json` (version 3) has `wall_ns`, `probe_ns` (the probes' calibrated
+cost in it, on the busiest thread), `overhead_ns` (per scope) and arrays:
 
 - `scopes`: `name`, `pos`, `auto` (a function, not a `profile!` label),
   `calls`, `total_ns`, `self_ns`, `min_ns`, `max_ns`, `mean_ns`, `p50_ns`,

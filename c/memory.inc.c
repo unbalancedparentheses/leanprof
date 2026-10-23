@@ -181,6 +181,7 @@ typedef struct lpf_mem_thread {
     size_t nstack, capstack;
     lean_object **mkeys;
     uint32_t *mcount;
+    size_t *mslots;            /* the slots in use, so clearing touches only those */
     size_t mcap, mused;
     lpf_slow_free *slow;
     size_t nslow, capslow;
@@ -215,7 +216,10 @@ static inline void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now) {
     size_t a = lpf_mem_find(n, start), b = lpf_mem_find(n, now + 1);
     if (a >= b) return;
     uint64_t peak = lpf_mem_range_max(a, b);
-    uint64_t base = lpf_mem_at(a > 0 ? a - 1 : 0)->commit; /* the level just before it started */
+    /* the level just before it started; a sample from longer before than the
+     * call lasted also counts what was allocated before it, so no rise then */
+    const lpf_mem_sample *before = lpf_mem_at(a > 0 ? a - 1 : 0);
+    uint64_t base = before->ts + (now - start) >= start ? before->commit : UINT64_MAX;
     lpf_mem_thread *m = lpf_mem_thread_get();
     size_t i = lpf_hash(s, NULL);
     for (size_t k = 0; k < LP_TABLE; k++, i = (i + 1) & (LP_TABLE - 1)) {
@@ -256,18 +260,22 @@ static int lpf_walk_last(lpf_mem_thread *m, lean_object *o, uint32_t refs) {
         size_t cap = m->mcap ? m->mcap * 2 : 1024;
         lean_object **keys = calloc(cap, sizeof(lean_object *));
         uint32_t *count = calloc(cap, sizeof(uint32_t));
-        if (keys == NULL || count == NULL) { free(keys); free(count); return 0; }
-        for (size_t i = 0; i < m->mcap; i++) {
-            if (m->mkeys[i] == NULL) continue;
+        size_t *slots = calloc(cap / 2, sizeof(size_t));
+        if (keys == NULL || count == NULL || slots == NULL) { free(keys); free(count); free(slots); return 0; }
+        for (size_t k = 0; k < m->mused; k++) {
+            size_t i = m->mslots[k];
             size_t h = lpf_hash(m->mkeys[i], NULL) & (cap - 1);
             while (keys[h] != NULL) h = (h + 1) & (cap - 1);
             keys[h] = m->mkeys[i];
             count[h] = m->mcount[i];
+            slots[k] = h;
         }
         free(m->mkeys);
         free(m->mcount);
+        free(m->mslots);
         m->mkeys = keys;
         m->mcount = count;
+        m->mslots = slots;
         m->mcap = cap;
     }
     size_t h = lpf_hash(o, NULL) & (m->mcap - 1);
@@ -275,7 +283,7 @@ static int lpf_walk_last(lpf_mem_thread *m, lean_object *o, uint32_t refs) {
     if (m->mkeys[h] == NULL) {
         m->mkeys[h] = o;
         m->mcount[h] = 0;
-        m->mused++;
+        m->mslots[m->mused++] = h;
     }
     return ++m->mcount[h] == refs;
 }
@@ -320,10 +328,9 @@ static uint64_t lpf_cascade_size(lpf_mem_thread *m, lean_object *o) {
             lpf_walk_child(m, lean_to_ref(x)->m_value);
         }
     }
-    if (m->mused > 0) {
-        memset(m->mkeys, 0, m->mcap * sizeof(lean_object *));
-        m->mused = 0;
-    }
+    /* not a memset of the whole table: most cascades see one or two shared children */
+    for (size_t k = 0; k < m->mused; k++) m->mkeys[m->mslots[k]] = NULL;
+    m->mused = 0;
     return n;
 }
 

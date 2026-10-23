@@ -20,12 +20,75 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - Reservoir metadata in the lakefile (description, keywords, license,
   homepage), this changelog, and a release workflow that attaches the
   command for macOS arm64 and Linux x86-64 to version tags.
+- Case studies of [lean-regex](docs/case-studies/lean-regex.md),
+  [doc-gen4](docs/case-studies/doc-gen4.md),
+  [verso](docs/case-studies/verso.md) and
+  [concrete](docs/case-studies/concrete.md), and a CI job that runs
+  `run --auto`, `--allocs --counters --frees`, `sample` and
+  `elab --heartbeats` on lean-regex's benchmark and checks the reports.
+- `run`, `stat` and `sample` take `--cwd DIR`, for programs that read the
+  current directory (a compiler run in its project); positions still come
+  from the project (`LEANPROF_PROJECT`).
+- `sample` says which declaration calls a specialization when it is not the
+  one it is named after (the compiler reuses specializations), names
+  `tlv_get_addr` in libdyld (from `dyld_info`) and counts thread-local
+  lookups and Lean's C++ expression and kernel code as their own
+  categories.
+- The report's JSON has `probe_ns`, the probes' calibrated cost in the wall
+  time.
 
 ### Fixed
 
 - `leanprof run` on another checkout of leanprof itself no longer links the
   runtime twice on Linux (`scripts/leanprof-cc` skips `LEANPROF_RUNTIME`
   when the link already has leanprof's runtime library).
+
+Found on real projects (see the case studies):
+
+- `--auto`: a declaration's compiled parts (`f`, `f._redArg`, `f._boxed`,
+  lambdas) were separate scopes with one name, nested in each other, and
+  their totals were added: 281% of the wall time for doc-gen4's `process`,
+  calls counted twice. They are one scope now; a lambda, `_redArg` or join
+  point called by its own declaration is not a new call, and `_boxed`
+  wrappers are not timed.
+- `%wall` divided totals without the probes' cost by a wall time with it
+  (`main` at 17.7% of lean-regex's run). It now uses the wall time without
+  the probes' calibrated cost, which the header shows.
+- `--frees` cleared an 8 KiB table after every freeing cascade that met a
+  shared object: lean-regex ran 6.3 times slower (13.0 s), now 1.8 times
+  (3.6 s).
+- Positions of modules in a `srcDir` (`scripts/Bench.lean`) were given as
+  if the module were at the package root (`Bench.lean`).
+- A specialization made inside another one
+  (`g._at_.(h._at_.f.spec_1).spec_2`) was reported under `h` instead of
+  `f`; long symbols (over 96 components or 1,024 characters) were cut
+  before demangling. `demangle-check` now passes on concrete's 192,087
+  symbols.
+- `leanprof elab` ran `lake env lean`, which cannot load plugins or the
+  shared libraries of precompiled modules: on Verso's documents Lean
+  aborted and the files were reported as nearly free. It runs `lake lean`
+  now, and says when Lean fails on a file. Lines are named by their source
+  instead of the trace's pretty-printed command (which can be `failed to
+  pretty print term`), and the header says what a kHB is.
+- `leanprof elab` read each of Lean's messages whole and then parsed it:
+  concrete's `Check.lean` prints a 2.4 GB trace in one message, and
+  leanprof needed 15.5 GB. Messages are now decoded a line at a time as they
+  arrive, only reported texts are kept, and the table of operations is
+  bounded: 167 MB for the same report.
+- Building with probes printed a report from every `lean` process that
+  loaded an instrumented precompiled module (doc-gen4's dependencies); the
+  build now runs with reports off and without the user's `LEANPROF_JSON`
+  and `LEANPROF_TRACE`.
+- `sample` said "is samply installed?" when the program exited with an
+  error; it now reports the profile and exits with the program's code.
+  Code the linker outlined (`OUTLINED_FUNCTION_N`) counts in its caller,
+  `lean_inc_heartbeat` counts as allocation, and C++ names are shown
+  without template arguments instead of cut at 512 characters.
+- Memory per scope: a call shorter than the time since the last reading
+  before it no longer gets a "max rise" (it included what was allocated
+  before the call: 9.5 MiB for a parser of ten characters).
+- The scope table was printed with a header and no rows when the only
+  scopes were tasks.
 
 ## [0.1.0] - 2026-10-23
 
