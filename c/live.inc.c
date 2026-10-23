@@ -55,6 +55,20 @@ static uint64_t lpf_clamp(double v);
 static const char *lpf_skip_package(const char *s);
 static void lpf_mem_read(uint64_t *commit, uint64_t *rss, uint64_t *peak_commit, uint64_t *peak_rss);
 
+/* Non-negative decimal number at the start of `v`, or -1. Not strtol/atoi:
+ * newer glibc renames them, and Lean links an older one. */
+static double lpf_parse_num(const char *v) {
+    double x = 0, scale = 0;
+    int any = 0;
+    for (; v != NULL && ((*v >= '0' && *v <= '9') || (*v == '.' && scale == 0)); v++) {
+        if (*v == '.') { scale = 1; continue; }
+        any = 1;
+        if (scale > 0) { scale /= 10; x += (*v - '0') * scale; }
+        else x = x * 10 + (*v - '0');
+    }
+    return any ? x : -1;
+}
+
 static int lpf_flight;                  /* the flight recorder is on: lpf_trace calls lpf_flight_trace */
 static char lpf_live_path[1024];        /* snapshot file ("" when off) */
 static uint64_t lpf_live_ms = 250;
@@ -675,7 +689,7 @@ static void lpf_live_write(int final) {
     unsigned nthreads = __atomic_load_n(&lpf_nthreads, __ATOMIC_RELAXED);
     size_t max_rows = 100;
     const char *mr = getenv("LEANPROF_LIVE_ROWS");
-    if (mr != NULL && atoi(mr) > 0) max_rows = (size_t)atoi(mr);
+    if (lpf_parse_num(mr) >= 1) max_rows = (size_t)lpf_parse_num(mr);
     fprintf(f,
             "{\"leanprof_live\":1,\"pid\":%d,\"seq\":%u,\"exited\":%s,\"interval_ms\":%llu,\"ts_ns\":%.0f,"
             "\"overhead_ns\":%.1f,\"threads\":%u,",
@@ -877,9 +891,8 @@ static void lpf_live_stop(void) {
 static double lpf_env_num(const char *name, double dflt) {
     const char *v = getenv(name);
     if (v == NULL || v[0] == 0) return dflt;
-    char *end;
-    double x = strtod(v, &end);
-    return end != v && x >= 0 ? x : dflt;
+    double x = lpf_parse_num(v);
+    return x >= 0 ? x : dflt;
 }
 
 static void lpf_abs_path(const char *p, char *out, size_t cap) {
@@ -899,7 +912,7 @@ static void lpf_live_init(void) {
     /* `leanprof top` runs the program through `leanprof run`, which links
      * this runtime too: only its child, the program, takes part */
     const char *skip = getenv("LEANPROF_LIVE_SKIP_CHILD_OF");
-    if (skip != NULL && atoi(skip) == (int)getppid()) return;
+    if (skip != NULL && lpf_parse_num(skip) == (double)getppid()) return;
     char tmpdir[900];
     lpf_tmpdir(tmpdir, sizeof tmpdir);
     if (want_live) {
