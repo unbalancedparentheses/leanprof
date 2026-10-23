@@ -1,0 +1,174 @@
+{
+ "all.allocs>0": true,
+ "all.copies": 1999,
+ "all.frees": true,
+ "all.reuse>0": true,
+ "auto.calls": {
+  "build": 1,
+  "buildWithHistory": 1,
+  "main": 1
+ },
+ "compare.self": 0,
+ "demangle": true,
+ "doctor": 0,
+ "elab.constants": [
+  "Array.instDecidableForallForallMemOfDecidablePred",
+  "Array.instMembership",
+  "Decidable.decide",
+  "DecidableEq",
+  "DecidablePred",
+  "GT.gt",
+  "Int.instDecidableEq",
+  "Int.instLEInt",
+  "LE.le",
+  "LT.lt",
+  "Lean.Grind.CommRing.OfCommSemiring.instOfNatQ",
+  "Lean.Omega.Coeffs",
+  "Lean.Omega.Coeffs.isZero",
+  "Lean.Omega.IntList",
+  "List.decidableBAll",
+  "List.foldl",
+  "List.instAppend",
+  "List.instMembership",
+  "List.length_append",
+  "List.range",
+  "List.range.loop",
+  "Nat.add_comm",
+  "Nat.add_left_cancel_iff",
+  "Nat.decLe",
+  "Nat.decLt",
+  "Nat.mul",
+  "Option.decidableForallMem",
+  "Option.instMembership",
+  "String.instHAddCharRaw",
+  "Unit",
+  "Vector.instDecidableForallForallMemOfDecidablePred",
+  "Vector.instMembership",
+  "eq_self",
+  "forall_prop_decidable",
+  "instAddNat",
+  "instDecidableEqBool",
+  "instDecidableEqNat",
+  "instDecidableOr",
+  "instHAdd",
+  "instHAppendOfAppend"
+ ],
+ "elab.lines": [
+  "Examples/ElabHeavy.lean:1",
+  "Examples/ElabHeavy.lean:10",
+  "Examples/ElabHeavy.lean:11",
+  "Examples/ElabHeavy.lean:12",
+  "Examples/ElabHeavy.lean:13",
+  "Examples/ElabHeavy.lean:15",
+  "Examples/ElabHeavy.lean:16",
+  "Examples/ElabHeavy.lean:17",
+  "Examples/ElabHeavy.lean:19",
+  "Examples/ElabHeavy.lean:21",
+  "Examples/ElabHeavy.lean:22",
+  "Examples/ElabHeavy.lean:24",
+  "Examples/ElabHeavy.lean:25",
+  "Examples/ElabHeavy.lean:27",
+  "Examples/ElabHeavy.lean:28",
+  "Examples/ElabHeavy.lean:29",
+  "Examples/ElabHeavy.lean:6",
+  "Examples/ElabHeavy.lean:7",
+  "Examples/ElabHeavy.lean:8"
+ ],
+ "explain": [
+  "why: `acc` is stored in `history` at line 21 (`history := history.push acc`) and is updated",
+  "where: Examples/CopyBug.lean lines 21, 22"
+ ],
+ "help.commands": [
+  "compare",
+  "doctor",
+  "dump",
+  "elab",
+  "explain",
+  "help",
+  "html",
+  "judge",
+  "mcp",
+  "measure",
+  "report-md",
+  "run",
+  "sample",
+  "stat",
+  "top"
+ ],
+ "html": true,
+ "run.copies": [
+  [
+   "buildWithHistory (in Std.Legacy.Range.forIn'.loop)",
+   "Examples/CopyBug.lean:17",
+   "Array",
+   1999,
+   0
+  ]
+ ],
+ "run.scopes": [
+  [
+   "build",
+   "Examples/CopyBug.lean:25",
+   1
+  ],
+  [
+   "buildWithHistory",
+   "Examples/CopyBug.lean:17",
+   1
+  ],
+  [
+   "fib",
+   "Examples/CopyBug.lean:15",
+   10945
+  ],
+  [
+   "report",
+   "Examples/CopyBug.lean:35",
+   1
+  ]
+ ],
+ "taskchains": [
+  [
+   "bound",
+   24
+  ],
+  [
+   "ioBound",
+   16
+  ],
+  [
+   "ioMapped",
+   8
+  ],
+  [
+   "mapped",
+   16
+  ],
+  [
+   "top level",
+   16
+  ]
+ ],
+ "tasks": [
+  [
+   "ioTasks",
+   16
+  ],
+  [
+   "pureTasks",
+   16
+  ]
+ ],
+ "tests": true,
+ "top": true,
+ "waits": [
+  [
+   "ioTasks (in List.forIn'.loop)",
+   16
+  ],
+  [
+   "pureTasks (in List.foldl)",
+   16
+  ]
+ ]
+}
