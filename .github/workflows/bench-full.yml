@@ -12,8 +12,6 @@ on:
       reps:
         description: runs of each workload and configuration
         default: "9"
-  push:  # temporary: one run from the branch that adds this workflow (dispatch needs it on main)
-    branches: [bench-ci]
   schedule:
     - cron: "17 4 * * 1"  # Mondays 04:17 UTC
 concurrency:
