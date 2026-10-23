@@ -10,11 +10,34 @@
 # since a new nightly or release candidate changes nothing in this repository.
 name: Lean versions
 on:
+  # Only pushes that can change behaviour across Lean versions: the runtime,
+  # the wrapper, the Lean sources, the build and this workflow.
   push:
+    paths:
+      - "c/**"
+      - "scripts/**"
+      - "**.lean"
+      - "lakefile.*"
+      - "lake-manifest.json"
+      - "lean-toolchain"
+      - "Tests/Smoke/**"
+      - ".github/workflows/lean-versions.yml"
   pull_request:
+    paths:
+      - "c/**"
+      - "scripts/**"
+      - "**.lean"
+      - "lakefile.*"
+      - "lake-manifest.json"
+      - "lean-toolchain"
+      - "Tests/Smoke/**"
+      - ".github/workflows/lean-versions.yml"
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
