@@ -1,0 +1,107 @@
+# On a version tag (v0.2.0, ...): build the leanprof command for macOS arm64
+# and Linux x86-64, smoke-test the packaged command, and attach the archives
+# to a GitHub release whose notes are the tag's CHANGELOG.md section.
+# See RELEASING.md.
+name: Release
+on:
+  push:
+    tags: ["v[0-9]*"]
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-15
+            platform: macos-arm64
+          # the oldest supported runner, so the binary runs on older glibc
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: lake build leanprof
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          name="leanprof-$TAG-$PLATFORM"
+          dir="dist/$name"
+          # leanprof finds its compiler wrapper and runtime source relative to
+          # the real executable: <root>/.lake/build/bin/leanprof
+          mkdir -p "$dir/.lake/build/bin" "$dir/bin" "$dir/c" "$dir/scripts"
+          cp .lake/build/bin/leanprof "$dir/.lake/build/bin/"
+          cp c/leanprof.c "$dir/c/"
+          cp scripts/leanprof-cc "$dir/scripts/"
+          cp LICENSE README.md CHANGELOG.md "$dir/"
+          cat > "$dir/bin/leanprof" <<'SH'
+          #!/bin/sh
+          # launcher: follows symlinks to find the release directory
+          self="$0"
+          while [ -L "$self" ]; do
+            link="$(readlink "$self")"
+            case "$link" in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+          done
+          root="$(cd "$(dirname "$self")/.." && pwd)"
+          exec "$root/.lake/build/bin/leanprof" "$@"
+          SH
+          chmod +x "$dir/bin/leanprof" "$dir/scripts/leanprof-cc"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "ARCHIVE=dist/$name.tar.gz" >> "$GITHUB_ENV"
+      - name: Smoke test the packaged command
+        run: |
+          mkdir -p "$RUNNER_TEMP/try" "$RUNNER_TEMP/bin"
+          tar -C "$RUNNER_TEMP/try" -xzf "$ARCHIVE"
+          ln -s "$RUNNER_TEMP"/try/leanprof-*/bin/leanprof "$RUNNER_TEMP/bin/leanprof"
+          "$RUNNER_TEMP/bin/leanprof" help | grep -q report-md
+          # profile this repository from outside, as with any Lake project
+          LEANPROF_QUIET=1 "$RUNNER_TEMP/bin/leanprof" run --json smoke.json copybug -- 500
+          grep -q '"shared":499' smoke.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # the section headed "## [X.Y.Z]" or "## X.Y.Z" for tag vX.Y.Z
+          awk -v v="${TAG#v}" '
+            /^## / { if (on) exit; on = (index($0, "[" v "]") || $2 == v) ; next }
+            on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md." > notes.md
+          cat notes.md
+          (cd dist && shasum -a 256 *.tar.gz > SHA256SUMS)
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "leanprof $TAG" --notes-file notes.md

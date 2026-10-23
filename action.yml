@@ -1,0 +1,143 @@
+name: leanprof
+description: >-
+  Profile a Lean 4 project on a pull request's base and head commits and comment
+  the changes in copies, allocations, calls, compile heartbeats and time.
+author: unbalancedparentheses
+branding:
+  icon: activity
+  color: blue
+
+inputs:
+  executable:
+    description: A `lean_exe` target to run with `leanprof run` (leave empty to only measure compile cost).
+    required: false
+    default: ""
+  args:
+    description: Arguments for the executable (shell-style quoting is honored).
+    required: false
+    default: ""
+  allocs:
+    description: Also count allocations (`leanprof run --allocs`).
+    required: false
+    default: "false"
+  elab-files:
+    description: Lean files whose compile cost to measure with `leanprof elab --heartbeats` (space-separated, relative to working-directory).
+    required: false
+    default: ""
+  fail-on:
+    description: >-
+      Exact metrics that fail the job when they regress: comma-separated from
+      copies, allocs, calls, heartbeats; or none.
+    required: false
+    default: copies
+  working-directory:
+    description: Directory of the Lake project, relative to the repository root.
+    required: false
+    default: "."
+  setup:
+    description: Shell command run in each checkout before profiling (for example `lake exe cache get`).
+    required: false
+    default: ""
+  base-ref:
+    description: "Commit to compare against (default: the pull request's base, or the previous commit of a push)."
+    required: false
+    default: ""
+  head-ref:
+    description: "Commit to measure (default: the pull request's head, or the pushed commit)."
+    required: false
+    default: ""
+  comment:
+    description: Post or update a comment on the pull request (falls back to the job summary when not allowed, as for forks).
+    required: false
+    default: "true"
+  comment-tag:
+    description: Distinguishes comments when the action runs more than once per pull request.
+    required: false
+    default: default
+  title:
+    description: Heading of the report.
+    required: false
+    default: ""
+  github-token:
+    description: "Token for the comment; the workflow needs `pull-requests: write`."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  report:
+    description: Path of the Markdown report.
+    value: ${{ steps.profile.outputs.report }}
+  regressed:
+    description: "\"true\" when a metric named by fail-on regressed."
+    value: ${{ steps.profile.outputs.regressed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install elan
+      shell: bash
+      run: |
+        if ! command -v elan >/dev/null 2>&1 && [ ! -x "$HOME/.elan/bin/elan" ]; then
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+        fi
+        echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+    - name: Cache key for leanprof's command
+      id: cli-key
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        hash=$(cat lean-toolchain lakefile.lean lake-manifest.json LeanprofCli.lean Leanprof.lean Leanprof/*.lean c/leanprof.c | shasum -a 256 | cut -c1-16)
+        echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+    - name: Restore leanprof's command
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.action_path }}/.lake
+        key: leanprof-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.cli-key.outputs.hash }}
+
+    - name: Build leanprof's command
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        export PATH="$HOME/.elan/bin:$PATH"
+        lake build leanprof
+
+    - name: Profile base and head
+      id: profile
+      shell: bash
+      env:
+        LP_EXE: ${{ inputs.executable }}
+        LP_ARGS: ${{ inputs.args }}
+        LP_ALLOCS: ${{ inputs.allocs }}
+        LP_ELAB_FILES: ${{ inputs.elab-files }}
+        LP_FAIL_ON: ${{ inputs.fail-on }}
+        LP_WORKDIR: ${{ inputs.working-directory }}
+        LP_SETUP: ${{ inputs.setup }}
+        LP_TITLE: ${{ inputs.title }}
+        LP_BASE: ${{ inputs.base-ref || github.event.pull_request.base.sha || github.event.before }}
+        LP_HEAD: ${{ inputs.head-ref || github.event.pull_request.head.sha || github.sha }}
+      run: bash "$GITHUB_ACTION_PATH/action/profile.sh"
+
+    - name: Comment
+      if: always() && steps.profile.outputs.report != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        LP_COMMENT: ${{ inputs.comment }}
+        LP_TAG: ${{ inputs.comment-tag }}
+        LP_REPORT: ${{ steps.profile.outputs.report }}
+        LP_PR: ${{ github.event.pull_request.number }}
+        LP_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      run: bash "$GITHUB_ACTION_PATH/action/comment.sh"
+
+    - name: Verdict
+      if: steps.profile.outputs.regressed == 'true' || steps.profile.outputs.head-failed == 'true'
+      shell: bash
+      run: |
+        if [ "${{ steps.profile.outputs.head-failed }}" = true ]; then
+          echo "::error::leanprof could not profile the head commit (see the log of 'Profile base and head')"
+        else
+          echo "::error::leanprof: a metric in fail-on (${{ inputs.fail-on }}) regressed; see the report"
+        fi
+        exit 1

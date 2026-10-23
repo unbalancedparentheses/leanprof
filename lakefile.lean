@@ -3,6 +3,12 @@ open Lake DSL System
 
 package leanprof where
   version := v!"0.1.0"
+  description := "Profiler for compiled Lean 4 programs: time per scope, hidden copies of shared arrays and strings, allocations, tasks and compile cost, with exact regression checks for CI"
+  keywords := #["profiler", "performance", "devtool", "cli", "benchmarking", "ci"]
+  homepage := "https://github.com/unbalancedparentheses/leanprof/tree/main/docs/guide"
+  license := "MIT"
+  licenseFiles := #["LICENSE"]
+  readmeFile := "README.md"
 
 /-- Flags that route the runtime's copy, task-spawn and blocking-wait paths
 through leanprof's shims. Add them to `moreLeancArgs` of any executable whose

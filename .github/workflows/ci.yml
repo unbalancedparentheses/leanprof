@@ -66,6 +66,18 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof run --json large.json copybug -- 2000
           lake exe leanprof compare small.json small.json
           if lake exe leanprof compare small.json large.json; then echo "expected a regression"; exit 1; fi
+      - name: report-md (the pull-request comment of the GitHub Action)
+        run: |
+          lake exe leanprof report-md small.json small.json | tee same.md
+          grep -q '✅ no regressions' same.md
+          grep -q '| copies | 999 | 999 | 0 | ✅ pass |' same.md
+          if lake exe leanprof report-md small.json large.json > worse.md; then echo "expected a regression"; exit 1; fi
+          cat worse.md
+          grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ❌ fail |' worse.md
+          grep -q '| calls | 10,948 | 10,948 | 0 | ✅ pass |' worse.md
+          grep -q '`buildWithHistory (in Std.Legacy.Range.forIn.\{0,1\}.loop) \[Array\] in buildWithHistory`' worse.md
+          lake exe leanprof report-md --fail-on none small.json large.json | grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ⚠️ worse (not enforced) |'
+          if lake exe leanprof report-md --fail-on bogus small.json large.json; then echo "expected an error"; exit 1; fi
       - name: Autoresearch demo (measure and judge)
         run: sh research/demo/run.sh
       - name: Inlay hints through the language server
@@ -89,6 +101,9 @@ jobs:
           lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean
           git checkout Examples/ElabHeavy.lean
           if lake exe leanprof compare base.json .lake/leanprof/elab.json; then echo "expected a regression"; exit 1; fi
+          lake exe leanprof report-md --fail-on none base.json .lake/leanprof/elab.json | tee elab.md
+          grep -q '| compile heartbeats |.*| ⚠️ worse (not enforced) |' elab.md
+          if lake exe leanprof report-md --fail-on heartbeats base.json .lake/leanprof/elab.json > /dev/null; then echo "expected a regression"; exit 1; fi
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |

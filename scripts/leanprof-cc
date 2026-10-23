@@ -61,9 +61,21 @@ esac
 # When linking, export symbols so the report can name functions,
 # find the toolchain's static libraries (gmp, libuv, ...), and link
 # leanprof's runtime into projects that do not depend on leanprof
-# (LEANPROF_RUNTIME, set by `leanprof run`)
+# (LEANPROF_RUNTIME, set by `leanprof run`), unless the link already has
+# leanprof's runtime library (a checkout of leanprof itself): GNU ld would
+# then see every symbol twice
 case " $* " in
   *" -c "*) ;;
-  *) set -- -rdynamic "-L$prefix/lib" "$@" ${LEANPROF_RUNTIME:+"$LEANPROF_RUNTIME"} ;;
+  *)
+    runtime="${LEANPROF_RUNTIME:-}"
+    if [ -n "$runtime" ]; then
+      for a in "$@"; do
+        case "$a" in
+          *libleanprof_c.a) runtime= ;;
+          @*) grep -q 'libleanprof_c\.a' "${a#@}" 2>/dev/null && runtime= ;;
+        esac
+      done
+    fi
+    set -- -rdynamic "-L$prefix/lib" "$@" ${runtime:+"$runtime"} ;;
 esac
 exec "$real" "$@"
