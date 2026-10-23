@@ -118,7 +118,16 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
      parseSrcRange "omega" == none && shortKind "Lean.Parser.Tactic.omega" == "omega") ""
   check "elab: a command named without the `set_option … in` and `open … in` before it"
     (dropInPrefix "set_option maxHeartbeats 400000 in open Foo Bar in theorem t : True := trivial" ==
-      "theorem t : True := trivial" && dropInPrefix "open Foo" == "open Foo") ""
+      "theorem t : True := trivial" && dropInPrefix "open Foo" == "open Foo" &&
+     dropInPrefix "variable (W' : C R) in\ndef f := 1" == "def f := 1" &&
+     dropInPrefix "variable (W' : C R)" == "variable (W' : C R)") ""
+  -- with the driver, `variable (W') in /-- long doc -/ def f` is one command: named after `f`
+  let src := #["", "", "variable (W') in", "/-- A doc comment longer than the description that is kept of the", "command. -/",
+    "noncomputable def negDblY (P : Fin 3 → R) : R :="]
+  let w := ({ src } : Acc).addMessage "F.lean" 1 (msg "[Elab.command] [5] ✅️ variable (W') in\n  /-- A doc comment longer than" 0)
+  check "elab: a declaration under `variable … in` and a long doc comment is named after the declaration"
+    ((((w.lines.get? "F.lean:3").map (·.name)).getD "").startsWith "noncomputable def negDblY")
+    (((w.lines.get? "F.lean:3").map (·.name)).getD "")
   let drv := "[Elab.command] [100] ✅️ theorem t : True := by skip; trivial
   [Leanprof.tactic] [60] ✅️ @2:3-3:10 Lean.Parser.Tactic.tacticSeq | skip; trivial
     [Leanprof.tactic] [10] ✅️ @2:3-2:7 Lean.Parser.Tactic.skip | skip
@@ -137,6 +146,39 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   check "elab: source nodes are transparent in self time per kind"
     (near (e.byClass.getD "Elab.command" 0) 70 && near (e.byClass.getD "Meta.isDefEq" 0) 30 &&
       !e.byClass.contains "Leanprof.tactic") s!"{e.byClass.toList}"
+  -- `variable (k) in theorem t ...` (lines 3-4) is elaborated as `section variable (k)
+  -- theorem t ... end`: the inner commands are at their own positions, the outer one spans them
+  let pos (l c : Nat) : Lean.Json := Lean.Json.mkObj [("line", l), ("column", c)]
+  let msg2 (data : String) (l c l' c' : Nat) : Lean.Json := Lean.Json.mkObj [("data", .str data),
+    ("pos", pos l c), ("endPos", pos l' c')]
+  let b := ({} : Acc).addMessage "F.lean" 1 (msg2 "[Elab.command] [1] ✅️ section" 3 19 3 21)
+  let b := b.addMessage "F.lean" 1 (msg2 "[Elab.command] [2] ✅️ variable (k : Nat)" 3 0 3 18)
+  let b := b.addMessage "F.lean" 1 (msg2 "[Elab.command] [100] ✅️ theorem t : True := trivial" 4 0 4 30)
+  let b := b.addMessage "F.lean" 1 (msg2 "[Elab.command] [1] ✅️ end" 3 19 3 21)
+  let b := b.addMessage "F.lean" 1 (msg2 "[Elab.command] [110] ✅️ variable (k : Nat) in theorem t : True := trivial" 3 0 4 30)
+  let b := b.addMessage "F.lean" 1 (msg2 "[Elab.command] [5] ✅️ def c := 1" 6 0 6 10)
+  check "elab: a command wrapped in `variable ... in` is not counted twice, and keeps its cost on its line"
+    (near b.grand 115 && near ((b.lines.get? "F.lean:4").map (·.total) |>.getD 0) 100 &&
+      near ((b.lines.get? "F.lean:3").map (·.total) |>.getD 0) 10) s!"grand={b.grand}"
+  let c := ({} : Acc).addMessage "F.lean" 1 (msg2 "[Elab.command] [1] ✅️ variable (W')" 8 0 8 3)
+  let c := c.addMessage "F.lean" 1 (msg2 "[Elab.command] [50] ✅️ def dblX (P : Nat) : Nat := P" 8 0 9 10)
+  check "elab: a line is named after the command on it that declares something"
+    (((c.lines.get? "F.lean:8").map (·.name)).getD "" == "def dblX (P : Nat) : Nat := P") ""
+  -- a declaration whose doc comment is longer than the description kept: named from the source
+  let src := #["variable (k) in", "/-- A long doc", "comment. -/", "def foo (n : Nat) : Nat := n"]
+  let d := ({ src } : Acc).addMessage "F.lean" 1 (msg2 "[Elab.command] [1] ✅️ section" 2 0 2 3)
+  let d := d.addMessage "F.lean" 1 (msg2 "[Elab.command] [50] ✅️ /--\n    A long doc" 2 0 4 30)
+  check "elab: a declaration with a long doc comment is named after the declaration"
+    (((d.lines.get? "F.lean:2").map (·.name)).getD "" == "def foo (n : Nat) : Nat := n")
+    (((d.lines.get? "F.lean:2").map (·.name)).getD "")
+  let src := #["variable {k : Nat}", "", "variable (k) in", "/-- A long documentation comment that goes on for a while, longer than the text leanprof keeps of", "a description, so that its end is not in it.", "", "More text here. -/", "def foo (n : Nat) : Nat := (List.range (n + k)).foldl (· + ·) 0"]
+  let e := ({ src } : Acc).addMessage "F.lean" 1 (msg2 "[Elab.command] [0.000027] ✅️ section" 3 13 3 15)
+  let e := e.addMessage "F.lean" 1 (msg2 "[Elab.command] [0.000080] ✅️ variable (k)\n  [Elab.step] [0.000046] ✅️ expected type: Type, term\n      Nat" 3 0 3 12)
+  let e := e.addMessage "F.lean" 1 (msg2 "[Elab.command] [0.000016] ✅️ failed to pretty print term (use 'set_option pp.rawOnError true' for raw representation)" 3 13 3 15)
+  let e := e.addMessage "F.lean" 1 (msg2 "[Elab.command] [0.001639] ✅️ /--\n    A long documentation comment that goes on for a while, longer than the text leanprof keeps of\n    a description, so that its end is not in it.\n    \n    More text here. -/\n  def foo (n : Nat) : Nat :=\n    (List.range (n + k)).foldl (fun x1 x2 => x1 + x2) 0" 4 0 8 63)
+  check "elab: a declaration whose kept text ends with its doc comment is named from the source"
+    ((((e.lines.get? "F.lean:4").map (·.name)).getD "").startsWith "def foo (n : Nat)")
+    (((e.lines.get? "F.lean:4").map (·.name)).getD "")
   check "elab: digit groups" (groupDigits 10000 == "10,000" && groupDigits 1234567 == "1,234,567" && groupDigits 999 == "999") ""
   check "elab: leading constants" (leadingConst "@instFoo to X" == some "instFoo" && leadingConst "inst✝ to X" == none &&
     leadingConst "?m.1 x" == none && leadingConst "Size α" == some "Size") ""

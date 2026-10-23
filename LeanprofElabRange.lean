@@ -57,13 +57,20 @@ def seqKind (k : String) : Bool :=
 /-- A command's text without the `set_option o v in` and `open X in` before it: the
 driver names a command by its source, where Lean printed the command it expands to. -/
 partial def dropInPrefix (text : String) : String :=
-  let words := text.splitOn " "
+  let words := (text.replace "\n" " ").splitOn " "
+  -- up to `in`, within the first `n` words
+  let upToIn (rest : List String) (n : Nat) : Option (List String) :=
+    match (rest.take n).findIdx? (· == "in") with
+    | some i => some (rest.drop (i + 1))
+    | none => none
   let rest? : Option (List String) := match words with
     | "set_option" :: _ :: _ :: "in" :: rest => some rest
-    | "open" :: rest =>
-      match (rest.take 8).findIdx? (· == "in") with
-      | some i => some (rest.drop (i + 1))
-      | none => none
+    | "open" :: rest => upToIn rest 8
+    -- `variable (x : T) in`, `omit [Foo α] in`, `include h in`, `attribute [local simp] f in`
+    | "variable" :: rest => upToIn rest 40
+    | "omit" :: rest => upToIn rest 40
+    | "include" :: rest => upToIn rest 40
+    | "attribute" :: rest => upToIn rest 40
     | _ => none
   match rest? with
   | some rest => dropInPrefix (" ".intercalate (rest.dropWhile (· == "")))

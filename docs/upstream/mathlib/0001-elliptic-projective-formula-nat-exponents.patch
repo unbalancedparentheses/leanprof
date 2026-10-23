@@ -1,0 +1,201 @@
+--- a/Mathlib/AlgebraicGeometry/EllipticCurve/Projective/Formula.lean
++++ b/Mathlib/AlgebraicGeometry/EllipticCurve/Projective/Formula.lean
+@@ -166,7 +166,7 @@
+ 
+ More specifically, the unit `u` such that `W.add P P = u • ![0, 1, 0]` where `P = W.neg P`. -/
+ noncomputable def dblU (P : Fin 3 → F) : F :=
+-  eval P W.polynomialX ^ 3 / P z ^ 2
++  eval P W.polynomialX ^ (3 : ℕ) / P z ^ (2 : ℕ)
+ 
+ lemma dblU_eq (P : Fin 3 → F) : W.dblU P =
+     (W.a₁ * P y * P z - (3 * P x ^ 2 + 2 * W.a₂ * P x * P z + W.a₄ * P z ^ 2)) ^ 3 / P z ^ 2 := by
+@@ -195,7 +195,7 @@
+ /-- The `Z`-coordinate of a representative of `2 • P` for a projective point representative `P` on a
+ Weierstrass curve. -/
+ def dblZ (P : Fin 3 → R) : R :=
+-  P z * (P y - W'.negY P) ^ 3
++  P z * (P y - W'.negY P) ^ (3 : ℕ)
+ 
+ lemma dblZ_smul (P : Fin 3 → R) (u : R) : W'.dblZ (u • P) = u ^ 4 * W'.dblZ P := by
+   simp only [dblZ, negY_smul, smul_fin3_ext]
+@@ -239,29 +239,29 @@
+ /-- The `X`-coordinate of a representative of `2 • P` for a projective point representative `P` on a
+ Weierstrass curve. -/
+ noncomputable def dblX (P : Fin 3 → R) : R :=
+-  2 * P x * P y ^ 3 + 3 * W'.a₁ * P x ^ 2 * P y ^ 2 + 6 * W'.a₂ * P x ^ 3 * P y
+-    - 8 * W'.a₂ * P y ^ 3 * P z + 9 * W'.a₃ * P x ^ 4 - 6 * W'.a₃ * P x * P y ^ 2 * P z
+-    - 6 * W'.a₄ * P x ^ 2 * P y * P z - 18 * W'.a₆ * P x * P y * P z ^ 2
+-    + 3 * W'.a₁ ^ 2 * P x ^ 3 * P y - 2 * W'.a₁ ^ 2 * P y ^ 3 * P z + 3 * W'.a₁ * W'.a₂ * P x ^ 4
+-    - 12 * W'.a₁ * W'.a₂ * P x * P y ^ 2 * P z - 9 * W'.a₁ * W'.a₃ * P x ^ 2 * P y * P z
+-    - 3 * W'.a₁ * W'.a₄ * P x ^ 3 * P z - 9 * W'.a₁ * W'.a₆ * P x ^ 2 * P z ^ 2
+-    + 8 * W'.a₂ ^ 2 * P x ^ 2 * P y * P z + 12 * W'.a₂ * W'.a₃ * P x ^ 3 * P z
+-    - 12 * W'.a₂ * W'.a₃ * P y ^ 2 * P z ^ 2 + 8 * W'.a₂ * W'.a₄ * P x * P y * P z ^ 2
+-    - 12 * W'.a₃ ^ 2 * P x * P y * P z ^ 2 + 6 * W'.a₃ * W'.a₄ * P x ^ 2 * P z ^ 2
+-    + 2 * W'.a₄ ^ 2 * P y * P z ^ 3 + W'.a₁ ^ 3 * P x ^ 4 - 3 * W'.a₁ ^ 3 * P x * P y ^ 2 * P z
+-    - 2 * W'.a₁ ^ 2 * W'.a₂ * P x ^ 2 * P y * P z - 3 * W'.a₁ ^ 2 * W'.a₃ * P y ^ 2 * P z ^ 2
+-    + 2 * W'.a₁ ^ 2 * W'.a₄ * P x * P y * P z ^ 2 + 4 * W'.a₁ * W'.a₂ ^ 2 * P x ^ 3 * P z
+-    - 8 * W'.a₁ * W'.a₂ * W'.a₃ * P x * P y * P z ^ 2
+-    + 4 * W'.a₁ * W'.a₂ * W'.a₄ * P x ^ 2 * P z ^ 2 - 3 * W'.a₁ * W'.a₃ ^ 2 * P x ^ 2 * P z ^ 2
+-    + 2 * W'.a₁ * W'.a₃ * W'.a₄ * P y * P z ^ 3 + W'.a₁ * W'.a₄ ^ 2 * P x * P z ^ 3
+-    + 4 * W'.a₂ ^ 2 * W'.a₃ * P x ^ 2 * P z ^ 2 - 6 * W'.a₂ * W'.a₃ ^ 2 * P y * P z ^ 3
+-    + 4 * W'.a₂ * W'.a₃ * W'.a₄ * P x * P z ^ 3 - 2 * W'.a₃ ^ 3 * P x * P z ^ 3
+-    + W'.a₃ * W'.a₄ ^ 2 * P z ^ 4 - W'.a₁ ^ 4 * P x ^ 2 * P y * P z
+-    + W'.a₁ ^ 3 * W'.a₂ * P x ^ 3 * P z - 2 * W'.a₁ ^ 3 * W'.a₃ * P x * P y * P z ^ 2
+-    + W'.a₁ ^ 3 * W'.a₄ * P x ^ 2 * P z ^ 2 + W'.a₁ ^ 2 * W'.a₂ * W'.a₃ * P x ^ 2 * P z ^ 2
+-    - W'.a₁ ^ 2 * W'.a₃ ^ 2 * P y * P z ^ 3 + 2 * W'.a₁ ^ 2 * W'.a₃ * W'.a₄ * P x * P z ^ 3
+-    - W'.a₁ * W'.a₂ * W'.a₃ ^ 2 * P x * P z ^ 3 - W'.a₂ * W'.a₃ ^ 3 * P z ^ 4
+-    + W'.a₁ * W'.a₃ ^ 2 * W'.a₄ * P z ^ 4
++  2 * P x * P y ^ (3 : ℕ) + 3 * W'.a₁ * P x ^ (2 : ℕ) * P y ^ (2 : ℕ) + 6 * W'.a₂ * P x ^ (3 : ℕ) * P y
++    - 8 * W'.a₂ * P y ^ (3 : ℕ) * P z + 9 * W'.a₃ * P x ^ (4 : ℕ) - 6 * W'.a₃ * P x * P y ^ (2 : ℕ) * P z
++    - 6 * W'.a₄ * P x ^ (2 : ℕ) * P y * P z - 18 * W'.a₆ * P x * P y * P z ^ (2 : ℕ)
++    + 3 * W'.a₁ ^ (2 : ℕ) * P x ^ (3 : ℕ) * P y - 2 * W'.a₁ ^ (2 : ℕ) * P y ^ (3 : ℕ) * P z + 3 * W'.a₁ * W'.a₂ * P x ^ (4 : ℕ)
++    - 12 * W'.a₁ * W'.a₂ * P x * P y ^ (2 : ℕ) * P z - 9 * W'.a₁ * W'.a₃ * P x ^ (2 : ℕ) * P y * P z
++    - 3 * W'.a₁ * W'.a₄ * P x ^ (3 : ℕ) * P z - 9 * W'.a₁ * W'.a₆ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    + 8 * W'.a₂ ^ (2 : ℕ) * P x ^ (2 : ℕ) * P y * P z + 12 * W'.a₂ * W'.a₃ * P x ^ (3 : ℕ) * P z
++    - 12 * W'.a₂ * W'.a₃ * P y ^ (2 : ℕ) * P z ^ (2 : ℕ) + 8 * W'.a₂ * W'.a₄ * P x * P y * P z ^ (2 : ℕ)
++    - 12 * W'.a₃ ^ (2 : ℕ) * P x * P y * P z ^ (2 : ℕ) + 6 * W'.a₃ * W'.a₄ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    + 2 * W'.a₄ ^ (2 : ℕ) * P y * P z ^ (3 : ℕ) + W'.a₁ ^ (3 : ℕ) * P x ^ (4 : ℕ) - 3 * W'.a₁ ^ (3 : ℕ) * P x * P y ^ (2 : ℕ) * P z
++    - 2 * W'.a₁ ^ (2 : ℕ) * W'.a₂ * P x ^ (2 : ℕ) * P y * P z - 3 * W'.a₁ ^ (2 : ℕ) * W'.a₃ * P y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    + 2 * W'.a₁ ^ (2 : ℕ) * W'.a₄ * P x * P y * P z ^ (2 : ℕ) + 4 * W'.a₁ * W'.a₂ ^ (2 : ℕ) * P x ^ (3 : ℕ) * P z
++    - 8 * W'.a₁ * W'.a₂ * W'.a₃ * P x * P y * P z ^ (2 : ℕ)
++    + 4 * W'.a₁ * W'.a₂ * W'.a₄ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ) - 3 * W'.a₁ * W'.a₃ ^ (2 : ℕ) * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    + 2 * W'.a₁ * W'.a₃ * W'.a₄ * P y * P z ^ (3 : ℕ) + W'.a₁ * W'.a₄ ^ (2 : ℕ) * P x * P z ^ (3 : ℕ)
++    + 4 * W'.a₂ ^ (2 : ℕ) * W'.a₃ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ) - 6 * W'.a₂ * W'.a₃ ^ (2 : ℕ) * P y * P z ^ (3 : ℕ)
++    + 4 * W'.a₂ * W'.a₃ * W'.a₄ * P x * P z ^ (3 : ℕ) - 2 * W'.a₃ ^ (3 : ℕ) * P x * P z ^ (3 : ℕ)
++    + W'.a₃ * W'.a₄ ^ (2 : ℕ) * P z ^ (4 : ℕ) - W'.a₁ ^ (4 : ℕ) * P x ^ (2 : ℕ) * P y * P z
++    + W'.a₁ ^ (3 : ℕ) * W'.a₂ * P x ^ (3 : ℕ) * P z - 2 * W'.a₁ ^ (3 : ℕ) * W'.a₃ * P x * P y * P z ^ (2 : ℕ)
++    + W'.a₁ ^ (3 : ℕ) * W'.a₄ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ) + W'.a₁ ^ (2 : ℕ) * W'.a₂ * W'.a₃ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - W'.a₁ ^ (2 : ℕ) * W'.a₃ ^ (2 : ℕ) * P y * P z ^ (3 : ℕ) + 2 * W'.a₁ ^ (2 : ℕ) * W'.a₃ * W'.a₄ * P x * P z ^ (3 : ℕ)
++    - W'.a₁ * W'.a₂ * W'.a₃ ^ (2 : ℕ) * P x * P z ^ (3 : ℕ) - W'.a₂ * W'.a₃ ^ (3 : ℕ) * P z ^ (4 : ℕ)
++    + W'.a₁ * W'.a₃ ^ (2 : ℕ) * W'.a₄ * P z ^ (4 : ℕ)
+ 
+ lemma dblX_eq' {P : Fin 3 → R} (hP : W'.Equation P) : W'.dblX P * P z =
+     (eval P W'.polynomialX ^ 2 - W'.a₁ * eval P W'.polynomialX * P z * (P y - W'.negY P)
+@@ -310,35 +310,35 @@
+ /-- The `Y`-coordinate of a representative of `-(2 • P)` for a projective point representative `P`
+ on a Weierstrass curve. -/
+ noncomputable def negDblY (P : Fin 3 → R) : R :=
+-  -P y ^ 4 - 3 * W'.a₁ * P x * P y ^ 3 - 9 * W'.a₃ * P x ^ 3 * P y + 3 * W'.a₃ * P y ^ 3 * P z
+-    - 3 * W'.a₄ * P x * P y ^ 2 * P z - 27 * W'.a₆ * P x ^ 3 * P z + 9 * W'.a₆ * P y ^ 2 * P z ^ 2
+-    - 3 * W'.a₁ ^ 2 * P x ^ 2 * P y ^ 2 + 4 * W'.a₁ * W'.a₂ * P y ^ 3 * P z
+-    - 3 * W'.a₁ * W'.a₂ * P x ^ 3 * P y - 9 * W'.a₁ * W'.a₃ * P x ^ 4
+-    + 6 * W'.a₁ * W'.a₃ * P x * P y ^ 2 * P z + 18 * W'.a₁ * W'.a₆ * P x * P y * P z ^ 2
+-    + 9 * W'.a₂ ^ 2 * P x ^ 4 - 8 * W'.a₂ ^ 2 * P x * P y ^ 2 * P z
+-    - 9 * W'.a₂ * W'.a₃ * P x ^ 2 * P y * P z + 9 * W'.a₂ * W'.a₄ * P x ^ 3 * P z
+-    - 4 * W'.a₂ * W'.a₄ * P y ^ 2 * P z ^ 2 - 27 * W'.a₂ * W'.a₆ * P x ^ 2 * P z ^ 2
+-    - 9 * W'.a₃ ^ 2 * P x ^ 3 * P z + 6 * W'.a₃ ^ 2 * P y ^ 2 * P z ^ 2
+-    - 12 * W'.a₃ * W'.a₄ * P x * P y * P z ^ 2 + 9 * W'.a₄ ^ 2 * P x ^ 2 * P z ^ 2
+-    - 2 * W'.a₁ ^ 3 * P x ^ 3 * P y + W'.a₁ ^ 3 * P y ^ 3 * P z + 3 * W'.a₁ ^ 2 * W'.a₂ * P x ^ 4
+-    + 2 * W'.a₁ ^ 2 * W'.a₂ * P x * P y ^ 2 * P z + 3 * W'.a₁ ^ 2 * W'.a₃ * P x ^ 2 * P y * P z
+-    + 3 * W'.a₁ ^ 2 * W'.a₄ * P x ^ 3 * P z - W'.a₁ ^ 2 * W'.a₄ * P y ^ 2 * P z ^ 2
+-    - 12 * W'.a₁ * W'.a₂ ^ 2 * P x ^ 2 * P y * P z - 6 * W'.a₁ * W'.a₂ * W'.a₃ * P x ^ 3 * P z
+-    + 4 * W'.a₁ * W'.a₂ * W'.a₃ * P y ^ 2 * P z ^ 2
+-    - 8 * W'.a₁ * W'.a₂ * W'.a₄ * P x * P y * P z ^ 2 + 6 * W'.a₁ * W'.a₃ ^ 2 * P x * P y * P z ^ 2
+-    - W'.a₁ * W'.a₄ ^ 2 * P y * P z ^ 3 + 8 * W'.a₂ ^ 3 * P x ^ 3 * P z
+-    - 8 * W'.a₂ ^ 2 * W'.a₃ * P x * P y * P z ^ 2 + 12 * W'.a₂ ^ 2 * W'.a₄ * P x ^ 2 * P z ^ 2
+-    - 9 * W'.a₂ * W'.a₃ ^ 2 * P x ^ 2 * P z ^ 2 - 4 * W'.a₂ * W'.a₃ * W'.a₄ * P y * P z ^ 3
+-    + 6 * W'.a₂ * W'.a₄ ^ 2 * P x * P z ^ 3 + W'.a₃ ^ 3 * P y * P z ^ 3
+-    - 3 * W'.a₃ ^ 2 * W'.a₄ * P x * P z ^ 3 + W'.a₄ ^ 3 * P z ^ 4 + W'.a₁ ^ 4 * P x * P y ^ 2 * P z
+-    - 3 * W'.a₁ ^ 3 * W'.a₂ * P x ^ 2 * P y * P z + W'.a₁ ^ 3 * W'.a₃ * P y ^ 2 * P z ^ 2
+-    - 2 * W'.a₁ ^ 3 * W'.a₄ * P x * P y * P z ^ 2 + 2 * W'.a₁ ^ 2 * W'.a₂ ^ 2 * P x ^ 3 * P z
+-    - 2 * W'.a₁ ^ 2 * W'.a₂ * W'.a₃ * P x * P y * P z ^ 2
+-    + 3 * W'.a₁ ^ 2 * W'.a₂ * W'.a₄ * P x ^ 2 * P z ^ 2
+-    - 2 * W'.a₁ ^ 2 * W'.a₃ * W'.a₄ * P y * P z ^ 3 + W'.a₁ ^ 2 * W'.a₄ ^ 2 * P x * P z ^ 3
+-    + W'.a₁ * W'.a₂ * W'.a₃ ^ 2 * P y * P z ^ 3 + 2 * W'.a₁ * W'.a₂ * W'.a₃ * W'.a₄ * P x * P z ^ 3
+-    + W'.a₁ * W'.a₃ * W'.a₄ ^ 2 * P z ^ 4 - 2 * W'.a₂ ^ 2 * W'.a₃ ^ 2 * P x * P z ^ 3
+-    - W'.a₂ * W'.a₃ ^ 2 * W'.a₄ * P z ^ 4
++  -P y ^ (4 : ℕ) - 3 * W'.a₁ * P x * P y ^ (3 : ℕ) - 9 * W'.a₃ * P x ^ (3 : ℕ) * P y + 3 * W'.a₃ * P y ^ (3 : ℕ) * P z
++    - 3 * W'.a₄ * P x * P y ^ (2 : ℕ) * P z - 27 * W'.a₆ * P x ^ (3 : ℕ) * P z + 9 * W'.a₆ * P y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 3 * W'.a₁ ^ (2 : ℕ) * P x ^ (2 : ℕ) * P y ^ (2 : ℕ) + 4 * W'.a₁ * W'.a₂ * P y ^ (3 : ℕ) * P z
++    - 3 * W'.a₁ * W'.a₂ * P x ^ (3 : ℕ) * P y - 9 * W'.a₁ * W'.a₃ * P x ^ (4 : ℕ)
++    + 6 * W'.a₁ * W'.a₃ * P x * P y ^ (2 : ℕ) * P z + 18 * W'.a₁ * W'.a₆ * P x * P y * P z ^ (2 : ℕ)
++    + 9 * W'.a₂ ^ (2 : ℕ) * P x ^ (4 : ℕ) - 8 * W'.a₂ ^ (2 : ℕ) * P x * P y ^ (2 : ℕ) * P z
++    - 9 * W'.a₂ * W'.a₃ * P x ^ (2 : ℕ) * P y * P z + 9 * W'.a₂ * W'.a₄ * P x ^ (3 : ℕ) * P z
++    - 4 * W'.a₂ * W'.a₄ * P y ^ (2 : ℕ) * P z ^ (2 : ℕ) - 27 * W'.a₂ * W'.a₆ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 9 * W'.a₃ ^ (2 : ℕ) * P x ^ (3 : ℕ) * P z + 6 * W'.a₃ ^ (2 : ℕ) * P y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 12 * W'.a₃ * W'.a₄ * P x * P y * P z ^ (2 : ℕ) + 9 * W'.a₄ ^ (2 : ℕ) * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 2 * W'.a₁ ^ (3 : ℕ) * P x ^ (3 : ℕ) * P y + W'.a₁ ^ (3 : ℕ) * P y ^ (3 : ℕ) * P z + 3 * W'.a₁ ^ (2 : ℕ) * W'.a₂ * P x ^ (4 : ℕ)
++    + 2 * W'.a₁ ^ (2 : ℕ) * W'.a₂ * P x * P y ^ (2 : ℕ) * P z + 3 * W'.a₁ ^ (2 : ℕ) * W'.a₃ * P x ^ (2 : ℕ) * P y * P z
++    + 3 * W'.a₁ ^ (2 : ℕ) * W'.a₄ * P x ^ (3 : ℕ) * P z - W'.a₁ ^ (2 : ℕ) * W'.a₄ * P y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 12 * W'.a₁ * W'.a₂ ^ (2 : ℕ) * P x ^ (2 : ℕ) * P y * P z - 6 * W'.a₁ * W'.a₂ * W'.a₃ * P x ^ (3 : ℕ) * P z
++    + 4 * W'.a₁ * W'.a₂ * W'.a₃ * P y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 8 * W'.a₁ * W'.a₂ * W'.a₄ * P x * P y * P z ^ (2 : ℕ) + 6 * W'.a₁ * W'.a₃ ^ (2 : ℕ) * P x * P y * P z ^ (2 : ℕ)
++    - W'.a₁ * W'.a₄ ^ (2 : ℕ) * P y * P z ^ (3 : ℕ) + 8 * W'.a₂ ^ (3 : ℕ) * P x ^ (3 : ℕ) * P z
++    - 8 * W'.a₂ ^ (2 : ℕ) * W'.a₃ * P x * P y * P z ^ (2 : ℕ) + 12 * W'.a₂ ^ (2 : ℕ) * W'.a₄ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 9 * W'.a₂ * W'.a₃ ^ (2 : ℕ) * P x ^ (2 : ℕ) * P z ^ (2 : ℕ) - 4 * W'.a₂ * W'.a₃ * W'.a₄ * P y * P z ^ (3 : ℕ)
++    + 6 * W'.a₂ * W'.a₄ ^ (2 : ℕ) * P x * P z ^ (3 : ℕ) + W'.a₃ ^ (3 : ℕ) * P y * P z ^ (3 : ℕ)
++    - 3 * W'.a₃ ^ (2 : ℕ) * W'.a₄ * P x * P z ^ (3 : ℕ) + W'.a₄ ^ (3 : ℕ) * P z ^ (4 : ℕ) + W'.a₁ ^ (4 : ℕ) * P x * P y ^ (2 : ℕ) * P z
++    - 3 * W'.a₁ ^ (3 : ℕ) * W'.a₂ * P x ^ (2 : ℕ) * P y * P z + W'.a₁ ^ (3 : ℕ) * W'.a₃ * P y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 2 * W'.a₁ ^ (3 : ℕ) * W'.a₄ * P x * P y * P z ^ (2 : ℕ) + 2 * W'.a₁ ^ (2 : ℕ) * W'.a₂ ^ (2 : ℕ) * P x ^ (3 : ℕ) * P z
++    - 2 * W'.a₁ ^ (2 : ℕ) * W'.a₂ * W'.a₃ * P x * P y * P z ^ (2 : ℕ)
++    + 3 * W'.a₁ ^ (2 : ℕ) * W'.a₂ * W'.a₄ * P x ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    - 2 * W'.a₁ ^ (2 : ℕ) * W'.a₃ * W'.a₄ * P y * P z ^ (3 : ℕ) + W'.a₁ ^ (2 : ℕ) * W'.a₄ ^ (2 : ℕ) * P x * P z ^ (3 : ℕ)
++    + W'.a₁ * W'.a₂ * W'.a₃ ^ (2 : ℕ) * P y * P z ^ (3 : ℕ) + 2 * W'.a₁ * W'.a₂ * W'.a₃ * W'.a₄ * P x * P z ^ (3 : ℕ)
++    + W'.a₁ * W'.a₃ * W'.a₄ ^ (2 : ℕ) * P z ^ (4 : ℕ) - 2 * W'.a₂ ^ (2 : ℕ) * W'.a₃ ^ (2 : ℕ) * P x * P z ^ (3 : ℕ)
++    - W'.a₂ * W'.a₃ ^ (2 : ℕ) * W'.a₄ * P z ^ (4 : ℕ)
+ 
+ lemma negDblY_eq' {P : Fin 3 → R} (hP : W'.Equation P) : W'.negDblY P * P z ^ 2 =
+     -eval P W'.polynomialX * (eval P W'.polynomialX ^ 2
+@@ -472,7 +472,7 @@
+ More specifically, the unit `u` such that `W.add P Q = u • ![0, 1, 0]` where `P x / P z = Q x / Q z`
+ but `P ≠ W.neg P`. -/
+ def addU (P Q : Fin 3 → F) : F :=
+-  -(P y * Q z - Q y * P z) ^ 3 / (P z * Q z)
++  -(P y * Q z - Q y * P z) ^ (3 : ℕ) / (P z * Q z)
+ 
+ lemma addU_smul (P Q : Fin 3 → F) (u v : F) : addU (u • P) (v • Q) = (u * v) ^ 2 * addU P Q := by
+   simp [field, addU]
+@@ -497,10 +497,10 @@
+ 
+ If the representatives of `P` and `Q` are equal, then this returns the value `0`. -/
+ def addZ (P Q : Fin 3 → R) : R :=
+-  -3 * P x ^ 2 * Q x * Q z + 3 * P x * Q x ^ 2 * P z + P y ^ 2 * Q z ^ 2 - Q y ^ 2 * P z ^ 2
+-    + W'.a₁ * P x * P y * Q z ^ 2 - W'.a₁ * Q x * Q y * P z ^ 2 - W'.a₂ * P x ^ 2 * Q z ^ 2
+-    + W'.a₂ * Q x ^ 2 * P z ^ 2 + W'.a₃ * P y * P z * Q z ^ 2 - W'.a₃ * Q y * P z ^ 2 * Q z
+-    - W'.a₄ * P x * P z * Q z ^ 2 + W'.a₄ * Q x * P z ^ 2 * Q z
++  -3 * P x ^ (2 : ℕ) * Q x * Q z + 3 * P x * Q x ^ (2 : ℕ) * P z + P y ^ (2 : ℕ) * Q z ^ (2 : ℕ) - Q y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    + W'.a₁ * P x * P y * Q z ^ (2 : ℕ) - W'.a₁ * Q x * Q y * P z ^ (2 : ℕ) - W'.a₂ * P x ^ (2 : ℕ) * Q z ^ (2 : ℕ)
++    + W'.a₂ * Q x ^ (2 : ℕ) * P z ^ (2 : ℕ) + W'.a₃ * P y * P z * Q z ^ (2 : ℕ) - W'.a₃ * Q y * P z ^ (2 : ℕ) * Q z
++    - W'.a₄ * P x * P z * Q z ^ (2 : ℕ) + W'.a₄ * Q x * P z ^ (2 : ℕ) * Q z
+ 
+ lemma addZ_eq' {P Q : Fin 3 → R} (hP : W'.Equation P) (hQ : W'.Equation Q) :
+     W'.addZ P Q * (P z * Q z) = (P x * Q z - Q x * P z) ^ 3 := by
+@@ -555,12 +555,12 @@
+ 
+ If the representatives of `P` and `Q` are equal, then this returns the value `0`. -/
+ def addX (P Q : Fin 3 → R) : R :=
+-  -P x * Q y ^ 2 * P z + Q x * P y ^ 2 * Q z - 2 * P x * P y * Q y * Q z + 2 * Q x * P y * Q y * P z
+-    - W'.a₁ * P x ^ 2 * Q y * Q z + W'.a₁ * Q x ^ 2 * P y * P z + W'.a₂ * P x ^ 2 * Q x * Q z
+-    - W'.a₂ * P x * Q x ^ 2 * P z - W'.a₃ * P x * P y * Q z ^ 2 + W'.a₃ * Q x * Q y * P z ^ 2
++  -P x * Q y ^ (2 : ℕ) * P z + Q x * P y ^ (2 : ℕ) * Q z - 2 * P x * P y * Q y * Q z + 2 * Q x * P y * Q y * P z
++    - W'.a₁ * P x ^ (2 : ℕ) * Q y * Q z + W'.a₁ * Q x ^ (2 : ℕ) * P y * P z + W'.a₂ * P x ^ (2 : ℕ) * Q x * Q z
++    - W'.a₂ * P x * Q x ^ (2 : ℕ) * P z - W'.a₃ * P x * P y * Q z ^ (2 : ℕ) + W'.a₃ * Q x * Q y * P z ^ (2 : ℕ)
+     - 2 * W'.a₃ * P x * Q y * P z * Q z + 2 * W'.a₃ * Q x * P y * P z * Q z
+-    + W'.a₄ * P x ^ 2 * Q z ^ 2 - W'.a₄ * Q x ^ 2 * P z ^ 2 + 3 * W'.a₆ * P x * P z * Q z ^ 2
+-    - 3 * W'.a₆ * Q x * P z ^ 2 * Q z
++    + W'.a₄ * P x ^ (2 : ℕ) * Q z ^ (2 : ℕ) - W'.a₄ * Q x ^ (2 : ℕ) * P z ^ (2 : ℕ) + 3 * W'.a₆ * P x * P z * Q z ^ (2 : ℕ)
++    - 3 * W'.a₆ * Q x * P z ^ (2 : ℕ) * Q z
+ 
+ lemma addX_eq' {P Q : Fin 3 → R} (hP : W'.Equation P) (hQ : W'.Equation Q) :
+     W'.addX P Q * (P z * Q z) ^ 2 =
+@@ -624,13 +624,13 @@
+ 
+ If the representatives of `P` and `Q` are equal, then this returns the value `0`. -/
+ def negAddY (P Q : Fin 3 → R) : R :=
+-  -3 * P x ^ 2 * Q x * Q y + 3 * P x * Q x ^ 2 * P y - P y ^ 2 * Q y * Q z + P y * Q y ^ 2 * P z
+-    + W'.a₁ * P x * Q y ^ 2 * P z - W'.a₁ * Q x * P y ^ 2 * Q z - W'.a₂ * P x ^ 2 * Q y * Q z
+-    + W'.a₂ * Q x ^ 2 * P y * P z + 2 * W'.a₂ * P x * Q x * P y * Q z
+-    - 2 * W'.a₂ * P x * Q x * Q y * P z - W'.a₃ * P y ^ 2 * Q z ^ 2 + W'.a₃ * Q y ^ 2 * P z ^ 2
+-    + W'.a₄ * P x * P y * Q z ^ 2 - 2 * W'.a₄ * P x * Q y * P z * Q z
+-    + 2 * W'.a₄ * Q x * P y * P z * Q z - W'.a₄ * Q x * Q y * P z ^ 2
+-    + 3 * W'.a₆ * P y * P z * Q z ^ 2 - 3 * W'.a₆ * Q y * P z ^ 2 * Q z
++  -3 * P x ^ (2 : ℕ) * Q x * Q y + 3 * P x * Q x ^ (2 : ℕ) * P y - P y ^ (2 : ℕ) * Q y * Q z + P y * Q y ^ (2 : ℕ) * P z
++    + W'.a₁ * P x * Q y ^ (2 : ℕ) * P z - W'.a₁ * Q x * P y ^ (2 : ℕ) * Q z - W'.a₂ * P x ^ (2 : ℕ) * Q y * Q z
++    + W'.a₂ * Q x ^ (2 : ℕ) * P y * P z + 2 * W'.a₂ * P x * Q x * P y * Q z
++    - 2 * W'.a₂ * P x * Q x * Q y * P z - W'.a₃ * P y ^ (2 : ℕ) * Q z ^ (2 : ℕ) + W'.a₃ * Q y ^ (2 : ℕ) * P z ^ (2 : ℕ)
++    + W'.a₄ * P x * P y * Q z ^ (2 : ℕ) - 2 * W'.a₄ * P x * Q y * P z * Q z
++    + 2 * W'.a₄ * Q x * P y * P z * Q z - W'.a₄ * Q x * Q y * P z ^ (2 : ℕ)
++    + 3 * W'.a₆ * P y * P z * Q z ^ (2 : ℕ) - 3 * W'.a₆ * Q y * P z ^ (2 : ℕ) * Q z
+ 
+ lemma negAddY_eq' {P Q : Fin 3 → R} (hP : W'.Equation P) (hQ : W'.Equation Q) :
+     W'.negAddY P Q * (P z * Q z) ^ 2 =

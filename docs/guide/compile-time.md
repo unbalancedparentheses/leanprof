@@ -170,7 +170,10 @@ built `.olean` files), then elaborates every module of the root package
 that has a source file, several at a time (`--jobs N`, default half the
 cores; each `lean` uses several threads of its own), and writes one report.
 Each module is elaborated as Lake does, with its setup file (module name,
-the package's `leanOptions`). `--module-glob 'Foo.Data.*'`
+the package's `leanOptions`): the one Lake wrote when it built the module,
+or, for modules fetched from a cache that were never compiled locally
+(Mathlib after `lake exe cache get`), the one `lake setup-file` prints.
+`--module-glob 'Foo.Data.*'`
 (comma-separated, `*` and `?`) profiles only the matching modules.
 Batteries' 195 modules take 17 s on 18 cores (15 s with `--compact`),
 against 13 s for a clean `lake build` ([case study](../case-studies/batteries.md)).
@@ -181,7 +184,10 @@ do not change; for times you will compare, use `--heartbeats`, or
 `--jobs 1`.
 
 `leanprof compare` and `report-md` work on project reports: declarations
-match by file and name, modules by name (`module Foo.Bar`).
+match by file and name, modules by name (`module Foo.Bar`), and commands
+that declare nothing (`variable (x) in`, `attribute [simp] …`) by file,
+text and which of the commands with that text they are (`variable (W') #3`).
+`compare` lists the largest changes first and ends with the total.
 
 ## Threshold
 
@@ -209,9 +215,21 @@ proofs in parallel, so this is more than the file's wall time (Batteries'
 `List/Lemmas.lean`: 16.4 s of elaboration in a 1.5 s run), and per
 declaration it is the time that declaration took, whichever thread ran it.
 A command Lean expands into another (`theorem Foo.bar` into `namespace Foo
-theorem bar end`) is traced twice, the outer including the inner; `elab`
-counts it once. Each file's `wall_ns` in `elab.json` is the wall time of its
-driver (or `lean`) process, imports included.
+theorem bar end`, `variable (x) in theorem t …` into `section variable (x)
+theorem t … end`, `set_option o v in …`) is traced twice, the outer
+including the inner; `elab` counts it once, the inner command on its own
+line and the outer one with what it adds.
+
+`trace.profiler` itself costs time, mostly after elaboration, when Lean
+prints the traced operations: usually 1.3 to 3 times plain `lean`, but
+Mathlib's `AlgebraicGeometry/Modules/Sheaf.lean` takes 24 s plain and about
+10 minutes profiled, 94% of it pretty-printing the large terms in its
+traces. It also costs heartbeats, so a declaration close to `maxHeartbeats`
+can fail only when profiled (that file's `pseudofunctor` does); `elab`
+prints each file's first error and says when it is a heartbeat limit.
+
+Each file's `wall_ns` in `elab.json` is the wall time of its driver (or
+`lean`) process, imports included.
 
 ## Heartbeats: exact compile cost
 
