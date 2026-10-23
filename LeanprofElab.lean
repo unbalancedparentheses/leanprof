@@ -88,11 +88,14 @@ def leafClass (cls : String) : Bool :=
 start of a trace line, with its indentation. -/
 def traceLine (line : String) : Option (Nat × String × Option Float × String.Slice) := do
   -- slices of `line`: no list of characters is built
-  let s := line.toSlice
-  let body := s.dropWhile (· == ' ')
-  let indent := s.utf8ByteSize - body.utf8ByteSize
-  guard (body.front? == some '[')
-  let afterBr := body.drop 1
+  -- most lines are deeply indented continuations: find the indentation a byte at a
+  -- time, and stop there unless a `[` follows
+  let mut indent := 0
+  while h : (⟨indent⟩ : String.Pos.Raw) < line.rawEndPos do
+    if line.getUTF8Byte ⟨indent⟩ h != 32 then break
+    indent := indent + 1
+  guard (if h : (⟨indent⟩ : String.Pos.Raw) < line.rawEndPos then line.getUTF8Byte ⟨indent⟩ h == 91 else false)
+  let afterBr := line.toSlice.drop (indent + 1)
   let cls := afterBr.takeWhile (· != ']')
   let rest := ((afterBr.dropWhile (· != ']')).drop 1).dropWhile (· == ' ')
   let clsS := cls.toString
