@@ -87,33 +87,38 @@ def leafClass (cls : String) : Bool :=
 /-- `[Class] [amount] ...` (or an untimed `[Class] ...` of `leafClass`) at the
 start of a trace line, with its indentation. -/
 def traceLine (line : String) : Option (Nat × String × Option Float × String) := do
-  let cs := line.toList
-  let indent := (cs.takeWhile (· == ' ')).length
-  let cs := cs.drop indent
-  guard (cs.head? == some '[')
-  let cls := (cs.drop 1).takeWhile (· != ']')
-  let rest := ((cs.drop 1).drop (cls.length + 1)).dropWhile (· == ' ')
-  let clsS := String.ofList cls
-  if rest.head? != some '[' then
+  -- slices of `line`: no list of characters is built
+  let s := line.toSlice
+  let body := s.dropWhile (· == ' ')
+  let indent := s.utf8ByteSize - body.utf8ByteSize
+  guard (body.front? == some '[')
+  let afterBr := body.drop 1
+  let cls := afterBr.takeWhile (· != ']')
+  let rest := ((afterBr.dropWhile (· != ']')).drop 1).dropWhile (· == ' ')
+  let clsS := cls.toString
+  if rest.front? != some '[' then
     guard (leafClass clsS)
-    return (indent, clsS, none, String.ofList rest)
-  let amt := (rest.drop 1).takeWhile (· != ']')
+    return (indent, clsS, none, rest.toString)
+  let amtSrc := rest.drop 1
+  let amt := amtSrc.takeWhile (· != ']')
   let ip := amt.takeWhile (· != '.')
   let fp := (amt.dropWhile (· != '.')).drop 1
-  match (String.ofList ip).toNat? with
+  match ip.toNat? with
   | none =>
     guard (leafClass clsS)
-    return (indent, clsS, none, String.ofList rest)
+    return (indent, clsS, none, rest.toString)
   | some i =>
-    let f := (String.ofList fp).toNat?.getD 0
-    let text := ((rest.drop 1).drop (amt.length + 1)).dropWhile (· == ' ')
+    let f := fp.toNat?.getD 0
+    let text := ((amtSrc.dropWhile (· != ']')).drop 1).dropWhile (· == ' ')
     -- the status mark (✅️, ❌️, 💥️: a symbol and a variation selector) that every timed
     -- operation has; without it, this is a continuation that happens to look like one
     -- (a description containing `[x] [6]`)
-    let text ← match text with
-      | _ :: '️' :: ' ' :: t => some t
-      | _ => none
-    return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat), String.ofList text)
+    let t1 := text.drop 1
+    guard (t1.front? == some '️')
+    let t2 := t1.drop 1
+    guard (t2.front? == some ' ')
+    -- `fp` is digits (ASCII) whenever `f` is not 0
+    return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.utf8ByteSize.toFloat), (t2.drop 1).toString)
 
 /-- Classes whose repeated identical operations are worth reporting. -/
 def repeatable (cls : String) : Bool :=
