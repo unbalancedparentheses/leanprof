@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 
 from markdown_it import MarkdownIt
-from mdit_py_plugins.anchors import anchors_plugin  # noqa: F401  (pinned; slugs are ours)
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name
