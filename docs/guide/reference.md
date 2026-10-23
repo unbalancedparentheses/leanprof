@@ -8,7 +8,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--allocs] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up |
+| `run [--auto \| --auto-all] [--allocs] [--counters] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up |
 | `sample [--rate HZ] [--top N] [--out F] EXE [-- ARGS]` | sample with samply, report per Lean declaration |
 | `elab [--heartbeats] [--top N] [--out F] FILE.lean…` | compile cost per declaration and operation |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
@@ -40,6 +40,7 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 |---|---|
 | `LEANPROF_AUTO=1` / `all` | time every function of this package / of all packages |
 | `LEANPROF_ALLOCS=1` | count allocations |
+| `LEANPROF_COUNTERS=1` | count failed constructor reuse and closure applications (force-includes `c/counters.h`) |
 | `LEANPROF_RUNTIME=file.o` | link this leanprof runtime (set by `run` for projects without the dependency) |
 | `LEANPROF_REAL_CC=cc` | compiler to forward to (default: the first `clang` on `PATH` that is not Lean's own) |
 
@@ -55,7 +56,14 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 - `allocations`: `function`, `scope`, `where`, `allocs`, `bytes`;
 - `tasks`: `spawned_by`, `tasks`, `run_total_ns`, `run_sum_ns`, `wait_ns`,
   `wait_max_ns`;
-- `waits`: `function`, `scope`, `where`, `waits`, `blocked_ns`.
+- `waits`: `function`, `scope`, `where`, `waits`, `blocked_ns`;
+- `reuse` (with counters, else empty): per function, `function`, `where`,
+  `checks`, `failures` (all failed checks), `shared`, `multi_threaded`,
+  `persistent`, `fields` (total fields of the cells that failed), `sites`;
+- `closures` (with counters, else empty): per call site and target,
+  `function` and `where` (the call site), `target`, `target_where`,
+  `target_symbol` (the closure's C function), `applications`, `exact`,
+  `partial`, `over`.
 
 Sampled reports add `"sampled": true`; compile reports from `elab` have
 `"elab": true`, `"unit": "ns"` or `"heartbeats"`, per-line `elab_ns`,

@@ -643,6 +643,8 @@ LEAN_EXPORT void *leanprof_mi_malloc_small(size_t sz) {
 }
 #endif
 
+#include "counters.inc.c"
+
 /* ---------- symbol names ----------
  * Inverse of Lean.Name.mangle for the common cases: `l_` and `lp_<pkg>_`
  * prefixes, `__` for `_`, `_x`/`_u`/`_U` escapes, `_00` disambiguation and
@@ -1409,6 +1411,7 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
             fputc('\n', f);
         }
     }
+    lpf_counters_print(f);
     if (hidden > 0)
         fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (LEANPROF_ALL=1 shows them)\n", hidden);
     if (dropped > 0) fprintf(f, "\nleanprof: %llu events dropped (table full)\n", (unsigned long long)dropped);
@@ -1496,7 +1499,9 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
                 (double)C[k].ticks * tick, (unsigned long long)C[k].count[LP_SHARED],
                 (unsigned long long)C[k].count[LP_MULTI_THREADED], (unsigned long long)C[k].count[LP_PERSISTENT]);
     }
-    fprintf(f, "]}\n");
+    fprintf(f, "]");
+    lpf_counters_json(f);
+    fprintf(f, "}\n");
 }
 
 /* True when the only thread is the one calibration ran on, with nothing else
@@ -1599,7 +1604,8 @@ static void lpf_write_trace(const char *path, double tick) {
 }
 
 static void lpf_report(void) {
-    if (lpf_threads == NULL || (lpf_threads->next == NULL && lpf_only_calibrated())) return; /* linked but unused */
+    if ((lpf_threads == NULL || (lpf_threads->next == NULL && lpf_only_calibrated())) && !lpf_ctr_any())
+        return; /* linked but unused */
     __atomic_store_n(&lpf_calibrated, 1, __ATOMIC_RELEASE);
     lpf_calibrate(); /* the CPU is warm now; keeps the lower estimate */
     double tick = lpf_ns_per_tick();

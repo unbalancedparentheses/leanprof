@@ -122,6 +122,42 @@ def tests : StateT Nat IO Unit := do
   for (sym, want) in demangleCases do
     let got := demangle sym
     check s!"demangle {sym}" (got == want) s!"got {got}"
+  -- ===== counters: constructor reuse and closure applications (counterFlags) =====
+  -- `step` rebuilds the pair from `p`; reuse succeeds when `p` is exclusive.
+  let rec step : Nat → Nat × Nat → Nat × Nat
+    | 0, p => p
+    | n + 1, p => step n (p.1 + 1, p.2)
+  -- `keep` stores every pair in the list too, so the next rebuild finds it shared.
+  let rec keep : Nat → Nat × Nat → List (Nat × Nat)
+    | 0, _ => []
+    | n + 1, p => let q := (p.1 + 1, p.2); q :: keep n q
+  let rec applyN (f : Nat → Nat) : Nat → Nat → Nat
+    | 0, x => x
+    | n + 1, x => applyN f n (f x)
+  let start := (n20, n50)
+  let c0 ← reuseChecks
+  let f0 ← reuseFailures
+  let p ← IO.lazyPure fun _ => step n500 (n20, n50)
+  let checked := (← reuseChecks) - c0
+  let failed := (← reuseFailures) - f0
+  -- the first step may fail: the starting pair is captured by the thunk, which is still alive
+  check "exclusive constructor is reused in place"
+    (p.1 == 520 && checked ≥ 499 && failed ≤ 1) s!"checks={checked} failed={failed}"
+  let f0 ← reuseFailures
+  let ps ← IO.lazyPure fun _ => keep n500 start
+  let failed := (← reuseFailures) - f0
+  check "shared constructor fails reuse once per step" (ps.length == 500 && failed ≥ 499) s!"failed={failed}"
+  let r ← (expectNoReuseFailures (IO.lazyPure fun _ => (keep n50 start).length)).toBaseIO
+  check "expectNoReuseFailures rejects shared code" (r matches .error _)
+  let r ← (expectNoReuseFailures (IO.lazyPure fun _ => (step n50 (n20, n50)).1)).toBaseIO
+  check "expectNoReuseFailures passes exclusive code" (r matches .ok _)
+  let a0 ← closureApplications
+  let v ← IO.lazyPure fun _ => applyN (· + n20) n500 0
+  let applied := (← closureApplications) - a0
+  check "closure applications are counted" (v == 10000 && applied ≥ 500) s!"applications={applied}"
+  let r ← (expectClosureApplicationsAtMost 10 (IO.lazyPure fun _ => applyN (· * 1) n50 1)).toBaseIO
+  check "expectClosureApplicationsAtMost rejects unspecialized code" (r matches .error _)
+  -- ===== end counters =====
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0

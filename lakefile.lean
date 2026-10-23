@@ -20,6 +20,13 @@ def allocFlags : Array String :=
   #["alloc_small_object_core", "alloc_object"].map (fun f => s!"-Dlean_{f}=leanprof_{f}") ++
   #["mi_malloc", "mi_malloc_small"].map (fun f => s!"-D{f}=leanprof_{f}")
 
+/-- Opt-in counters: failed constructor reuse and closure applications, per
+function. Force-includes `c/counters.h`, which redirects `lean_is_exclusive`
+and `lean_apply_*` in the generated C to leanprof's shims (every check and
+application then pays a small cost). Projects depending on leanprof can use
+`-include .lake/packages/leanprof/c/counters.h`. -/
+def counterFlags : Array String := #["-include", (__dir__ / "c" / "counters.h").toString]
+
 /-- Link flags so the report can name the functions that copied. -/
 def linkFlags : Array String := #["-rdynamic"]
 
@@ -32,14 +39,15 @@ lean_exe copybug where
 
 @[test_driver] lean_exe tests where
   root := `Tests.Main
-  moreLeancArgs := copyFlags ++ allocFlags
+  moreLeancArgs := copyFlags ++ allocFlags ++ counterFlags
   moreLinkArgs := linkFlags
 
 target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc" getLeanTrace
+  let incTrace ← computeTrace (pkg.dir / "c" / "counters.inc.c")
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc" (return (← getLeanTrace).mix incTrace)
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch

@@ -58,12 +58,86 @@ Frees happen inside the runtime and are not seen, so this is allocation
 volume, not live memory. It is off by default because every allocation then
 pays a small cost.
 
+## Failed constructor reuse and closure applications
+
+`leanprof run --counters EXE` adds two counters, per function, with the
+declaration's file:line:
+
+```
+constructor reuse: 2744186 checks, 671240 failed on shared values (24.5%), 16892 on compile-time constants (LEANPROF_ALL=1 shows them)
+(a failure allocates a new cell and retains every field instead of updating in place)
+    failed     checks   rate  fields  why                      function  (where)
+    130130     130130 100.0%     1.0  shared                   LeanCompilerBackend.Statement.definition  (LeanCompilerBackend/IR.lean:228)
+     44716      89432  50.0%     2.0  shared                   LeanCompilerBackend.Parser.take  (LeanCompilerBackend/Parser.lean:82)
+
+closure applications: 141709 (exact 141709, partial 0, over-applied 0)
+closure targets (the function each applied closure runs)
+   applies   share    partial       over  sites  target  (where)
+    108064   76.3%          0          0      6  LeanCompilerBackend.Optimize.Cleanup.resolve  (LeanCompilerBackend/Optimize/Cleanup.lean:32)
+closure call sites (a hot site is a higher-order call that was not specialized or inlined)
+   applies   share    partial       over  call site  (where)  ->  target
+     75762   53.5%          0          0  LeanCompilerBackend.Optimize.Cleanup.mapOperation  (LeanCompilerBackend/Optimize/Cleanup.lean:8)  ->  LeanCompilerBackend.Optimize.Cleanup.resolve
+```
+
+**Constructor reuse.** When a function takes a constructor value apart and
+builds one of the same size (`{ s with x := v }`, `match t with | node l r
+=> node l' r`, `.assign i => some ..`), Lean's compiler emits a check:
+if the old cell is exclusive it is updated in place, otherwise its fields are
+retained, the old value is released and a new cell is allocated. This is the
+constructor version of a copy. leanprof counts every check per function and
+each failure with the same `why` as copies (`shared`, `multi-threaded`,
+`persistent`) and the cell's field count (a failure costs one allocation plus
+one increment per field). Read the rate:
+
+- **100% in a function that reads from a structure** (an accessor such as
+  `Statement.definition` above, called on elements still held in an array):
+  the argument is borrowed from a live container, so it can never be reused.
+  The allocation is unavoidable unless the function is given ownership, or
+  returns something that does not need a new cell.
+- **A loop or state update with a high rate** (a `StateT` state, an
+  accumulator record, a tree being rebuilt): an extra reference is keeping
+  the old value alive, exactly like a shared array. Find it the same way.
+
+**Closure applications.** Code that calls a function value goes through the
+runtime's `lean_apply_N`. leanprof counts each call by its call site and by
+the closure's function (its target), and classifies it: `exact` (the
+closure gets all its missing arguments and runs), `partial` (too few: a new
+closure is allocated) or `over` (too many: it runs, then the result is
+applied to the rest). A hot call site is usually a higher-order function
+that was not specialized for the function passed to it (above,
+`Cleanup.mapOperation (map : Operand → Operand)` called 75,762 times with
+`resolve aliases`). `@[specialize]` on the higher-order function, or
+`@[inline]` if it is small, lets Lean call the target directly and often
+removes the closure allocation as well.
+
+Both counters see only code compiled with them: the precompiled standard
+library is not counted unless it was specialized into your module, so a
+`List.map f` that calls `f` inside the core library does not show up.
+
+How it works: `lean_is_exclusive` is a `static inline` function in
+`lean.h`, so it cannot be renamed with `-D` like the copy functions.
+`c/counters.h` is force-included (`-include`) instead: it includes `lean.h`
+first (which is `#pragma once`, so the generated file's own include is then
+skipped) and then defines `lean_is_exclusive` and `lean_apply_*` as macros
+for leanprof's shims. `lean.h`'s own inline functions keep the original, and
+in the C that Lean emits the only uses are the reset/reuse checks
+(`isSharedCheck = !lean_is_exclusive(x)`). The shims return exactly what
+the runtime would. Without `--counters` nothing is redirected and nothing
+is counted. To build with the counters yourself, add leanprof's
+`counterFlags` to `moreLeancArgs`, or build through the wrapper with
+`LEANPROF_COUNTERS=1`. Every check and application then pays a hash-table
+update, so leave it off for timing.
+
 ## In tests
 
 ```lean
 Leanprof.expectNoCopies x            -- fails if x copies a shared or multi-threaded value
 Leanprof.expectAllocsAtMost 100 x    -- fails if x makes more than 100 allocations
+Leanprof.expectNoReuseFailures x     -- fails if a constructor in x could not be reused in place
+Leanprof.expectClosureApplicationsAtMost 10 x  -- fails if x applies more than 10 closures
 ```
 
 These need the test executable built with the flags (`copyFlags`,
-`allocFlags`), which turns a performance property into a test.
+`allocFlags`, `counterFlags`), which turns a performance property into a
+test. The counts themselves are `Leanprof.copies`, `allocs`,
+`reuseChecks`, `reuseFailures` and `closureApplications`.

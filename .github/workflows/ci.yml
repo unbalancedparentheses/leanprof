@@ -33,6 +33,12 @@ jobs:
         run: |
           LEANPROF_QUIET=1 lake exe leanprof run --allocs --json allocs.json copybug -- 2000
           python3 -c "import json,sys; d=json.load(open('allocs.json')); n=sum(a['allocs'] for a in d['allocations']); print(n); sys.exit(0 if n > 0 else 1)"
+      - name: Reuse and closure counters
+        run: |
+          LEANPROF_QUIET=1 lake exe leanprof run --counters --json counters.json copybug -- 2000
+          python3 -c "import json,sys; d=json.load(open('counters.json')); c=sum(r['checks'] for r in d['reuse']); a=sum(r['applications'] for r in d['closures']); print(c,a); sys.exit(0 if c >= 2000 and a > 0 else 1)"
+          LEANPROF_QUIET=1 lake exe leanprof run --json plain.json copybug -- 2000
+          python3 -c "import json,sys; d=json.load(open('plain.json')); sys.exit(0 if d['reuse'] == [] and d['closures'] == [] else 1)"
       - name: Tasks
         run: |
           lake build tasks

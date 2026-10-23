@@ -24,9 +24,10 @@ open Lean System
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--allocs] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
-    "time; --allocs: allocations), run it, print the report and save it to .lake/leanprof/report.json.\n" ++
+    "time; --allocs: allocations; --counters: failed constructor reuse and closure applications),\n" ++
+    "run it, print the report and save it to .lake/leanprof/report.json.\n" ++
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
     "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build."),
   ("sample", "[--rate HZ] [--top N] [--out FILE] EXE [-- ARGS...]",
@@ -110,6 +111,7 @@ structure RunOpts where
   json : Option String := none
   keep : Bool := false
   allocs : Bool := false
+  counters : Bool := false
   exe : Option String := none
   args : Array String := #[]
 
@@ -121,6 +123,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--json" :: f :: rest => parseRun { opts with json := some f } rest
   | "--keep" :: rest => parseRun { opts with keep := true } rest
   | "--allocs" :: rest => parseRun { opts with allocs := true } rest
+  | "--counters" :: rest => parseRun { opts with counters := true } rest
   | "--" :: rest => .ok { opts with args := opts.args ++ rest.toArray }
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
@@ -131,7 +134,8 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
 function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
 build removes the instrumented objects again. -/
-def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false) : IO UInt32 := do
+def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false)
+    (counters : Bool := false) : IO UInt32 := do
   let root ← packageRoot
   let wrapper := root / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
@@ -151,9 +155,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
   -- Lake does not notice a new LEAN_CC, so objects built without it must go.
   let removed ← removeWorkspaceObjects
-  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""} ({removed} stale objects removed)"
+  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if counters then " and reuse/closure counters" else ""} ({removed} stale objects removed)"
   let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
-    ("LEANPROF_ALLOCS", if allocs then some "1" else none)] ++ runtimeEnv
+    ("LEANPROF_ALLOCS", if allocs then some "1" else none),
+    ("LEANPROF_COUNTERS", if counters then some "1" else none)] ++ runtimeEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
     discard <| removeWorkspaceObjects
@@ -165,7 +170,7 @@ def exePath (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" 
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
   let some exe := opts.exe | throw <| IO.userError (usageFor "run")
-  let rc ← buildWithShims exe opts.auto opts.allocs
+  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters
   if rc != 0 then return rc
   -- the report `#leanprof` reads, unless another path was asked for
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")

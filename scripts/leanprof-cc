@@ -41,6 +41,13 @@ if [ "${LEANPROF_ALLOCS:-}" = 1 ]; then
     -Dmi_malloc_small=leanprof_mi_malloc_small \
     "$@"
 fi
+# LEANPROF_COUNTERS=1 also counts failed constructor reuse and closure
+# applications (c/counters.h redirects lean_is_exclusive and lean_apply_*).
+if [ "${LEANPROF_COUNTERS:-}" = 1 ]; then
+  case " $* " in
+    *" -c "*) set -- -include "$(cd "$(dirname "$0")/.." && pwd)/c/counters.h" "$@" ;;
+  esac
+fi
 # LEANPROF_AUTO=1 also times every function of this package (no `profile!`
 # needed); LEANPROF_AUTO=all includes dependencies.
 case " $* " in
