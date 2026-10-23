@@ -532,7 +532,8 @@ def compare (argv : List String) : IO UInt32 := do
     | some (bt, _), none => IO.println s!"  gone {k}: was {if base.exact then s!"{fmt2 (bt / 1000)} kHB" else time base bt}"
     | none, none => pure ()
   if base.isElab && new.isElab && base.total > 0 then
-    IO.println s!"total: {amt base.total} -> {amt new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
+    let amt (r : Report) (x : Float) := if base.exact then s!"{fmt2 (x / 1000)} kHB" else let _ := r; fmtTime x
+    IO.println s!"total: {amt base base.total} -> {amt new new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
   IO.println "copies of shared or multi-threaded values (any increase is a regression)"
   let ckeys := (base.copies.toList.map (·.1) ++ new.copies.toList.map (·.1)).eraseDups
   for k in ckeys do
