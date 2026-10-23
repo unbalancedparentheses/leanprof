@@ -185,6 +185,8 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
       "was shared between threads), so Lean cannot update it in place." ++
       String.join ((explained.filter (str · "symbol" == str c "symbol")).toList.map fun e =>
         s!"\n\nwhy: {str e "why"}" ++ (if (str e "fix").isEmpty then "" else s!"\nfix: {str e "fix"}") ++
+          String.join ((((e.getObjValAs? (Array String) "fix_code").toOption).getD #[]).toList.map
+            fun c => s!"\n```lean\n{c}\n```") ++
           s!"\n(leanprof explain; confidence {str e "confidence"})")
     hint (endOfLine fm line) label tip
     lines := lines.push s!"{file}:{line}  {label}  ({str c "function"})"
