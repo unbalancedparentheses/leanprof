@@ -243,7 +243,8 @@ def sources (positions : Array String) (context : Nat) (limit : Nat := 1500) : I
     if seen.contains p then continue
     if let some (f, l) := parsePos p then
       seen := seen.insert p
-      want := want.insert f ((want.getD f {}).insert l)
+      -- alter, not getD then insert: the file's set is updated in place, not copied
+      want := want.alter f fun ls => some ((ls.getD {}).insert l)
   let mut files : Array (String × Json) := #[]
   for (f, ls) in want.toArray.qsort (·.1 < ·.1) do
     unless ← (f : FilePath).pathExists do continue
