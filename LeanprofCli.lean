@@ -207,6 +207,9 @@ def stashObjects (deps : Bool) : IO (Nat × Nat) := do
   let mut n := 0
   let mut pkgs := 0
   for pkg in ← workspacePackages deps do
+    -- the stash marks the package even when empty: what is built in it now
+    -- is instrumented and goes afterwards
+    IO.FS.createDirAll (stashDir pkg)
     let moved ← moveObjects (pkg / ".lake" / "build" / "ir") (stashDir pkg)
     n := n + moved
     if moved > 0 then pkgs := pkgs + 1

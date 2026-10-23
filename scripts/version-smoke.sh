@@ -55,7 +55,14 @@ echo "== self-check: a missing shim is reported"
 # String copy): the run, its JSON and doctor must warn
 broken="$work/broken"
 mkdir -p "$broken/.lake/build/bin" "$broken/scripts"
-cp "$(cd "$(dirname "$lp")" && pwd -P)/$(basename "$lp")" "$broken/.lake/build/bin/leanprof"
+# the command itself, behind the release launcher (bin/leanprof) and symlinks
+real="$lp"
+while [ -L "$real" ]; do
+  link="$(readlink "$real")"
+  case "$link" in /*) real="$link" ;; *) real="$(dirname "$real")/$link" ;; esac
+done
+if [ -x "$(dirname "$real")/../.lake/build/bin/leanprof" ]; then real="$(dirname "$real")/../.lake/build/bin/leanprof"; fi
+cp "$real" "$broken/.lake/build/bin/leanprof"
 cp -R "$root/c" "$broken/"
 grep -v -e '-Dlean_string_push=' -e '-Dlean_string_push_cold=' "$root/scripts/leanprof-cc" > "$broken/scripts/leanprof-cc"
 chmod +x "$broken/scripts/leanprof-cc"
