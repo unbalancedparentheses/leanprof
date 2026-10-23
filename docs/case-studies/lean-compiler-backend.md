@@ -80,6 +80,35 @@ branches was evaluated while `tokens` was still used by other branches. Moving
 the push into the branches that use it removed every copy. The project's CI
 (three runners, proofs and native checks) passed before the merge.
 
+### Two more fixes: `CFG.build` and `Parser.peek`
+
+Same workload, measured with leanprof built for Lean 4.35 against the
+project's Lean 4.34.1, after the tokenizer fix:
+
+- **`CFG.build`**: `explain` named `successors.set! i (successors[i]!.push
+  target)` (and the same for `predecessors`): the push updates an element the
+  outer array still holds. `Array.modify` takes it out first. The first
+  version of this fix updated both arrays in one loop and `run --allocs`
+  showed it added 59,514 allocations: the pair carrying the two arrays through
+  the loop was no longer reused. Filling predecessors in a second pass over
+  the deduplicated successors (same order) removed them
+  ([commit 8a0d286](https://github.com/unbalancedparentheses/lean-compiler-backend/commit/8a0d286)).
+- **`Parser.peek`** returned `Option String` through `StateT` over `Except`,
+  three allocations per call (the `Option`, the result pair, `Except.ok`).
+  It is now `@[inline]`, and the 47 comparisons with a literal token use
+  `peekIs`/`peekStartsWith`, which never build the `Option`
+  ([commit a623acc](https://github.com/unbalancedparentheses/lean-compiler-backend/commit/a623acc)).
+
+| | before | after |
+|---|---|---|
+| `CFG.build` array copies | 121,054 (822 KiB, 35,093 of filled arrays) | 43,899 (360 KiB), each the first push into an empty slot |
+| `Parser.peek` allocations | 910,550 (16.2 MiB) | none |
+| whole run | 8,572,024 allocations (215.1 MiB) | 7,719,273 (200.1 MiB), −10% |
+| wall time (30 runs × 3, median) | 338–347 ms | 328–346 ms: within noise on a loaded machine |
+| output | | byte-identical on all 160 input/target/option combinations |
+
+Both are on the `perf-cfg-peek` branch and go to `main` once the project's CI passes.
+
 ## Compile time (`leanprof elab --heartbeats`)
 
 Six large or proof-heavy files: 296M heartbeats in total (2 min 38 s).

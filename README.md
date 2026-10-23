@@ -145,7 +145,8 @@ Profiled from outside, without changing the projects:
   byte-identical output; while it was written, leanprof caught a 6.8 GiB copy
   the first attempt had introduced. `leanprof explain` traced 121,054 copies
   in `CFG.build` to arrays pushed while still held by an outer array, and
-  printed the fix.
+  printed the fix; that fix and an allocation-free `Parser.peek` (910,550
+  allocations before) cut another 10%, again byte-identical.
 - **[doc-gen4](docs/case-studies/doc-gen4.md)**: one SQL query that grows with
   the square of a module's declarations takes two thirds of the HTML pass;
   12.7% of the time is threads waiting on SQLite's memory mutex.
