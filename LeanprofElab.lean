@@ -1134,7 +1134,8 @@ def main (argv : List String) : IO UInt32 := do
   for (k, c) in acc.lines do
     if c.name.isEmpty then continue
     let (f, l) := splitPos k
-    named := named.insert f ((named.getD f #[]).push (l, c.name))
+    -- alter, not getD then insert: the file's array is pushed to in place, not copied
+    named := named.alter f fun ls => some ((ls.getD #[]).push (l, c.name))
     if let some d := declName c.name then
       let unfolds := ["def", "abbrev", "instance", "theorem", "lemma", "opaque"].any fun kw => (c.name.splitOn s!"{kw} ").length > 1
       localDecls := localDecls.insert d (k, unfolds)
