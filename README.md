@@ -1,5 +1,49 @@
 # leanprof
 
+> In Lean, `arr.push x` is fast only when nothing else refers to `arr`; if
+> something does, Lean silently copies the whole array first. One stray
+> reference turns a linear loop quadratic, and nothing in your code, your
+> types, or a normal profiler tells you. **leanprof is the only tool that shows
+> you those copies: the line, how many, how many bytes, how much time, and why
+> the value was shared, with the fix.**
+
+## Why leanprof
+
+Copies are what only leanprof sees. For the rest, it does what each
+alternative does, measured and in Lean's terms, from one command.
+
+- **Timing that tells the truth about itself.** About 11 ns per profiled
+  scope, constant however long the program runs (LeanProfiler's cost per span
+  grows with every recorded event, from 4.6 µs to 88 µs, and leanprof found
+  why). It measures its own cost and removes it from the report, call counts
+  are exact in every mode, and where its exact times are not reliable
+  (functions that run for nanoseconds) the [benchmark](bench/RESULTS.md) says
+  so and `leanprof sample` is as accurate as samply.
+- **Sampling that speaks Lean.** samply and perf show mangled C names like
+  `lp_pkg_Foo_bar___lam__0`; `leanprof sample` shows `Foo.bar` with file:line,
+  folds compiler-generated helpers into the function you wrote, and says where
+  the Lean runtime's time went (copying, freeing, allocating, closures), with
+  no rebuild.
+- **Compile time with causes, not just totals.** It names the definitions
+  behind slow elaboration (constants unfolded, instances tried, simp lemmas
+  used), each with file:line, and finds repeated work such as the same
+  instance search done 132 times. Its numbers add up (lean-source-profiler's
+  per-definition attribution can exceed a file's real time), and it profiles
+  all of Batteries in 17 s against 88–130 s.
+- **Regression checks that do not flake.** Copies, call counts and compile
+  heartbeats are the same on every run, so CI can fail on "+1 copy" or "+8%
+  heartbeats" without noise, where the alternatives compare times against a
+  threshold. A GitHub Action posts the change on every pull request, and
+  `measure`/`judge` give keep or discard verdicts for automated optimization.
+- **Everything in one place, on any project.** No changes and no dependency
+  needed, for Lean 4.34 and later. Results show in VS Code as inlay hints (run
+  time, copies and compile time on the same line), in one shareable HTML
+  report, live while the program runs, or through an MCP server for AI
+  agents. The alternatives each cover one slice: LeanProfiler spans, samply
+  sampling, lean-source-profiler compile time, LeanBench benchmarks.
+
+## What it is
+
 A profiler for Lean 4: where a compiled program spends its time, what it
 allocates, which values it copies and why, and what each declaration costs to
 compile. It works on any Lake project without changing it, and shows results
@@ -146,7 +190,7 @@ true share) and adds Lean names, file:line and the runtime breakdown. The
 exact modes (`profile!`, `--auto`) report times that match the
 uninstrumented program when each scope does real work (0.98–1.06× on the
 allocation, copy and mixed workloads), but over-report functions that run
-for only a few nanoseconds (up to 4× for `fib`-sized calls): use them for
+for only a few nanoseconds (up to 5.5× for `fib`-sized calls): use them for
 counts, copies and causes, and `sample` for the time of tiny functions.
 
 ## Documentation
