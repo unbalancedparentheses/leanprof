@@ -41,6 +41,11 @@ if [ "${LEANPROF_ALLOCS:-}" = 1 ]; then
     -Dmi_malloc_small=leanprof_mi_malloc_small \
     "$@"
 fi
+# LEANPROF_FREES=1 also times freeing cascades and counts atomic decrements
+# of multi-threaded objects, per call site.
+if [ "${LEANPROF_FREES:-}" = 1 ]; then
+  set -- -Dlean_dec_ref_cold=leanprof_dec_ref_cold "$@"
+fi
 # LEANPROF_AUTO=1 also times every function of this package (no `profile!`
 # needed); LEANPROF_AUTO=all includes dependencies.
 case " $* " in

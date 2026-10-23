@@ -65,6 +65,9 @@ def demangleCases : List (String × String) := [
   ("lean_array_push", "lean_array_push")
 ]
 
+/-- One pair (and its string) referenced `n` times from an array. -/
+def sharedPair (n : Nat) : Array (String × Nat) := Array.replicate n (toString n, n)
+
 /-- `n`, but unknown to the compiler, so calls using it are not hoisted into
 constants computed at startup. -/
 def opaqueNat (n : Nat) : IO Nat := do
@@ -122,6 +125,26 @@ def tests : StateT Nat IO Unit := do
   for (sym, want) in demangleCases do
     let got := demangle sym
     check s!"demangle {sym}" (got == want) s!"got {got}"
+  -- ===== frees and memory (built with freeFlags; docs/guide/memory.md) =====
+  -- `frees` counts objects freed by cascades; the monadic code between two
+  -- queries frees a few objects of its own (strings of earlier checks)
+  let f0 ← frees
+  let len ← IO.lazyPure fun _ => (mkPairs n500).length
+  let freed := (← frees) - f0
+  check "frees count every object of a cascade (500 cells, 500 pairs)"
+    (freed ≥ 1000 && freed ≤ 1004 && len == 500) s!"freed={freed}"
+  let f0 ← frees
+  let size ← IO.lazyPure fun _ => (sharedPair n100).size
+  let freed := (← frees) - f0
+  -- the array, then the pair once its 100 references are gone, then its string
+  check "a shared child is freed once, with its last reference"
+    (freed ≥ 3 && freed ≤ 7 && size == 100) s!"freed={freed}"
+  let p0 ← peakMemory
+  check "peak memory is sampled" (p0 > 0) s!"peak={p0}"
+  let big ← IO.lazyPure fun _ => Array.replicate (n500 * 5000) (0 : Nat)
+  let p1 ← peakMemory
+  check "peak memory includes a large array" (p1 ≥ p0 && p1 ≥ big.size * 8) s!"peak={p1} size={big.size}"
+  -- ===== end of frees and memory =====
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0

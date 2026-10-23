@@ -39,8 +39,11 @@ from its JSON messages.
 
 - **Copies and allocations inside Lean's precompiled standard library are not
   seen**, unless the code was specialized into your module.
-- **Frees are not seen** (they happen inside the runtime), so there is no
-  live or peak memory yet.
+- **No live memory per object.** Memory over time is mimalloc's committed
+  memory and the process's resident memory, read about every millisecond
+  at scope exits ([memory](memory.md)); frees are seen where compiled code
+  drops a last reference (`--frees`), and the objects a cascade frees are
+  counted by walking it first, not observed.
 - **`Task.map`/`bind` and `IO.mapTask`/`bindTask`** are not linked to their
   spawning scope.
 - **Positions are per declaration** for copies and functions, because Lean's

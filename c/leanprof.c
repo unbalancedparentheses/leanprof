@@ -259,6 +259,8 @@ __attribute__((no_instrument_function)) static inline void lpf_enter(const void 
 
 static inline uint64_t lpf_sub(uint64_t a, uint64_t b) { return a > b ? a - b : 0; }
 
+static inline void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now); /* memory.inc.c */
+
 __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
     uint64_t now = lpf_now();
     lpf_thread *t = lpf_self;
@@ -278,6 +280,7 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
     }
     lpf_scope *s = f->scope;
     if (s == NULL) return;
+    lpf_mem_on_exit(s, f->start, now);
     s->calls++;
     s->self += raw - f->child;
     s->sum += raw;
@@ -642,6 +645,8 @@ LEAN_EXPORT void *leanprof_mi_malloc_small(size_t sz) {
     return mi_malloc_small(sz);
 }
 #endif
+
+#include "memory.inc.c" /* frees, memory over time */
 
 /* ---------- symbol names ----------
  * Inverse of Lean.Name.mangle for the common cases: `l_` and `lp_<pkg>_`
@@ -1409,6 +1414,7 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
             fputc('\n', f);
         }
     }
+    lpf_mem_print(f, tick);
     if (hidden > 0)
         fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (LEANPROF_ALL=1 shows them)\n", hidden);
     if (dropped > 0) fprintf(f, "\nleanprof: %llu events dropped (table full)\n", (unsigned long long)dropped);
@@ -1496,7 +1502,9 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
                 (double)C[k].ticks * tick, (unsigned long long)C[k].count[LP_SHARED],
                 (unsigned long long)C[k].count[LP_MULTI_THREADED], (unsigned long long)C[k].count[LP_PERSISTENT]);
     }
-    fprintf(f, "]}\n");
+    fprintf(f, "]");
+    lpf_mem_json(f, tick);
+    fprintf(f, "}\n");
 }
 
 /* True when the only thread is the one calibration ran on, with nothing else
@@ -1586,6 +1594,7 @@ static void lpf_write_trace(const char *path, double tick) {
             }
         }
     }
+    lpf_mem_trace(f, tick, &first);
     fprintf(f, "]}\n");
     fclose(f);
     if (cname != NULL)
@@ -1599,7 +1608,9 @@ static void lpf_write_trace(const char *path, double tick) {
 }
 
 static void lpf_report(void) {
-    if (lpf_threads == NULL || (lpf_threads->next == NULL && lpf_only_calibrated())) return; /* linked but unused */
+    if ((lpf_threads == NULL || (lpf_threads->next == NULL && lpf_only_calibrated())) && !lpf_mem_wanted())
+        return; /* linked but unused */
+    lpf_mem_finish();
     __atomic_store_n(&lpf_calibrated, 1, __ATOMIC_RELEASE);
     lpf_calibrate(); /* the CPU is warm now; keeps the lower estimate */
     double tick = lpf_ns_per_tick();
@@ -1754,5 +1765,6 @@ __attribute__((constructor)) static void lpf_init(void) {
         if (n > 2 * LP_DEPTH) lpf_trace_max = n;
     }
     lpf_start = lpf_now();
+    lpf_mem_init();
     atexit(lpf_report);
 }

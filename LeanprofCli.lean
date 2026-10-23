@@ -24,11 +24,16 @@ open Lean System
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--allocs] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--allocs] [--frees] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
-    "time; --allocs: allocations), run it, print the report and save it to .lake/leanprof/report.json.\n" ++
+    "time; --allocs: allocations; --frees: freeing pauses and atomic decrements), run it, print the\n" ++
+    "report and save it to .lake/leanprof/report.json. Memory (peak, per scope) is always sampled.\n" ++
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
     "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build."),
+  ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
+    "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
+    "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
+    "unless turned off (they slow the program down); --auto times every function."),
   ("sample", "[--rate HZ] [--top N] [--out FILE] EXE [-- ARGS...]",
     "Run EXE under samply (no probes) and report CPU time per Lean declaration with file:line,\n" ++
     "plus where the Lean runtime's time went. `samply load` on the saved profile opens a flame\n" ++
@@ -52,6 +57,7 @@ def commands : List (String × String × String) := [
 /-- What each command is for, in one line. -/
 def summary : String → String
   | "run" => "profile a program exactly: copies, tasks, waits; --auto every function, --allocs allocations"
+  | "stat" => "one-screen summary: time, peak memory, allocations, copies, frees, tasks, top scopes"
   | "sample" => "sample a program with samply: CPU per Lean declaration, no probes"
   | "elab" => "compile cost per line and declaration, repeated work, exact heartbeats"
   | "compare" => "compare two reports, exit 1 on regressions (for CI)"
@@ -110,6 +116,7 @@ structure RunOpts where
   json : Option String := none
   keep : Bool := false
   allocs : Bool := false
+  frees : Bool := false
   exe : Option String := none
   args : Array String := #[]
 
@@ -121,6 +128,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--json" :: f :: rest => parseRun { opts with json := some f } rest
   | "--keep" :: rest => parseRun { opts with keep := true } rest
   | "--allocs" :: rest => parseRun { opts with allocs := true } rest
+  | "--frees" :: rest => parseRun { opts with frees := true } rest
   | "--" :: rest => .ok { opts with args := opts.args ++ rest.toArray }
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
@@ -131,7 +139,8 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
 function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
 build removes the instrumented objects again. -/
-def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false) : IO UInt32 := do
+def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false) (frees : Bool := false) :
+    IO UInt32 := do
   let root ← packageRoot
   let wrapper := root / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
@@ -151,9 +160,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
   -- Lake does not notice a new LEAN_CC, so objects built without it must go.
   let removed ← removeWorkspaceObjects
-  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""} ({removed} stale objects removed)"
+  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if frees then " and frees timed" else ""} ({removed} stale objects removed)"
   let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
-    ("LEANPROF_ALLOCS", if allocs then some "1" else none)] ++ runtimeEnv
+    ("LEANPROF_ALLOCS", if allocs then some "1" else none),
+    ("LEANPROF_FREES", if frees then some "1" else none)] ++ runtimeEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
     discard <| removeWorkspaceObjects
@@ -165,7 +175,7 @@ def exePath (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" 
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
   let some exe := opts.exe | throw <| IO.userError (usageFor "run")
-  let rc ← buildWithShims exe opts.auto opts.allocs
+  let rc ← buildWithShims exe opts.auto opts.allocs opts.frees
   if rc != 0 then return rc
   -- the report `#leanprof` reads, unless another path was asked for
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
@@ -989,6 +999,97 @@ def doctor : IO UInt32 := do
   IO.println (if problems == 0 then "everything leanprof needs is here" else s!"{problems} problem(s)")
   return if problems == 0 then 0 else 1
 
+/-! ## stat -/
+
+/-- `n` with thousands separators. -/
+def withCommas (n : Nat) : String :=
+  let ds := (toString n).toList.reverse
+  let grouped := (List.range ds.length).zip ds |>.foldl (init := []) fun acc (i, c) =>
+    if i > 0 && i % 3 == 0 then c :: ',' :: acc else c :: acc
+  String.ofList grouped
+
+def fmtBytes (b : Float) : String :=
+  if b < 1024 then s!"{b.toUInt64} B"
+  else if b < 1024 * 1024 then s!"{fmt2 (b / 1024)} KiB"
+  else if b < 1024 * 1024 * 1024 then s!"{fmt2 (b / 1048576)} MiB"
+  else s!"{fmt2 (b / 1073741824)} GiB"
+
+def fmtTime (ns : Float) : String :=
+  if ns < 1e3 then s!"{ns.toUInt64} ns"
+  else if ns < 1e6 then s!"{fmt2 (ns / 1e3)} µs"
+  else if ns < 1e9 then s!"{fmt2 (ns / 1e6)} ms"
+  else s!"{fmt2 (ns / 1e9)} s"
+
+def statCmd (argv : List String) : IO UInt32 := do
+  -- allocations and frees are on unless turned off
+  let (offAllocs, argv) := (argv.contains "--no-allocs", argv.filter (· != "--no-allocs"))
+  let (offFrees, argv) := (argv.contains "--no-frees", argv.filter (· != "--no-frees"))
+  let opts ← IO.ofExcept (parseRun {} argv)
+  let some exe := opts.exe | throw <| IO.userError (usageFor "stat")
+  let allocs := !offAllocs
+  let frees := !offFrees
+  let rc ← buildWithShims exe opts.auto allocs frees
+  if rc != 0 then return rc
+  IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
+  let json := opts.json.getD ".lake/leanprof/report.json"
+  if ← (json : FilePath).pathExists then IO.FS.removeFile json
+  let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_STAT", some "1"), ("LEANPROF_JSON", some json),
+    ("LEANPROF_TRACE", opts.trace)]
+  let t0 ← IO.monoNanosNow
+  let code ← try spawnWait (exePath exe).toString opts.args env
+    finally
+      unless opts.keep do discard <| removeWorkspaceObjects
+  let outside := (← IO.monoNanosNow) - t0
+  unless ← (json : FilePath).pathExists do
+    IO.eprintln s!"leanprof: {exe} wrote no report (exit code {code}); was it killed?"
+    return if code == 0 then 1 else code
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile json))
+  let mem := (j.getObjVal? "memory").toOption.getD Json.null
+  let user := num mem "user_ns"
+  let sys := num mem "sys_ns"
+  let row (k v : String) := IO.println s!"  {k.pushn ' ' (13 - k.length)}{v}"
+  IO.println s!"\nleanprof stat: {" ".intercalate (exe :: opts.args.toList)}   (exit code {code})\n"
+  -- the program's own wall time (start to exit), not leanprof's report or process launch
+  let wall := num mem "wall_ns"
+  row "wall" s!"{fmtTime wall}  ({fmtTime outside.toFloat} including process start and the report)"
+  row "CPU" s!"{fmtTime user} user + {fmtTime sys} system ({fmt2 ((user + sys) / (if wall > 0 then wall else 1))} cores)"
+  row "peak memory" s!"{fmtBytes (num mem "peak_rss")} resident, {fmtBytes (num mem "peak_commit")} committed by Lean's allocator"
+  let allocSites := getArr j "allocations"
+  if allocs then
+    let n := allocSites.foldl (fun a s => a + num s "allocs") 0
+    let b := allocSites.foldl (fun a s => a + num s "bytes") 0
+    row "allocations" s!"{withCommas n.toUInt64.toNat} objects, {fmtBytes b} (by compiled Lean code)"
+  else row "allocations" "not counted (--no-allocs)"
+  let copies := (getArr j "copies").filter fun c => num c "shared" + num c "multi_threaded" > 0
+  let nc := copies.foldl (fun a c => a + num c "shared" + num c "multi_threaded") 0
+  let bc := copies.foldl (fun a c => a + num c "bytes") 0
+  let tc := copies.foldl (fun a c => a + num c "copy_ns") 0
+  row "copies" s!"{withCommas nc.toUInt64.toNat} of shared values, {fmtBytes bc}, {fmtTime tc}"
+  match j.getObjVal? "frees" with
+  | .ok f =>
+    row "frees" s!"{withCommas (num f "objects").toUInt64.toNat} objects in {withCommas (num f "cascades").toUInt64.toNat} cascades, {fmtTime (num f "free_ns")} (pause p99 {fmtTime (num f "p99_ns")}, max {fmtTime (num f "max_ns")})"
+    row "" s!"{withCommas (num f "mt_decrements").toUInt64.toNat} atomic decrements of multi-threaded objects"
+  | .error _ => row "frees" (if frees then "none seen" else "not tracked (--no-frees)")
+  let tasks := getArr j "tasks"
+  let nt := tasks.foldl (fun a t => a + num t "tasks") 0
+  let rt := tasks.foldl (fun a t => a + num t "run_sum_ns") 0
+  row "tasks" (if nt == 0 then "none spawned" else s!"{withCommas nt.toUInt64.toNat} spawned, {fmtTime rt} run")
+  let scopes := (getArr j "scopes").qsort fun a b => num a "total_ns" > num b "total_ns"
+  if scopes.isEmpty then
+    row "top scopes" "none (mark code with profile!, or pass --auto)"
+  else
+    let jw := num j "wall_ns"
+    for i in [0:min 3 scopes.size] do
+      let s := scopes[i]!
+      let pos := str s "pos"
+      let pct := if jw > 0 then s!"  {fmt2 (num s "total_ns" / jw * 100)}%" else ""
+      row (if i == 0 then "top scopes" else "")
+        s!"{fmtTime (num s "total_ns")}{pct}  {str s "name"}{if pos.isEmpty then "" else s!"  ({pos})"}"
+  if allocs || frees || opts.auto.isSome then
+    IO.println "\n  times include the probes' cost; `leanprof run` and the JSON report have the details"
+  IO.println s!"  report: {json}"
+  return code
+
 def main (argv : List String) : IO UInt32 := do
   try
     match argv with
@@ -1001,6 +1102,7 @@ def main (argv : List String) : IO UInt32 := do
       | none => IO.eprintln usage; return 2
     | ["doctor"] => doctor
     | "run" :: rest => run rest
+    | "stat" :: rest => statCmd rest
     | "measure" :: rest => measureCmd rest
     | "judge" :: rest => judgeCmd rest
     | "compare" :: rest => compare rest

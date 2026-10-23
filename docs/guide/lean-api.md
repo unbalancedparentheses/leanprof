@@ -35,6 +35,8 @@ allocations) in its `moreLeancArgs`.
 |---|---|
 | `Leanprof.copies : BaseIO Nat` | copies of shared or multi-threaded values so far |
 | `Leanprof.allocs : BaseIO Nat` | allocations so far (with `allocFlags`) |
+| `Leanprof.frees : BaseIO Nat` | objects freed by cascades so far (with `freeFlags`, see [memory](memory.md)) |
+| `Leanprof.peakMemory : BaseIO Nat` | peak bytes committed by Lean's allocator so far |
 | `Leanprof.calls "name" : BaseIO Nat` | completed calls of scopes named `name` |
 | `Leanprof.totalNs "name" : BaseIO Float` | their total time, overhead removed |
 | `Leanprof.overheadNs : BaseIO Float` | measured cost of one scope |

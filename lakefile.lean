@@ -20,6 +20,11 @@ def allocFlags : Array String :=
   #["alloc_small_object_core", "alloc_object"].map (fun f => s!"-Dlean_{f}=leanprof_{f}") ++
   #["mi_malloc", "mi_malloc_small"].map (fun f => s!"-D{f}=leanprof_{f}")
 
+/-- Opt-in free tracking: route compiled code's slow reference-count path
+(last references dropped, and every decrement of a multi-threaded object)
+through leanprof, which times freeing cascades per call site. -/
+def freeFlags : Array String := #["-Dlean_dec_ref_cold=leanprof_dec_ref_cold"]
+
 /-- Link flags so the report can name the functions that copied. -/
 def linkFlags : Array String := #["-rdynamic"]
 
@@ -32,14 +37,17 @@ lean_exe copybug where
 
 @[test_driver] lean_exe tests where
   root := `Tests.Main
-  moreLeancArgs := copyFlags ++ allocFlags
+  moreLeancArgs := copyFlags ++ allocFlags ++ freeFlags
   moreLinkArgs := linkFlags
 
 target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc" getLeanTrace
+  -- leanprof.c includes memory.inc.c: rebuild when either changes
+  let included := TextFilePath.mk (pkg.dir / "c" / "memory.inc.c")
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc"
+    (return (← getLeanTrace).mix (← computeTrace included))
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch

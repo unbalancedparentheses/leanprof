@@ -91,5 +91,6 @@ Run the program as usual and the report appears on stderr when it exits. Add
 editor.
 
 Next: [run time](run-time.md), [copies and allocations](copies-and-allocations.md),
+[memory, frees and `leanprof stat`](memory.md),
 [compile time](compile-time.md), [editor](editor.md),
 [CI and regressions](ci-and-regressions.md).

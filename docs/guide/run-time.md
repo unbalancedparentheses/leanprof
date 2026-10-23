@@ -1,6 +1,8 @@
 # Run time
 
-Four ways to see where a program spends its time, from least to most effort:
+Four ways to see where a program spends its time, from least to most effort
+(for a one-screen summary with peak memory, start with `leanprof stat EXE`,
+see [memory](memory.md)):
 
 | | command | cost | gives |
 |---|---|---|---|
@@ -86,7 +88,9 @@ milliseconds usually ran its work before the spawn (see above).
 program that links leanprof) writes a timeline in Chrome trace format: open
 it in [ui.perfetto.dev](https://ui.perfetto.dev). Each thread is a track,
 tasks appear on their worker threads as `task <- scope`, and copies are
-markers inside the scope that made them. At most 1,048,576 events are kept
+markers inside the scope that made them. A `memory (MiB)` counter track shows
+committed and resident memory, and with `--frees` freeing cascades of 100 µs
+or more are slices ([memory](memory.md)). At most 1,048,576 events are kept
 per thread (`LEANPROF_TRACE_MAX`).
 
 ## Overhead and accuracy

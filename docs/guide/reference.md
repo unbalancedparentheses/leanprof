@@ -8,7 +8,8 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--allocs] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up |
+| `run [--auto \| --auto-all] [--allocs] [--frees] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up |
+| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] EXE [-- ARGS]` | sample with samply, report per Lean declaration |
 | `elab [--heartbeats] [--top N] [--out F] FILE.lean…` | compile cost per declaration and operation |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
@@ -32,6 +33,7 @@ For programs that link leanprof:
 | `LEANPROF_TRACE_MAX=n` | timeline events kept per thread (default 1,048,576) |
 | `LEANPROF_NO_CALIBRATION=1` | raw times, leanprof's own cost not subtracted |
 | `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for positions |
+| `LEANPROF_STAT=1` | write the report even when nothing was recorded (set by `stat`) |
 
 For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 `LEAN_CC`):
@@ -40,6 +42,7 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 |---|---|
 | `LEANPROF_AUTO=1` / `all` | time every function of this package / of all packages |
 | `LEANPROF_ALLOCS=1` | count allocations |
+| `LEANPROF_FREES=1` | time freeing cascades, count atomic decrements ([memory](memory.md)) |
 | `LEANPROF_RUNTIME=file.o` | link this leanprof runtime (set by `run` for projects without the dependency) |
 | `LEANPROF_REAL_CC=cc` | compiler to forward to (default: the first `clang` on `PATH` that is not Lean's own) |
 
@@ -56,6 +59,17 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 - `tasks`: `spawned_by`, `tasks`, `run_total_ns`, `run_sum_ns`, `wait_ns`,
   `wait_max_ns`;
 - `waits`: `function`, `scope`, `where`, `waits`, `blocked_ns`.
+
+and objects:
+
+- `memory`: `peak_rss` and `peak_commit` (bytes), `start_commit`,
+  `end_commit`, `wall_ns`, `user_ns`, `sys_ns` (the program from start to
+  exit), `samples`, and `scopes`: `name`, `pos`, `sampled_calls`,
+  `peak_commit`, `max_rise`;
+- `frees` (only in builds with free tracking): totals `cascades`,
+  `objects`, `free_ns`, `p50_ns`, `p99_ns`, `max_ns`, `mt_decrements`, and
+  the same per site in `sites` (`function`, `scope`, `where`) and per scope
+  in `scopes` (`scope`, `pos`).
 
 Sampled reports add `"sampled": true`; compile reports from `elab` have
 `"elab": true`, `"unit": "ns"` or `"heartbeats"`, per-line `elab_ns`,
