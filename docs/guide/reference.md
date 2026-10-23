@@ -11,7 +11,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries |
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] EXE [-- ARGS]` | sample with samply, report per Lean declaration |
-| `elab [--heartbeats] [--top N] [--out F] FILE.lean…` | compile cost per declaration and operation |
+| `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--out F] EXE [-- ARGS]` | repeated runs into one summary |
 | `judge BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
@@ -87,9 +87,24 @@ and objects:
   the same per site in `sites` (`function`, `scope`, `where`) and per scope
   in `scopes` (`scope`, `pos`).
 
-Sampled reports add `"sampled": true`; compile reports from `elab` have
-`"elab": true`, `"unit": "ns"` or `"heartbeats"`, per-line `elab_ns`,
-`kernel_ns`, `compile_ns`, `lint_ns`, `top` operations, and `repeated`.
+Sampled reports add `"sampled": true`. Compile reports from `elab` have
+`"elab": true`, `"project"` (true with `--project`), `"unit": "ns"` or
+`"heartbeats"`, `threshold`, `timing` (`build_ns`, `profile_ns`,
+`report_ns`, `jobs`) and arrays:
+
+- `scopes`, per line: `name`, `pos`, `key` (`file declaration`, what
+  `compare` matches), `total_ns`, `elab_ns`, `kernel_ns`, `compile_ns`,
+  `lint_ns`, `top` operations (`amount`, `op`) and `unfolded`: the
+  definitions behind the line's work (`name`, `kind`: `unfold`, `whnf`,
+  `instance` or `simp`, `amount`, `count`, `sites`, `where`, `path`);
+- `files`: `file`, `module`, `key` (`module M`), `total_ns`, `elab_ns`,
+  `kernel_ns`, `compile_ns`, `lint_ns`, `wall_ns` (the `lean` process,
+  imports included), `errors`;
+- `tactics`: `pos`, `tactic`, `amount`, `count`;
+- `repeated`: `class`, `op`, `count`, `total`, `first_at`;
+- `constants`: as in `unfolded`, plus `module` and the exact counts
+  `unfolds`, `kernel`, `instances`, `simp_used`, `simp_tried`,
+  `simp_failed` when nonzero.
 
 ## GitHub Action and releases
 

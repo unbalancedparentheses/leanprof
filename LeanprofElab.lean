@@ -17,7 +17,7 @@ to each source position a tree of timed operations printed as indented lines,
   caused (the timed operations after it);
 * `trace.Meta.Tactic.simp.rewrite`: an untimed line naming each simp lemma that
   rewrote, after the unification that tried it;
-* `diagnostics`: exact per-command counts of the declarations `whnf` and
+* `diagnostics` (with `--counts`; it nearly doubles elaboration time): exact per-command counts of the declarations `whnf` and
   `isDefEq` unfolded, the instances used, the declarations the kernel
   unfolded, and the simp lemmas used and tried;
 * `pp.fullNames`, so `Meta.whnf` and `Meta.synthInstance.apply` lines name
@@ -97,10 +97,12 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
   | some i =>
     let f := (String.ofList fp).toNat?.getD 0
     let text := ((rest.drop 1).drop (amt.length + 1)).dropWhile (· == ' ')
-    -- drop the status mark (✅️, ❌️, 💥️: a symbol and a variation selector)
-    let text := match text with
-      | _ :: '️' :: ' ' :: t => t
-      | t => t
+    -- the status mark (✅️, ❌️, 💥️: a symbol and a variation selector) that every timed
+    -- operation has; without it, this is a continuation that happens to look like one
+    -- (a description containing `[x] [6]`)
+    let text ← match text with
+      | _ :: '️' :: ' ' :: t => some t
+      | _ => none
     return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat), String.ofList text)
 
 /-- Parse one message's trace into nodes (index 0 is the root). -/
@@ -323,6 +325,8 @@ structure Acc where
   /-- The file being read, by line, and without whitespace to find tactics in (not merged). -/
   src : Array String := #[]
   srcSq : Array String := #[]
+  /-- The largest command traced so far at each `line:column` of the file (not merged). -/
+  commandsAt : Std.HashMap String Float := {}
 
 /-- `s` without whitespace. -/
 def squash (s : String) : String := String.ofList (s.toList.filter fun c => !c.isWhitespace)
@@ -362,6 +366,19 @@ def Acc.addMessage (a : Acc) (file : String) (scale : Float) (m : Json) : Acc :=
     return a
   let nodes := parseTrace data
   let some root := nodes[0]? | return a
+  -- A command Lean expands into others (`theorem Foo.bar` into `namespace Foo theorem bar
+  -- end`, `open X in ...`) traces the inner command first and then itself, at the same
+  -- position, including the inner one's time: count only what the outer adds.
+  let col := ((m.getObjVal? "pos" >>= (·.getObjVal? "column")) >>= Json.getNat?).toOption.getD 0
+  let at_ := s!"{ln}:{col}"
+  let mut nodes := nodes
+  let mut root := root
+  if root.cls == "Elab.command" then
+    let inner := a.commandsAt.getD at_ 0
+    a := { a with commandsAt := a.commandsAt.insert at_ (max inner root.amount) }
+    if inner > 0 then
+      root := { root with amount := max 0 (root.amount - inner) }
+      nodes := nodes.set! 0 root
   let rootAmt := root.amount * scale
   a := { a with grand := a.grand + rootAmt }
   -- per line: total and kind
@@ -503,7 +520,11 @@ structure Opts where
   slower to elaborate, mostly printing the trace. -/
   threshold : Option Nat := none
   build : Bool := true
-  diagnostics : Bool := true
+  /-- `--counts`: Lean's `diagnostics` counters (exact unfold, instance and simp counts).
+  Off by default: it makes elaboration up to twice as slow. -/
+  diagnostics : Bool := false
+  /-- Elaborate a built module with Lake's setup file for it. -/
+  setup : Bool := true
 
 def Opts.thresholdValue (o : Opts) : Nat :=
   o.threshold.getD (if o.heartbeats then 10000 else 1)
@@ -530,9 +551,13 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   let source ← try IO.FS.readFile file catch _ => pure ""
   let src := (source.splitOn "\n").toArray
   let scale : Float := if o.heartbeats then 1 else 1e9
+  -- a built module is elaborated as Lake does: with its setup (module name, the package's
+  -- `leanOptions`, the exact imported files)
+  let setup : FilePath := ".lake" / "build" / "ir" / (module.replace "." "/" ++ ".setup.json")
+  let setupArgs := if o.setup && (← setup.pathExists) then #["--setup", setup.toString] else #[]
   let t0 ← IO.monoNanosNow
   let child ← IO.Process.spawn {
-    cmd := le.lean, args := (traceArgs o).push file, env := #[("LEAN_PATH", some le.path)],
+    cmd := le.lean, args := (traceArgs o ++ setupArgs).push file, env := #[("LEAN_PATH", some le.path)],
     stdout := .piped, stderr := .null, stdin := .null }
   let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := src.map squash } : Acc)
   readLines child.stdout fun line => do
@@ -547,6 +572,10 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   -- `diagnostics` can make Lean fail where it otherwise does not (4.35: nested inductive
   -- types, "Unknown constant `_nested.…rec`"): then profile the file again without it
   let errors : Nat := (a.files[0]?.map (·.2.errors)).getD 0
+  -- a setup Lake wrote before the file was edited (imports changed): without it
+  if errors > 0 && !setupArgs.isEmpty then
+    let b ← profileFile le { o with setup := false } file module
+    if (b.files[0]?.map (·.2.errors)).getD (0 : Nat) < errors then return b
   if errors > 0 && o.defs && o.diagnostics then
     let b ← profileFile le { o with diagnostics := false } file module
     if (b.files[0]?.map (·.2.errors)).getD (0 : Nat) < errors then
@@ -636,35 +665,48 @@ def locate (le : LeanEnv) (modules : Array Name) (names : Array String) : IO (St
       built := built.push { module := m }
   if built.isEmpty then return {}
   let cwd ← IO.currentDir
-  let env? ← try some <$> importModules built {} (loadExts := false) catch e => do
-    IO.eprintln s!"leanprof: definitions not located (cannot load the modules' environment: {e})"
-    pure none
-  let some env := env? | return {}
+  -- all at once; modules that cannot be imported together (two executables' `main`):
+  -- one at a time, until every name is found
+  let joint ← try some <$> importModules built {} (loadExts := false) catch _ => pure none
+  if let some env := joint then
+    return ← lookup le cwd env names {}
   let mut out : Std.HashMap String Loc := {}
-  let mut srcs : Std.HashMap Name (Option FilePath) := {}
-  for s in names do
-    let n := parseName s
-    let ranges? := declRangeExt.find? (level := .server) env n <|> declRangeExt.find? env n <|>
-      -- auxiliary recursors and `match_` functions: the declaration they belong to
-      declRangeExt.find? (level := .server) env n.getPrefix
-    let some ranges := ranges? | continue
-    let some idx := env.getModuleIdxFor? n | continue
-    let some mod := env.header.moduleNames[idx.toNat]? | continue
-    let src ← match srcs.get? mod with
-      | some s => pure s
-      | none => do
-        let s ← sourceOf le mod
-        srcs := srcs.insert mod s
-        pure s
-    let line := ranges.range.pos.line
-    let unfoldable := match env.find? n with
-      | some (.defnInfo _) | some (.thmInfo _) | some (.opaqueInfo _) => true
-      | _ => false
-    match src with
-    | some p => out := out.insert s { pos := s!"{showPath le cwd p}:{line}", path := p.toString,
-                                      module := mod.toString, unfoldable }
-    | none => out := out.insert s { pos := s!"{mod}:{line}", module := mod.toString, unfoldable }
+  for m in built do
+    let rest := names.filter (!out.contains ·)
+    if rest.isEmpty then break
+    try
+      let env ← importModules #[m] {} (loadExts := false)
+      out ← lookup le cwd env rest out
+    catch e => IO.eprintln s!"leanprof: definitions in {m.module} not located ({e})"
   return out
+where
+  lookup (le : LeanEnv) (cwd : FilePath) (env : Environment) (names : Array String)
+      (out : Std.HashMap String Loc) : IO (Std.HashMap String Loc) := do
+    let mut out := out
+    let mut srcs : Std.HashMap Name (Option FilePath) := {}
+    for s in names do
+      let n := parseName s
+      let ranges? := declRangeExt.find? (level := .server) env n <|> declRangeExt.find? env n <|>
+        -- auxiliary recursors and `match_` functions: the declaration they belong to
+        declRangeExt.find? (level := .server) env n.getPrefix
+      let some ranges := ranges? | continue
+      let some idx := env.getModuleIdxFor? n | continue
+      let some mod := env.header.moduleNames[idx.toNat]? | continue
+      let src ← match srcs.get? mod with
+        | some s => pure s
+        | none => do
+          let s ← sourceOf le mod
+          srcs := srcs.insert mod s
+          pure s
+      let line := ranges.range.pos.line
+      let unfoldable := match env.find? n with
+        | some (.defnInfo _) | some (.thmInfo _) | some (.opaqueInfo _) => true
+        | _ => false
+      match src with
+      | some p => out := out.insert s { pos := s!"{showPath le cwd p}:{line}", path := p.toString,
+                                        module := mod.toString, unfoldable }
+      | none => out := out.insert s { pos := s!"{mod}:{line}", module := mod.toString, unfoldable }
+    return out
 
 /-! ## The project -/
 
@@ -711,6 +753,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--jobs" :: v :: rest => parseOpts { o with jobs := v.toNat! } rest
   | "-j" :: v :: rest => parseOpts { o with jobs := v.toNat! } rest
   | "--no-defs" :: rest => parseOpts { o with defs := false } rest
+  | "--counts" :: rest => parseOpts { o with diagnostics := true } rest
   | "--no-build" :: rest => parseOpts { o with build := false } rest
   | "--threshold" :: v :: rest => parseOpts { o with threshold := some v.toNat! } rest
   | f :: rest =>
@@ -758,7 +801,7 @@ def kindLabel : String → String
 def main (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
   if o.files.isEmpty && !o.project then
-    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--top N] [--out FILE] [FILE.lean...]"
+    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out FILE] [FILE.lean...]"
   let tStart ← IO.monoNanosNow
   -- the modules must be built: their imports are read from `.olean` files
   if o.project && o.build then
@@ -802,12 +845,14 @@ def main (argv : List String) : IO UInt32 := do
   -- declarations of the profiled files, by line: for constants defined there (unbuilt
   -- files) and to name kernel and compiler lines
   let mut named : Std.HashMap String (Array (Nat × String)) := {}
-  let mut localDecls : Std.HashMap String String := {}  -- declared name ↦ file:line
+  let mut localDecls : Std.HashMap String (String × Bool) := {}  -- declared name ↦ (file:line, unfolds)
   for (k, c) in acc.lines do
     if c.name.isEmpty then continue
     let (f, l) := splitPos k
     named := named.insert f ((named.getD f #[]).push (l, c.name))
-    if let some d := declName c.name then localDecls := localDecls.insert d k
+    if let some d := declName c.name then
+      let unfolds := ["def", "abbrev", "instance", "theorem", "lemma", "opaque"].any fun kw => (c.name.splitOn s!"{kw} ").length > 1
+      localDecls := localDecls.insert d (k, unfolds)
   let locOf (s : String) : Option Loc := match locs.get? s with
     | some l => some l
     | none =>
@@ -815,7 +860,7 @@ def main (argv : List String) : IO UInt32 := do
       let parts := u.splitOn "."
       -- `Foo.bar` declared as `bar` in `namespace Foo`, or as `Foo.bar`
       (List.range parts.length).findSome? fun i =>
-        (localDecls.get? (".".intercalate (parts.drop i))).map fun k => { pos := k }
+        (localDecls.get? (".".intercalate (parts.drop i))).map fun (k, u) => { pos := k, unfoldable := u }
   -- `whnf` reduces applications of anything (structures, variables): keep only
   -- constants that unfold
   let keep (s : String) (c : ConstCost) : Bool :=

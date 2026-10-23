@@ -72,6 +72,14 @@ def hint (pos : String.Pos.Raw) (label tooltip : String) : CommandElabM Unit :=
     ({ position := pos, label := .name label, tooltip? := some tooltip, paddingLeft := true, lctx := {} } :
       InlayHint).toCustomInfo
 
+/-- How `elab` reached a definition (`unfold`, `whnf`, `instance`, `simp`). -/
+def unfoldVerb : String → String
+  | "unfold" => "unfolding"
+  | "whnf" => "reducing"
+  | "instance" => "trying instance"
+  | "simp" => "rewriting with"
+  | k => k
+
 syntax (name := leanprofCmd) "#leanprof" (ppSpace str)? : command
 
 /-- Hints and summary lines for one report. -/
@@ -100,14 +108,31 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     let tip :=
       if compile then
         let ops := (arr s "top").toList.map fun o => s!"\n  {amount (num o "amount")}  {str o "op"}"
+        -- `elab` names the definitions behind the work, each with its own file:line
+        let defs := (arr s "unfolded").toList.map fun u =>
+          let w := str u "where"
+          let sites := (num u "sites").toUInt64.toNat
+          s!"\n  {amount (num u "amount")} {unfoldVerb (str u "kind")} `{str u "name"}`" ++
+            (if w.isEmpty then "" else s!" ({w})") ++
+            (if sites > 1 then s!", reached from {sites} call sites" else "")
         s!"compile cost: elaboration {amount (num s "elab_ns")}, kernel {amount (num s "kernel_ns")}, " ++
           s!"compiler {amount (num s "compile_ns")}, linters {amount (num s "lint_ns")}" ++
-          (if ops.isEmpty then "" else "\ncostliest operations:" ++ String.join ops)
+          (if ops.isEmpty then "" else "\ncostliest operations:" ++ String.join ops) ++
+          (if defs.isEmpty then "" else "\ndefinitions behind it:" ++ String.join defs)
       else if sampled then s!"{str s "name"}: {fmtNs total} CPU inclusive, {fmtNs (num s "self_ns")} self (sampled)"
       else s!"{str s "name"}: {calls} calls, total {fmtNs total}, self {fmtNs (num s "self_ns")}, " ++
         s!"mean {fmtNs (num s "mean_ns")}, p50 {fmtNs (num s "p50_ns")}, p99 {fmtNs (num s "p99_ns")}"
     if (best.get? line).all (·.1 < total) then best := best.insert line (total, label, tip)
     lines := lines.push s!"{file}:{line}  {label}  ({str s "name"})"
+  -- tactic steps inside proofs (`elab`), on lines no declaration starts on
+  for t in arr j "tactics" do
+    let some line := lineIn file (str t "pos") | continue
+    if best.contains line then continue
+    let x := num t "amount"
+    let n := (num t "count").toUInt64.toNat
+    best := best.insert line (x, s!"⚙ {amount x}", s!"tactic step{if n > 1 then s!" (run {n} times)" else ""}: {str t "tactic"}\n" ++
+      "inclusive: includes the steps nested in it")
+    lines := lines.push s!"{file}:{line}  ⚙ {amount x}  ({str t "tactic"})"
   for (line, (_, label, tip)) in best.toList do
     hint (endOfLine fm line) label tip
   for c in arr j "copies" do

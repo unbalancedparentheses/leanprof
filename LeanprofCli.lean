@@ -44,11 +44,12 @@ def commands : List (String × String × String) := [
     "Run EXE under samply (no probes) and report CPU time per Lean declaration with file:line,\n" ++
     "plus where the Lean runtime's time went. `samply load` on the saved profile opens a flame\n" ++
     "graph with Lean names. Needs samply (brew install samply / cargo install samply)."),
-  ("elab", "[--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--no-defs] [--top N] [--out FILE] [FILE.lean...]",
+  ("elab", "[--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out FILE] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
-    "the package in parallel (--module-glob: those matching, e.g. 'Foo.Data.*'). --heartbeats counts\n" ++
+    "the package in parallel (--module-glob: those matching, e.g. 'Foo.Data.*'). --counts adds Lean's exact\n" ++
+    "unfold counts (slower). --heartbeats counts\n" ++
     "heartbeats, which are the same on every run."),
   ("compare", "[--threshold PCT] [--min-ms MS] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, changed call counts, compile heartbeats up by more than\n" ++

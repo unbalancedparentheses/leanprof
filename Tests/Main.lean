@@ -1,4 +1,4 @@
-import Leanprof
+import Leanprof import Tests.Elab
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -239,6 +239,8 @@ def tests : StateT Nat IO Unit := do
   let t ← IO.mapTask (fun x => pure (x + 1)) src
   check "IO.mapTask passes the value through" (match t.get with | .ok r => r == 8 | .error _ => false)
   -- <<< task continuations
+  -- leanprof elab: reading traces (Tests/Elab.lean)
+  Tests.Elab.run fun n ok d => check n ok d
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0
