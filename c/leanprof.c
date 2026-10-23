@@ -174,9 +174,12 @@ static lpf_thread *lpf_thread_get(void) {
     return t;
 }
 
+#include "live.inc.c" /* live snapshots (LEANPROF_LIVE), flight recorder (LEANPROF_FLIGHT, LEANPROF_SLOW_MS) */
+
 /* Append a timeline event. Begin events stop a frame short of the limit, so
  * every recorded begin can still get its end. */
 static int lpf_trace(lpf_thread *t, uint8_t ph, const void *key, uint8_t kind, uint64_t ts, uint64_t bytes) {
+    if (LEAN_UNLIKELY(lpf_flight)) return lpf_flight_trace(t, ph, key, kind, ts, bytes);
     size_t limit = ph == 'E' ? lpf_trace_max : lpf_trace_max - LP_DEPTH;
     if (t->nevents >= limit) {
         t->events_dropped++;
@@ -2010,4 +2013,5 @@ __attribute__((constructor)) static void lpf_init(void) {
     lpf_start = lpf_now();
     lpf_mem_init();
     atexit(lpf_report);
+    lpf_live_init(); /* after atexit(lpf_report): the live thread stops before the report */
 }
