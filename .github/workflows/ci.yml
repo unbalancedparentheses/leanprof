@@ -274,7 +274,7 @@ jobs:
           printf '#!/bin/sh\necho 0123456789abcdef\n' > other-lean-driver && chmod +x other-lean-driver
           LEANPROF_ELAB_DRIVER=$PWD/other-lean-driver lake exe leanprof elab --heartbeats --threshold 0 --out other.json Examples/ElabHeavy.lean > other.txt 2> other.err
           cat other.err
-          grep -q "is not the one leanprof was built with" other.err
+          grep -q "is not the one .*other-lean-driver was built with" other.err
           grep -q "Examples/ElabHeavy.lean:28  refine" other.txt
           python3 -c "import json,sys; d=json.load(open('other.json')); sys.exit(0 if not d['exact_ranges'] and not d['ranges'] and any(t['pos'] == 'Examples/ElabHeavy.lean:22' for t in d['tactics']) else 1)"
           lake exe leanprof elab --no-driver --out nodriver.json Examples/ElabHeavy.lean > /dev/null
@@ -671,9 +671,15 @@ jobs:
           cat elab.err
           python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 3
           grep -q "Regex/VM/Basic.lean:105  def eachStepChar" elab.txt
-          # another Lean than leanprof's: the driver cannot load its modules, `lean` is used
-          grep -q "is not the one leanprof was built with" elab.err
-          grep -q '"exact_ranges":false' .lake/leanprof/elab.json
+          # another Lean than leanprof's: the driver is built for it (once, cached), so the
+          # profile still has exact ranges, and the definitions are located by that driver
+          grep -q "building leanprof-elab-driver for the project's Lean" elab.err
+          grep -q '"exact_ranges":true' .lake/leanprof/elab.json
+          python3 -c "import json,sys; d=json.load(open('.lake/leanprof/elab.json')); print(len(d['ranges']), sum(1 for c in d['constants'] if c['where'])); sys.exit(0 if d['ranges'] and any(c['where'] for c in d['constants']) else 1)"
+          # the second run uses the cached driver
+          $LP/leanprof elab --compact Regex/VM/Basic.lean > /dev/null 2> elab2.err
+          if grep -q "building leanprof-elab-driver" elab2.err; then echo "expected the cached driver"; exit 1; fi
+          python3 "$GITHUB_WORKSPACE/scripts/check-elab-dataset.py" .lake/leanprof/elab --timeline
 
   # The VS Code extension (editors/vscode): its commands run in a real VS Code
   # against the leanprof command built here, then it is packaged as a .vsix
