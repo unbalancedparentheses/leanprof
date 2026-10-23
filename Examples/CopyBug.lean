@@ -24,9 +24,11 @@ def buildWithHistory (n : Nat) : Array Nat × Array (Array Nat) := profile! "bui
 
 def build (n : Nat) : Array Nat := profile! "build" Id.run do
   let mut acc : Array Nat := Array.mkEmpty 0
+  let mut snapshot : Array Nat := #[]
   for i in [0:n] do
+    if i == n / 2 then snapshot := acc
     acc := acc.push i
-  return acc
+  return if snapshot.size > n then snapshot else acc
 
 public def main (args : List String) : IO Unit := do
   let n := (args.head? >>= String.toNat?).getD 2000
