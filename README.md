@@ -78,11 +78,13 @@ actions (any monad with `MonadFinally` and a `BaseIO` lift, such as `IO` or
 `StateT σ IO`); a monadic scope also closes when the action throws.
 
 ```lean
-import Leanprof
+module
+
+public import Leanprof
 
 def solve (xs : Array Nat) : Nat := profile! "solve" (xs.foldl (· + ·) 0)
 
-def main : IO Unit := profile! "main" do
+public def main : IO Unit := profile! "main" do
   IO.println (solve #[1, 2, 3])
 ```
 
@@ -304,8 +306,9 @@ the counters and positions while the program runs.
 
 Overhead: about 11 ns per profiled `IO` action and 15 ns per pure
 `profile!` scope (which allocates a closure) on an Apple M5 Max; see
-[`bench/`](bench/README.md). leanprof measures its own cost at startup and
-again at exit (fastest of many batches, after a warm-up) and subtracts it
+[`bench/`](bench/README.md). leanprof measures its own cost the first time
+something is profiled and again at exit (fastest of many batches, after a
+warm-up; programs that never profile pay nothing) and subtracts it
 from every enclosing scope, so the report shows the program's time, not the
 profiler's: in `lake build overhead && .lake/build/bin/overhead`, a 24 ms
 loop of 10 million tiny steps runs in 190 ms with profiling and is reported
