@@ -962,10 +962,13 @@ where
       let unfoldable := match env.find? n with
         | some (.defnInfo _) | some (.thmInfo _) | some (.opaqueInfo _) => true
         | _ => false
+      -- a copy: `Name.toString` of a one-part name is the name's own string, which
+      -- lives in the module's .olean data, unmapped when `withImportModules` returns
+      let modStr := String.ofList mod.toString.toList
       match src with
       | some p => out := out.insert s { pos := s!"{showPath le cwd p}:{line}", path := p.toString,
-                                        module := mod.toString, unfoldable }
-      | none => out := out.insert s { pos := s!"{mod}:{line}", module := mod.toString, unfoldable }
+                                        module := modStr, unfoldable }
+      | none => out := out.insert s { pos := s!"{mod}:{line}", module := modStr, unfoldable }
     return out
 
 /-! ## The project -/

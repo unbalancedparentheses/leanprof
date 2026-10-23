@@ -19,3 +19,8 @@ race:lean::
 race:lean_io_prim_
 # mimalloc, inside Lean's runtime (its per-thread data torn down at thread exit)
 race:mi_
+# a new object's header written by lean_alloc_ctor (inline, from lean.h) into
+# memory another thread's object had before it was freed: mimalloc hands the
+# block over through atomics TSan cannot see (taskchains: a task's context
+# read by its worker, freed, and its block reused by the spawning thread)
+race_top:lean_alloc_ctor_memory
