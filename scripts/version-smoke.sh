@@ -57,7 +57,7 @@ broken="$work/broken"
 mkdir -p "$broken/.lake/build/bin" "$broken/scripts"
 # the command itself, behind any launcher or install script: doctor says
 # where its files are
-real="$("$lp" doctor | sed -n 's/.*leanprof files at //p')/.lake/build/bin/leanprof"
+real="$("$lp" doctor | sed -n 's/.*leanprof files at //p' | head -1)/.lake/build/bin/leanprof"
 cp "$real" "$broken/.lake/build/bin/leanprof"
 cp -R "$root/c" "$broken/"
 grep -v -e '-Dlean_string_push=' -e '-Dlean_string_push_cold=' "$root/scripts/leanprof-cc" > "$broken/scripts/leanprof-cc"
