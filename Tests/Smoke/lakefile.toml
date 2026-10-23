@@ -1,0 +1,10 @@
+# A small project with no dependency on leanprof, profiled from outside by the
+# Lean version matrix (.github/workflows/lean-versions.yml): CI sets its
+# lean-toolchain to each Lean version and runs `leanprof run`, `sample` and
+# `elab` on it.
+name = "smoke"
+defaultTargets = ["smoke"]
+
+[[lean_exe]]
+name = "smoke"
+root = "Main"
