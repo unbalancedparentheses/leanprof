@@ -96,11 +96,18 @@ DISCARD when any of these hold:
   few);
 - every new run was slower than every base run.
 
+Time is not judged at all when the machine was overloaded (1-minute load
+average above the number of CPUs) during either `measure`; run the loop on
+a quiet machine, or rely on the exact metrics.
+
 Otherwise KEEP when copies went down, allocations went down by at least 1%
 of the base count and 100 (a smaller cut is exact but too small to show in
 time; it is listed, not counted), heartbeats went down by more than 1% and
-1,000, or every new run was faster than every base run (new max below base min; with
-5 runs each, chance alone does that about 1 time in 252). A change within
+1,000, or every new run was faster than every base run (new max below base
+min) and the median moved by at least 1% (`--min-change`). Base and new are
+measured one after the other, so a quiet machine's drift of about 1% can
+separate the runs by itself: unchanged code gave 2 such verdicts in 20 before
+the 1% floor. A change within
 the noise is DISCARDed: it has to show that it helps. Call counts are
 listed but not judged, since restructuring code changes them legitimately.
 

@@ -15,12 +15,17 @@ DISCARD when any of these hold:
 * allocations went up (exact counts; when they differ between runs, only
   when every new run allocated more than every base run);
 * compile heartbeats of the measured files went up by more than 1% and 1,000;
-* every new run was slower than every base run.
+* every new run was slower than every base run, by at least `minChange`
+  percent of the median.
 
 Otherwise KEEP when copies went down, allocations went down by at least 1%
 and 100, heartbeats went down by more than 1% and 1,000, or every new run was
-faster than every base run (new max below base min: with 5 runs each, chance
-alone does that 1 time in 252).
+faster than every base run by at least `minChange` percent (default 1).
+Independent runs would not overlap by chance 1 time in 252 with 5 runs each,
+but base and new are measured one after the other and a quiet machine drifts
+by about 1% between them: unchanged code gave 2 such verdicts in 20
+(docs/case-studies/leanbench.md). Time is not judged at all when either
+summary was measured on an overloaded machine (load above its CPU count).
 -/
 
 namespace Leanprof.Judge
@@ -45,6 +50,9 @@ structure Summary where
   allocs : Option (Nat × Nat × Nat) := none
   allocSites : Std.HashMap String Nat := {}
   heartbeats : Option (Std.HashMap String Float) := none
+  /-- the machine ran more jobs than it has CPUs while measuring -/
+  overloaded : Bool := false
+  loadAvg : Option Float := none
 
 def num (j : Json) (k : String) : Float :=
   match j.getObjVal? k with
@@ -81,7 +89,9 @@ def Summary.ofJson (j : Json) : Except String Summary := do
     sites := toNatMap (keyedMap (field "copies") "copies")
     calls := toNatMap (keyedMap (field "calls") "calls")
     allocs, allocSites := toNatMap (keyedMap (field "allocs") "allocs")
-    heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats") }
+    heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats")
+    overloaded := ((field "machine").getObjValAs? Bool "overloaded").toOption.getD false
+    loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption }
 
 /-- The verdict and its reasons. -/
 structure Verdict where
@@ -136,7 +146,7 @@ def siteChanges (what : String) (b n : Std.HashMap String Nat) (top : Nat := 10)
 
 /-- KEEP or DISCARD, from the summaries before (`b`) and after (`n`) a change
 (the rules are in the module docstring). -/
-def judge (b n : Summary) : Verdict := Id.run do
+def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
   let mut worse : Array String := #[]
   let mut better : Array String := #[]
   let mut notes : Array String := #[]
@@ -187,10 +197,19 @@ def judge (b n : Summary) : Verdict := Id.run do
     notes := notes.push "compile heartbeats measured in only one summary; not compared"
   -- calls: exact, but restructuring code changes them legitimately
   notes := notes ++ siteChanges "calls" b.calls n.calls
-  -- time: only when the runs do not overlap
-  let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median}"
-  if n.max < b.min then better := better.push s!"{t} (every new run faster than every base run)"
-  else if n.min > b.max then worse := worse.push s!"{t} (every new run slower than every base run)"
+  -- time: only when the runs do not overlap and the median moved by at
+  -- least minChange percent, and never on an overloaded machine
+  let pct := if b.median > 0 then (n.median - b.median) / b.median * 100 else 0
+  let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median} ({if pct > 0 then "+" else ""}{fmt2 pct}%)"
+  if b.overloaded || n.overloaded then
+    -- on a machine running more jobs than CPUs, load drifts between the two
+    -- summaries and whole runs shift together; non-overlap proves nothing
+    let la (x : Summary) := match x.loadAvg with | some l => fmt2 l | none => "?"
+    notes := notes.push s!"{t} (not judged: machine overloaded while measuring, load average {la b} and {la n})"
+  else if n.max < b.min && -pct >= minChange then better := better.push s!"{t} (every new run faster than every base run)"
+  else if n.min > b.max && pct >= minChange then worse := worse.push s!"{t} (every new run slower than every base run)"
+  else if n.max < b.min || n.min > b.max then
+    notes := notes.push s!"{t} (runs do not overlap, but the change is below --min-change {fmt2 minChange}%)"
   else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
   return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes }
 

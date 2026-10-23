@@ -5,3 +5,4 @@
 /Tests/Smoke/.lake
 /dist
 /_site
+/bench/leanbench/project/.lake

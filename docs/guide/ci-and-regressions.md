@@ -158,6 +158,20 @@ smaller cut than 1% is exact but saves less than timing can see (each
 allocation costs a few ns), so it is listed but is not an improvement on
 its own.
 
+Time counts only when the runs do not overlap **and** the median moved by
+at least `--min-change PCT` percent (default 1): base and new are measured
+one after the other, and on a quiet, pinned machine drift of about 1%
+between the two separated the runs of unchanged code in 2 of 20 pairs.
+
+`measure` also records the 1-minute load average and the number of CPUs
+(and the mean and standard deviation of the run times). When either summary
+was measured on an overloaded machine (load average above the number of
+CPUs), `judge` reports the time change but does not use it: on such a
+machine whole runs drift together, and on a shared 18-core Mac at load 30–68,
+"every new run faster than every base run" held for 2 of 20 comparisons of
+unchanged code ([LeanBench case study](../case-studies/leanbench.md)).
+Copies, heartbeats and the output are still judged.
+
 ## Autoresearch
 
 `measure` and `judge` are the measurement and verdict of an

@@ -42,6 +42,18 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - [Lake, the language server and `lean`](docs/case-studies/lake-and-server.md)
   case study, and seven candidate patches for Lean with measurements in
   [docs/upstream/lean4](docs/upstream/lean4/README.md) (not sent upstream).
+- `measure` records the 1-minute load average and the CPU count, and the
+  mean and standard deviation of the run times; `judge` does not judge time
+  when either summary was measured on an overloaded machine (load above the
+  CPU count), and prints the time change in percent.
+- `judge --min-change PCT` (default 1): non-overlapping runs count as faster
+  or slower only when the median also moved by PCT percent. On a quiet,
+  pinned machine, unchanged code had been judged faster in 2 of 20 pairs;
+  with the floor, 0 of 20, and a 2% slowdown is still caught 5 of 5
+  ([LeanBench case study](docs/case-studies/leanbench.md)).
+- `bench/leanbench/`: leanprof against LeanBench on noise, seeded copies,
+  allocations, 2–30% slowdowns and a speedup, with the scripts and raw
+  results.
 - A `sanitizers` job: tests, examples, the server with live snapshots and
   the flight recorder, `run --allocs --counters --frees`, `explain --why`
   and the stress test, built with ASan and UBSan and with TSan on Linux

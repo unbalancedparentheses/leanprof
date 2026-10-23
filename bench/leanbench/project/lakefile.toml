@@ -1,0 +1,21 @@
+# Shared benchmark project for docs/case-studies/leanbench.md: one workload,
+# measured by LeanBench (the `bench` exe, in process) and by leanprof (the
+# `work` exe, whole process). leanprof needs nothing in this file.
+name = "lbcase"
+
+# --- LeanBench setup: these 4 lines plus Bench.lean ---
+[[require]]
+name = "LeanBench"
+git = "https://github.com/alok/LeanBench"
+rev = "250d2a892bf8c91ec3ae5de8517793e18379f97b"
+
+[[lean_lib]]
+name = "Work"
+
+[[lean_exe]]
+name = "work"
+root = "WorkMain"
+
+[[lean_exe]]
+name = "bench"
+root = "Bench"
