@@ -39,6 +39,29 @@ jobs:
           python3 -c "import json,sys; d=json.load(open('counters.json')); c=sum(r['checks'] for r in d['reuse']); a=sum(r['applications'] for r in d['closures']); print(c,a); sys.exit(0 if c >= 2000 and a > 0 else 1)"
           LEANPROF_QUIET=1 lake exe leanprof run --json plain.json copybug -- 2000
           python3 -c "import json,sys; d=json.load(open('plain.json')); sys.exit(0 if d['reuse'] == [] and d['closures'] == [] else 1)"
+      - name: Frees, memory and leanprof stat
+        run: |
+          LEANPROF_QUIET=1 lake exe leanprof run --frees --json frees.json --trace frees-trace.json copybug -- 2000
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('frees.json'))
+          f, m = d['frees'], d['memory']
+          print({k: f[k] for k in ('cascades', 'objects', 'max_ns')}, {k: m[k] for k in ('peak_commit', 'peak_rss', 'samples')})
+          rise = {s['name']: s['max_rise'] for s in m['scopes']}
+          print(rise)
+          ev = json.load(open('frees-trace.json'))['traceEvents']
+          counters = sum(e['ph'] == 'C' for e in ev)
+          slow = [e['name'] for e in ev if e['ph'] == 'X']
+          print(counters, slow)
+          ok = (f['objects'] >= 2000 and m['peak_commit'] > 15 * 2**20 and m['samples'] >= 2
+                and rise.get('buildWithHistory', 0) > 10 * 2**20 and counters >= 2)
+          sys.exit(0 if ok else 1)
+          PY
+          lake exe leanprof stat copybug -- 2000 | tee stat.txt
+          grep -q "peak memory" stat.txt
+          grep -q "copies       1,999 of shared values" stat.txt
+          grep -q "frees        [0-9,]* objects in" stat.txt
+          grep -q "top scopes   .*buildWithHistory" stat.txt
       - name: Tasks
         run: |
           lake build tasks

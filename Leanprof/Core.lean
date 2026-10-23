@@ -106,3 +106,20 @@ def expectAllocsAtMost (n : Nat) (x : IO α) : IO α := do
   return r
 
 end Leanprof
+
+namespace Leanprof
+
+/-! Frees and memory (see `docs/guide/memory.md`). -/
+
+/-- Objects freed so far by cascades started in compiled Lean code, on all
+threads. Counted only in builds with `freeFlags` (or `LEANPROF_FREES=1`
+through the wrapper); otherwise 0. -/
+@[extern "leanprof_frees"]
+opaque frees : BaseIO Nat
+
+/-- The most memory Lean's allocator (mimalloc) has had committed so far, in
+bytes. Takes a sample, so it also updates the timeline's memory track. -/
+@[extern "leanprof_peak_memory"]
+opaque peakMemory : BaseIO Nat
+
+end Leanprof

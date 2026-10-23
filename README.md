@@ -31,6 +31,7 @@ looks linear. No other profiler shows this.
 | Copies of shared arrays and strings, with file:line and the reason | `leanprof run myapp` |
 | Allocations per function; failed in-place reuse; closure calls | `leanprof run --allocs --counters myapp` |
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
+| Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
 | Compile cost per line and operation kind, repeated work, exact heartbeats | `leanprof elab --heartbeats Foo.lean` |
 | Regressions in CI, exactly for copies, calls and heartbeats; PR comments | `leanprof compare`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, for automated optimization loops | `leanprof measure`, `leanprof judge` |
@@ -50,6 +51,7 @@ sh leanprof/scripts/install.sh       # puts `leanprof` on your PATH
 cd your-lean-project
 leanprof doctor                      # checks Lean, clang, samply
 leanprof sample myapp -- args        # where the time goes
+leanprof stat myapp -- args          # one screen: time, memory, allocations, copies, frees
 leanprof run myapp -- args           # exact counts, copies, tasks
 ```
 
@@ -85,6 +87,7 @@ The [getting started guide](docs/guide/getting-started.md) walks through it.
 | Works without changing the project | ✅ | – | ✅ | ✅ |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – |
+| Peak memory per scope, freeing pauses | ✅ | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads |
 | Compile time | per line and operation, repeated work | – | deeper (unfolded definitions, all of Mathlib) | – |
 | Exact regression checks, PR comments | ✅ | thresholded time | – | – |
@@ -97,6 +100,7 @@ Overhead from [`bench/`](bench/README.md) on an Apple M5 Max.
 - [Getting started](docs/guide/getting-started.md)
 - [Run time](docs/guide/run-time.md): sampling, every function, `profile!`, tasks, timeline
 - [Copies and allocations](docs/guide/copies-and-allocations.md), reuse and closures
+- [Memory, frees and `leanprof stat`](docs/guide/memory.md)
 - [Compile time](docs/guide/compile-time.md)
 - [In the editor](docs/guide/editor.md)
 - [CI, regressions and autoresearch](docs/guide/ci-and-regressions.md)
