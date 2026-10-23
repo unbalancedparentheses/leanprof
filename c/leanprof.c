@@ -102,6 +102,7 @@ typedef struct {
     uint8_t traced;            /* its begin event was recorded */
     uint8_t path;              /* LP_PATH_* */
     uint8_t fwd;               /* not a call: forwarded within one declaration */
+    uint8_t counted;           /* allocations are counted (below) */
     const void *label;         /* the innermost `profile!` label from this frame down, or NULL */
     uint64_t start;
     uint64_t child;            /* raw time in direct children */
@@ -111,7 +112,6 @@ typedef struct {
      * shims, `counted`): the thread's counts when the frame opened, and
      * what its completed children made. Without the shims nothing here is
      * touched, which was 2.5 ns of a 22 ns scope. */
-    uint8_t counted;
     uint64_t allocs0, bytes0;
     uint64_t allocs_kids, bytes_kids;
 } lpf_frame;

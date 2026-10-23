@@ -42,18 +42,22 @@ allocations.
 | `copy` | an array pushed while an old version is kept (one hidden copy per push) against the same pushes in place |
 | `tasks` | the same work split over 2, 4 and 8 dedicated threads, a tiny scope per step; truth is the sum of the tasks' own durations |
 
-The program is built three times from the same file: plain (the baseline,
+The program is built four times from the same file: plain (the baseline,
 also what `run --auto`, `sample` and samply run), with `profile!` around
 every function (`WlProf.lean`, a symbolic link; `run`, `--allocs`,
-`--counters` and `--frees` run this one) and with LeanProfiler spans around
-phases and tasks (`WlSpans.lean`); see `BenchScope.lean`. Functions are called
+`--counters` and `--frees` run this one), with LeanProfiler spans around
+phases and tasks (`WlSpans.lean`), and with leanprof scopes in exactly
+those places (`WlPhases.lean`, the `phases` configuration, so that leanprof
+and LeanProfiler are also compared like with like: the per-function
+configurations time every call, LeanProfiler only phases); see
+`BenchScope.lean`. Functions are called
 through closures from another module (`BenchKernels.lean`) so that the C
 compiler cannot inline them: an inlined function has no frame for samply and
 no hooks for `--auto`, which would make the comparison about inlining.
 
 For each configuration (plain; `profile!`; `leanprof run`; `run --auto`;
 `--allocs`; `--counters`; `--frees`; `leanprof sample`; `samply record`
-directly at its default 1 kHz; LeanProfiler) and workload, the runs are
+directly at its default 1 kHz; `phases`; LeanProfiler) and workload, the runs are
 interleaved in shuffled order and the report gives the median and range of:
 
 - **error in share of time**: each phase's (or task function's) reported
@@ -94,6 +98,75 @@ inclusive time of its top declarations (there is no ground truth there).
   program's slowdown (on the workloads, 1.0–1.1×).
 - `--allocs` and `--frees` add time they do not subtract (an allocation or
   a free is counted and timed): use them for counting.
+
+### Linux: AMD Ryzen 9 7950X3D (2026-10-23)
+
+A dedicated idle machine (Arch Linux, kernel 7.2, `performance` governor,
+boost off, the suite pinned to cores 0–7) run with
+`servers/leanprof-bench-run.sh` from the dotfiles. Before (`8d9f807`) and
+after this round, 7 runs each:
+
+| | before | after |
+|---|---|---|
+| cost per scope (`tiny`, `profile!` / `--auto`) | 50.9 / 50.0 ns | 22.8 / 22.6 ns |
+| `tiny` slowdown (`profile!`) | 38.3× | 17.7× |
+| `rec` slowdown (`profile!` / `--auto`) | 6.8× / 11.7× | 3.5× / 5.9× |
+| `rec` share error, `leanprof sample` (samply) | 14.2 pp (13.8) | 1.2 pp (14.8) |
+| `alloc` share error, `--auto` (samply) | 8.2 pp (1.2) | 2.6 pp (0.5) |
+| `copy` share error, `--auto` (samply) | 6.5 pp (0.5) | 3.2 pp (0.5) |
+| `copy` reported total, `--auto` | 0.86 | 1.05 |
+| `tasks` share error, `--auto` (samply) | 2.1 pp (1.4) | 0.5 pp (1.6) |
+| `phases` against LeanProfiler (worst workload) | – | 0.6 against 0.7 pp (`rec`) |
+
+What was slow or wrong, and what changed:
+
+1. **The clock.** `clock_gettime(CLOCK_MONOTONIC)` through the vDSO is
+   18 ns a read on this CPU, and a scope reads twice: 52% of a `tiny` run
+   in perf. leanprof now reads the TSC (7 ns in a loop, ~4.5 ns in place)
+   when the kernel's clocksource is `tsc` and the CPU reports an invariant
+   TSC, its rate measured against `CLOCK_MONOTONIC`; `CNTVCT_EL0` on arm64
+   Linux. Still the larger part of what is left: `RDTSC` is microcode on
+   Zen 4, about 9 of the 23 ns. That is why a scope costs about three times
+   what it costs on the M5 Max, where reading the counter is one
+   instruction; at or below the M5's cost is out of reach on this CPU.
+2. **The enter and exit code** was a shared function (six registers
+   pushed and popped, a stack-protector check from an inlined
+   `clock_gettime` buffer), with every frame zeroing and summing allocation
+   counts that only `--allocs` builds use. Inlined, with the slow paths
+   out of line and allocation bookkeeping only once the alloc shims have
+   run, the bookkeeping went from about 14 to 10 ns (perf: the clock reads
+   are now 40–50% of the probe).
+3. **Sampled recursion.** perf copies at most 64 KiB of stack per sample,
+   so samply's stacks stop a few hundred frames from the leaf: 10,000 calls
+   deep, `phDeep10k` got 0.08–0.13 of its time from samply and from
+   `leanprof sample`. Frame pointers would not change that (the limit is on
+   the bytes copied; Lean's bundled clang already keeps frame pointers);
+   `sample` now completes a cut stack from the thread's last whole one, and
+   gets 1.00.
+4. **`run`/`--auto` on `copy`** were built by the system's clang and
+   linker, and that program's copy phase was 18% faster than the plain
+   build with no probes at all (55 against 67 ms, an uninstrumented build
+   through the same wrapper). The wrapper now uses Lean's own `leanc` on
+   Linux, so the instrumented program is built like the plain one. What is
+   left is code placement: a probe moves Lean's precompiled runtime to
+   other addresses, and the alignment of `lean_copy_expand_array` and
+   `lean_del_core_other` alone moves the copy phase by up to 18% on this
+   CPU (the plain and `profile!` builds share it; builds that place them
+   elsewhere ran 55 ms). In-place pushes also pay the `Array.push` shim's
+   check, which nothing subtracts: `phPushExclusive` at 1.10 (`run`) and
+   1.20 (`--auto`).
+5. **`--auto` on `alloc`** was mostly probe cost: with the probes at half
+   the cost the error is a third of what it was.
+
+Still worse than an alternative here: `run --auto` against samply on
+`alloc` (2.6 against 0.5 pp) and `copy` (3.2 against 0.5 pp), and the
+probe-cost-bound rows (`tiny`, `rec` with `--auto`: 4.2 and 10.4 pp; the
+rows are flagged, and `leanprof sample` gets 0.1 and 1.2 pp). With scopes
+where LeanProfiler's spans are, leanprof is within 0.5 pp of LeanProfiler
+or better everywhere, but the program is 1.1–1.4× slower against
+LeanProfiler's 1.0–1.05×: leanprof calibrates its probes for 10–15 ms
+at the first scope, inside the first phase, which these 40–120 ms
+workloads see.
 
 ### Second round: accuracy and overhead (2026-10-23)
 

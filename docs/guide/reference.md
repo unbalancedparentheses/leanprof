@@ -38,6 +38,7 @@ For programs that link leanprof:
 | `LEANPROF_TRACE=path` | also write a Perfetto timeline |
 | `LEANPROF_TRACE_MAX=n` | timeline events kept per thread (default 1,048,576; with the flight recorder, the ring's size, default 262,144) |
 | `LEANPROF_NO_CALIBRATION=1` | raw times, leanprof's own cost not subtracted |
+| `LEANPROF_CLOCK=monotonic` | on Linux, time with `clock_gettime(CLOCK_MONOTONIC)` instead of the CPU's counter (TSC or `CNTVCT_EL0`) |
 | `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for positions |
 | `LEANPROF_STAT=1` | write the report even when nothing was recorded (set by `stat`) |
 | `LEANPROF_LIVE=path` / `1` | rewrite a live snapshot every 250 ms (`1`: `$TMPDIR/leanprof-<pid>.live.json`) ([live](live.md)) |
@@ -68,7 +69,7 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 | `LEANPROF_FREES=1` | time freeing cascades, count atomic decrements ([memory](memory.md)) |
 | `LEANPROF_RUNTIME=file.o` | link this leanprof runtime (set by `run` for projects without the dependency) |
 | `LEANPROF_CORE_LIB=dir` | search `dir` first for `-lInit`, `-lStd`, ... (set by `run --core` to the rewritten copies) |
-| `LEANPROF_REAL_CC=cc` | compiler to forward to (default: the first `clang` on `PATH` that is not Lean's own) |
+| `LEANPROF_REAL_CC=cc` | compiler to forward to (default: Lean's own `leanc` on Linux, so instrumented builds compile and link like Lake's; elsewhere, and for sanitizer builds, the first `clang` on `PATH` that is not Lean's own) |
 
 ## JSON report
 

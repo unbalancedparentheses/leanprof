@@ -10,7 +10,32 @@ to leanprof's shims in [`c/leanprof.c`](../../c/leanprof.c), which record what
 happened and forward to the real function. The rest of the runtime is
 untouched. The compiler wrapper `scripts/leanprof-cc` adds the flags to every
 package when set as `LEAN_CC`, and `leanprof run` compiles the shims against
-the project's own `lean.h`, so the project needs no dependency.
+the project's own `lean.h`, so the project needs no dependency. On Linux the
+wrapper hands the compile and the link to Lean's own `leanc` (its bundled
+clang, sysroot and linker), so the profiled program is built like the one
+Lake builds: built by the system's clang and linker instead, the copy
+benchmark ran 18% faster without any probes, and that difference showed up
+in the report as if leanprof had subtracted too much. (A probe still moves
+code: Lean's precompiled runtime lands at other addresses, and on a Ryzen
+7950X3D the alignment of its copy and free loops alone changes that
+benchmark by up to 18%. No build setting removes that.)
+
+## The clock
+
+Each scope reads the clock twice. On Apple Silicon leanprof reads the
+counter `CNTVCT_EL0` directly (not `mach_absolute_time`, which waits for
+every earlier instruction). On Linux it reads the TSC on x86-64 and
+`CNTVCT_EL0` on arm64, but only when the kernel keeps time with the same
+counter (clocksource `tsc` or `arch_sys_counter`: the kernel checks that
+the TSC is invariant and in step across cores) and, on x86-64, the CPU
+reports an invariant TSC. The TSC's rate is measured against
+`CLOCK_MONOTONIC`: over 50 µs at startup for intervals and thresholds, and
+over at least 5 ms from startup for every reported time. Otherwise, or with
+`LEANPROF_CLOCK=monotonic`, it calls `clock_gettime(CLOCK_MONOTONIC)`, about
+18 ns a read through the vDSO on a 7950X3D against 4.5 ns for `RDTSC`.
+None of these reads wait for earlier instructions; both ends of a scope
+read the same way, and calibration measures the probes with the same
+reads.
 
 ## Lean's own libraries (`--core`)
 
@@ -107,7 +132,14 @@ names are demangled and resolve to positions (`scripts/check-report.py`).
 ## Sampling and compile time
 
 `sample` runs samply and reads its profile and symbol files, so it needs no
-probes. `elab` runs `lean` with `trace.profiler` and parses the trace trees
+probes. On Linux samply unwinds a copy of the top 64 KiB of the stack
+(perf's limit), so samples deep in recursion lose their outer frames.
+A stack is whole when its outermost frame is one that is never anything
+but outermost on that thread (`_start`, the thread's start routine); a cut
+one is completed with the outer frames of the thread's last whole stack,
+from the outermost call of the cut stack's outermost function. Frame
+pointers would not help: the limit is on the bytes copied, not on how
+they are unwound, and Lean's bundled clang already keeps frame pointers. `elab` runs `lean` with `trace.profiler` and parses the trace trees
 from its JSON messages.
 
 ## Limits

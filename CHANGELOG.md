@@ -41,6 +41,40 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Changed
 
+- **The clock on Linux** is the CPU's counter where the kernel keeps time
+  with it: the TSC on x86-64 (clocksource `tsc` and the CPU's invariant-TSC
+  bit; its rate measured against `CLOCK_MONOTONIC`), `CNTVCT_EL0` on arm64
+  (clocksource `arch_sys_counter`). `clock_gettime` through the vDSO cost
+  18 ns a read on a Ryzen 7950X3D, two reads per scope.
+  `LEANPROF_CLOCK=monotonic` keeps `clock_gettime`.
+- **A scope costs less to enter and exit**: the enter and exit code is
+  inlined into its callers (no shared function pushing and popping half a
+  dozen registers), the scope lookup, the memory-sample check and the
+  thread lookup have their common case inline and the rest out of line,
+  and allocation counts are kept only once an allocation went through the
+  `--allocs` shims (per-thread totals, read at each frame's start and end).
+  On a Ryzen 7950X3D (fixed clock, boost off) the `tiny` benchmark went
+  from 51 to 23 ns per scope and from 38× to 17.7× slower; on an M5 Max
+  calibration measures 7 ns per direct pair instead of 13.
+- **`leanprof sample` completes stacks samply cut short on Linux.** perf
+  copies at most 64 KiB of a thread's stack per sample, so a sample deep
+  in recursion lost its outer frames (10,000 calls deep, the phase that
+  started the recursion was missing from 90% of samples). A cut stack now
+  takes its outer frames from the thread's last whole stack, from the
+  outermost call of the cut stack's outermost function: on the `rec`
+  benchmark the share error went from 14.2 to 1.2 percentage points
+  (samply itself: 14.8).
+- **`scripts/leanprof-cc` builds with Lean's own `leanc` on Linux** (its
+  bundled clang, sysroot and linker), so `run` and `--auto` build the
+  program the way Lake does. Built by the system's clang and linker, the
+  copy benchmark ran 18% faster with no probes at all, and leanprof's
+  report then looked like it had subtracted too much (`run --auto` at 0.86
+  of the plain time, now 1.05). Sanitizer builds and macOS still use the
+  system's clang; `LEANPROF_REAL_CC` overrides.
+- `bench/run.py` has a `phases` configuration: leanprof scopes exactly
+  where LeanProfiler's spans are (phases and tasks), shown in the headline
+  next to LeanProfiler, so the two are compared like with like.
+
 - **`profile!` on a pure term no longer builds a closure.** It compiles to
   `Leanprof.enterPure` before the term and `Leanprof.exitPure` after it,
   with a variant per scalar type, so nothing is allocated or boxed inside

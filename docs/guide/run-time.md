@@ -7,8 +7,8 @@ see [memory](memory.md)):
 | | command | cost | gives |
 |---|---|---|---|
 | Sampling | `leanprof sample EXE` | near zero, no probes | CPU per Lean declaration, runtime breakdown, flame graph |
-| Every function | `leanprof run --auto EXE` | ~8 ns per call | exact calls and time of every function |
-| Marked scopes | `profile!` in your code | ~8 ns per scope | exact time, p50/p99 of what you mark |
+| Every function | `leanprof run --auto EXE` | ~8 ns per call (M5 Max), ~23 ns (Ryzen 7950X3D) | exact calls and time of every function |
+| Marked scopes | `profile!` in your code | ~8 ns per scope (M5 Max), ~23 ns (Ryzen 7950X3D) | exact time, p50/p99 of what you mark |
 | Timeline | `--trace FILE` / `LEANPROF_TRACE` | one event per scope | Perfetto timeline per thread, with copies as markers |
 
 Start with sampling to find where to look, then use exact counts.
@@ -37,6 +37,16 @@ runtime's own time went:
 
 `samply load .lake/leanprof/EXE.json` opens the flame graph in Firefox
 Profiler, with Lean names instead of mangled C names.
+
+On Linux, perf gives samply at most 64 KiB of a thread's stack per sample,
+so a sample deep in recursion (a few hundred Lean frames) arrives without
+its outer frames, and samply's own profile charges none of that time to the
+function that started the recursion. `sample` completes such a stack with
+the outer frames of the thread's last whole stack, from the outermost call
+of the cut stack's outermost function; the report's inclusive times are
+then right (on the `rec` benchmark, 10,000 calls deep: 1.2 percentage
+points of error against samply's 14.8). The flame graph `samply load`
+shows is samply's own, with the cut stacks.
 
 The runtime breakdown also separates Lean's C++ code for expressions and the
 kernel (`instantiate`, `replace`, type checking: most of the time of programs
@@ -132,10 +142,13 @@ per thread (`LEANPROF_TRACE_MAX`).
 ## Overhead and accuracy
 
 Measured in [`bench/`](../../bench/RESULTS.md) on an Apple M5 Max (shared
-with other jobs):
+with other jobs), and on an idle AMD Ryzen 9 7950X3D under Linux (fixed
+clock, boost off; see [bench/README.md](../../bench/README.md)):
 
 - **Cost per scope:** about 8 ns for `profile!` (pure or monadic) and per
-  call with `--auto` (`Leanprof.scope`, which builds a closure, 11 ns).
+  call with `--auto` on the M5 Max (`Leanprof.scope`, which builds a
+  closure, 11 ns); about 23 ns on the 7950X3D, of which reading the
+  clock twice (`RDTSC`, which Zen 4 runs as microcode) is about 9 ns.
   leanprof measures each kind of entry when profiling starts and again at
   exit, and subtracts it from every enclosing scope; programs that never
   profile pay nothing. On lean-compiler-backend, `--auto` makes the whole
@@ -164,4 +177,7 @@ So: take counts, copies, allocations and causes from the exact modes, and
 the time of starred rows from `sample`. `LEANPROF_NO_CALIBRATION=1` shows
 raw times. On Apple Silicon leanprof reads the CPU's counter directly: it
 runs at 1 GHz on an M5 and at 24 MHz (41.7 ns per tick) on earlier chips,
-where percentiles of very short scopes are coarse.
+where percentiles of very short scopes are coarse. On Linux it reads the
+TSC (x86-64) or `CNTVCT_EL0` (arm64) when the kernel itself keeps time with
+it, and otherwise, or with `LEANPROF_CLOCK=monotonic`, `clock_gettime`
+(about twice the cost per scope).
