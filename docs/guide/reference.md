@@ -8,7 +8,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--allocs] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up |
+| `run [--auto \| --auto-all] [--allocs] [--core] [--trace F] [--json F] [--keep] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries |
 | `sample [--rate HZ] [--top N] [--out F] EXE [-- ARGS]` | sample with samply, report per Lean declaration |
 | `elab [--heartbeats] [--top N] [--out F] FILE.lean…` | compile cost per declaration and operation |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
@@ -33,6 +33,12 @@ For programs that link leanprof:
 | `LEANPROF_NO_CALIBRATION=1` | raw times, leanprof's own cost not subtracted |
 | `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for positions |
 
+For `leanprof run --core`:
+
+| variable | effect |
+|---|---|
+| `LEANPROF_OBJCOPY=path` | objcopy used to rewrite Lean's libraries (default: `llvm-objcopy` on `PATH`, then Homebrew's and Debian's LLVM directories, then GNU `objcopy` on Linux) |
+
 For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 `LEAN_CC`):
 
@@ -41,6 +47,7 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 | `LEANPROF_AUTO=1` / `all` | time every function of this package / of all packages |
 | `LEANPROF_ALLOCS=1` | count allocations |
 | `LEANPROF_RUNTIME=file.o` | link this leanprof runtime (set by `run` for projects without the dependency) |
+| `LEANPROF_CORE_LIB=dir` | search `dir` first for `-lInit`, `-lStd`, ... (set by `run --core` to the rewritten copies) |
 | `LEANPROF_REAL_CC=cc` | compiler to forward to (default: the first `clang` on `PATH` that is not Lean's own) |
 
 ## JSON report

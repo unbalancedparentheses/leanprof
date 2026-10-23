@@ -64,7 +64,8 @@ Two things to know about Lean's compiler:
 
 ## Tasks
 
-Every `Task.spawn` and `IO.asTask` is linked to the scope that spawned it:
+Every `Task.spawn`, `IO.asTask`, `Task.map`, `Task.bind`, `IO.mapTask` and
+`IO.bindTask` is linked to the scope that created it:
 
 ```
 tasks (run on worker threads; wait is spawn to start)
@@ -78,7 +79,16 @@ pureTasks (in List.foldl)                      16  653.3 µs   40.8 µs  pureTas
 
 A task that finishes in microseconds while its spawning scope takes
 milliseconds usually ran its work before the spawn (see above).
-`Task.map`/`bind` and `IO.mapTask`/`bindTask` are not tracked yet.
+
+A continuation (`Task.map`, `Task.bind`, `IO.mapTask`, `IO.bindTask`) counts
+as a task of the scope that called `map` or `bind`. Its run time is the
+function given to `map` or `bind`. For `bind`, that does not include the task
+the function returns, which is counted where it is spawned. Its wait runs
+from the call to the start, so it includes waiting for the input task, not
+only for a free worker. In [`Examples/TaskChains.lean`](../../Examples/TaskChains.lean),
+`bound` has 24 tasks: 8 sources, 8 `bind` continuations and the 8 tasks
+they spawn. Tasks that Lean's own libraries create are seen only with
+`leanprof run --core` (see [copies and allocations](copies-and-allocations.md)).
 
 ## Timeline
 

@@ -643,6 +643,8 @@ LEAN_EXPORT void *leanprof_mi_malloc_small(size_t sz) {
 }
 #endif
 
+#include "coverage.inc.c" /* Task.map/bind, IO.mapTask/bindTask; notes on --core */
+
 /* ---------- symbol names ----------
  * Inverse of Lean.Name.mangle for the common cases: `l_` and `lp_<pkg>_`
  * prefixes, `__` for `_`, `_x`/`_u`/`_U` escapes, `_00` disambiguation and

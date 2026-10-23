@@ -11,7 +11,8 @@ def copyFlags : Array String :=
   #["copy_expand_array_nonlinear", "copy_sarray_nonlinear", "copy_string_nonlinear",
     "array_push", "byte_array_push", "float_array_push",
     "string_push", "string_append", "string_utf8_set",
-    "task_spawn_core", "io_as_task", "io_wait", "task_get"].map
+    "task_spawn_core", "io_as_task", "io_wait", "task_get",
+    "task_map_core", "task_bind_core", "io_map_task", "io_bind_task"].map
     fun f => s!"-Dlean_{f}=leanprof_{f}"
 
 /-- Opt-in allocation counting: route compiled code's allocations through
@@ -39,7 +40,10 @@ target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc" getLeanTrace
+  -- leanprof.c includes coverage.inc.c, so its contents are part of the trace
+  let inc := pkg.dir / "c" / "coverage.inc.c"
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc" do
+    return (← getLeanTrace).mix (← computeTrace (TextFilePath.mk inc))
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch
@@ -60,3 +64,13 @@ lean_exe tasks where
 
 lean_exe minimal where
   root := `Examples.Minimal
+
+lean_exe taskchains where
+  root := `Examples.TaskChains
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags
+
+lean_exe corecopies where
+  root := `Examples.CoreCopies
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags
