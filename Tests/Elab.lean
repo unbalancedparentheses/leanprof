@@ -179,6 +179,24 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   check "elab: a declaration whose kept text ends with its doc comment is named from the source"
     ((((e.lines.get? "F.lean:4").map (·.name)).getD "").startsWith "def foo (n : Nat)")
     (((e.lines.get? "F.lean:4").map (·.name)).getD "")
+  -- the driver's `[amount@start]`: a start time for the timeline; `lean --json` has none
+  let tl := parseTrace "[Elab.command] [0.010000000@1.500000000] ✅️ theorem t : x := by simp
+  [Leanprof.tactic] [0.004000000@1.502000000] ✅️ @1:24-1:28 Lean.Parser.Tactic.simp | simp
+    [Meta.isDefEq.delta.unfoldLeft] Foo.bar
+    [Meta.isDefEq] [0.001000000@1.503000000] ✅️ a =?= b
+  [Leanprof.term] [0.000000000@1.509000000] ✅️ @1:12-1:13 Lean.Parser.Term.ident | x"
+  let ev := timelineEvents tl 7 10
+  check "elab: start times are read from `[amount@start]`"
+    (tl.size == 5 && near tl[0]!.start 1.5 && near tl[0]!.amount 0.01 && near tl[1]!.start 1.502 &&
+      (parseTrace sample)[0]!.start < 0) s!"starts={tl.map (·.start)}"
+  check "elab: timeline events nest by parent, with ranges, threads and numbering from base"
+    (ev.size == 4 && ev[0]!.parent == -1 && ev[1]!.parent == 10 && ev[1]!.range == "1:24-1:28" && ev[1]!.text == "simp" &&
+      ev[2]!.parent == 11 && ev[3]!.parent == 10 && ev[3]!.range == "1:12-1:13" && ev.all (·.tid == 7))
+    s!"parents={ev.map (·.parent)}"
+  check "elab: no timeline without start times" (timelineEvents (parseTrace sample) 0 0).isEmpty ""
+  check "elab: module names as dataset file names"
+    (moduleFileName "Batteries.Data.List.Lemmas" == "Batteries.Data.List.Lemmas.json" &&
+      moduleFileName "A/«b c»" == "A__b_c_.json") ""
   check "elab: digit groups" (groupDigits 10000 == "10,000" && groupDigits 1234567 == "1,234,567" && groupDigits 999 == "999") ""
   check "elab: leading constants" (leadingConst "@instFoo to X" == some "instFoo" && leadingConst "inst✝ to X" == none &&
     leadingConst "?m.1 x" == none && leadingConst "Size α" == some "Size") ""

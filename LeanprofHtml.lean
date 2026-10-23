@@ -269,6 +269,9 @@ structure Opts where
   minMs : Float := 1
   context : Nat := 3
   title : Option String := none
+  /-- The Timeline tab: at most this many files' timelines, and this many operations in all. -/
+  timelineFiles : Nat := 12
+  timelineEvents : Nat := 250000
   files : Array String := #[]
 
 partial def parse (o : Opts) : List String → Except String Opts
@@ -280,8 +283,39 @@ partial def parse (o : Opts) : List String → Except String Opts
   | "--min-ms" :: v :: rest => parse { o with minMs := v.toNat!.toFloat } rest
   | "--context" :: v :: rest => parse { o with context := v.toNat! } rest
   | "--title" :: v :: rest => parse { o with title := some v } rest
+  | "--timeline-files" :: v :: rest => parse { o with timelineFiles := v.toNat! } rest
+  | "--timeline-events" :: v :: rest => parse { o with timelineEvents := v.toNat! } rest
   | a :: rest =>
     if a.startsWith "-" then .error s!"unknown option {a}" else parse { o with files := o.files.push a } rest
+
+/-- The timelines of an elab report's slowest files, from its dataset (`files[].detail`,
+relative to the report): what the Timeline tab draws. Each is the module file's events
+and classes, the text of each range, and the file's source lines. -/
+def timelines (o : Opts) (report : FilePath) (j : Json) : IO (Array Json) := do
+  let dir := report.parent.getD "."
+  let total (f : Json) : Float := ((f.getObjVal? "total_ns").toOption.bind numOf).getD 0
+  let files := (arr j "files").qsort fun a b => total a > total b
+  let mut budget := o.timelineEvents
+  let mut out : Array Json := #[]
+  for f in files do
+    if out.size ≥ o.timelineFiles then break
+    let d := str f "detail"
+    let n := (f.getObjVal? "events" >>= Json.getNat?).toOption.getD 0
+    if d.isEmpty || n == 0 || n > budget then continue
+    let some m ← (try pure (Json.parse (← IO.FS.readFile (dir / d))).toOption catch _ => pure none) | continue
+    budget := budget - n
+    let texts := Json.mkObj ((arr m "ranges").toList.map fun r => (str r "range", Json.str (str r "text")))
+    let file := str m "file"
+    let lines ← try
+        let t ← IO.FS.readFile file
+        pure ((t.splitOn "\n").take 6000 |>.map fun l => Json.str (if l.length > 300 then String.ofList (l.toList.take 300) else l))
+      catch _ => pure []
+    out := out.push (Json.mkObj [("file", Json.str file), ("module", Json.str (str m "module")),
+      ("wall_ns", (m.getObjVal? "wall_ns").toOption.getD (toJson (0 : Nat))),
+      ("imports_ns", (m.getObjVal? "imports_ns").toOption.getD (toJson (0 : Nat))),
+      ("classes", Json.arr (arr m "classes")), ("events", Json.arr (arr m "events")), ("texts", texts),
+      ("lines", Json.arr lines.toArray)])
+  return out
 
 /-- `run` (also `sample`), `elab` or `measure`. -/
 def kindOf (j : Json) : String :=
@@ -357,6 +391,9 @@ def htmlCmd (usage : String) (argv : List String) : IO UInt32 := do
         if let some tr := o.trace then
           let t := (← traceTree tr).toJson pos.get?
           entry := entry ++ [("flame", t), ("flame_from", Json.str tr)]
+      else if kind == "elab" then
+        let tls ← timelines o f j
+        unless tls.isEmpty do entry := entry ++ [("timelines", Json.arr tls)]
     reports := reports.push (Json.mkObj entry)
   let project := ((← IO.currentDir).fileName).getD "project"
   let data := Json.mkObj [("project", Json.str project), ("title", Json.str (o.title.getD s!"leanprof · {project}")),

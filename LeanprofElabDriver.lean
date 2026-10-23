@@ -37,6 +37,10 @@ namespace Leanprof.ElabDriver
 /-- Set (in compact mode) where `trace.profiler` is off but source nodes are still recorded. -/
 def compactOpt : Name := `leanprof.compact
 
+/-- Terms and tactics that take longer than this are recorded (milliseconds, or heartbeats
+with `trace.profiler.useHeartbeats`); 0, the default, records every one. -/
+def termThresholdOpt : Name := `leanprof.termThreshold
+
 /-- The trace classes of the source nodes. -/
 def tacticCls : Name := `Leanprof.tactic
 def termCls : Name := `Leanprof.term
@@ -45,8 +49,9 @@ def termCls : Name := `Leanprof.term
 opaque believerTrustLevel (_ : Unit) : UInt32
 
 /-- Run `k` and record it as a trace node of class `cls` carrying `stx`'s range (in its
-`tag`: start and end byte, and the syntax kind), when it takes longer than
-`trace.profiler.threshold`. In compact mode `k` runs with `trace.profiler` off.
+`tag`: start and end byte, and the syntax kind), every time (or, with
+`leanprof.termThreshold`, when it takes longer than that). In compact mode `k` runs with
+`trace.profiler` off.
 Generated syntax without a source range is not recorded: its time stays in the
 node around it. -/
 @[inline] def withSource {m : Type → Type} {α : Type} [Monad m] [MonadTrace m] [MonadOptions m]
@@ -65,7 +70,8 @@ node around it. -/
   let res ← observing (if compact && trace.profiler.get opts then
     withOptions (·.setBool `trace.profiler false) k else k)
   let stop ← if hb then pure (← IO.getNumHeartbeats).toFloat else pure ((← IO.monoNanosNow).toFloat / 1e9)
-  if stop - start > trace.profiler.threshold.unitAdjusted opts then
+  let th : Nat := opts.get termThresholdOpt 0
+  if th == 0 || stop - start > (if hb then th.toFloat else th.toFloat / 1000) then
     let data : TraceData := { cls, startTime := start, stopTime := stop, result? := some res.toTraceResult,
                               tag := s!"{s.byteIdx}:{e.byteIdx}:{stx.getKind}" }
     let children := (← getTraces).toArray.map (·.msg)
@@ -151,6 +157,9 @@ structure Ctx where
   fullNames : Bool
   /-- Describe only commands and source nodes: a compact profile reads nothing else. -/
   compact : Bool
+  /-- When the driver started (seconds, the clock of the traces): each timed node is printed
+  with its start relative to it, for the timeline. Not with heartbeats. -/
+  t0 : Float := 0
 
 /-- The source between two byte positions on one line, at most 100 characters. -/
 def excerpt (src : String) (s e : Nat) : String :=
@@ -194,20 +203,22 @@ partial def render (c : Ctx) (root : Option String) (depth : Nat) (wrap : Messag
       else if depth == 0 || (!c.compact && keepsText data.cls) then describe c.fullNames (wrap body)
       else pure ""
     let mark := (data.result?.getD .success).toEmoji
-    out := out.push s!"{indent}[{data.cls}] [{fmtAmount c.hb (data.stopTime - data.startTime)}] {mark} {text}"
+    -- `[amount@start]`: `lean --json` prints the amount only
+    let at_ := if c.hb then "" else "@" ++ fmtAmount false (data.startTime - c.t0)
+    out := out.push s!"{indent}[{data.cls}] [{fmtAmount c.hb (data.stopTime - data.startTime)}{at_}] {mark} {text}"
     for ch in children do out ← render c none (depth + 1) wrap out ch
     return out
   | _ => return out
 
-/-- Print `lines` as a `lean --json` message at `pos`. -/
-def emit (c : Ctx) (pos : String.Pos.Raw) (lines : Array String) : IO Unit := do
+/-- Print `lines` as a `lean --json` message at `pos`, with the thread that ran it. -/
+def emit (c : Ctx) (pos : String.Pos.Raw) (tid : UInt64) (lines : Array String) : IO Unit := do
   let p := c.fm.toPosition pos
   IO.println (Json.mkObj [("severity", "information"),
-    ("pos", Json.mkObj [("line", p.line), ("column", p.column)]),
+    ("pos", Json.mkObj [("line", p.line), ("column", p.column)]), ("tid", toJson tid.toNat),
     ("data", Json.str ("\n".intercalate lines.toList))]).compress
 
 /-- Print one retained trace as a `lean --json` message at `pos`. -/
-def emitTrace (c : Ctx) (pos : String.Pos.Raw) (t : TraceElem) : IO Unit := do
+def emitTrace (c : Ctx) (pos : String.Pos.Raw) (tid : UInt64) (t : TraceElem) : IO Unit := do
   -- a command is described by its source text (what `lean` prints is its syntax, formatted)
   let root := match t.ref.getPos?, t.ref.getTailPos? with
     | some s, some e => if s < e then some (oneLine (String.Pos.Raw.extract c.src s e)) else none
@@ -216,7 +227,7 @@ def emitTrace (c : Ctx) (pos : String.Pos.Raw) (t : TraceElem) : IO Unit := do
     | .withContext _ (.trace d _ _) | .trace d _ _ => d.cls == `Elab.command
     | _ => false
   let lines ← render c (if isCommand then root else none) 0 id #[] t.msg
-  unless lines.isEmpty do emit c pos lines
+  unless lines.isEmpty do emit c pos tid lines
 
 /-! ## Running the frontend -/
 
@@ -224,6 +235,8 @@ structure Args where
   compact : Bool := false
   heartbeats : Bool := false
   threshold : Nat := 1
+  /-- Terms and tactics under this are not recorded on their own; 0: all of them. -/
+  termThreshold : Nat := 0
   defs : Bool := false
   counts : Bool := false
   setup : Option String := none
@@ -236,6 +249,7 @@ partial def parseArgs (a : Args) : List String → Except String Args
   | "--defs" :: r => parseArgs { a with defs := true } r
   | "--counts" :: r => parseArgs { a with counts := true } r
   | "--threshold" :: v :: r => parseArgs { a with threshold := v.toNat! } r
+  | "--term-threshold" :: v :: r => parseArgs { a with termThreshold := v.toNat! } r
   | "--setup" :: f :: r => parseArgs { a with setup := some f } r
   | f :: r => if f.startsWith "--" then .error s!"unknown option {f}" else parseArgs { a with file := f } r
 
@@ -249,6 +263,7 @@ partial def lastCmd (s : Language.Lean.CommandParsedSnapshot) : Language.Lean.Co
   | none => s
 
 def run (a : Args) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
   initSearchPath (← findSysroot)
   unsafe enableInitializersExecution
   let input ← IO.FS.readFile a.file
@@ -282,13 +297,16 @@ def run (a : Args) : IO UInt32 := do
     (headerStx? := some header)
   printMessages msgs
   if msgs.hasErrors then return 3
+  let tImported ← IO.monoNanosNow
   let mut opts' ← Language.Lean.reparseOptions opts
   -- not a registered option: set after Lean checks them
   if a.compact then opts' := opts'.setBool compactOpt true
+  if a.termThreshold > 0 then opts' := opts'.set termThresholdOpt a.termThreshold
   let cmdState := Command.mkState (instrument env) {} opts'
   let cmdState := { cmdState with infoState.enabled := true }
   let first ← Language.Lean.processCommands inputCtx parserState cmdState
-  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact }
+  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact,
+                   t0 := t0.toFloat / 1e9 }
   -- messages and traces of each snapshot as it completes, in order
   let lastPos ← IO.mkRef (0 : String.Pos.Raw)
   let errors ← IO.mkRef false
@@ -299,10 +317,79 @@ def run (a : Args) : IO UInt32 := do
       let pos ← match t.ref.getPos? with
         | some p => lastPos.set p; pure p
         | none => lastPos.get
-      emitTrace c pos t
+      emitTrace c pos snap.traces.tid t
   -- the kernel's work on the last declarations
   let _ ← IO.wait (lastCmd first.get).elabSnap.resultSnap.get.cmdState.env.checked
+  let tEnd ← IO.monoNanosNow
+  -- what the report says about the run (not a message: no `severity`)
+  IO.println (Json.mkObj [("leanprof", Json.mkObj [("lean_version", Json.str Lean.versionString),
+    ("lean_githash", Json.str Lean.githash), ("imports_ns", toJson (tImported - t0)),
+    ("elab_ns", toJson (tEnd - tImported)), ("term_threshold", toJson a.termThreshold)])]).compress
   return if ← errors.get then 1 else 0
+
+/-! ## Where constants are declared
+
+`leanprof elab` looks up the constants behind the work in the environment of the profiled
+modules. It can only read `.olean` files of its own Lean; for a project on another Lean it
+asks this driver, built with the project's Lean: `--locate REQUEST.json`, where the request
+is `{"modules": [...], "names": [...]}`, prints `{"NAME": [module, line, unfoldable]}`. -/
+
+/-- `Foo.bar`, `«a b».c`, `_private.M.0.f` as a `Name`. -/
+def parseName (s : String) : Name := Id.run do
+  let mut parts : Array String := #[]
+  let mut cur := ""
+  let mut inQuote := false
+  for c in s.toList do
+    if c == '«' then inQuote := true
+    else if c == '»' then inQuote := false
+    else if c == '.' && !inQuote then
+      parts := parts.push cur
+      cur := ""
+    else cur := cur.push c
+  parts := parts.push cur
+  return parts.foldl (fun n p => match p.toNat? with
+    | some k => if p.all Char.isDigit then .num n k else .str n p
+    | none => .str n p) .anonymous
+
+def lookup (env : Environment) (names : Array String) (out : Std.HashMap String Json) : Std.HashMap String Json := Id.run do
+  let mut out := out
+  for s in names do
+    if out.contains s then continue
+    let n := parseName s
+    let ranges? := declRangeExt.find? (level := .server) env n <|> declRangeExt.find? env n <|>
+      declRangeExt.find? (level := .server) env n.getPrefix
+    let some ranges := ranges? | continue
+    let some idx := env.getModuleIdxFor? n | continue
+    let some mod := env.header.moduleNames[idx.toNat]? | continue
+    let unfoldable := match env.find? n with
+      | some (.defnInfo _) | some (.thmInfo _) | some (.opaqueInfo _) => true
+      | _ => false
+    out := out.insert s (Json.arr #[Json.str (String.ofList mod.toString.toList), toJson ranges.range.pos.line, Json.bool unfoldable])
+  return out
+
+def locate (request : String) : IO UInt32 := do
+  initSearchPath (← findSysroot)
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile request))
+  let strs (k : String) : Array String :=
+    ((j.getObjVal? k >>= Json.getArr?).toOption.getD #[]).filterMap fun x => x.getStr?.toOption
+  let names := strs "names"
+  let mut built : Array Import := #[]
+  for m in (strs "modules").toList.eraseDups do
+    if (← (try some <$> findOLean (parseName m) catch _ => pure none)).isSome then
+      built := built.push { module := parseName m }
+  let mut out : Std.HashMap String Json := {}
+  if !built.isEmpty then
+    let joint ← try some <$> importModules built {} (loadExts := false) catch _ => pure none
+    if let some env := joint then
+      out := lookup env names out
+    else
+      -- modules that cannot be imported together: one at a time
+      for m in built do
+        if names.all out.contains then break
+        try out ← unsafe withImportModules #[m] {} fun env => pure (lookup env names out)
+        catch _ => pure ()
+  IO.println (Json.mkObj (out.toList.map fun (k, v) => (k, v))).compress
+  return 0
 
 end Leanprof.ElabDriver
 
@@ -310,8 +397,10 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--githash"] then
     IO.println Lean.githash
     return 0
+  if let ["--locate", request] := args then
+    return ← Leanprof.ElabDriver.locate request
   match Leanprof.ElabDriver.parseArgs {} args with
   | .error e =>
-    IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--threshold N] [--setup FILE] FILE.lean"
+    IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--threshold N] [--term-threshold N] [--setup FILE] FILE.lean"
     return 2
   | .ok a => Leanprof.ElabDriver.run a

@@ -1,0 +1,106 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://unbalancedparentheses.github.io/leanprof/schema/elab-dataset-1.schema.json",
+ "title": "leanprof elab: a dataset's index (version 1)",
+ "description": "DATASET/index.json, written by `leanprof elab --dataset DIR` (by default .lake/leanprof/elab). The dataset is this index, the report (elab.json) and one file per module (modules/MODULE.json).",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "leanprof-elab-dataset"
+  },
+  "version": {
+   "const": 1
+  },
+  "project": {
+   "type": "string"
+  },
+  "lean_version": {
+   "type": "string"
+  },
+  "unit": {
+   "enum": [
+    "ns",
+    "heartbeats"
+   ]
+  },
+  "compact": {
+   "type": "boolean"
+  },
+  "exact_ranges": {
+   "type": "boolean"
+  },
+  "threshold": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "term_threshold": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "report": {
+   "type": "string",
+   "description": "the report, relative to the dataset"
+  },
+  "files": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "file": {
+      "type": "string"
+     },
+     "module": {
+      "type": "string"
+     },
+     "path": {
+      "type": "string",
+      "description": "its module file, relative to the dataset"
+     },
+     "total": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "wall_ns": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "imports_ns": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "errors": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "events": {
+      "type": "integer",
+      "minimum": 0
+     }
+    },
+    "required": [
+     "errors",
+     "events",
+     "file",
+     "imports_ns",
+     "module",
+     "path",
+     "total",
+     "wall_ns"
+    ]
+   }
+  }
+ },
+ "required": [
+  "compact",
+  "exact_ranges",
+  "files",
+  "lean_version",
+  "project",
+  "report",
+  "schema",
+  "term_threshold",
+  "threshold",
+  "unit",
+  "version"
+ ]
+}

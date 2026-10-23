@@ -632,6 +632,238 @@ if (elab) {
     table(kinds, [col("operation kind", "class", (v) => h("span", { class: "mono" }, v)), ncol("cost", "total", f, { bar: true }), { t: "%", v: (r) => (kall ? num(r, "total") / kall * 100 : 0), f: fPct, num: true }], { what: "kinds" })));
 }
 
+// ---------- elaboration timeline (elab, from its dataset) ----------
+// events: [parent, class, start_ns, dur_ns, thread, range, text]; each thread is a lane,
+// and inside it an operation is drawn below the one whose interval contains it.
+const TL_KINDS = [["command", 215, 50], ["tactic", 150, 45], ["term", 35, 72], ["internal", 265, 38], ["kernel / async", 175, 40],
+  ["compiler", 15, 60], ["linters", 290, 35], ["other", 220, 8]];
+function tlKind(c) {
+  return c === "Elab.command" ? 0 : c === "Leanprof.tactic" ? 1 : c === "Leanprof.term" ? 2 : c.startsWith("Meta") || c === "Elab.step" ? 3
+    : c === "Elab.async" || c.startsWith("Kernel") ? 4 : c.startsWith("Compiler") ? 5 : c.startsWith("Elab.lint") ? 6 : 7;
+}
+function tlColor(k, hl) {
+  const [, hue, sat] = TL_KINDS[k];
+  return "hsl(" + hue + "," + sat + "%," + (isDark() ? (hl ? 52 : 34) : (hl ? 55 : 72)) + "%)";
+}
+function timeline(tl) {
+  const E = tl.events, C = tl.classes || [], n = E.length, texts = tl.texts || {}, lines = tl.lines || [];
+  const kind = new Uint8Array(n), self = new Float64Array(n);
+  for (let i = 0; i < n; i++) { kind[i] = tlKind(C[E[i][1]] || ""); self[i] = E[i][3]; }
+  for (let i = 0; i < n; i++) { const p = E[i][0]; if (p >= 0 && p < n) self[p] -= E[i][3]; }
+  const label = (i) => { const e = E[i]; return e[5] ? e[6] + "  " + (texts[e[5]] || "") : e[6] || C[e[1]]; };
+  // lanes and rows
+  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => E[a][2] - E[b][2] || E[b][3] - E[a][3]);
+  const lanes = [], laneOf = new Map();
+  let tEnd = num(tl, "imports_ns");
+  for (const i of order) {
+    const tid = E[i][4];
+    let L = laneOf.get(tid);
+    if (!L) { L = { tid, rows: [], open: [] }; laneOf.set(tid, L); lanes.push(L); }
+    const s = E[i][2], e = s + E[i][3];
+    while (L.open.length && L.open[L.open.length - 1] <= s) L.open.pop();
+    const d = L.open.length;
+    (L.rows[d] = L.rows[d] || []).push(i);
+    L.open.push(e);
+    if (e > tEnd) tEnd = e;
+  }
+  const ROW = 16, HEAD = 18, AXIS = 20;
+  let y = AXIS + ROW + 4;
+  for (const L of lanes) { L.y = y; y += HEAD + L.rows.length * ROW + 4; }
+  const H = y;
+  // the view opens on elaboration: from just before the first command to the last operation
+  const first = n ? E[order[0]][2] : 0;
+  const home = () => { const w = Math.max(tEnd - first, 1); v0 = Math.max(0, first - w * 0.03); v1 = tEnd + w * 0.01; };
+  let v0 = 0, v1 = 1, sel = -1, query = "";
+  home();
+  const cv = h("canvas", { class: "tlc" });
+  const box = h("div", { class: "tlbox" }, cv);
+  const details = h("div", { class: "tld" }, h("p", { class: "note", style: "margin:0" }, "Hover an operation for its time; click it for its source range and what it ran in; double-click to zoom to it."));
+  const tip = document.getElementById("tip");
+  const input = h("input", { type: "search", placeholder: "highlight (source, kind, class)…", oninput: () => { query = input.value.toLowerCase(); draw(); } });
+  const span = h("span", { class: "note", style: "margin:0" });
+  function draw() {
+    const W = Math.max(200, box.clientWidth || 800), dpr = window.devicePixelRatio || 1;
+    cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px";
+    const g = cv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cs = getComputedStyle(document.documentElement);
+    const fg = cs.getPropertyValue("--fg").trim() || "#222", muted = cs.getPropertyValue("--muted").trim() || "#666";
+    const border = cs.getPropertyValue("--border").trim() || "#ddd";
+    g.clearRect(0, 0, W, H);
+    g.font = "11px " + (cs.getPropertyValue("--mono").trim() || "monospace");
+    g.textBaseline = "middle";
+    const k = W / (v1 - v0), X = (t) => (t - v0) * k;
+    // time axis
+    const span0 = v1 - v0, raw = span0 / 8, p10 = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 5, 10].map((m) => m * p10).find((x) => x >= raw);
+    g.fillStyle = muted; g.strokeStyle = border;
+    for (let t = Math.ceil(v0 / step) * step; t <= v1; t += step) {
+      const x = X(t);
+      g.beginPath(); g.moveTo(x + 0.5, AXIS - 4); g.lineTo(x + 0.5, H); g.stroke();
+      g.fillText(fNs(t), x + 3, AXIS / 2);
+    }
+    // loading the imports
+    const imp = num(tl, "imports_ns");
+    if (imp > v0) {
+      g.fillStyle = isDark() ? "#2a2e35" : "#e4e6ea";
+      const x0 = Math.max(0, X(0)), x1 = Math.min(W, X(imp));
+      g.fillRect(x0, AXIS + 2, x1 - x0, ROW - 2);
+      g.fillStyle = muted;
+      if (x1 - x0 > 90) g.fillText("loading imports " + fNs(imp), x0 + 4, AXIS + 2 + ROW / 2);
+    }
+    let shown = 0;
+    for (const L of lanes) {
+      g.fillStyle = muted;
+      g.fillText((L === lanes[0] ? "main thread" : "thread " + (lanes.indexOf(L) + 1)) + (L.rows[0] ? "  (" + L.rows[0].length + " roots)" : ""), 4, L.y + HEAD / 2);
+      L.rows.forEach((row, d) => {
+        const ry = L.y + HEAD + d * ROW;
+        let lastX = -1;
+        // first operation that ends after v0 (rows are sorted by start; their intervals do not overlap much)
+        let lo = 0, hi = row.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (E[row[m]][2] + E[row[m]][3] < v0 && E[row[m]][2] < v0) lo = m + 1; else hi = m; }
+        for (let j = Math.max(0, lo - 1); j < row.length; j++) {
+          const i = row[j], s = E[i][2];
+          if (s > v1) break;
+          const x = X(s), w = E[i][3] * k;
+          if (x + w < 0) continue;
+          if (w < 0.6 && Math.floor(x) === lastX) continue;
+          lastX = Math.floor(x);
+          const m = query && (label(i).toLowerCase().includes(query) || (E[i][5] || "").includes(query) || (C[E[i][1]] || "").toLowerCase().includes(query));
+          g.globalAlpha = query && !m ? 0.25 : 1;
+          g.fillStyle = tlColor(kind[i], i === sel || m);
+          const xx = Math.max(x, -1), ww = Math.max(1, Math.min(w, W - xx + 1));
+          g.fillRect(xx, ry, ww, ROW - 1);
+          shown++;
+          if (i === sel) { g.strokeStyle = fg; g.lineWidth = 2; g.strokeRect(xx + 1, ry + 1, ww - 2, ROW - 3); g.lineWidth = 1; }
+          if (ww > 36) {
+            g.save(); g.beginPath(); g.rect(xx, ry, ww, ROW); g.clip();
+            g.fillStyle = isDark() ? "#eef0f3" : "#1a1a1a";
+            g.fillText(label(i), xx + 3, ry + ROW / 2);
+            g.restore();
+          }
+        }
+        g.globalAlpha = 1;
+      });
+    }
+    span.textContent = fNs(v0) + " – " + fNs(v1) + " (" + fNs(v1 - v0) + "), " + fN(n) + " operations, " + lanes.length + " thread" + (lanes.length === 1 ? "" : "s");
+  }
+  function at(ev) {
+    const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, yy = ev.clientY - r.top;
+    const t = v0 + x / r.width * (v1 - v0);
+    for (const L of lanes) {
+      const d = Math.floor((yy - L.y - HEAD) / ROW);
+      if (d < 0 || d >= L.rows.length) continue;
+      const row = L.rows[d], eps = (v1 - v0) / r.width;
+      let best = -1;
+      for (const i of row) { const s = E[i][2]; if (s > t + eps) break; if (s + E[i][3] >= t - eps) best = i; }
+      return best;
+    }
+    return -1;
+  }
+  function crumbsOf(i) {
+    const chain = [];
+    for (let p = i; p >= 0 && chain.length < 40; p = E[p][0]) chain.unshift(p);
+    return chain;
+  }
+  function srcOf(i) {
+    const r = E[i][5];
+    if (!r) return null;
+    const m = /^(\d+):(\d+)-(\d+):(\d+)$/.exec(r);
+    if (!m || !lines.length) return null;
+    const [l0, c0, l1, c1] = m.slice(1).map(Number);
+    const out = h("div", { class: "src" });
+    for (let l = Math.max(1, l0 - 2); l <= Math.min(lines.length, l1 + 2); l++) {
+      const t = lines[l - 1] || "", a = l === l0 ? c0 - 1 : 0, b = l === l1 ? c1 - 1 : t.length;
+      const inside = l >= l0 && l <= l1;
+      out.append(h("div", { class: "l" + (inside ? " at" : "") }, h("span", { class: "ln" }, l),
+        h("span", null, inside ? [t.slice(0, a), h("mark", null, t.slice(a, b)), t.slice(b)] : t)));
+    }
+    return out;
+  }
+  function select(i) {
+    sel = i;
+    draw();
+    if (i < 0) return;
+    const e = E[i], pos = e[5] ? tl.file + ":" + e[5] : null;
+    details.replaceChildren(
+      h("div", { class: "crumbs" }, crumbsOf(i).flatMap((p, j) => [j ? " › " : "", h("a", { href: "#", onclick: (ev) => { ev.preventDefault(); zoomTo(p); select(p); } }, (label(p) || "").slice(0, 60))])),
+      h("div", { class: "kv", style: "margin-top:6px" },
+        h("div", null, "operation"), h("div", { class: "mono" }, label(i)),
+        h("div", null, "class"), h("div", { class: "mono" }, C[e[1]]),
+        pos ? [h("div", null, "source range"), h("div", { class: "mono" }, pos)] : null,
+        h("div", null, "time"), h("div", null, fNs(e[3]) + " (inclusive), " + fNs(Math.max(0, self[i])) + " self"),
+        h("div", null, "started"), h("div", null, fNs(e[2]) + " after the start, on thread " + e[4])),
+      srcOf(i));
+  }
+  function zoomTo(i) {
+    const s = E[i][2], d = Math.max(E[i][3], 1000), pad = d * 0.08;
+    v0 = Math.max(0, s - pad); v1 = s + d + pad;
+  }
+  cv.addEventListener("mousemove", (ev) => {
+    if (drag) return;
+    const i = at(ev);
+    if (i < 0) { tip.style.display = "none"; return; }
+    const e = E[i];
+    tip.replaceChildren(h("b", null, label(i)), h("div", { class: "mono" }, C[e[1]] + (e[5] ? "  " + tl.file + ":" + e[5] : "")),
+      h("div", null, fNs(e[3]) + " inclusive · " + fNs(Math.max(0, self[i])) + " self"));
+    tip.style.display = "block";
+    const r = tip.getBoundingClientRect();
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - r.width - 8) + "px";
+    tip.style.top = (ev.clientY + 16 + r.height > innerHeight ? ev.clientY - r.height - 10 : ev.clientY + 16) + "px";
+  });
+  cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  let drag = null;
+  cv.addEventListener("mousedown", (ev) => { drag = { x: ev.clientX, v0, v1, moved: false }; });
+  addEventListener("mouseup", (ev) => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (!d.moved && ev.target === cv) select(at(ev));
+  });
+  addEventListener("mousemove", (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x;
+    if (Math.abs(dx) > 2) drag.moved = true;
+    const dt = dx / (cv.clientWidth || 1) * (drag.v1 - drag.v0);
+    v0 = drag.v0 - dt; v1 = drag.v1 - dt;
+    draw();
+  });
+  cv.addEventListener("dblclick", (ev) => { const i = at(ev); if (i >= 0) { zoomTo(i); select(i); } });
+  cv.addEventListener("wheel", (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey || ev.altKey || Math.abs(ev.deltaX) < Math.abs(ev.deltaY) && !ev.shiftKey)) return;
+    ev.preventDefault();
+    const r = cv.getBoundingClientRect(), f = (ev.clientX - r.left) / r.width, t = v0 + f * (v1 - v0);
+    const z = Math.exp(ev.deltaY * 0.0025), w = Math.max(1000, Math.min(tEnd * 1.2, (v1 - v0) * z));
+    v0 = t - f * w; v1 = v0 + w;
+    draw();
+  }, { passive: false });
+  const legend = h("div", { class: "legend" }, TL_KINDS.map((x, i) => h("span", null, h("i", { style: "background:" + tlColor(i) }), x[0])));
+  const el = h("div", null,
+    h("div", { class: "bar" }, input, span, h("span", { class: "grow" }),
+      h("button", { onclick: () => { home(); draw(); } }, "reset zoom"),
+      h("button", { onclick: () => { v0 = 0; v1 = Math.max(tEnd, 1); draw(); } }, "with imports")),
+    box, legend, details);
+  el._draw = draw;
+  flames.push(el);
+  requestAnimationFrame(draw);
+  return el;
+}
+
+if (elab && arr(elab, "timelines").length) {
+  const tls = arr(elab, "timelines");
+  addTab("timeline", "Timeline", tls.length, () => {
+    const holder = h("div");
+    const show = (k) => holder.replaceChildren(timeline(tls[k]));
+    const pick = h("select", { onchange: () => show(+pick.value) },
+      tls.map((t, k) => h("option", { value: k }, t.file + "  (" + fN(t.events.length) + " operations, " + fNs(num(t, "wall_ns")) + " wall)")));
+    show(0);
+    return panel(null, "When each command, term and tactic was elaborated, and on which thread, with the operations inside them " +
+      (elab.data.compact ? "(compact profile: commands, terms and tactics only)" : "(over the threshold)") +
+      ". Scroll to zoom (or ctrl/alt + scroll), drag to pan. The slowest files of the report are here; every file's timeline is in the dataset (" +
+      (elab.data.dataset || "elab/") + "), and `leanprof elab --chrome-trace FILE` writes them for Perfetto.",
+      h("div", { class: "bar" }, pick), holder);
+  });
+}
+
 if (meas) addTab("measure", "Measure", null, () => {
   const d = meas.data, t = d.time_ns || {};
   const kv = (rows) => h("div", { class: "kv" }, rows.flatMap(([k, v]) => [h("div", null, k), h("div", null, v)]));

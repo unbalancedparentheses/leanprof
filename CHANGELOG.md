@@ -66,36 +66,31 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `leanprof elab --compact`: only commands, terms and tactics are timed,
   not the operations inside them, within a few percent of plain `lean`
   (needs the driver).
-||||||| parent of da92a3f (Docs: allocations in judge, compare and measure (rules, overhead), share of the run, tiny copies, times too small to measure; research/program.md judge rules; CHANGELOG)
-- **Allocations judged exactly.** `measure` counts allocations by default
-  (`--no-allocs` turns it off; about 6 ns per allocation, 10% on
-  lean-compiler-backend) and records them per site and per run; `judge`
-  says DISCARD when they go up (any increase; for counts that vary between
-  runs, only beyond their range) and counts a cut of at least 1% and 100
-  as an improvement. `compare` reports more allocations in total as a
-  regression when both reports counted them. The first `CFG.build` fix in
-  lean-compiler-backend cut copies but added 59,514 allocations; `judge`
-  kept it before and discards it now (a test checks that case).
-- **Each finding states its share of the run.** Copy rows show `%run` and
-  are sorted by time; allocation rows show an estimated time (count times
-  the calibrated cost of a small allocation and its free, a lower bound)
-  and `%run`, sorted by it; `explain`, `stat`, the HTML report, the editor
-  hints and the MCP tools show and rank by the same shares. A run without
-  `--allocs` says how to count allocations. JSON: `run_ns`,
-  `resolution_ns`, `alloc_ns`; `pct_run` on copies and allocations,
-  `est_ns` on allocations.
-- **Copies of empty or tiny values** (at most 16 bytes per copy, under 1%
-  of the run), such as the first push into an empty array slot, are
-  grouped into one row; `run --all-copies` (`LEANPROF_ALL_COPIES=1`) lists
-  them. The JSON keeps every row, with `"tiny": true`; `explain` and the
-  editor skip them.
-- **Times too small to measure are never shown as 0**: `< probe` (a
-  scope's time after subtracting the probes' cost) and `< 1 ns` / `< 42 ns`
-  (a copy, wait or task shorter than a clock tick) in the terminal, and
-  `too_small` (the fields concerned) on JSON rows, read as `< probe cost` /
-  `< 1 clock tick` by the HTML report, `#leanprof`, `compare` and the MCP
-  tools. `compare` shows times in adaptive units instead of `0.00 ms`.
-
+- **`leanprof elab` works with exact ranges on any Lean**: for a project on
+  another Lean than leanprof's, it builds `leanprof-elab-driver` for that
+  Lean once (its source is compiled into the command; `lean -c`, then
+  `leanc` against that Lean's shared library, a few seconds) and keeps it in
+  `~/.cache/leanprof/driver/COMMIT/` (`LEANPROF_CACHE`, `XDG_CACHE_HOME`).
+  `lean --json` stays the fallback when the build fails. Tested with Lean
+  4.34.1, 4.35.0 and 4.36.0-rc1. The definitions behind the work are then
+  located by that driver too (`--locate`): leanprof's own Lean cannot read
+  another Lean's `.olean` files, which before left them unlocated.
+- **Every term and tactic is recorded** by default, however short (it was
+  those over 1 ms): 0 to 3% more time on Batteries' heaviest files.
+  `--term-threshold N` records only those over N ms (or heartbeats).
+- **Datasets**: `elab` writes, next to the report, one file per module with
+  every term and tactic and the timeline of its elaboration, an index and a
+  copy of the report (`--dataset DIR`, `--no-dataset`), in documented,
+  versioned formats (docs/guide/elab-dataset.md, JSON Schemas in
+  docs/schema/; `elab.json` is version 4 and says `schema`).
+  `scripts/elab-dataset.sh PROJECT OUT` profiles a whole project into one,
+  with provenance, and `scripts/check-elab-dataset.py` checks one.
+- **Timelines**: `leanprof html` has a Timeline tab, a zoomable chart of when
+  each command, term and tactic (and the operations inside them) was
+  elaborated, by thread, with the exact range of what you click highlighted
+  in the source; `elab --chrome-trace FILE` writes every file's timeline as
+  a Chrome trace for Perfetto. The driver prints when each operation started
+  (`[amount@start]`) and on which thread.
 - Rows whose time is near the probes' own cost are marked: `*` after the
   total in the terminal report, `near_probe_cost` (and `probes_ns`) in the
   JSON, in the HTML report and in `#leanprof` hovers ("near the probe cost:

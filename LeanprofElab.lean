@@ -74,6 +74,9 @@ structure TNode where
   child's `next`, up to this. -/
   next : Nat := 0
   parent : Option Nat := none
+  /-- When it started, in seconds from the start of the driver (`[amount@start]`); -1 when
+  not known (`lean --json`, heartbeats). -/
+  start : Float := -1
   deriving Inhabited
 
 /-- Untimed messages that name a constant: `isDefEq` unfolding it, or simp
@@ -84,9 +87,18 @@ def unfoldClasses : List String :=
 def leafClass (cls : String) : Bool :=
   unfoldClasses.contains cls || cls == "Meta.Tactic.simp.rewrite"
 
+/-- A decimal amount `12.345`. -/
+def parseAmount (amt : List Char) : Option Float := do
+  let ip := amt.takeWhile (· != '.')
+  let fp := (amt.dropWhile (· != '.')).drop 1
+  let i ← (String.ofList ip).toNat?
+  let f := (String.ofList fp).toNat?.getD 0
+  return i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat
+
 /-- `[Class] [amount] ...` (or an untimed `[Class] ...` of `leafClass`) at the
-start of a trace line, with its indentation. -/
-def traceLine (line : String) : Option (Nat × String × Option Float × String) := do
+start of a trace line, with its indentation, and when it started (the driver prints
+`[amount@start]`). -/
+def traceLine (line : String) : Option (Nat × String × Option Float × String × Option Float) := do
   let cs := line.toList
   let indent := (cs.takeWhile (· == ' ')).length
   let cs := cs.drop indent
@@ -96,16 +108,15 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
   let clsS := String.ofList cls
   if rest.head? != some '[' then
     guard (leafClass clsS)
-    return (indent, clsS, none, String.ofList rest)
+    return (indent, clsS, none, String.ofList rest, none)
   let amt := (rest.drop 1).takeWhile (· != ']')
-  let ip := amt.takeWhile (· != '.')
-  let fp := (amt.dropWhile (· != '.')).drop 1
-  match (String.ofList ip).toNat? with
+  let amount := amt.takeWhile (· != '@')
+  match parseAmount amount with
   | none =>
     guard (leafClass clsS)
-    return (indent, clsS, none, String.ofList rest)
-  | some i =>
-    let f := (String.ofList fp).toNat?.getD 0
+    return (indent, clsS, none, String.ofList rest, none)
+  | some x =>
+    let start := if amount.length < amt.length then parseAmount (amt.drop (amount.length + 1)) else none
     let text := ((rest.drop 1).drop (amt.length + 1)).dropWhile (· == ' ')
     -- the status mark (✅️, ❌️, 💥️: a symbol and a variation selector) that every timed
     -- operation has; without it, this is a continuation that happens to look like one
@@ -113,7 +124,7 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
     let text ← match text with
       | _ :: '️' :: ' ' :: t => some t
       | _ => none
-    return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat), String.ofList text)
+    return (indent, clsS, some x, String.ofList text, start)
 
 /-- Classes whose repeated identical operations are worth reporting. -/
 def repeatable (cls : String) : Bool :=
@@ -142,7 +153,7 @@ def TraceBuilder.addLine (b : TraceBuilder) (line : String) : TraceBuilder := Id
   let mut stack := stack
   let mut classes := classes
   match traceLine line with
-  | some (indent, cls, amount, text) =>
+  | some (indent, cls, amount, text, start) =>
     -- an untimed message before any timed root is not part of a tree
     if nodes.isEmpty && amount.isNone then return ⟨nodes, stack, classes⟩
     let i := nodes.size
@@ -155,7 +166,8 @@ def TraceBuilder.addLine (b : TraceBuilder) (line : String) : TraceBuilder := Id
       | none => do classes := classes.insert cls cls; pure cls
     let text := if i == 0 || keepsText cls then text else ""
     let x := amount.getD 0
-    nodes := nodes.push { cls, amount := x, timed := amount.isSome, text, depth := indent, parent }
+    nodes := nodes.push { cls, amount := x, timed := amount.isSome, text, depth := indent, parent,
+                          start := start.getD (-1) }
     if let some p := parent then
       nodes := nodes.modify p fun n => { n with childSum := n.childSum + x }
     stack := stack.push i
@@ -404,6 +416,14 @@ structure FileCost where
   errors : Nat := 0
   /-- The first error: `line: message`. -/
   firstError : String := ""
+  /-- Loading the imports, as the driver measured it (0 with `lean`). -/
+  importsNs : Nat := 0
+  /-- Operations in the file's timeline (with the driver; 0 otherwise). -/
+  events : Nat := 0
+  /-- The file's dataset file (`--dataset`), relative to the dataset's directory. -/
+  detail : String := ""
+  /-- The Lean that elaborated it, as the driver reports it. -/
+  leanVersion : String := ""
 
 /-- One source range's elaborations: inclusive cost, how many times, what it is. -/
 structure RangeCost where
@@ -736,6 +756,15 @@ structure Opts where
   /-- `--compact`: only commands, terms and tactics are timed, not the operations inside them
   (needs the driver): close to plain `lean` in cost. -/
   compact : Bool := false
+  /-- `--term-threshold N`: terms and tactics under N ms (heartbeats with `--heartbeats`) are
+  not recorded on their own. 0, the default: every one is. -/
+  termThreshold : Nat := 0
+  /-- Where to write the dataset (an index and one file per module, with its timeline):
+  `--dataset DIR`; by default `elab/` next to `--out`; `--no-dataset`: none. -/
+  dataset : Option String := none
+  noDataset : Bool := false
+  /-- `--chrome-trace FILE`: the timelines as a Chrome trace (Perfetto, chrome://tracing). -/
+  chromeTrace : Option String := none
 
 def Opts.thresholdValue (o : Opts) : Nat :=
   o.threshold.getD (if o.heartbeats then 10000 else 1)
@@ -753,6 +782,7 @@ def traceArgs (o : Opts) : Array String := Id.run do
 /-- The driver's arguments for `o` (it takes the same options as `lean`, as flags). -/
 def driverArgs (o : Opts) : Array String := Id.run do
   let mut args := #["--threshold", toString o.thresholdValue]
+  if o.termThreshold > 0 then args := args ++ #["--term-threshold", toString o.termThreshold]
   if o.heartbeats then args := args.push "--heartbeats"
   if o.compact then args := args.push "--compact"
   else if o.defs then
@@ -858,9 +888,119 @@ def setupFile (file module : String) : IO (Option FilePath) := do
   IO.FS.writeFile saved out.stdout
   return some saved
 
+/-! ## Timelines and datasets -/
+
+/-- One timed operation of a file's elaboration, for its timeline: `parent` is the index of
+the operation it ran in (-1: a command or another root), `start` and `dur` are seconds from
+the start of the driver, `tid` the thread that ran it. A term or tactic has its `range`
+(`line:col-line:col`) and its syntax kind as `text`; another operation its description. -/
+structure TEvent where
+  parent : Int
+  cls : String
+  start : Float
+  dur : Float
+  tid : Nat
+  range : String := ""
+  text : String := ""
+  deriving Inhabited
+
+/-- The timed nodes of one trace as timeline events, numbered from `base`. Empty when the
+trace has no start times (`lean --json`, heartbeats). -/
+def timelineEvents (nodes : Array TNode) (tid : Nat) (base : Nat) : Array TEvent := Id.run do
+  if (nodes[0]?.map (fun n => decide (n.start < 0))).getD true then return #[]
+  -- the event of each node, or of its nearest timed ancestor when it is not timed
+  let mut idx : Array (Option Nat) := Array.replicate nodes.size none
+  let mut out : Array TEvent := #[]
+  for i in [0:nodes.size] do
+    let n := nodes[i]!
+    let up := n.parent.bind (idx[·]!)
+    unless n.timed && n.start ≥ 0 do
+      idx := idx.set! i up
+      continue
+    let parent : Int := match up with
+      | some p => p
+      | none => -1
+    let (range, text) := if isSourceClass n.cls then
+        match parseSrcRange n.text with
+        | some r => (r.range, shortKind r.kind)
+        | none => ("", "")
+      else ("", String.ofList (n.text.toList.take 100))
+    idx := idx.set! i (some (base + out.size))
+    out := out.push { parent, cls := n.cls, start := n.start, dur := n.amount, tid, range, text }
+  return out
+
+/-- Seconds as whole nanoseconds. -/
+def nsOf (x : Float) : Nat := if x ≤ 0 then 0 else (x * 1e9).round.toUInt64.toNat
+
+/-- The line of a `file:line` key. -/
+def lineOfKey (k : String) : Nat := ((k.splitOn ":").getLastD "0").toNat?.getD 0
+
+/-- An amount as the dataset writes it: whole nanoseconds or heartbeats. -/
+def amountJson (x : Float) : Json := toJson (if x ≤ 0 then 0 else x.round.toUInt64.toNat)
+
+/-- One module's file in the dataset (schema `leanprof-elab-module`, docs/reference/elab-json.md):
+its totals, declarations, every term and tactic by range, and its timeline. -/
+def moduleJson (o : Opts) (file module : String) (a : Acc) (events : Array TEvent) (exact : Bool) : Json := Id.run do
+  let f : FileCost := (a.files[0]?.map (·.2)).getD {}
+  let mut classes : Array String := #[]
+  let mut clsIdx : Std.HashMap String Nat := {}
+  let mut rows : Array Json := Array.mkEmpty events.size
+  for e in events do
+    let c := clsIdx.getD e.cls classes.size
+    if c == classes.size then
+      classes := classes.push e.cls
+      clsIdx := clsIdx.insert e.cls c
+    rows := rows.push (Json.arr #[toJson e.parent, toJson c, toJson (nsOf e.start), toJson (nsOf e.dur), toJson e.tid,
+      if e.range.isEmpty then Json.null else Json.str e.range, Json.str e.text])
+  let decls := (a.lines.toArray.qsort (fun x y => lineOfKey x.1 < lineOfKey y.1)).map fun (k, c) =>
+    Json.mkObj [("line", toJson (lineOfKey k)), ("name", Json.str (c.name.replace "\n" " ")),
+      ("total", amountJson c.total), ("elab", amountJson c.elaboration), ("kernel", amountJson c.kernel),
+      ("compile", amountJson c.compile), ("lint", amountJson c.lint)]
+  let ranges := (a.ranges.toArray.qsort (fun x y => x.2.total > y.2.total || (x.2.total == y.2.total && x.1 < y.1))).map fun (_, c) =>
+    Json.mkObj [("range", Json.str c.src.range), ("kind", Json.str (if c.tactic then "tactic" else "term")),
+      ("syntax", Json.str c.src.kind), ("text", Json.str c.src.text), ("amount", amountJson c.total), ("count", toJson c.count)]
+  return Json.mkObj [("schema", Json.str "leanprof-elab-module"), ("version", toJson (1 : Nat)),
+    ("file", Json.str file), ("module", Json.str module), ("lean_version", Json.str f.leanVersion),
+    ("unit", Json.str (if o.heartbeats then "heartbeats" else "ns")), ("exact_ranges", Json.bool exact),
+    ("compact", Json.bool o.compact), ("threshold", toJson o.thresholdValue), ("term_threshold", toJson o.termThreshold),
+    ("wall_ns", toJson f.wallNs), ("imports_ns", toJson f.importsNs), ("errors", toJson f.errors),
+    ("total", amountJson f.total), ("elab", amountJson f.elaboration), ("kernel", amountJson f.kernel),
+    ("compile", amountJson f.compile), ("lint", amountJson f.lint),
+    ("declarations", Json.arr decls), ("ranges", Json.arr ranges),
+    ("classes", toJson classes),
+    ("event_fields", toJson #["parent", "class", "start_ns", "dur_ns", "thread", "range", "text"]),
+    ("events", Json.arr rows)]
+
+/-- A module's name as a file name in the dataset. -/
+def moduleFileName (module : String) : String :=
+  String.ofList (module.toList.map fun c => if c.isAlphanum || c == '.' || c == '_' || c == '-' then c else '_') ++ ".json"
+
+/-- One file's timeline as Chrome trace events (one process per file, a thread per Lean
+thread), `offsetNs` after the start of the whole run; the lines are joined by commas. -/
+def chromeEvents (pid : Nat) (file module : String) (offsetNs : Nat) (events : Array TEvent) : Array String := Id.run do
+  let us (ns : Nat) : Json := Json.num ⟨ns, 3⟩
+  let mut out := #[(Json.mkObj [("name", Json.str "process_name"), ("ph", Json.str "M"), ("pid", toJson pid),
+    ("args", Json.mkObj [("name", Json.str module)])]).compress]
+  for e in events do
+    let name := if !e.range.isEmpty then s!"{e.text} {e.range}" else if e.text.isEmpty then e.cls else e.text
+    let args := if e.range.isEmpty then Json.mkObj [("class", Json.str e.cls)]
+      else Json.mkObj [("class", Json.str e.cls), ("range", Json.str s!"{file}:{e.range}")]
+    out := out.push (Json.mkObj [("name", Json.str name), ("cat", Json.str e.cls), ("ph", Json.str "X"),
+      ("ts", us (offsetNs + nsOf e.start)), ("dur", us (nsOf e.dur)), ("pid", toJson pid), ("tid", toJson e.tid),
+      ("args", args)]).compress
+  return out
+
+/-- Where `profileFile` writes what it keeps per file: the dataset's module files and parts of
+the Chrome trace. -/
+structure Outputs where
+  dataset : Option FilePath := none
+  chrome : Option FilePath := none
+  /-- When the whole run started (`IO.monoNanosNow`): the Chrome trace's time 0. -/
+  t0 : Nat := 0
+
 /-- Elaborate one file and fold its trace into a fresh accumulator; its
 messages are read as Lean prints them, so a large trace is never held whole. -/
-partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Acc := do
+partial def profileFile (le : LeanEnv) (o : Opts) (outs : Outputs) (idx : Nat) (file module : String) : IO Acc := do
   let source ← try IO.FS.readFile file catch _ => pure ""
   let src := (source.splitOn "\n").toArray
   let scale : Float := if o.heartbeats then 1 else 1e9
@@ -877,12 +1017,24 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
     env := #[("LEAN_PATH", some le.path), ("LEAN_SYSROOT", some le.sysroot.toString)],
     stdout := .piped, stderr := .null, stdin := .null }
   let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := src.map squash, exact } : Acc)
+  let events ← IO.mkRef (#[] : Array TEvent)
+  let setFile (g : FileCost → FileCost) : IO Unit :=
+    acc.modify fun a => { a with files := a.files.modify 0 fun (k, f) => (k, g f) }
   readMessages (IO.FS.Stream.ofHandle child.stdout) fun m p => do
+    -- the driver's last line: what it measured itself
+    if let .ok info := m.getObjVal? "leanprof" then
+      setFile fun f => { f with importsNs := ((info.getObjVal? "imports_ns" >>= Json.getNat?).toOption.getD 0),
+                                leanVersion := str info "lean_version" }
+      return
     if str m "severity" == "error" then
       let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
       acc.modify fun a => { a with files := a.files.modify 0 fun (k, f) =>
         (k, { f with errors := f.errors + 1,
                      firstError := if f.firstError.isEmpty then s!"{ln}: {str m "data"}" else f.firstError }) }
+    if let .trace nodes := p then
+      if exact && !o.heartbeats then
+        let tid := ((m.getObjVal? "tid" >>= Json.getNat?).toOption.getD 0)
+        events.modify fun es => es ++ timelineEvents nodes tid es.size
     acc.modify (·.addParsed file scale m p)
   let code ← child.wait
   let t1 ← IO.monoNanosNow
@@ -891,7 +1043,7 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   -- `lean` reports what is wrong
   if exact && (code ≥ 2 || (code == 1 && a.grand == 0 && (a.files[0]?.map (·.2.errors)).getD 0 == 0)) then
     IO.eprintln s!"leanprof: {file}: leanprof-elab-driver could not elaborate it (exit code {code}); elaborating with `lean` instead"
-    return ← profileFile le { o with driver := false } file module
+    return ← profileFile le { o with driver := false } outs idx file module
   let a := { a with files := a.files.modify 0 fun (k, f) => (k, { f with wallNs := t1 - t0 }), src := #[], srcSq := #[] }
   -- `diagnostics` can make Lean fail where it otherwise does not (4.35: nested inductive
   -- types, "Unknown constant `_nested.…rec`"): then profile the file again without it
@@ -905,17 +1057,29 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
     l.startsWith "import " || l.startsWith "public import " || l.startsWith "meta import " || l == "module").foldl
       (fun m (_, i) => max m (i + 1)) 0
   if errors > 0 && !setupArgs.isEmpty && firstLine ≤ headerEnd + 1 then
-    let b ← profileFile le { o with setup := false } file module
+    let b ← profileFile le { o with setup := false } outs idx file module
     if (b.files[0]?.map (·.2.errors)).getD (0 : Nat) < errors then return b
   if errors > 0 && o.defs && o.diagnostics then
-    let b ← profileFile le { o with diagnostics := false } file module
+    let b ← profileFile le { o with diagnostics := false } outs idx file module
     if (b.files[0]?.map (·.2.errors)).getD (0 : Nat) < errors then
       IO.eprintln s!"leanprof: {file}: errors with `diagnostics` on, profiled without it (no exact unfold counts)"
       return b
+  -- what is kept per file: its dataset file and its part of the Chrome trace
+  let es ← events.get
+  let mut a := { a with files := a.files.modify 0 fun (k, f) => (k, { f with events := es.size }) }
+  if let some dir := outs.dataset then
+    let name := moduleFileName (if module.isEmpty then file else module)
+    IO.FS.createDirAll (dir / "modules")
+    IO.FS.writeFile (dir / "modules" / name) (moduleJson o file module a es exact).compress
+    a := { a with files := a.files.modify 0 fun (k, f) => (k, { f with detail := s!"modules/{name}" }) }
+  if let some dir := outs.chrome then
+    if !es.isEmpty then
+      IO.FS.createDirAll dir
+      IO.FS.writeFile (dir / s!"{idx}.part") (",\n".intercalate (chromeEvents (idx + 1) file module (t0 - outs.t0) es).toList)
   return a
 
 /-- Profile `files` with `jobs` Lean processes at a time; results in the order of `files`. -/
-def profileAll (le : LeanEnv) (o : Opts) (files : Array (String × String)) (jobs : Nat) : IO (Array Acc) := do
+def profileAll (le : LeanEnv) (o : Opts) (outs : Outputs) (files : Array (String × String)) (jobs : Nat) : IO (Array Acc) := do
   let next ← IO.mkRef 0
   let results ← IO.mkRef (Array.replicate files.size ({} : Acc))
   let done ← IO.mkRef 0
@@ -924,7 +1088,7 @@ def profileAll (le : LeanEnv) (o : Opts) (files : Array (String × String)) (job
       let i ← next.modifyGet fun i => (i, i + 1)
       if h : i < files.size then
         let (file, module) := files[i]
-        let a ← profileFile le o file module
+        let a ← profileFile le o outs i file module
         results.modify (·.set! i a)
         let d ← done.modifyGet fun d => (d + 1, d + 1)
         if files.size > 1 then
@@ -1043,6 +1207,37 @@ where
       | none => out := out.insert s { pos := s!"{mod}:{line}", module := modStr, unfoldable }
     return out
 
+/-- `locate`, done by the driver (`--locate`): for a project on another Lean, whose `.olean`
+files only that Lean can read. -/
+def locateWithDriver (le : LeanEnv) (scratch : FilePath) (modules : Array Name) (names : Array String) :
+    IO (Std.HashMap String Loc) := do
+  if names.isEmpty || le.driver.isEmpty then return {}
+  IO.FS.createDirAll scratch
+  let req := scratch / "locate-request.json"
+  IO.FS.writeFile req (Json.mkObj [("modules", toJson (modules.map (·.toString))), ("names", toJson names)]).compress
+  let env : Array (String × Option String) := #[("LEAN_PATH", some le.path), ("LEAN_SYSROOT", some le.sysroot.toString)]
+  let out ← IO.Process.output { cmd := le.driver, args := #["--locate", req.toString], env }
+  try IO.FS.removeFile req catch _ => pure ()
+  let some (.obj kvs) := (Json.parse out.stdout).toOption
+    | IO.eprintln s!"leanprof: definitions not located ({le.driver} --locate: {String.ofList (out.stderr.toList.take 300)})"
+      return {}
+  let cwd ← IO.currentDir
+  let mut res : Std.HashMap String Loc := {}
+  let mut srcs : Std.HashMap String (Option FilePath) := {}
+  for (name, v) in kvs.toArray do
+    let some #[.str mod, line, .bool unfoldable] := v.getArr?.toOption | continue
+    let line := line.getNat?.toOption.getD 0
+    let src ← match srcs.get? mod with
+      | some x => pure x
+      | none => do
+        let x ← sourceOf le (parseName mod)
+        srcs := srcs.insert mod x
+        pure x
+    res := res.insert name <| match src with
+      | some p => { pos := s!"{showPath le cwd p}:{line}", path := p.toString, module := mod, unfoldable }
+      | none => { pos := s!"{mod}:{line}", module := mod, unfoldable }
+  return res
+
 /-! ## The project -/
 
 /-- Glob over module names: `*` matches any run of characters, `?` one. -/
@@ -1093,6 +1288,10 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--threshold" :: v :: rest => parseOpts { o with threshold := some v.toNat! } rest
   | "--no-driver" :: rest => parseOpts { o with driver := false } rest
   | "--compact" :: rest => parseOpts { o with compact := true } rest
+  | "--term-threshold" :: v :: rest => parseOpts { o with termThreshold := v.toNat! } rest
+  | "--dataset" :: d :: rest => parseOpts { o with dataset := some d } rest
+  | "--no-dataset" :: rest => parseOpts { o with noDataset := true } rest
+  | "--chrome-trace" :: f :: rest => parseOpts { o with chromeTrace := some f } rest
   | f :: rest =>
     if f.startsWith "--" then .error s!"unknown option {f}" else parseOpts { o with files := o.files.push f } rest
 
@@ -1125,7 +1324,7 @@ def kindLabel : String → String
 def main (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
   if o.files.isEmpty && !o.project then
-    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--compact] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]"
+    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--compact] [--threshold N] [--term-threshold N] [--dataset DIR | --no-dataset] [--chrome-trace FILE] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]"
   let tStart ← IO.monoNanosNow
   -- the modules must be built: their imports are read from `.olean` files
   if o.project && o.build then
@@ -1138,7 +1337,7 @@ def main (argv : List String) : IO UInt32 := do
   let tBuilt ← IO.monoNanosNow
   let le ← leanEnv
   -- exact source ranges need leanprof's own frontend, built with the project's Lean
-  let le ← if !o.driver then pure le else match ← findDriver le.lean with
+  let le ← if !o.driver then pure le else match ← findDriver le.lean le.sysroot with
     | .ok d => pure { le with driver := d }
     | .error why => do
       IO.eprintln s!"leanprof: elaborating with `lean` ({why}): tactics are placed by their text, terms are not timed{if o.compact then "; --compact needs the driver, so this is a full profile" else ""}"
@@ -1157,7 +1356,15 @@ def main (argv : List String) : IO UInt32 := do
   let jobs := if o.jobs > 0 then o.jobs else max 1 (cores / 2)
   if files.size > 1 then
     IO.eprintln s!"leanprof: elaborating {files.size} files, {min jobs files.size} at a time"
-  let results ← profileAll le o files jobs
+  -- the dataset (by default next to the report) and the Chrome trace's parts
+  let outDir := ((o.out : FilePath).parent).getD "."
+  let datasetDir : Option FilePath := if o.noDataset then none else some (o.dataset.getD (outDir / "elab").toString)
+  if let some d := datasetDir then
+    -- module files of an earlier run would be listed with this one's
+    if ← (d / "modules").isDir then IO.FS.removeDirAll (d / "modules")
+  let chromeParts : Option FilePath := o.chromeTrace.map fun f => ((f ++ ".parts" : String) : FilePath)
+  let outs : Outputs := { dataset := datasetDir, chrome := chromeParts, t0 := tBuilt }
+  let results ← profileAll le o outs files jobs
   let tProfiled ← IO.monoNanosNow
   let acc := results.foldl Acc.merge {}
   let hb := o.heartbeats
@@ -1172,7 +1379,11 @@ def main (argv : List String) : IO UInt32 := do
     if let some h ← (try some <$> parseImports' (← IO.FS.readFile file) file catch _ => pure none) then
       imports := imports ++ h.imports.map (·.module)
   let names := acc.consts.toArray.map (·.1)
-  let locs ← if o.defs then locate le imports names else pure {}
+  -- leanprof's Lean reads only its own `.olean` files: for another Lean, the driver built
+  -- for it looks the definitions up
+  let locs ← if !o.defs || names.isEmpty then pure {}
+    else if (← githashOf le.lean) != some Lean.githash then locateWithDriver le outDir imports names
+    else locate le imports names
   -- declarations of the profiled files, by line: for constants defined there (unbuilt
   -- files) and to name kernel and compiler lines
   let mut named : Std.HashMap String (Array (Nat × String)) := {}
@@ -1308,15 +1519,26 @@ def main (argv : List String) : IO UInt32 := do
       [("module", Json.str ((l.map (·.module)).getD ""))] ++
       (["unfolds", "kernel", "instances", "simp_used", "simp_tried", "simp_failed"].filterMap fun ctr =>
         (c.diag.get? ctr).map fun n => (ctr, toJson n)))
+  -- paths in the report are relative to its directory
+  let rel (p : FilePath) : String :=
+    let p := p.normalize.toString
+    let b := outDir.normalize.toString
+    if p == b then "." else if p.startsWith (b ++ "/") then (p.drop (b.length + 1)).toString else p
+  -- a file's dataset file, relative to the report
+  let detailOf (c : FileCost) : String := match datasetDir with
+    | some d => if c.detail.isEmpty then "" else rel (d / c.detail)
+    | none => ""
   let fileJson := (acc.files.qsort (·.1 < ·.1)).map fun (f, c) => Json.mkObj [("file", Json.str f),
     ("module", Json.str c.module), ("key", Json.str s!"module {c.module}"),
     ("total_ns", toJson c.total), ("elab_ns", toJson c.elaboration), ("kernel_ns", toJson c.kernel),
     ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint), ("wall_ns", toJson c.wallNs),
-    ("errors", toJson c.errors), ("first_error", Json.str c.firstError)]
+    ("imports_ns", toJson c.importsNs), ("errors", toJson c.errors), ("first_error", Json.str c.firstError),
+    ("events", toJson c.events), ("detail", Json.str (detailOf c))]
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
   let tEnd ← IO.monoNanosNow
-  IO.FS.writeFile o.out
-    (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true), ("project", Json.bool o.project),
+  let leanVersion := (acc.files.findSome? fun (_, c) => if c.leanVersion.isEmpty then none else some c.leanVersion).getD ""
+  let report := Json.mkObj [("schema", Json.str "leanprof-elab"), ("version", toJson (4 : Nat)),
+      ("elab", Json.bool true), ("project", Json.bool o.project), ("lean_version", Json.str leanVersion),
       ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
       ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("constants", Json.arr constants),
       ("files", Json.arr fileJson), ("copies", Json.arr #[]),
@@ -1331,9 +1553,45 @@ def main (argv : List String) : IO UInt32 := do
         Json.mkObj [("range", Json.str k), ("pos", Json.str s!"{(k.dropEnd (c.src.range.length + 1)).toString}:{c.src.line}"),
           ("kind", Json.str (if c.tactic then "tactic" else "term")), ("syntax", Json.str c.src.kind),
           ("text", Json.str c.src.text), ("amount", toJson c.total), ("count", toJson c.count)])),
-      ("threshold", toJson o.thresholdValue),
+      ("threshold", toJson o.thresholdValue), ("term_threshold", toJson o.termThreshold),
+      ("dataset", Json.str ((datasetDir.map rel).getD "")),
       ("timing", Json.mkObj [("build_ns", toJson (tBuilt - tStart)), ("profile_ns", toJson (tProfiled - tBuilt)),
-        ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])]).compress
+        ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])]
+  IO.FS.writeFile o.out report.compress
+  -- the dataset's index (schema `leanprof-elab-dataset`), and the report with it
+  if let some d := datasetDir then
+    IO.FS.createDirAll d
+    let project := ((← IO.currentDir).fileName).getD ""
+    let index := Json.mkObj [("schema", Json.str "leanprof-elab-dataset"), ("version", toJson (1 : Nat)),
+      ("project", Json.str project), ("lean_version", Json.str leanVersion),
+      ("unit", Json.str (if hb then "heartbeats" else "ns")), ("compact", Json.bool o.compact),
+      ("exact_ranges", Json.bool !le.driver.isEmpty), ("threshold", toJson o.thresholdValue),
+      ("term_threshold", toJson o.termThreshold), ("report", Json.str "elab.json"),
+      ("files", Json.arr ((acc.files.qsort (·.1 < ·.1)).map fun (f, c) => Json.mkObj [("file", Json.str f),
+        ("module", Json.str c.module), ("path", Json.str c.detail), ("total", amountJson c.total),
+        ("wall_ns", toJson c.wallNs), ("imports_ns", toJson c.importsNs), ("errors", toJson c.errors),
+        ("events", toJson c.events)]))]
+    IO.FS.writeFile (d / "index.json") index.compress
+    -- the report as it would be read from the dataset: details relative to it
+    let inDataset := report.setObjVal! "files" (Json.arr ((acc.files.qsort (·.1 < ·.1)).map fun (f, c) =>
+      match fileJson.find? (fun j => str j "file" == f) with
+      | some j => j.setObjVal! "detail" (Json.str c.detail)
+      | none => Json.null)) |>.setObjVal! "dataset" (Json.str ".")
+    if (d / "elab.json").normalize != (o.out : FilePath).normalize then IO.FS.writeFile (d / "elab.json") inDataset.compress
+  -- the Chrome trace: its parts, one per file, joined
+  if let (some f, some parts) := (o.chromeTrace, chromeParts) then
+    let h ← IO.FS.Handle.mk f .write
+    h.putStr "{\"displayTimeUnit\":\"ms\",\"otherData\":{\"generator\":\"leanprof elab\"},\"traceEvents\":[\n"
+    let mut first := true
+    for i in [0:files.size] do
+      let part := parts / s!"{i}.part"
+      if ← part.pathExists then
+        unless first do h.putStr ",\n"
+        h.putStr (← IO.FS.readFile part)
+        first := false
+    h.putStr "\n]}\n"
+    h.flush
+    if ← parts.isDir then IO.FS.removeDirAll parts
   if !failed.isEmpty then
     IO.eprintln s!"\nleanprof: {failed.size} {if failed.size == 1 then "file" else "files"} had errors (costs stop at the error); the first of each:"
     for (f, c) in failed.toList.take 10 do
@@ -1342,7 +1600,7 @@ def main (argv : List String) : IO UInt32 := do
       IO.eprintln "  (with `trace.profiler` on, Lean records every operation, which costs heartbeats too: a declaration\n   that builds within `maxHeartbeats` can exceed it when profiled)"
   if files.size > 1 then
     IO.println s!"\n{files.size} files in {fmt2 ((tProfiled - tBuilt).toFloat / 1e9)} s ({min jobs files.size} at a time){if o.project && o.build then s!", lake build {fmt2 ((tBuilt - tStart).toFloat / 1e9)} s" else ""}, report {fmt2 ((tEnd - tProfiled).toFloat / 1e9)} s"
-  IO.println s!"written to {o.out}; `#leanprof` shows it next to the code"
+  IO.println s!"written to {o.out}; `#leanprof` shows it next to the code{(datasetDir.map (s!", dataset in {·}")).getD ""}{(o.chromeTrace.map (s!", Chrome trace in {·}")).getD ""}"
   return 0
 
 end Leanprof.Elab

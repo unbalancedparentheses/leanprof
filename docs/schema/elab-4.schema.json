@@ -1,0 +1,390 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://unbalancedparentheses.github.io/leanprof/schema/elab-4.schema.json",
+ "title": "leanprof elab: the report, elab.json (version 4)",
+ "description": "What `leanprof elab` writes to --out (.lake/leanprof/elab.json): the aggregate over every profiled file. Amounts are ns (as numbers) or heartbeats (unit). Read by #leanprof, compare, report-md and html. Fields may be added within a version; consumers must ignore unknown fields.",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "leanprof-elab"
+  },
+  "version": {
+   "const": 4
+  },
+  "elab": {
+   "const": true
+  },
+  "project": {
+   "type": "boolean"
+  },
+  "lean_version": {
+   "type": "string"
+  },
+  "unit": {
+   "enum": [
+    "ns",
+    "heartbeats"
+   ]
+  },
+  "wall_ns": {
+   "type": "number",
+   "minimum": 0,
+   "description": "the sum of every file's traced cost (not wall time; the name is kept for compatibility)"
+  },
+  "scopes": {
+   "type": "array",
+   "description": "lines and declarations, costliest first",
+   "items": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "pos": {
+      "type": "string",
+      "description": "file:line"
+     },
+     "key": {
+      "type": "string",
+      "description": "what compare matches: file and declared name, else pos"
+     },
+     "total_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "elab_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "kernel_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "compile_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "lint_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "top": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "amount": {
+         "type": "number",
+         "minimum": 0
+        },
+        "op": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "amount",
+        "op"
+       ]
+      }
+     },
+     "unfolded": {
+      "type": "array"
+     }
+    },
+    "required": [
+     "name",
+     "pos",
+     "key",
+     "total_ns",
+     "elab_ns",
+     "kernel_ns",
+     "compile_ns",
+     "lint_ns"
+    ]
+   }
+  },
+  "repeated": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "class": {
+      "type": "string"
+     },
+     "op": {
+      "type": "string"
+     },
+     "count": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "total": {
+      "type": "number",
+      "minimum": 0
+     },
+     "first_at": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "class",
+     "count",
+     "first_at",
+     "op",
+     "total"
+    ]
+   }
+  },
+  "constants": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "unfold",
+       "whnf",
+       "instance",
+       "simp",
+       ""
+      ]
+     },
+     "amount": {
+      "type": "number",
+      "minimum": 0
+     },
+     "count": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "sites": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "where": {
+      "type": "string"
+     },
+     "path": {
+      "type": "string"
+     },
+     "module": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "kind",
+     "amount",
+     "count",
+     "sites",
+     "where"
+    ]
+   }
+  },
+  "files": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "file": {
+      "type": "string"
+     },
+     "module": {
+      "type": "string"
+     },
+     "key": {
+      "type": "string"
+     },
+     "total_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "elab_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "kernel_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "compile_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "lint_ns": {
+      "type": "number",
+      "minimum": 0
+     },
+     "wall_ns": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "imports_ns": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "errors": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "events": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "detail": {
+      "type": "string",
+      "description": "its module file in the dataset, relative to this report; empty without a dataset"
+     }
+    },
+    "required": [
+     "compile_ns",
+     "detail",
+     "elab_ns",
+     "errors",
+     "events",
+     "file",
+     "imports_ns",
+     "kernel_ns",
+     "key",
+     "lint_ns",
+     "module",
+     "total_ns",
+     "wall_ns"
+    ]
+   }
+  },
+  "kinds": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "class": {
+      "type": "string"
+     },
+     "total": {
+      "type": "number",
+      "minimum": 0
+     }
+    },
+    "required": [
+     "class",
+     "total"
+    ]
+   }
+  },
+  "tactics": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "pos": {
+      "type": "string"
+     },
+     "amount": {
+      "type": "number",
+      "minimum": 0
+     },
+     "tactic": {
+      "type": "string"
+     },
+     "count": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "range": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "amount",
+     "count",
+     "pos",
+     "range",
+     "tactic"
+    ]
+   }
+  },
+  "exact_ranges": {
+   "type": "boolean"
+  },
+  "compact": {
+   "type": "boolean"
+  },
+  "ranges": {
+   "type": "array",
+   "description": "terms and tactics by exact source range, the costliest 20,000 (every one: the dataset's module files)",
+   "items": {
+    "type": "object",
+    "properties": {
+     "range": {
+      "type": "string",
+      "description": "file:line:col-line:col"
+     },
+     "pos": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "term",
+       "tactic"
+      ]
+     },
+     "syntax": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "amount": {
+      "type": "number",
+      "minimum": 0
+     },
+     "count": {
+      "type": "integer",
+      "minimum": 0
+     }
+    },
+    "required": [
+     "amount",
+     "count",
+     "kind",
+     "pos",
+     "range",
+     "syntax",
+     "text"
+    ]
+   }
+  },
+  "threshold": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "term_threshold": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "dataset": {
+   "type": "string",
+   "description": "the dataset's directory, relative to this report; empty with --no-dataset"
+  },
+  "timing": {
+   "type": "object"
+  },
+  "copies": {
+   "type": "array"
+  }
+ },
+ "required": [
+  "schema",
+  "version",
+  "elab",
+  "unit",
+  "scopes",
+  "files",
+  "ranges",
+  "exact_ranges"
+ ]
+}

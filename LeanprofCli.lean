@@ -52,15 +52,17 @@ def commands : List (String × String × String) := [
     "graph with Lean names. EXE is a target of this project or a path to any program, such as\n" ++
     "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
     "Needs samply (brew install samply / cargo install samply)."),
-  ("elab", "[--heartbeats] [--compact] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
+  ("elab", "[--heartbeats] [--compact] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--term-threshold N] [--dataset DIR | --no-dataset] [--chrome-trace FILE] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
     "the package in parallel (--module-glob: those matching, e.g. 'Foo.Data.*'). --counts adds Lean's exact\n" ++
     "unfold counts (slower). --heartbeats counts\n" ++
-    "heartbeats, which are the same on every run. With the project on leanprof's Lean, terms and tactics\n" ++
-    "are timed by exact source range (line:column); --compact times only those (close to plain lean).\n" ++
-    "--no-driver elaborates with `lean --json` instead."),
+    "heartbeats, which are the same on every run. Every term and tactic is timed by exact source range\n" ++
+    "(line:column; --term-threshold N: only those over N ms); --compact times only those (close to plain\n" ++
+    "lean). On another Lean than leanprof's, its driver is built for that Lean once (~/.cache/leanprof).\n" ++
+    "Writes a dataset (index.json and one file per module with its timeline) to DIR, by default elab/\n" ++
+    "next to the report; --chrome-trace writes the timelines for Perfetto. --no-driver: `lean --json`."),
   ("compare", "[--threshold PCT] [--min-ms MS] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
@@ -83,13 +85,15 @@ def commands : List (String × String × String) := [
     "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
     "#leanprof hovers."),
-  ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [REPORT.json...]",
+  ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [--timeline-files N] [--timeline-events N] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
     "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++
     "summary, flame graph, sortable tables, source lines with hints, and a comparison when given\n" ++
     "two reports of a kind (base, then new; regressions as `compare` counts them). The flame graph\n" ++
     "of a sampled report reads samply's profile next to it (or --profile FILE); for a run report,\n" ++
-    "pass the timeline of `run --trace FILE` as --trace FILE."),
+    "pass the timeline of `run --trace FILE` as --trace FILE. An elab report's Timeline tab draws\n" ++
+    "the elaboration of its slowest files (commands, terms, tactics, by thread), from its dataset\n" ++
+    "(at most 12 files and 250,000 operations; --timeline-files, --timeline-events)."),
   ("top", "[--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS...] | --attach FILE | --pid PID",
     "Run EXE with probes (as `run`) and show it live, refreshed like top: hottest scopes, copy sites,\n" ++
     "allocation sites, tasks and waits with rates per second, memory, CPU and what each thread is inside.\n" ++

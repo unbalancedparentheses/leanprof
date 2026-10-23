@@ -1,0 +1,265 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://unbalancedparentheses.github.io/leanprof/schema/elab-module-1.schema.json",
+ "title": "leanprof elab: one module of a dataset (version 1)",
+ "description": "Written by `leanprof elab` for each profiled file to DATASET/modules/MODULE.json. Amounts are whole nanoseconds, or heartbeats when unit is \"heartbeats\". Fields may be added in later versions of the same major version; consumers must ignore unknown fields.",
+ "type": "object",
+ "properties": {
+  "schema": {
+   "const": "leanprof-elab-module"
+  },
+  "version": {
+   "const": 1
+  },
+  "file": {
+   "type": "string",
+   "description": "the source file, relative to the project"
+  },
+  "module": {
+   "type": "string"
+  },
+  "lean_version": {
+   "type": "string",
+   "description": "Lean.versionString of the Lean that elaborated it; empty without the driver"
+  },
+  "unit": {
+   "enum": [
+    "ns",
+    "heartbeats"
+   ]
+  },
+  "exact_ranges": {
+   "type": "boolean",
+   "description": "elaborated by leanprof-elab-driver: terms and tactics by exact source range, and a timeline"
+  },
+  "compact": {
+   "type": "boolean",
+   "description": "--compact: commands, terms and tactics only, not the operations inside them"
+  },
+  "threshold": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "operations other than terms and tactics under this (ms, or heartbeats) are not recorded on their own"
+  },
+  "term_threshold": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "terms and tactics under this are not recorded on their own; 0: every one is"
+  },
+  "wall_ns": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "wall time of the process that elaborated the file, imports included"
+  },
+  "imports_ns": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "loading the imports, as the driver measured it; 0 without the driver"
+  },
+  "errors": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "total": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "the sum of the file's commands' traced cost (Lean elaborates on several threads: can exceed wall_ns)"
+  },
+  "elab": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "kernel": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "compile": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "lint": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "declarations": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "line": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "name": {
+      "type": "string"
+     },
+     "total": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "elab": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "kernel": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "compile": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "lint": {
+      "type": "integer",
+      "minimum": 0
+     }
+    },
+    "required": [
+     "compile",
+     "elab",
+     "kernel",
+     "line",
+     "lint",
+     "name",
+     "total"
+    ]
+   }
+  },
+  "ranges": {
+   "type": "array",
+   "description": "every term and tactic, by exact source range, costliest first",
+   "items": {
+    "type": "object",
+    "properties": {
+     "range": {
+      "type": "string",
+      "pattern": "^[0-9]+:[0-9]+-[0-9]+:[0-9]+$",
+      "description": "line:col-line:col; lines and columns count from 1, and the end column is one past the range's last character"
+     },
+     "kind": {
+      "enum": [
+       "term",
+       "tactic"
+      ]
+     },
+     "syntax": {
+      "type": "string",
+      "description": "the syntax kind, e.g. Lean.Parser.Tactic.simp"
+     },
+     "text": {
+      "type": "string",
+      "description": "the source, whitespace collapsed, at most 100 characters"
+     },
+     "amount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "inclusive cost; a range nested in itself (a macro's expansion) counted once"
+     },
+     "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "how many times it was elaborated"
+     }
+    },
+    "required": [
+     "amount",
+     "count",
+     "kind",
+     "range",
+     "syntax",
+     "text"
+    ]
+   }
+  },
+  "classes": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "trace classes, indexed by events[i][1]"
+  },
+  "event_fields": {
+   "const": [
+    "parent",
+    "class",
+    "start_ns",
+    "dur_ns",
+    "thread",
+    "range",
+    "text"
+   ]
+  },
+  "events": {
+   "type": "array",
+   "description": "the timeline: every recorded operation (empty with heartbeats or without the driver)",
+   "items": {
+    "type": "array",
+    "prefixItems": [
+     {
+      "type": "integer",
+      "minimum": -1,
+      "description": "index of the operation it ran in, -1 for a root (a command, or work Lean ran asynchronously)"
+     },
+     {
+      "type": "integer",
+      "minimum": 0,
+      "description": "index into classes"
+     },
+     {
+      "type": "integer",
+      "minimum": 0,
+      "description": "start, ns after the driver started"
+     },
+     {
+      "type": "integer",
+      "minimum": 0,
+      "description": "duration, ns"
+     },
+     {
+      "type": "integer",
+      "minimum": 0,
+      "description": "the thread that ran it"
+     },
+     {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "line:col-line:col for a term or tactic (Leanprof.term, Leanprof.tactic), else null"
+     },
+     {
+      "type": "string",
+      "description": "a term or tactic's syntax kind (short), a command's source, or the operation's description"
+     }
+    ],
+    "minItems": 7,
+    "maxItems": 7
+   }
+  }
+ },
+ "required": [
+  "classes",
+  "compact",
+  "compile",
+  "declarations",
+  "elab",
+  "errors",
+  "event_fields",
+  "events",
+  "exact_ranges",
+  "file",
+  "imports_ns",
+  "kernel",
+  "lean_version",
+  "lint",
+  "module",
+  "ranges",
+  "schema",
+  "term_threshold",
+  "threshold",
+  "total",
+  "unit",
+  "version",
+  "wall_ns"
+ ]
+}
