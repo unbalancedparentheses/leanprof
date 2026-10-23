@@ -98,7 +98,7 @@
       <p class="tool"><code>elab --project</code></p>
     </header>
     <div>
-      <p>The compile time of all 195 modules, profiled in 17.0 s, against 13.3 s for <code>lake build</code> from clean. lean-source-profiler took 88.5 s in compact mode and 129.5 s in detailed mode, on 263 files with tests and scripts (<a href="docs/case-studies/compile-time-vs-lean-source-profiler.html">comparison</a>).</p>
+      <p>The compile time of all 195 modules, profiled in 17.0 s, against 13.3 s for <code>lake build</code> from clean. In one session on the same machine, leanprof took 16.8 s and lean-source-profiler 102.9 s in compact mode and 152.3 s in detailed mode, on 263 files with tests and scripts (<a href="docs/case-studies/compile-time-vs-lean-source-profiler.html">comparison</a>).</p>
       <p>Termination and bounds proofs are about a quarter of all elaboration: <code>decreasing_tactic</code> alone is 216.5 M heartbeats, 14.4%. An iterator definition is unfolded 24,369 times from ordinary RBTree proofs.</p>
     </div>
   </article>

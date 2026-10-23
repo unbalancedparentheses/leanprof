@@ -93,7 +93,7 @@ FACTS = [
         "24,369",
     ]),
     ("docs/case-studies/compile-time-vs-lean-source-profiler.md", [
-        "88.5 s", "129.5 s",
+        "16.8 s", "102.9 s", "152.3 s",
     ]),
 ]
 

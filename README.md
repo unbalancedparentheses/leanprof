@@ -32,7 +32,7 @@ alternative does, measured and in Lean's terms, from one command.
   used), each with file:line, and finds repeated work such as the same
   instance search done 132 times. Its numbers add up (lean-source-profiler's
   per-definition attribution can exceed a file's real time), and it profiles
-  all of Batteries in 17 s against 88–130 s.
+  all of Batteries in 17 s against 103–152 s.
 - **Regression checks that do not flake.** Copies, call counts and compile
   heartbeats are the same on every run, so CI can fail on "+1 copy" or "+8%
   heartbeats" without noise, where the alternatives compare times against a
