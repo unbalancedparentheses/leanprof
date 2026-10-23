@@ -97,6 +97,9 @@ def demangleCases : List (String × String) := [
   -- private callers, and private names inside a name
   ("lp_leanprof___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00__private_OddNames_Basic_0__Odd_secretSum_spec__0___redArg",
    "Odd.secretSum (in Std.Legacy.Range.forIn'.loop)"),
+  -- a specialization made inside another one (lambdaclass/concrete): the user code is the last caller
+  ("lp_concrete_List_filterMapTR_go___at___00List_filterMapTR_go___at___00Concrete_elabModule_spec__107_spec__119",
+   "Concrete.elabModule (in List.filterMapTR.go)"),
   ("l___private_Lean_Elab_PreDefinition_WF_Unfold_0____regBuiltin___private_Lean_Elab_PreDefinition_WF_Unfold_0__Lean_Elab_WF_matcherPushArg_declare__19_00___x40_Lean_Elab_PreDefinition_WF_Unfold_300889135____hygCtx___hyg_10_",
    "_regBuiltin.Lean.Elab.WF.matcherPushArg.declare_19"),
   -- packages this project does not know: escapes in the package name

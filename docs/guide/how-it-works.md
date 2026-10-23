@@ -56,8 +56,15 @@ compiler's `.cold.1`) are dropped, so they count as their declaration;
 other components starting with `_` are user names and kept.
 Specializations (`Std.Legacy.Range.forIn'.loop._at_.foo.spec_0`) are
 reported under the function that caused them, as
-`foo (in Std.Legacy.Range.forIn'.loop)`. Positions come from the `.ilean`
-files Lake writes, restricted to modules that are linked into the program.
+`foo (in Std.Legacy.Range.forIn'.loop)`; a specialization made inside
+another one (`g._at_.(h._at_.foo.spec_1).spec_2`) is reported under the user
+code at the end of the chain, `foo (in g)`. The compiler reuses a
+specialization for every caller with the same arguments, so `foo (in g)` can
+also run for other callers (`leanprof sample` shows the main one). Positions
+come from the `.ilean` files Lake writes, restricted to modules that are
+linked into the program; a module's source is looked up in its package and
+one directory down, for libraries and executables with a `srcDir`
+(`scripts/Bench.lean`).
 
 ### Checking the demangler against Lean's
 

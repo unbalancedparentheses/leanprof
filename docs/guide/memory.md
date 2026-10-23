@@ -89,7 +89,9 @@ scope peaks stop at 23.8 MiB while the process peak is 31.9 MiB).
   touched.
 - **peak** per scope is the largest committed value read while a call of
   the scope was running, and **max rise** the largest increase over the
-  reading just before such a call started. Scopes are listed by rise. A
+  reading just before such a call started; a call shorter than the time
+  since that reading has no rise (the reading would also count what was
+  allocated before the call). Scopes are listed by rise. A
   scope with no reading during any of its calls (calls shorter than the
   gap between readings, or with no scope exiting inside them) is not
   listed; readings are taken at scope exits, so a long stretch of code with

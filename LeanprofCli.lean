@@ -26,7 +26,7 @@ open Lean System
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
@@ -34,12 +34,13 @@ def commands : List (String × String × String) := [
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
     "--core also sees copies, tasks (and with --allocs, allocations) inside Lean's precompiled\n" ++
     "libraries, by linking against copies rewritten with llvm-objcopy (cached in .lake/leanprof/core).\n" ++
-    "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build."),
-  ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
+    "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
+    "--cwd DIR runs EXE in DIR (for programs that read the current directory)."),
+  ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
     "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
     "unless turned off (they slow the program down); --auto times every function."),
-  ("sample", "[--rate HZ] [--top N] [--out FILE] EXE [-- ARGS...]",
+  ("sample", "[--rate HZ] [--top N] [--out FILE] [--cwd DIR] EXE [-- ARGS...]",
     "Run EXE under samply (no probes) and report CPU time per Lean declaration with file:line,\n" ++
     "plus where the Lean runtime's time went. `samply load` on the saved profile opens a flame\n" ++
     "graph with Lean names. Needs samply (brew install samply / cargo install samply)."),
@@ -116,8 +117,9 @@ def removeWorkspaceObjects : IO Nat := do
       n := n + (← removeObjects (e.path / ".lake" / "build" / "ir"))
   return n
 
-def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String)) : IO UInt32 := do
-  let child ← IO.Process.spawn { cmd, args, env }
+def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String))
+    (cwd : Option FilePath := none) : IO UInt32 := do
+  let child ← IO.Process.spawn { cmd, args, env, cwd }
   child.wait
 
 structure RunOpts where
@@ -129,6 +131,7 @@ structure RunOpts where
   counters : Bool := false
   frees : Bool := false
   core : Bool := false
+  cwd : Option String := none
   exe : Option String := none
   args : Array String := #[]
 
@@ -143,6 +146,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--counters" :: rest => parseRun { opts with counters := true } rest
   | "--frees" :: rest => parseRun { opts with frees := true } rest
   | "--core" :: rest => parseRun { opts with core := true } rest
+  | "--cwd" :: d :: rest => parseRun { opts with cwd := some d } rest
   | "--" :: rest => .ok { opts with args := opts.args ++ rest.toArray }
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
@@ -296,7 +300,11 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
   let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
     ("LEANPROF_ALLOCS", if allocs then some "1" else none),
     ("LEANPROF_COUNTERS", if counters then some "1" else none),
-    ("LEANPROF_FREES", if frees then some "1" else none)] ++ runtimeEnv ++ extraEnv
+    ("LEANPROF_FREES", if frees then some "1" else none),
+    -- the build may run instrumented code (precompiled modules are loaded
+    -- into `lean`): no reports from it, and none over the program's
+    ("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none), ("LEANPROF_TRACE", none),
+    ("LEANPROF_STAT", none)] ++ runtimeEnv ++ extraEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
     cleanupInstrumented exe
@@ -304,6 +312,21 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
 
 /-- The executable Lake builds for `exe`. -/
 def exePath (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
+
+def absPath (p : FilePath) : IO FilePath := do
+  if p.isAbsolute then return p
+  return (← IO.currentDir) / p
+
+/-- Run the instrumented `exe` in the project, or in `--cwd DIR` (for
+programs that read their input from the current directory): paths become
+absolute, and LEANPROF_PROJECT tells the runtime where the `.ilean` files are. -/
+def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Option String)) : IO UInt32 := do
+  let fix (v : Option String) : IO (Option String) := v.mapM fun p => return (← absPath p).toString
+  let mut env' := #[]
+  for (k, v) in env do
+    env' := env'.push (k, ← if k == "LEANPROF_JSON" || k == "LEANPROF_TRACE" then fix v else pure v)
+  if opts.cwd.isSome then env' := env'.push ("LEANPROF_PROJECT", some (← IO.currentDir).toString)
+  spawnWait (← absPath (exePath exe)).toString opts.args env' (opts.cwd.map (·))
 
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
@@ -317,7 +340,7 @@ def run (argv : List String) : IO UInt32 := do
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
   let json := opts.json.getD ".lake/leanprof/report.json"
   let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)]
-  let rc ← spawnWait (exePath exe).toString opts.args runEnv
+  let rc ← runInstrumented exe opts runEnv
   unless opts.keep do
     cleanupInstrumented exe
   return rc
@@ -411,6 +434,7 @@ structure SampleOpts where
   rate : Nat := 4000
   out : Option String := none
   top : Nat := 25
+  cwd : Option String := none
   exe : Option String := none
   args : Array String := #[]
 
@@ -419,6 +443,7 @@ partial def parseSample (o : SampleOpts) : List String → Except String SampleO
   | "--rate" :: v :: rest => parseSample { o with rate := v.toNat! } rest
   | "--out" :: f :: rest => parseSample { o with out := some f } rest
   | "--top" :: v :: rest => parseSample { o with top := v.toNat! } rest
+  | "--cwd" :: d :: rest => parseSample { o with cwd := some d } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
@@ -468,11 +493,67 @@ def runtimeCategory (raw : String) : Option String :=
   else if has "lean_copy_" then some "copying non-exclusive values"
   else if has "lean_mark_mt" || has "lean_mark_persistent" then some "marking objects multi-threaded/persistent"
   else if has "lean_dec_ref" || has "lean_del_core" || has "lean_free" || has "del_core" then some "freeing objects (reference counts reaching zero)"
-  else if has "lean_alloc" || r.startsWith "mi_" || has "malloc" || has "mi_page" then some "allocation"
+  -- every small allocation also bumps the thread's heartbeat counter
+  else if has "lean_alloc" || r.startsWith "mi_" || has "malloc" || has "mi_page" || has "lean_inc_heartbeat" then some "allocation"
   else if has "lean_apply" then some "applying closures"
   else if has "gmpz" || has "lean_nat_big" || has "mpz" then some "big-number arithmetic"
+  -- Lean's C++ code for expressions and the kernel (also the hash maps it caches in)
+  else if (r.startsWith "lean_" || has "lean::") && (has "expr" || has "replace" || has "instantiate" ||
+      has "abstract" || has "type_checker" || has "loose_bvar" || has "kernel" || has "level") then
+    some "expressions and kernel (Lean's C++: instantiate, replace, type checking)"
   else if r.startsWith "lean_" || has "lean::" then some "other Lean runtime"
+  -- reached through a thread-local variable: the allocator's heap, the heartbeat counter
+  else if has "tlv_get_addr" then some "thread-local variable lookups"
   else none
+
+/-- A C++ name without template arguments (`std::__1::__hash_table<…>::find`):
+they can run to thousands of characters. -/
+def elideTemplates (s : String) : String := Id.run do
+  unless (s.splitOn "::").length > 1 && (s.splitOn "<").length > 1 do return s
+  let mut out := ""
+  let mut depth := 0
+  let mut prev := ' '
+  for c in s.toList do
+    if c == '<' && !out.endsWith "operator" then
+      if depth == 0 then out := out ++ "<…"
+      depth := depth + 1
+    else if c == '>' && depth > 0 && prev != '-' then
+      depth := depth - 1
+      if depth == 0 then out := out.push '>'
+    else if depth == 0 then out := out.push c
+    prev := c
+  return out
+
+/-- Symbols of a system library that samply did not symbolicate (libdyld,
+whose `tlv_get_addr` serves every thread-local variable), from the labels in
+`dyld_info -disassemble`: sorted (start, end, name) relative to `__TEXT`. -/
+def dyldInfoSymbols (path arch : String) : IO (Array (Nat × Nat × String)) := do
+  unless System.Platform.isOSX do return #[]
+  let run (what : String) : IO String := do
+    let out ← IO.Process.output { cmd := "dyld_info", args := #["-arch", arch, what, path] }
+    return if out.exitCode == 0 then out.stdout else ""
+  let hex (w : String) : Option Nat :=
+    if w.startsWith "0x" then (w.drop 2).foldl (init := some 0) fun acc c =>
+      acc.bind fun n => if c.isDigit then some (n * 16 + (c.toNat - '0'.toNat))
+        else if 'A' ≤ c && c ≤ 'F' then some (n * 16 + (c.toNat - 'A'.toNat + 10))
+        else if 'a' ≤ c && c ≤ 'f' then some (n * 16 + (c.toNat - 'a'.toNat + 10)) else none
+    else none
+  let words (l : String) := (l.splitOn " ").filter (· != "")
+  let text (l : String) : Option Nat := match words l with
+    | a :: "__TEXT" :: _ => hex a
+    | _ => none
+  let some base := ((← run "-segments").splitOn "\n").findSome? text | return #[]
+  let mut syms : Array (Nat × String) := #[]
+  let mut label : Option String := none
+  for l in (← try run "-disassemble" catch _ => pure "").splitOn "\n" do
+    if l.endsWith ":" && !l.startsWith "0x" && !l.startsWith "/" then
+      label := some ((l.dropEnd 1).toString)
+    else if let some name := label then
+      if let some a := (words l).head? >>= hex then
+        if a ≥ base then syms := syms.push (a - base, if name.startsWith "_" then (name.drop 1).toString else name)
+        label := none
+  return (List.range syms.size).toArray.map fun i =>
+    (syms[i]!.1, (syms[i + 1]?.map (·.1)).getD (syms[i]!.1 + 4), syms[i]!.2)
 
 def sample (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseSample {} argv)
@@ -482,11 +563,18 @@ def sample (argv : List String) : IO UInt32 := do
   let bin : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
   let out : FilePath := o.out.getD s!".lake/leanprof/{exe}.json"
   if let some dir := out.parent then IO.FS.createDirAll dir
-  let rc ← spawnWait "samply" (#["record", "--save-only", "--unstable-presymbolicate", "--rate", toString o.rate,
-    "-o", out.toString, bin.toString] ++ o.args) #[("LEANPROF_QUIET", some "1")]
-  if rc != 0 then
-    IO.eprintln s!"leanprof: samply exited with {rc} (is it installed? brew install samply / cargo install samply)"
-    return rc
+  if ← out.pathExists then IO.FS.removeFile out
+  let samplyArgs := #["record", "--save-only", "--unstable-presymbolicate", "--rate", toString o.rate,
+    "-o", (← absPath out).toString, (← absPath bin).toString] ++ o.args
+  let rc ← try spawnWait "samply" samplyArgs #[("LEANPROF_QUIET", some "1")] (o.cwd.map (·))
+    catch e =>
+      IO.eprintln s!"leanprof: cannot run samply ({e}); install it: brew install samply / cargo install samply"
+      return 1
+  -- samply exits with the program's exit code: a failing program still has a profile
+  unless ← out.pathExists do
+    IO.eprintln s!"leanprof: samply exited with {rc} and wrote no profile"
+    return if rc == 0 then 1 else rc
+  if rc != 0 then IO.eprintln s!"leanprof: {exe} exited with {rc}; its profile so far:"
   let symsPath : FilePath := out.withExtension "syms.json"
   let profile ← IO.ofExcept (Json.parse (← IO.FS.readFile out))
   let syms ← IO.ofExcept (Json.parse (← IO.FS.readFile symsPath))
@@ -500,7 +588,9 @@ def sample (argv : List String) : IO UInt32 := do
   for l in libsMeta do
     let dn := str l "debugName"
     let entry := symData.find? fun e => str e "debug_name" == dn
-    libTables := libTables.push (entry.map (libSymbols · strings) |>.getD #[])
+    libTables := libTables.push <| ← match entry with
+      | some e => pure (libSymbols e strings)
+      | none => try dyldInfoSymbols (str l "path") (str l "arch") catch _ => pure #[]
     libIsMain := libIsMain.push (dn == exe)
   -- CPU time per display name: self (leaf) and inclusive (anywhere in the stack)
   let mut selfT : Std.HashMap String Float := {}
@@ -510,6 +600,11 @@ def sample (argv : List String) : IO UInt32 := do
   let mut leanDecls : Std.HashSet String := {}       -- display names that are Lean declarations
   let mut categories : Std.HashMap String String := {} -- display name ↦ runtime category
   let mut catT : Std.HashMap String Float := {}
+  -- code the linker outlined (OUTLINED_FUNCTION_N): its time is its caller's
+  let mut outlined : Std.HashSet String := {}
+  -- callers of specializations: `g (in f)` is named after the first `g` that
+  -- needed `f` specialized, but the compiler reuses it for other callers
+  let mut specCallers : Std.HashMap String (Std.HashMap String Float) := {}
   for t in getArr profile "threads" do
     let samples ← IO.ofExcept (t.getObjVal? "samples")
     let stacks := getArr samples "stack"
@@ -534,12 +629,18 @@ def sample (argv : List String) : IO UInt32 := do
       let disp ← match names.get? raw with
         | some d => pure d
         | none => do
-          let d := if isMain then Leanprof.demangle raw else s!"[{(str (libsMeta[lib]?.getD Json.null) "name")}] {raw}"
-          names := names.insert raw d
           let r := if raw.startsWith "_" then (raw.drop 1).toString else raw
-          if isMain && (r.startsWith "l_" || r.startsWith "lp_" || r == "_lean_main" || r == "lean_main") then
+          let lean := r.startsWith "l_" || r.startsWith "lp_" || r == "_lean_main" || r == "lean_main"
+          -- only Lean symbols are demangled (C++ names, already demangled by
+          -- samply, are not cut to the demangler's buffer)
+          let d := elideTemplates <|
+            if isMain then (if lean then Leanprof.demangle raw else raw)
+            else s!"[{(str (libsMeta[lib]?.getD Json.null) "name")}] {raw}"
+          names := names.insert raw d
+          if r.startsWith "OUTLINED_FUNCTION_" then outlined := outlined.insert d
+          if isMain && lean then
             leanDecls := leanDecls.insert d
-          if isMain then
+          if isMain || r.endsWith "tlv_get_addr" then
             if let some c := runtimeCategory raw then categories := categories.insert d c
           pure d
       frameName := frameName.push disp
@@ -553,10 +654,21 @@ def sample (argv : List String) : IO UInt32 := do
       let mut seen : Std.HashSet String := {}
       let mut s? := some s0
       let mut leaf := true
+      let mut spec : Option String := none  -- the frame below, if a specialization
+      let mut specSeen : Std.HashSet String := {}
       while true do
         let some s := s? | break
         let f := getNatAt frameOf s |>.getD 0
         let n := frameName[f]?.getD "?"
+        if outlined.contains n then
+          s? := getNatAt parents s
+          continue
+        if let some sp := spec then
+          unless specSeen.contains sp do
+            let m := specCallers.getD sp {}
+            specCallers := specCallers.insert sp (m.insert n (m.getD n 0 + w))
+            specSeen := specSeen.insert sp
+        spec := if (n.splitOn " (in ").length > 1 then some n else none
         if leaf then
           selfT := selfT.insert n (selfT.getD n 0 + w)
           if let some c := categories.get? n then catT := catT.insert c (catT.getD c 0 + w)
@@ -575,14 +687,27 @@ def sample (argv : List String) : IO UInt32 := do
     IO.println s!"  {pad (fmtCpu w) 12} {pad (pct w) 8} {c}"
   IO.println s!"\n  top {o.top} functions by self CPU time"
   let bySelf := selfT.toArray.qsort (fun a b => a.2 > b.2)
+  -- a specialization is named after the first caller that needed it, but the
+  -- compiler reuses it (and inlines callers): say who calls it in this run
+  let callerNote (n : String) : IO Unit := do
+    let some m := specCallers.get? n | return
+    let named := (n.splitOn " (in ").head!
+    let some (c, cw) := (m.toArray.qsort (fun a b => a.2 > b.2))[0]? | return
+    let base := (c.splitOn " (in ").head!
+    if base != named && !base.startsWith (named ++ ".") && leanDecls.contains c then
+      let cwh ← Leanprof.whereIs c
+      let all := inclT.getD n 0
+      IO.println s!"{"".pushn ' ' 24}{fmt2 (if all > 0 then cw / all * 100 else 0)}% of it called from {c}{if cwh.isEmpty then "" else s!"  ({cwh})"}"
   for (n, w) in bySelf.toList.take o.top do
     let wh ← Leanprof.whereIs n
     IO.println s!"  {(fmtCpu w).pushn ' ' (12 - (fmtCpu w).length)} {(pct w).pushn ' ' (8 - (pct w).length)} {n}{if wh.isEmpty then "" else s!"  ({wh})"}"
+    callerNote n
   IO.println s!"\n  top {o.top} Lean declarations by inclusive CPU time"
   let leanIncl := (inclT.toArray.filter fun (n, _) => leanDecls.contains n && !n.startsWith "initialize_").qsort (fun a b => a.2 > b.2)
   for (n, w) in leanIncl.toList.take o.top do
     let wh ← Leanprof.whereIs n
     IO.println s!"  {(fmtCpu w).pushn ' ' (12 - (fmtCpu w).length)} {(pct w).pushn ' ' (8 - (pct w).length)} {n}{if wh.isEmpty then "" else s!"  ({wh})"}"
+    callerNote n
   -- Lean names for Firefox Profiler: rewrite the sidecar's strings
   let renamed := strings.map fun r => names.getD r r
   let syms' := syms.setObjVal! "string_table" (Json.arr (renamed.map Json.str))
@@ -599,7 +724,7 @@ def sample (argv : List String) : IO UInt32 := do
   IO.FS.writeFile ".lake/leanprof/report.json" report.compress
   IO.println s!"\nflamegraph with Lean names: samply load {out}"
   IO.println "in the editor: add `#leanprof` to a file to see these numbers next to its code"
-  return 0
+  return rc
 
 /-! ## elab
 
@@ -664,24 +789,26 @@ def parseTrace (data : String) : Array TNode := Id.run do
 
 /-- Merge operations that differ only in metavariable numbers (`?m.123`). -/
 def normalizeOp (t : String) : String := Id.run do
-  let mut out : List Char := []
+  -- only the first 120 characters are kept, so only those are read (an
+  -- operation's text can be a whole expression)
+  let mut out := ""
   let mut cs := t.toList
-  while !cs.isEmpty do
+  while !cs.isEmpty && out.length < 120 do
     match cs with
     | '?' :: rest =>
       let name := rest.takeWhile (fun c => c.isAlpha || c == '_')
       let after := rest.drop name.length
       if after.head? == some '.' && ((after.drop 1).head?.map Char.isDigit).getD false then
-        out := out ++ '?' :: name ++ ['.', 'n']
+        out := out.push '?' ++ String.ofList name ++ ".n"
         cs := (after.drop 1).dropWhile Char.isDigit
       else
-        out := out ++ ['?']
+        out := out.push '?'
         cs := rest
     | c :: rest =>
-      out := out ++ [c]
+      out := out.push c
       cs := rest
     | [] => break
-  return String.ofList (out.take 120)
+  return String.ofList (out.toList.take 120)
 
 /-- Classes whose repeated identical operations are worth reporting. -/
 def repeatable (cls : String) : Bool :=
@@ -762,11 +889,21 @@ def elabCmd (argv : List String) : IO UInt32 := do
   let mut ops : Std.HashMap (String × String) OpCost := {}
   let mut grand : Float := 0
   for file in files do
-    let mut args := #["env", "lean", "--json", "-Dtrace.profiler=true", "-Dtrace.profiler.threshold=0"]
+    -- `lake lean` runs Lean the way the build does (plugins and the shared
+    -- libraries of precompiled modules); `lake env lean` cannot load those
+    let mut args := #["lean", file, "--", "--json", "-Dtrace.profiler=true", "-Dtrace.profiler.threshold=0"]
     if hb then args := args.push "-Dtrace.profiler.useHeartbeats=true"
-    let out ← IO.Process.output { cmd := "lake", args := args.push file }
-    for msgLine in out.stdout.splitOn "\n" do
-      let some m := (Json.parse msgLine).toOption | continue
+    -- one message per line, read as it comes: with every trace kept, the
+    -- output of a large file runs to gigabytes
+    let child ← IO.Process.spawn { cmd := "lake", args, stdout := .piped, stderr := .piped }
+    let stderr ← IO.asTask child.stderr.readToEnd
+    let srcLines := ((← (some <$> IO.FS.readFile file) <|> pure none).getD "").splitOn "\n" |>.toArray
+    let mut errors : Array String := #[]
+    repeat
+      let msgLine ← child.stdout.getLine
+      if msgLine.isEmpty then break
+      let some m := (Json.parse msgLine.trimAscii.toString).toOption | continue
+      if str m "severity" == "error" then errors := errors.push (str m "data")
       let nodes := parseTrace (str m "data")
       let some root := nodes[0]? | continue
       let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
@@ -785,7 +922,11 @@ def elabCmd (argv : List String) : IO UInt32 := do
       else
         c := { c with elaboration := c.elaboration + rootAmt }
         if root.cls == "Elab.command" && c.name.isEmpty then
-          c := { c with name := String.ofList ((dropDocComment root.text).toList.take 60) }
+          -- the source, not the trace's pretty-printed command (which can be
+          -- "failed to pretty print term ...")
+          let src := " ".intercalate ((srcLines.extract (ln - 1) (ln + 9)).toList.map (·.trimAscii.toString))
+          let text := if src.trimAscii.isEmpty then root.text else src
+          c := { c with name := String.ofList ((dropDocComment text).toList.take 60) }
       -- self time per class; repeated operations; the line's heaviest nested operations
       for i in [0:nodes.size] do
         let n := nodes[i]!
@@ -803,18 +944,27 @@ def elabCmd (argv : List String) : IO UInt32 := do
               p := nodes[q]!.parent
             return found
           unless nested do
-            let k := (n.cls, normalizeOp n.text)
+            let op := normalizeOp n.text
+            let k := (n.cls, op)
             let o := ops.getD k {}
             let amt := n.amount * scale
             ops := ops.insert k { count := o.count + 1, total := o.total + amt, maxOne := max o.maxOne amt,
                                   firstAt := if o.firstAt.isEmpty then key else o.firstAt }
-            c := { c with top := c.top.push (amt, s!"[{n.cls}] {normalizeOp n.text}") }
+            if amt ≥ c.total * 0.01 then c := { c with top := c.top.push (amt, s!"[{n.cls}] {op}") }
       -- the line's heaviest operations, ignoring those under 1% of it
       c := { c with top := (((c.top.filter (·.1 ≥ c.total * 0.01)).qsort (fun a b => a.1 > b.1)).toList.take 5).toArray }
       lines := lines.insert key c
+      -- a large file has millions of distinct operations: past a bound, keep
+      -- only those already seen twice (memory stays bounded; an operation
+      -- dropped once can still be reported if it repeats later)
+      if ops.size > 300000 then ops := ops.filter fun _ o => o.count > 1
+    let code ← child.wait
+    if code != 0 then
+      let err := match stderr.get with | .ok e => e.trimAscii.toString | .error _ => ""
+      IO.eprintln s!"leanprof: lean failed on {file} (exit code {code}); its costs below are incomplete:\n{(errors.getD 0 err).take 400}"
   let pad (t : String) (w : Nat) := t.pushn ' ' (w - t.length)
   let pct (x : Float) := s!"{fmt2 (if grand > 0 then x / grand * 100 else 0)}%"
-  IO.println s!"\nleanprof elab: {files.length} files, {fmtAmt grand} {if hb then "(heartbeats, exact)" else "compile time"}"
+  IO.println s!"\nleanprof elab: {files.length} files, {fmtAmt grand} {if hb then "(heartbeats, exact; 1 kHB is the unit of `maxHeartbeats`, whose default limit is 200,000 per declaration)" else "compile time"}"
   -- where compile time went
   IO.println "\n  where compile time went (self, by operation kind)"
   for (cls, x) in ((byClass.toArray.qsort (fun a b => a.2 > b.2)).toList.take top) do
@@ -1390,7 +1540,7 @@ def statCmd (argv : List String) : IO UInt32 := do
   let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_STAT", some "1"), ("LEANPROF_JSON", some json),
     ("LEANPROF_TRACE", opts.trace)]
   let t0 ← IO.monoNanosNow
-  let code ← try spawnWait (exePath exe).toString opts.args env
+  let code ← try runInstrumented exe opts env
     finally
       unless opts.keep do cleanupInstrumented exe
   let outside := (← IO.monoNanosNow) - t0
@@ -1432,7 +1582,7 @@ def statCmd (argv : List String) : IO UInt32 := do
   if scopes.isEmpty then
     row "top scopes" "none (mark code with profile!, or pass --auto)"
   else
-    let jw := num j "wall_ns"
+    let jw := num j "wall_ns" - num j "probe_ns"
     for i in [0:min 3 scopes.size] do
       let s := scopes[i]!
       let pos := str s "pos"

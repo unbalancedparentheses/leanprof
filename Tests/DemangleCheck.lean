@@ -86,7 +86,8 @@ def cutCompiler (cs : List Char) : List Char :=
 def normalize (lean : String) : String :=
   let pieces := (splitTop lean.toList " spec at ".toList).map (fun p => cutCompiler (dropFlags p))
   match pieces with
-  | base :: ctx :: _ => s!"{String.ofList ctx} (in {String.ofList base})"
+  -- a specialization made for another one: the user code is the last caller
+  | base :: ctx :: more => s!"{String.ofList (more.getLastD ctx)} (in {String.ofList base})"
   | [base] => String.ofList base
   | [] => lean
 

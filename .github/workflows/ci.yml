@@ -113,6 +113,9 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof run --json large.json copybug -- 2000
           lake exe leanprof compare small.json small.json
           if lake exe leanprof compare small.json large.json; then echo "expected a regression"; exit 1; fi
+          # --cwd: the program runs elsewhere, positions still come from the project
+          LEANPROF_QUIET=1 lake exe leanprof run --cwd Examples --json cwd.json copybug -- 1000
+          grep -q '"function":"buildWithHistory (in Std.Legacy.Range.forIn[^"]*","symbol":"[^"]*","scope":"buildWithHistory","where":"Examples/CopyBug.lean:17"' cwd.json
       - name: report-md (the pull-request comment of the GitHub Action)
         run: |
           lake exe leanprof report-md small.json small.json | tee same.md
@@ -141,6 +144,12 @@ jobs:
         run: |
           lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean | tee elab.txt
           grep -q "repeated work" elab.txt
+          # a file Lean fails on is reported, not silently counted as nearly free
+          printf 'def broken : Nat := "a"\n' > Broken.lean
+          lake exe leanprof elab Broken.lean 2> broken.txt || true
+          rm Broken.lean
+          cat broken.txt
+          grep -q "lean failed on Broken.lean" broken.txt
           cp .lake/leanprof/elab.json base.json
           lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean
           lake exe leanprof compare base.json .lake/leanprof/elab.json
@@ -228,3 +237,98 @@ jobs:
           head -30 elab.txt
           python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 5
           grep -q '"pos":"REPL/Main.lean:' .lake/leanprof/elab.json
+
+  # leanprof on lean-regex's own benchmark (docs/case-studies/lean-regex.md),
+  # pinned to the commit of the case study: a project with no dependency on
+  # leanprof, its own toolchain (4.34.0-rc1), an executable in a `srcDir`
+  # (`scripts/Bench.lean`), and one hot loop with every kind of finding
+  # (copies, allocations, failed reuse, closure calls, freeing). It builds in
+  # about a minute and its benchmark runs in under a second.
+  lean-regex:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build leanprof
+        run: |
+          lake build leanprof demangle-check
+          echo "LP=$PWD/.lake/build/bin" >> "$GITHUB_ENV"
+          echo "CHECK=$PWD/scripts/check-report.py" >> "$GITHUB_ENV"
+      - name: Clone and build lean-regex
+        run: |
+          git clone https://github.com/pandaman64/lean-regex.git "$RUNNER_TEMP/lean-regex"
+          git -C "$RUNNER_TEMP/lean-regex" checkout 32af6f3
+          cd "$RUNNER_TEMP/lean-regex/regex"
+          lake build Bench
+          $LP/demangle-check .lake/build/bin/Bench
+          # the input: Lean's own sources (4.5 MB)
+          cat "$(lean --print-prefix)"/src/lean/Init/Data/*/*.lean > corpus.txt
+          echo "RE=$RUNNER_TEMP/lean-regex/regex" >> "$GITHUB_ENV"
+      - name: Every function (run --auto)
+        working-directory: ${{ env.RE }}
+        run: |
+          $LP/leanprof run --auto --json auto.json Bench -- -e '[a-zA-Z_]+_(lt|le)\b' corpus.txt > auto.out 2>&1 || { cat auto.out; exit 1; }
+          head -30 auto.out
+          # srcDir: the benchmark is scripts/Bench.lean, not Bench.lean
+          python3 $CHECK auto.json --min-pos 10 --expect main=scripts/Bench.lean \
+            --expect Regex.VM.εClosure=Regex/VM/Basic.lean --expect Regex.BufferStrategy=Regex/Strategy.lean
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('auto.json'))
+          s = {x['name']: x for x in d['scopes']}
+          copies = sum(c['copies'] for c in d['copies'] if c['function'] == 'Regex.BufferStrategy')
+          calls = s['Regex.BufferStrategy']['calls']
+          base = d['wall_ns'] - d['probe_ns']
+          print('BufferStrategy calls', calls, 'copies', copies, 'main', s['main']['total_ns'], 'of', base)
+          # its lambda and `_boxed` wrapper are one declaration: one call per write, not two
+          ok = copies > 1000000 and calls < 1.5 * copies
+          # %wall is against the wall time without the probes, like the totals
+          ok = ok and d['probe_ns'] > 0 and s['main']['total_ns'] > 0.5 * base
+          sys.exit(0 if ok else 1)
+          PY
+      - name: Allocations, counters and frees
+        working-directory: ${{ env.RE }}
+        run: |
+          $LP/leanprof run --allocs --counters --frees --json all.json Bench -- -e '[a-zA-Z_]+_(lt|le)\b' corpus.txt > all.out 2>&1 || { cat all.out; exit 1; }
+          sed -n '/^copies/,/^memory/p' all.out
+          python3 $CHECK all.json --min-pos 3 --expect Regex.VM.εClosure=Regex/VM/Basic.lean
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('all.json'))
+          allocs = {a['function']: a['allocs'] for a in d['allocations']}
+          sites = {(c['function'], c['target']): c['applications'] for c in d['closures']}
+          reuse = {r['function']: r['failures'] for r in d['reuse']}
+          print(allocs.get('Regex.VM.εClosure'), sites, d['frees']['objects'])
+          ok = (allocs.get('Regex.VM.εClosure', 0) > 10_000_000
+                and sites.get(('Regex.VM.εClosure', 'Regex.BufferStrategy'), 0) > 1_000_000
+                and reuse.get('Regex.VM.εClosure', 0) > 1_000_000
+                and d['frees']['objects'] > 10_000_000)
+          sys.exit(0 if ok else 1)
+          PY
+      - name: Sampling (macOS)
+        if: runner.os == 'macOS'
+        working-directory: ${{ env.RE }}
+        run: |
+          brew install samply
+          $LP/leanprof sample --top 15 Bench -- -e '[a-zA-Z_]+_(lt|le)\b' corpus.txt > sample.txt
+          sed -n '/^leanprof sample/,$p' sample.txt
+          grep -q "Regex.VM.εClosure  (Regex/VM/Basic.lean:" sample.txt
+          grep -q "main  (scripts/Bench.lean:" sample.txt
+          if grep -q OUTLINED_FUNCTION sample.txt; then echo "outlined code not merged into its caller"; exit 1; fi
+      - name: Compile time
+        working-directory: ${{ env.RE }}
+        run: |
+          $LP/leanprof elab --heartbeats Regex/VM/Basic.lean > elab.txt
+          head -20 elab.txt
+          python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 3
+          grep -q "Regex/VM/Basic.lean:105  def eachStepChar" elab.txt

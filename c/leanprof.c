@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #ifdef __APPLE__
 #include <mach/mach_time.h>
 #endif
@@ -39,9 +40,17 @@ static const char *lpf_reason_name[LP_REASONS] = {"shared", "multi-threaded", "p
  * `parent_kind`; key NULL when spawned outside any scope). */
 enum { LP_LABEL, LP_FN, LP_INTERNAL, LP_TASK };
 
-typedef struct {
+typedef struct lpf_scope {
     const void *key;
     uint8_t kind;              /* LP_LABEL, LP_FN, or LP_INTERNAL (calibration) */
+    /* LP_FN: one declaration is often several functions (`f`, `f._redArg`,
+     * `f._boxed`, its lambdas); they all record into `canon`, the first one
+     * seen under that name. `part`: a lambda, `_redArg` or join point, no new
+     * call when its declaration calls it; `boxed`: a wrapper that only
+     * unboxes arguments, not timed (its frame folds into its caller's). */
+    struct lpf_scope *canon;
+    char *name;                /* LP_FN canonical scopes: the declaration's name */
+    uint8_t part, boxed;
     /* Raw times. `sum` is every call's own duration, `total` only outermost
      * calls (recursion). Overhead is removed at report time from the counts:
      * `kids` direct children, `desc_sum`/`desc_total` descendants over all and
@@ -68,6 +77,7 @@ typedef struct {
 typedef struct {
     lpf_scope *scope;
     uint8_t traced;            /* its begin event was recorded */
+    uint8_t part;              /* a part of the enclosing frame's declaration (see lpf_scope) */
     uint64_t start;
     uint64_t child;            /* raw time in direct children */
     uint64_t kids, desc;       /* direct children and all descendants that completed */
@@ -84,11 +94,13 @@ typedef struct {
 
 typedef struct lpf_thread {
     lpf_scope *scopes[LP_TABLE];
+    lpf_scope *byname[LP_TABLE]; /* LP_FN canonical scopes by name */
     lpf_copy *copies[LP_TABLE];
     size_t nscopes, ncopies;   /* keys in each table */
     lpf_frame stack[LP_DEPTH];
     uint32_t depth;
     uint64_t dropped;
+    uint64_t pairs;            /* enter/exit pairs of completed outermost frames (their probes' cost) */
     lpf_event *events;
     size_t nevents, capevents;
     uint64_t events_dropped;
@@ -202,6 +214,33 @@ static inline size_t lpf_hash(const void *a, const void *b) {
     return (size_t)h & (LP_TABLE - 1);
 }
 
+static void lpf_symbol_raw(void *pc, char *out, size_t cap);
+static void lpf_demangle(const char *s, char *out, size_t cap);
+
+/* Find the canonical scope of a new LP_FN scope (see lpf_scope). */
+static void lpf_fn_canon(lpf_thread *t, lpf_scope *s) {
+    char raw[4096], name[512];
+    lpf_symbol_raw((void *)s->key, raw, sizeof raw);
+    size_t n = strlen(raw);
+    s->canon = s;
+    s->boxed = n > 8 && strcmp(raw + n - 8, "___boxed") == 0;
+    s->part = strstr(raw, "___lam_") || strstr(raw, "___elam_") || strstr(raw, "___redArg") || strstr(raw, "___jp_");
+    lpf_demangle(raw, name, sizeof name);
+    uint64_t h = 1469598103934665603ull;
+    for (const char *p = name; *p; p++) h = (h ^ (unsigned char)*p) * 1099511628211ull;
+    for (size_t i = h & (LP_TABLE - 1), k = 0; k < LP_TABLE; k++, i = (i + 1) & (LP_TABLE - 1)) {
+        lpf_scope *c = t->byname[i];
+        if (c == NULL) {
+            if ((s->name = strdup(name)) != NULL) t->byname[i] = s;
+            return;
+        }
+        if (strcmp(c->name, name) == 0) {
+            s->canon = c;
+            return;
+        }
+    }
+}
+
 static lpf_scope *lpf_scope_get(lpf_thread *t, const void *key, uint8_t kind) {
     size_t i = lpf_hash(key, (const void *)(uintptr_t)(kind == LP_TASK));
     for (size_t n = 0; n < LP_TABLE; n++, i = (i + 1) & (LP_TABLE - 1)) {
@@ -216,6 +255,7 @@ static lpf_scope *lpf_scope_get(lpf_thread *t, const void *key, uint8_t kind) {
             s->min = UINT64_MAX;
             t->scopes[i] = s;
             t->nscopes++;
+            if (kind == LP_FN) lpf_fn_canon(t, s);
             return s;
         }
     }
@@ -256,9 +296,26 @@ __attribute__((no_instrument_function)) static inline void lpf_enter(const void 
     uint32_t d = t->depth++;
     if (LEAN_UNLIKELY(d >= LP_DEPTH)) return;
     lpf_scope *s = lpf_scope_get(t, key, kind);
-    if (s != NULL) s->active++;
+    uint8_t part = 0;
+    if (s != NULL && kind == LP_FN) {
+        if (s->boxed) { /* transparent: its time is its caller's, its callee's call is counted */
+            part = d > 0;
+            s = NULL;
+        } else {
+            if (s->part) /* called by its own declaration, past `profile!` scopes and wrappers */
+                for (uint32_t k = d; k > 0; k--) {
+                    lpf_scope *ps = t->stack[k - 1].scope;
+                    if (ps == NULL || ps->kind == LP_LABEL) continue;
+                    part = ps == s->canon;
+                    break;
+                }
+            s = s->canon;
+        }
+    }
+    if (s != NULL && !part) s->active++;
     lpf_frame *f = &t->stack[d];
     f->scope = s;
+    f->part = part;
     f->child = f->kids = f->desc = 0;
     f->allocs = f->bytes = f->allocs_in = f->bytes_in = 0;
     f->start = lpf_now();
@@ -278,6 +335,18 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
     lpf_frame *f = &t->stack[d];
     if (LEAN_UNLIKELY(f->traced)) lpf_trace(t, 'E', f->scope ? f->scope->key : NULL, 0, now, 0);
     uint64_t raw = now - f->start;
+    if (LEAN_UNLIKELY(f->part)) { /* the declaration's own code: fold into its frame */
+        lpf_frame *p = &t->stack[d - 1];
+        p->child += f->child;
+        p->kids += 1 + f->kids;
+        p->desc += 1 + f->desc;
+        p->allocs += f->allocs;
+        p->bytes += f->bytes;
+        p->allocs_in += f->allocs_in;
+        p->bytes_in += f->bytes_in;
+        return;
+    }
+    if (d == 0 && (f->scope == NULL || f->scope->kind != LP_INTERNAL)) t->pairs += 1 + f->desc;
     if (d > 0) {
         lpf_frame *p = &t->stack[d - 1];
         p->child += raw;
@@ -694,9 +763,9 @@ static int lpf_hex(const char *s, int n, uint32_t *out) {
 }
 
 /* A decoded name: its components, each a string or a number. */
-#define LPF_NAME_MAX 96
+#define LPF_NAME_MAX 256 /* nested specializations run to hundreds */
 typedef struct {
-    char text[1024];
+    char text[4096];
     size_t len;
     unsigned short off[LPF_NAME_MAX];
     unsigned char num[LPF_NAME_MAX];
@@ -961,15 +1030,20 @@ static void lpf_name_show(const lpf_name *nm, char *out, size_t cap) {
         lpf_show(nm, 0, nm->n, out, cap);
         return;
     }
-    int e = at + 1;
+    /* specializations made for other ones (`g._at_.(h._at_.f.spec_1).spec_2`)
+     * nest: the user code they were made for is the last caller, `f` */
+    int last = at;
+    for (int i = at + 1; i < nm->n; i++)
+        if (!nm->num[i] && strcmp(lpf_comp(nm, i), "_at_") == 0) last = i;
+    int b = last + 1, e = b;
     while (e < nm->n && (nm->num[e] || !lpf_spec_end(lpf_comp(nm, e)))) e++;
-    if (e == at + 1) {
+    if (e == b) {
         lpf_show(nm, 0, at, out, cap);
         return;
     }
     char callee[512], caller[512];
     lpf_show(nm, 0, at, callee, sizeof callee);
-    lpf_show(nm, at + 1, e, caller, sizeof caller);
+    lpf_show(nm, b, e, caller, sizeof caller);
     snprintf(out, cap, "%s (in %s)", caller, callee);
 }
 
@@ -978,6 +1052,15 @@ static void lpf_name_show(const lpf_name *nm, char *out, size_t cap) {
 static void lpf_find_root_pkg(void);
 static void lpf_mangle_module(const char *m, char *out, size_t cap);
 static char lpf_root_pkg[256];
+
+/* `rel` inside the project: the current directory, or LEANPROF_PROJECT when
+ * the program runs elsewhere (`leanprof run --cwd`). */
+static const char *lpf_proj_path(const char *rel, char *out, size_t cap) {
+    const char *proj = getenv("LEANPROF_PROJECT");
+    if (proj == NULL || proj[0] == 0) snprintf(out, cap, "%s", rel);
+    else snprintf(out, cap, "%s/%s", proj, rel);
+    return out;
+}
 
 /* Mangled names of the packages this project knows (its own, from the
  * lakefile, and each in .lake/packages): `lp_<pkg>_` is ambiguous when a
@@ -1005,7 +1088,8 @@ static void lpf_load_pkgs(void) {
     lpf_npkgs = 0;
     if (lpf_root_pkg[0] == 0) lpf_find_root_pkg();
     if (lpf_root_pkg[0]) lpf_mangle_pkg(lpf_root_pkg, lpf_pkgs[lpf_npkgs++], 256);
-    DIR *d = opendir(".lake/packages");
+    char path[1024];
+    DIR *d = opendir(lpf_proj_path(".lake/packages", path, sizeof path));
     struct dirent *e;
     while (d != NULL && (e = readdir(d)) != NULL && lpf_npkgs < 64) {
         if (e->d_name[0] == '.') continue;
@@ -1051,7 +1135,7 @@ static void lpf_demangle(const char *s, char *out, size_t cap) {
 #endif
     /* `f.cold.1`, `f.isra.0`, `f.llvm.42`: parts of `f` the C compiler split
      * off (mangled Lean names have no '.') */
-    char sym[1024];
+    char sym[4096];
     const char *dot = strchr(s, '.');
     if (dot != NULL && dot > s) {
         size_t n = (size_t)(dot - s) < sizeof sym - 1 ? (size_t)(dot - s) : sizeof sym - 1;
@@ -1166,8 +1250,8 @@ static void lpf_mangle_module(const char *m, char *out, size_t cap) {
  * package (from its lakefile) and each checked-out dependency. */
 
 static void lpf_find_root_pkg(void) {
-    FILE *f = fopen("lakefile.toml", "r");
     char line[512];
+    FILE *f = fopen(lpf_proj_path("lakefile.toml", line, sizeof line), "r");
     if (f != NULL) {
         while (fgets(line, sizeof line, f)) {
             char *q;
@@ -1179,7 +1263,7 @@ static void lpf_find_root_pkg(void) {
         fclose(f);
         return;
     }
-    f = fopen("lakefile.lean", "r");
+    f = fopen(lpf_proj_path("lakefile.lean", line, sizeof line), "r");
     if (f == NULL) return;
     while (fgets(line, sizeof line, f)) {
         if (strncmp(line, "package ", 8) == 0) {
@@ -1253,6 +1337,40 @@ static int lpf_module_linked(const char *module, const char *pkg) {
     return 0;
 }
 
+/* The directory of `module`'s source in the package at `prefix`: the package
+ * itself, or a library's `srcDir` one level down (`src/`, `scripts/`, ...),
+ * found by looking for the file. The last one found is tried first. */
+static void lpf_source_dir(const char *prefix, const char *module, char *out, size_t cap) {
+    static char last[1024], last_prefix[1024];
+    char rel[512], path[2048], probe[1024];
+    size_t n = 0;
+    for (const char *m = module; *m && n + 7 < sizeof rel; m++) rel[n++] = *m == '.' ? '/' : *m;
+    memcpy(rel + n, ".lean", 6);
+    snprintf(out, cap, "%s", prefix);
+    snprintf(probe, sizeof probe, "%s%s", prefix, rel);
+    if (access(lpf_proj_path(probe, path, sizeof path), F_OK) == 0) return;
+    if (last[0] && strcmp(last_prefix, prefix) == 0) {
+        snprintf(probe, sizeof probe, "%s%s", last, rel);
+        if (access(lpf_proj_path(probe, path, sizeof path), F_OK) == 0) {
+            snprintf(out, cap, "%s", last);
+            return;
+        }
+    }
+    DIR *d = opendir(lpf_proj_path(prefix[0] ? prefix : ".", path, sizeof path));
+    struct dirent *e;
+    while (d != NULL && (e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        snprintf(probe, sizeof probe, "%s%s/%s", prefix, e->d_name, rel);
+        if (access(lpf_proj_path(probe, path, sizeof path), F_OK) == 0) {
+            snprintf(out, cap, "%s%s/", prefix, e->d_name);
+            snprintf(last, sizeof last, "%s", out);
+            snprintf(last_prefix, sizeof last_prefix, "%s", prefix);
+            break;
+        }
+    }
+    if (d != NULL) closedir(d);
+}
+
 static void lpf_index_file(const char *path, const char *prefix, const char *pkg) {
     FILE *f = fopen(path, "rb");
     if (f == NULL) return;
@@ -1269,6 +1387,8 @@ static void lpf_index_file(const char *path, const char *prefix, const char *pkg
     const char *p = strstr(buf, "\"decls\":{");
     if (module[0] == 0 || p == NULL || !lpf_module_linked(module, pkg)) { free(buf); return; }
     p += 9;
+    char src[1024];
+    lpf_source_dir(prefix, module, src, sizeof src);
     while (*p == '"') {
         char name[512];
         p = lpf_json_read_str(p + 1, name, sizeof name);
@@ -1286,7 +1406,7 @@ static void lpf_index_file(const char *path, const char *prefix, const char *pkg
         }
         if (*p == ']') p++;
         /* the name's own line (selection range) when present */
-        lpf_add_decl(name, prefix, module, (k >= 5 ? v[4] : v[0]) + 1);
+        lpf_add_decl(name, src, module, (k >= 5 ? v[4] : v[0]) + 1);
         if (*p == ',') p++;
     }
     free(buf);
@@ -1318,13 +1438,14 @@ static const char *lpf_where(const char *fn, char *out, size_t cap) {
         } else {
             /* this package, then each dependency Lake checked out */
             lpf_find_root_pkg();
-            lpf_index_dir(".lake/build/lib/lean", "", lpf_root_pkg, 0);
-            DIR *d = opendir(".lake/packages");
+            char path[1024], prefix[1024];
+            lpf_index_dir(lpf_proj_path(".lake/build/lib/lean", path, sizeof path), "", lpf_root_pkg, 0);
+            DIR *d = opendir(lpf_proj_path(".lake/packages", path, sizeof path));
             struct dirent *e;
             while (d != NULL && (e = readdir(d)) != NULL) {
                 if (e->d_name[0] == '.') continue;
-                char path[1024], prefix[1024];
-                snprintf(path, sizeof path, ".lake/packages/%s/.lake/build/lib/lean", e->d_name);
+                snprintf(prefix, sizeof prefix, ".lake/packages/%s/.lake/build/lib/lean", e->d_name);
+                lpf_proj_path(prefix, path, sizeof path);
                 snprintf(prefix, sizeof prefix, ".lake/packages/%s/", e->d_name);
                 lpf_index_dir(path, prefix, e->d_name, 0);
             }
@@ -1517,23 +1638,34 @@ static const lpf_scope_sum *lpf_find_scope(const lpf_scope_sum *S, size_t ns, co
     return NULL;
 }
 
+/* The probes' own cost in the wall time: enter/exit pairs on the busiest
+ * thread times the calibrated cost of a pair (set by lpf_report). */
+static double lpf_probe_ns;
+
 static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                      double wall, uint64_t dropped) {
-    char w[32];
+    char w[32], wp[32];
     lpf_fmt_time(wall, w, sizeof w);
-    fprintf(f, "\nleanprof: %zu scopes, wall %s, %.1f ns overhead per scope subtracted\n", ns, w,
-            (double)lpf_pair_fp / 1024.0 * tick);
+    /* %wall is against the wall time without the probes, like the times */
+    double base = wall - lpf_probe_ns;
+    for (size_t k = 0; k < ns; k++)
+        if (!S[k].is_task && (double)S[k].total * tick > base) base = (double)S[k].total * tick;
+    lpf_fmt_time(base, wp, sizeof wp);
     int any_fn = 0;
     size_t ntasks = 0, nwaits = 0, nallocs = 0;
     for (size_t k = 0; k < ns; k++) {
         any_fn |= S[k].is_fn;
         ntasks += S[k].is_task;
     }
+    fprintf(f, "\nleanprof: %zu scopes, wall %s", ns - ntasks, w);
+    if (lpf_probe_ns > 0.01 * wall) fprintf(f, " (%s without the probes' calibrated cost)", wp);
+    fprintf(f, ", %.1f ns overhead per scope subtracted\n", (double)lpf_pair_fp / 1024.0 * tick);
+    wall = base;
     for (size_t k = 0; k < nc; k++) {
         nwaits += C[k].kind == LP_WAIT;
         nallocs += C[k].kind == LP_ALLOC;
     }
-    if (ns > 0) {
+    if (ns > ntasks) { /* tasks have their own table */
         fprintf(f, "\n%10s %10s %10s %6s %10s %10s %10s", "calls", "total", "self", "%wall", "mean", "p50", "p99");
         if (nallocs > 0) fprintf(f, " %10s %11s", "allocs", "alloc bytes");
         fprintf(f, "  %s\n", any_fn ? "function or \"scope\"  (where)" : "scope  (where)");
@@ -1664,7 +1796,7 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
 
 static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                           double wall, uint64_t dropped) {
-    fprintf(f, "{\"version\":3,\"wall_ns\":%.0f,\"overhead_ns\":%.1f,\"dropped\":%llu,\"scopes\":[", wall,
+    fprintf(f, "{\"version\":3,\"wall_ns\":%.0f,\"probe_ns\":%.0f,\"overhead_ns\":%.1f,\"dropped\":%llu,\"scopes\":[", wall, lpf_probe_ns,
             (double)lpf_pair_fp / 1024.0 * tick, (unsigned long long)dropped);
     int first = 1;
     for (size_t k = 0; k < ns; k++) {
@@ -1858,6 +1990,10 @@ static void lpf_report(void) {
     lpf_calibrate(); /* the CPU is warm now; keeps the lower estimate */
     double tick = lpf_ns_per_tick();
     double wall = (double)(lpf_now() - lpf_start) * tick;
+    uint64_t pairs = 0;
+    for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
+        if (t->pairs > pairs) pairs = t->pairs;
+    lpf_probe_ns = (double)pairs * (double)lpf_pair_fp / 1024.0 * tick;
     size_t ns = 0, nc = 0, cap_s = 64, cap_c = 64;
     uint64_t dropped = 0;
     lpf_scope_sum *S = calloc(cap_s, sizeof(lpf_scope_sum));

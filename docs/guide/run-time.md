@@ -38,6 +38,27 @@ runtime's own time went:
 `samply load .lake/leanprof/EXE.json` opens the flame graph in Firefox
 Profiler, with Lean names instead of mangled C names.
 
+The runtime breakdown also separates Lean's C++ code for expressions and the
+kernel (`instantiate`, `replace`, type checking: most of the time of programs
+that run `MetaM`) and thread-local variable lookups (`tlv_get_addr` on macOS,
+which the allocator and the heartbeat counter go through). Code the linker
+outlined (`OUTLINED_FUNCTION_N`) counts in its caller, and C++ names are
+shown without template arguments.
+
+A specialization is named after the first function that needed it
+(`Foo.helper (in List.elem)`), but the compiler reuses it for every caller
+with the same arguments, and inlined callers disappear from the stack. When
+most of its time comes from another declaration, `sample` says so under it:
+
+```
+  30.79 ms     5.88%    Concrete.Symbols.isRuntimeHelperName (in List.elem)  (Concrete/Backend/Symbols.lean:51)
+                        90.73% of it called from Concrete.ensurePtrOp  (Concrete/Backend/EmitSSA.lean:632)
+```
+
+A program that reads its current directory can run elsewhere with
+`--cwd DIR` (also for `run` and `stat`); positions still come from the
+project.
+
 ## Every function
 
 `leanprof run --auto EXE` times every function compiled from your package
@@ -46,7 +67,9 @@ Profiler, with Lean names instead of mangled C names.
 functions inlined away cost nothing. `profile!` labels appear in quotes next
 to function names. Every call pays the bookkeeping cost (subtracted in the
 report, but the program runs slower), so switch to `profile!` for hot loops
-once you know where to look.
+once you know where to look. One declaration is often several compiled
+functions (`f`, `f._redArg`, `f._boxed`, its lambdas): they are timed as one,
+and a lambda or `_redArg` called by its own declaration is not a new call.
 
 ## Marked scopes
 
@@ -111,5 +134,12 @@ own cost the first time something is profiled and again at exit, and
 subtracts it from every enclosing scope: a 24 ms loop of 10 million tiny
 steps runs in 190 ms with profiling and is reported as 28–31 ms. Programs
 that never profile pay nothing. `LEANPROF_NO_CALIBRATION=1` shows raw times.
+The header gives the wall time with and without the probes' calibrated
+cost, and `%wall` is against the latter, like the times. The calibration
+runs with warm caches: in a large program under `--auto`, where every call
+also touches scope tables that do not stay in cache, the real cost per call
+can be several times higher (lambdaclass/concrete: 0.98 s normally, 2.47 s
+with `--auto`, of which the calibration accounts for 0.24 s). Call counts
+stay exact; take absolute times from `leanprof sample`.
 On Apple Silicon the clock ticks every 41.7 ns, so percentiles of very short
 scopes are coarse; totals and means over many calls are fine.
