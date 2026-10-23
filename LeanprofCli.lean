@@ -63,9 +63,11 @@ def commands : List (String × String × String) := [
   ("measure", "[--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies, calls,\n" ++
     "compile heartbeats, exit code and an output hash. For `judge` and autoresearch loops."),
-  ("judge", "BASE.json NEW.json",
+  ("judge", "[--min-change PCT] BASE.json NEW.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
-    "output or exit code changed, or copies, heartbeats or time got worse."),
+    "output or exit code changed, or copies, heartbeats or time got worse. Time counts only when the\n" ++
+    "runs do not overlap and the median moved by at least PCT% (default 1), and never when the machine\n" ++
+    "was overloaded while measuring."),
   ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
@@ -818,6 +820,30 @@ def fnv1a (b : ByteArray) : String := Id.run do
   let hex := Nat.toDigits 16 h.toNat
   return "fnv1a64:" ++ String.ofList (List.replicate (16 - hex.length) '0' ++ hex)
 
+/-- A decimal like `33.23` (no exponent). -/
+def parseDecimal? (t : String) : Option Float :=
+  match t.splitOn "." with
+  | [w] => w.toNat?.map (·.toFloat)
+  | [w, f] => do
+    let wn ← (if w.isEmpty then some 0 else w.toNat?)
+    let fn ← f.toNat?
+    return wn.toFloat + fn.toFloat / (10 : Float) ^ f.length.toFloat
+  | _ => none
+
+/-- The 1-minute load average and the number of CPUs, when the system says
+(`/proc/loadavg` and `nproc` on Linux, `sysctl` on macOS). A time verdict
+from a machine running more jobs than it has CPUs is not trustworthy. -/
+def machineLoad : IO (Option Float × Option Nat) := do
+  let out (cmd : String) (args : Array String) : IO String := do
+    try pure (← IO.Process.output { cmd, args }).stdout catch _ => pure ""
+  let words (x : String) := (x.split (fun c => c == ' ' || c == '\n' || c == '{' || c == '}')).toList.map (·.toString)
+    |>.filter (· != "")
+  let (la, cpus) ← if System.Platform.isOSX then
+      pure ((← out "sysctl" #["-n", "vm.loadavg"]), (← out "sysctl" #["-n", "hw.ncpu"]))
+    else
+      pure ((← try IO.FS.readFile "/proc/loadavg" catch _ => pure ""), (← out "nproc" #[]))
+  return ((words la).head? >>= parseDecimal?, (words cpus).head? >>= String.toNat?)
+
 /-- Median of a non-empty array. -/
 def median (xs : Array Nat) : Nat :=
   let s := xs.qsort (· < ·)
@@ -840,6 +866,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
   let mut hashes : Array String := #[]
   let mut codes : Array UInt32 := #[]
   let mut reports : Array Report := #[]
+  let (load0, cpus) ← machineLoad
   try
     for i in [0:o.warmup + o.runs] do
       if ← reportPath.pathExists then IO.FS.removeFile reportPath
@@ -861,6 +888,13 @@ def measureCmd (argv : List String) : IO UInt32 := do
       reports := reports.push <| ← if ← reportPath.pathExists then loadReport reportPath.toString else pure {}
   finally
     cleanupInstrumented exe
+  let (load1, _) ← machineLoad
+  let loadMax := match load0, load1 with
+    | some a, some b => some (max a b) | some a, none | none, some a => some a | none, none => none
+  let overloaded := match loadMax, cpus with | some l, some c => l > c.toFloat | _, _ => false
+  let mean := times.foldl (fun a t => a + t.toFloat) 0 / times.size.toFloat
+  let stddev := Float.sqrt (times.foldl (fun a t => a + (t.toFloat - mean) ^ 2) 0 /
+    (if times.size > 1 then (times.size - 1).toFloat else 1))
   -- copies and calls are exact: take the last run's, and say if runs disagree
   let last := reports.back?.getD {}
   let copyTotal (r : Report) := r.copies.fold (fun acc _ n => acc + n) 0
@@ -884,7 +918,10 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD "stdout")),
       ("hash", Json.str hashes.back!), ("stable", Json.bool outputStable)]),
     ("time_ns", Json.mkObj [("median", toJson (median times)), ("min", toJson (times.foldl min times[0]!)),
-      ("max", toJson (times.foldl max 0)), ("runs", toJson times)]),
+      ("max", toJson (times.foldl max 0)), ("mean", toJson mean.round), ("stddev", toJson stddev.round),
+      ("runs", toJson times)]),
+    ("machine", Json.mkObj [("load_avg_1m", match loadMax with | some l => toJson l | none => Json.null),
+      ("cpus", match cpus with | some c => toJson c | none => Json.null), ("overloaded", Json.bool overloaded)]),
     ("copies_total", toJson (copyTotal last)), ("copies_stable", Json.bool copiesStable),
     ("copies", keyedArr "copies" (last.copies.toList.map fun (k, n) => (k, toJson n))),
     ("calls", keyedArr "calls" (last.scopes.toList.map fun (k, (_, c)) => (k, toJson c))),
@@ -898,7 +935,9 @@ def measureCmd (argv : List String) : IO UInt32 := do
     if !d.toString.isEmpty then IO.FS.createDirAll d
   IO.FS.writeFile o.out (summary.pretty ++ "\n")
   IO.println s!"\nleanprof measure: {exe}, {o.runs} runs"
-  IO.println s!"  time     median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}"
+  IO.println s!"  time     median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}, mean {fmtMs mean} ± {fmtMs stddev}"
+  if let (some l, some c) := (loadMax, cpus) then
+    IO.println s!"  machine  load average {fmt2 l} on {c} CPUs{if overloaded then " (overloaded: judge will not use time)" else ""}"
   IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"
   IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD "stdout"}), exit code {codes.back!}"
   if let some xs := hb then
@@ -920,6 +959,9 @@ structure Summary where
   sites : Std.HashMap String Nat := {}
   calls : Std.HashMap String Nat := {}
   heartbeats : Option (Std.HashMap String Float) := none
+  /-- the machine ran more jobs than it has CPUs while measuring -/
+  overloaded : Bool := false
+  loadAvg : Option Float := none
 
 /-- `[{"key": k, field: v}, ...]` back into a map. -/
 def keyedMap (j : Json) (field : String) : Std.HashMap String Float :=
@@ -941,7 +983,9 @@ def loadSummary (path : String) : IO Summary := do
     copies := (num j "copies_total").toUInt64.toNat
     sites := toNatMap (keyedMap (field "copies") "copies")
     calls := toNatMap (keyedMap (field "calls") "calls")
-    heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats") }
+    heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats")
+    overloaded := ((field "machine").getObjValAs? Bool "overloaded").toOption.getD false
+    loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption }
 
 /-- KEEP or DISCARD a change, from the summaries before and after it.
 
@@ -950,8 +994,16 @@ the same on every run, copies went up, the compile heartbeats of the
 measured files went up by more than 1% and 1,000, or every new run was slower
 than every base run. Otherwise KEEP when copies or heartbeats went down (by the same
 margins) or every new run was faster than every base run (new max below
-base min: with 5 runs each, chance alone does that 1 time in 252). -/
+base min). Independent runs would do that by chance 1 time in 252 with 5
+runs each, but base and new are measured one after the other and a quiet
+machine drifts by about 1% between them: unchanged code gave 2 such
+verdicts in 20 (docs/case-studies/leanbench.md). So time also has to move
+the median by `--min-change` percent (default 1), and is not judged at all
+when the machine was overloaded. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
+  let (minChange, argv) := match argv with
+    | "--min-change" :: v :: rest => ((parseDecimal? v).getD 1, rest)
+    | _ => ((1 : Float), argv)
   let [basePath, newPath] := argv | throw <| IO.userError (usageFor "judge")
   let b ← loadSummary basePath
   let n ← loadSummary newPath
@@ -995,9 +1047,17 @@ def judgeCmd (argv : List String) : IO UInt32 := do
     let (x, y) := (b.calls.getD k 0, n.calls.getD k 0)
     if x != y then notes := notes.push s!"calls {k}: {x} -> {y}"
   -- time: only when the runs do not overlap
-  let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median}"
-  if n.max < b.min then better := better.push s!"{t} (every new run faster than every base run)"
-  else if n.min > b.max then worse := worse.push s!"{t} (every new run slower than every base run)"
+  let pct := if b.median > 0 then (n.median - b.median) / b.median * 100 else 0
+  let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median} ({if pct > 0 then "+" else ""}{fmt2 pct}%)"
+  if b.overloaded || n.overloaded then
+    -- on a machine running more jobs than CPUs, load drifts between the two
+    -- summaries and whole runs shift together; non-overlap proves nothing
+    let la (x : Summary) := match x.loadAvg with | some l => fmt2 l | none => "?"
+    notes := notes.push s!"{t} (not judged: machine overloaded while measuring, load average {la b} and {la n})"
+  else if n.max < b.min && -pct >= minChange then better := better.push s!"{t} (every new run faster than every base run)"
+  else if n.min > b.max && pct >= minChange then worse := worse.push s!"{t} (every new run slower than every base run)"
+  else if n.max < b.min || n.min > b.max then
+    notes := notes.push s!"{t} (runs do not overlap, but the change is below --min-change {fmt2 minChange}%)"
   else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
   let keep := worse.isEmpty && !better.isEmpty
   IO.println (if keep then "KEEP" else "DISCARD")

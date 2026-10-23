@@ -165,25 +165,31 @@ Profiled from outside, without changing the projects:
 - **[Batteries](docs/case-studies/batteries.md)** at compile time:
   termination and bounds proofs are about a quarter of all elaboration, and an
   iterator definition is unfolded 24,369 times from ordinary RBTree proofs.
+- **[LeanBench](docs/case-studies/leanbench.md)** on "did this change make
+  it slower?": both catch 5% slowdowns on a quiet machine; only leanprof sees
+  a hidden copy or 2,000 extra allocations (under 1% of time); LeanBench is
+  10× cheaper per verdict.
 - **[LeanProfiler](bench/README.md)**: why its cost per span grows with the
   number of events (its event array is copied on every span).
 
 ## How it compares
 
-| | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler) | samply / perf |
-|---|---|---|---|---|
-| Run time | exact and sampled | manual spans | – | sampled |
-| Overhead while recording | about 8 ns per scope (pure, `IO` or `--auto`); constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low |
-| Works without changing the project | ✅ | – | ✅ | ✅ |
-| Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names |
-| Copies, allocations, failed reuse, closures | ✅ | – | – | – |
-| Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – |
-| Peak memory per scope, freeing pauses | ✅ | – | – | – |
-| Tasks | ✅ queue wait, blocking waits | parent links | – | threads |
-| Compile time | per file, declaration and tactic line; the definitions unfolded behind it; repeated work; whole projects | – | exact term ranges, Mathlib-scale data ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – |
-| Exact regression checks, PR comments | ✅ | thresholded time | – | – |
-| Live view, flight recorder | ✅ `top`, `dump` | – | – | – |
-| In the editor | run time, copies, compile time | – | compile time | – |
+| | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler) | samply / perf | [LeanBench](https://github.com/alok/LeanBench) |
+|---|---|---|---|---|---|
+| Run time | exact and sampled | manual spans | – | sampled | wall time per named benchmark: mean, stddev, percentiles |
+| Overhead while recording | about 8 ns per scope (pure, `IO` or `--auto`); constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low | none (times the plain build, two clock reads per sample) |
+| Works without changing the project | ✅ | – | ✅ | ✅ | – (a dependency and a bench module) |
+| Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names | your benchmark names |
+| Copies, allocations, failed reuse, closures | ✅ | – | – | – | – |
+| Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – | – |
+| Peak memory per scope, freeing pauses | ✅ | – | – | – | – |
+| Tasks | ✅ queue wait, blocking waits | parent links | – | threads | – |
+| Compile time | per file, declaration and tactic line; the definitions unfolded behind it; repeated work; whole projects | – | exact term ranges, Mathlib-scale data ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
+| Exact regression checks, PR comments | ✅ | thresholded time | – | – | mean against a saved baseline, fixed threshold |
+| Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
+| In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |
+| Seeded slowdowns caught, quiet machine ([case study](docs/case-studies/leanbench.md)) | 2%: 5/5, 5% and up: 5/5; never a false alarm in 20 | – | – | – | at a 5% threshold: 2%: 0/5, 4.8%: 2/5, 10% and up: 5/5; 0 false alarms in 20 |
+| Wall time per verdict | 6.5 s, and the next plain build recompiles | – | – | – | 0.6 s |
 
 ### Accuracy
 

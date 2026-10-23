@@ -10,7 +10,7 @@ Neighbours, and how leanprof should compare with each:
 |---|---|---|
 | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | manual spans, Perfetto, regression comparison | add automatic instrumentation, lower overhead, live traces, paired comparison |
 | samply / perf | sampling, no annotations | add Lean-aware names and source lines, merged with exact counts |
-| [LeanBench](https://github.com/alok/LeanBench) | benchmark harness, saved baselines | report copies and allocations per bench, compare by interleaved runs |
+| [LeanBench](https://github.com/alok/LeanBench) | benchmark harness, saved baselines | match its cost (0.6 s per verdict against 6.5 s) and per-benchmark precision, keep exact copies and allocations, compare by interleaved runs ([case study](docs/case-studies/leanbench.md)) |
 | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler), `trace.profiler` | elaboration time | not compete; running programs only |
 
 Status (2026-10-23): M1–M9 are largely done; what remains before and after
@@ -74,6 +74,28 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
   Claude Code command; the results log used as memory of tried ideas.
 - [ ] Evidence: a benchmark of seeded slowdowns the loop must find, a run on
   leanprof itself, and runs on projects it has never seen.
+- [ ] Lessons from LeanBench ([case study](docs/case-studies/leanbench.md)):
+  - [x] `judge` does not use time measured on an overloaded machine (load
+    average above the CPU count, now recorded by `measure`); on a shared Mac
+    at load 20–70 it had judged a 10% slowdown KEEP.
+  - [x] `judge --min-change` (1%): sequential base/new runs drift by about 1%
+    on a quiet machine, which gave 2 false KEEPs in 20; the "1 in 252" claim
+    is corrected.
+  - [x] `measure` shows mean ± standard deviation.
+  - [ ] Keep instrumented objects apart from the normal build: today each
+    `measure` rebuilds the project's C with shims and the next plain build
+    recompiles all of it (6.5 s per verdict plus a 10 s rebuild, against
+    LeanBench's 0.6 s); a timing-only mode on the plain build.
+  - [ ] `measure --scope NAME`: time a `profile!` scope instead of the whole
+    process, so start-up does not dilute a change (a 10.4% slowdown read as
+    8.2%).
+  - [ ] Several named benchmarks per summary, each judged; read LeanBench's
+    JSON in `judge`/`report-md` so its users get copies and allocations next
+    to its timings.
+  - [ ] A run manifest in summaries (git commit, Lean version, OS) and radar
+    JSONL output.
+  - [ ] Support Lean versions before 4.34 where the runtime allows
+    (LeanBench, plain Lean, runs from 4.27 to 4.35).
 
 Claims about overhead and accuracy are only made after M2's head-to-head
 benchmark measures them.
