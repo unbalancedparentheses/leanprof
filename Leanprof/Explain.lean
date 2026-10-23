@@ -990,7 +990,10 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
   let src ← if !file.isEmpty && (← (file : FilePath).pathExists) then
       pure ((← IO.FS.readFile file).splitOn "\n").toArray else pure #[]
   let decl := if line > 0 && line ≤ src.size then declLines src (line - 1) else #[]
-  if mt > 0 then
+  if mt > 0 && mt * 10 < shared then
+    -- a few copies of values that other threads could see: say so, not why all copied
+    out := out ++ s!"  ({mt.toUInt64} of the copies were of values shared with other threads; the others are explained below)\n"
+  else if mt > 0 then
     out := out ++ wrap ("  why (multi-threaded): the value was reachable from more than one thread (a `Task` " ++
       "result or argument, a global `IO.Ref`/`Mutex`, or an `initialize` value). Lean marks such values and " ++
       "never updates them in place, even with a single reference. fix: build the value in the thread that " ++
@@ -1055,6 +1058,13 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
       let same := staticIncs.any fun (file, l) => l == r.line && (r.file.endsWith file || file.endsWith (rel r.file))
       out := out ++ wrap s!"    {r.count}×  {← describeShare cache r}  [{rel r.file}:{r.line}]" "          " ++
         (if same then "\n          (the increment the IR analysis above points to)" else "") ++ "\n"
+  -- an `IO.Ref` shared between threads: every value put in it is marked
+  -- multi-threaded, so each `modify (·.push x)` copies everything in it
+  if mt > 0 && (out.splitOn "lean_st_ref_take").length > 1 then
+    out := out ++ wrap ("  the value comes out of an `IO.Ref` that more than one thread uses: `IO.Ref.set` " ++
+      "marks what it stores multi-threaded, so every `ref.modify (·.push x)` copies the whole array, " ++
+      "quadratic in the number of pushes between drains. fix: cons onto a `List` in the reference " ++
+      "(reverse it when draining), or keep a buffer per thread.") "    " ++ "\n"
   return (out, Json.arr entries)
 
 def explainCmd (argv : List String) (runLeanprof : Array String → Array (String × Option String) → IO UInt32) :

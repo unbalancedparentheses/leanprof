@@ -1,0 +1,116 @@
+diff --git a/src/runtime/process.cpp b/src/runtime/process.cpp
+index 2bf04e4..6505527 100644
+--- a/src/runtime/process.cpp
++++ b/src/runtime/process.cpp
+@@ -25,6 +25,9 @@ Author: Jared Roesch
+ #include <sys/wait.h>
+ #include <signal.h>
+ #include <limits.h> // NOLINT
++#include <spawn.h>
++#include <cstring>
++#include <vector>
+ #endif
+ 
+ #ifdef __linux
+@@ -435,6 +438,90 @@ static optional<pipe> setup_stdio(stdio cfg) {
+ extern "C" char **environ;
+ #endif
+ 
++#if defined(__APPLE__) || (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29)))
++#define LEAN_SPAWN_ADDCHDIR 1
++#endif
++
++/*
++Starts the child with `posix_spawnp` instead of `fork` and `execvp`. `fork` copies the page
++tables of the whole process, which is slow for a process that maps many `.olean` files (Lake,
++the language server), and other threads wait for the allocator's locks meanwhile.
++
++Returns the child's pid, or -1 when `posix_spawnp` would not do exactly what the `fork` path
++does, or failed (e.g., a missing executable or working directory): the caller then uses the
++`fork` path, which reports such errors from the child as before.
++*/
++static int spawn_without_fork(char * const * pargs, optional<pipe> const & stdin_pipe, optional<pipe> const & stdout_pipe,
++  optional<pipe> const & stderr_pipe, stdio stdin_mode, stdio stdout_mode, stdio stderr_mode,
++  option_ref<string_ref> const & cwd, array_ref<pair_ref<string_ref, option_ref<string_ref>>> const & env,
++  bool inherit_env, bool do_setsid) {
++    // `execvp` searches the `PATH` of the child's environment, `posix_spawnp` the parent's.
++    if (!inherit_env) return -1;
++    for (auto & entry : env)
++        if (strcmp(entry.fst().data(), "PATH") == 0) return -1;
++#ifndef POSIX_SPAWN_SETSID
++    if (do_setsid) return -1;
++#endif
++#ifndef LEAN_SPAWN_ADDCHDIR
++    if (cwd) return -1;
++#endif
++    // the child's environment: ours with `env` applied, as `setenv`/`unsetenv` would
++    std::vector<std::string> vars;
++    char ** envp = environ;
++    std::vector<char *> envv;
++    if (env.size() > 0) {
++        for (char ** e = environ; *e != nullptr; e++) vars.push_back(*e);
++        for (auto & entry : env) {
++            std::string key = entry.fst().data();
++            key += '=';
++            size_t i = 0;
++            while (i < vars.size() && vars[i].compare(0, key.size(), key) != 0) i++;
++            if (entry.snd()) {
++                std::string var = key + entry.snd().get()->data();
++                if (i < vars.size()) vars[i] = var; else vars.push_back(var);
++            } else if (i < vars.size()) {
++                vars.erase(vars.begin() + i);
++            }
++        }
++        for (auto & v : vars) envv.push_back(const_cast<char *>(v.c_str()));
++        envv.push_back(nullptr);
++        envp = envv.data();
++    }
++    posix_spawn_file_actions_t actions;
++    posix_spawnattr_t attr;
++    if (posix_spawn_file_actions_init(&actions) != 0) return -1;
++    if (posix_spawnattr_init(&attr) != 0) {
++        posix_spawn_file_actions_destroy(&actions);
++        return -1;
++    }
++    bool ok = true;
++    // the pipes' own descriptors are close-on-exec, as in the `fork` path
++    auto redirect = [&](optional<pipe> const & p, bool child_reads, stdio mode, int fd) {
++        if (p) {
++            ok = ok && posix_spawn_file_actions_adddup2(&actions, child_reads ? p->m_read_fd : p->m_write_fd, fd) == 0;
++        } else if (mode == stdio::NUL) {
++            ok = ok && posix_spawn_file_actions_addopen(&actions, fd, "/dev/null", child_reads ? O_RDONLY : O_WRONLY, 0) == 0;
++        }
++    };
++    redirect(stdin_pipe, true, stdin_mode, STDIN_FILENO);
++    redirect(stdout_pipe, false, stdout_mode, STDOUT_FILENO);
++    redirect(stderr_pipe, false, stderr_mode, STDERR_FILENO);
++#ifdef LEAN_SPAWN_ADDCHDIR
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Wdeprecated-declarations"
++    if (cwd) ok = ok && posix_spawn_file_actions_addchdir_np(&actions, cwd.get()->data()) == 0;
++#pragma clang diagnostic pop
++#endif
++#ifdef POSIX_SPAWN_SETSID
++    if (do_setsid) ok = ok && posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID) == 0;
++#endif
++    pid_t pid = -1;
++    if (ok && posix_spawnp(&pid, pargs[0], &actions, &attr, pargs, envp) != 0) pid = -1;
++    posix_spawn_file_actions_destroy(&actions);
++    posix_spawnattr_destroy(&attr);
++    return ok ? pid : -1;
++}
++
+ static obj_res spawn(string_ref const & proc_name, array_ref<string_ref> const & args, stdio stdin_mode, stdio stdout_mode,
+   stdio stderr_mode, option_ref<string_ref> const & cwd, array_ref<pair_ref<string_ref, option_ref<string_ref>>> const & env,
+   bool inherit_env, bool do_setsid) {
+@@ -450,7 +537,9 @@ static obj_res spawn(string_ref const & proc_name, array_ref<string_ref> const &
+         pargs.push_back(strdup(arg.data()));
+     pargs.push_back(NULL);
+ 
+-    int pid = fork();
++    int pid = spawn_without_fork(pargs.data(), stdin_pipe, stdout_pipe, stderr_pipe, stdin_mode, stdout_mode, stderr_mode,
++                                 cwd, env, inherit_env, do_setsid);
++    if (pid == -1) pid = fork();
+ 
+     if (pid == 0) {
+         if (!inherit_env) {

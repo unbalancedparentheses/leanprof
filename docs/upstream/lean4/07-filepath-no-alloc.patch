@@ -1,0 +1,51 @@
+diff --git a/src/Init/System/FilePath.lean b/src/Init/System/FilePath.lean
+index 2e6c65e..3dea878 100644
+--- a/src/Init/System/FilePath.lean
++++ b/src/Init/System/FilePath.lean
+@@ -57,6 +57,17 @@ expected by users on the platform.
+ def pathSeparators : List Char :=
+   if isWindows then ['\\', '/'] else ['/']
+ 
++/--
++Whether a byte of a path is one of `pathSeparators` (all are ASCII, so a byte matches only at a
++character boundary). Path functions test bytes instead of characters: `String.front` and
++`String.revFind?` allocate, the latter for every character it steps over.
++-/
++@[inline] private def isSepByte (b : UInt8) : Bool :=
++  b == '/'.toUInt8 || (isWindows && b == '\\'.toUInt8)
++
++@[inline] private def startsWithSep (s : String) : Bool :=
++  if h : (0 : String.Pos.Raw) < s.rawEndPos then isSepByte (s.getUTF8Byte 0 h) else false
++
+ /--
+ The character that separates file extensions from file names.
+ -/
+@@ -107,7 +118,7 @@ An absolute path starts at the root directory or a drive letter. Accessing files
+ path does not depend on the current working directory.
+ -/
+ def isAbsolute (p : FilePath) : Bool := Id.run do
+-  pathSeparators.contains p.toString.front || (isWindows && p.toString.chars.atIdxSlow? 1 == some ':')
++  startsWithSep p.toString || (isWindows && p.toString.chars.atIdxSlow? 1 == some ':')
+ 
+ /--
+ A relative path is one that depends on the current working directory for interpretation. Relative
+@@ -136,10 +147,17 @@ instance : HDiv FilePath String FilePath where
+   hDiv p sub := FilePath.join p ⟨sub⟩
+ 
+ private def posOfLastSep (p : FilePath) : Option p.toString.Pos :=
+-  p.toString.revFind? pathSeparators.contains
++  go p.toString.utf8ByteSize
++where
++  go : Nat → Option p.toString.Pos
++  | 0 => none
++  | i + 1 =>
++    if h : (⟨i⟩ : String.Pos.Raw) < p.toString.rawEndPos then
++      if isSepByte (p.toString.getUTF8Byte ⟨i⟩ h) then p.toString.pos? ⟨i⟩ else go i
++    else none
+ 
+ private def afterRootDirectory (p : FilePath) : p.toString.Pos :=
+-  if pathSeparators.contains p.toString.front then
++  if startsWithSep p.toString then
+     p.toString.startPos.nextn 1
+   else
+     p.toString.startPos.nextn 3

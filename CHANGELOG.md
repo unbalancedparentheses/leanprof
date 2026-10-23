@@ -8,6 +8,20 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Added
 
+- `leanprof sample` takes a path to any program (`leanprof sample
+  ~/.elan/toolchains/…/bin/lean -- FILE`). It names Lean code in Lean's
+  shared libraries (`libleanshared`, `libInit_shared`, `libLake_shared`),
+  and gives positions of Lean's own declarations in the toolchain's sources
+  (from its `.ilean` files). `run` passes the toolchain
+  (`LEANPROF_CORE_DIR`), so copies and allocations inside Lean's libraries
+  (`--core`) get positions too.
+- `leanprof doctor` checks for the objcopy that `run --core` needs.
+  `run --core` also finds rustup's llvm-objcopy (`rust-objcopy`).
+- `leanprof explain` recognizes arrays pushed inside an `IO.Ref` that
+  threads share (each push copies the whole array) and says how to fix it.
+- [Lake, the language server and `lean`](docs/case-studies/lake-and-server.md)
+  case study, and seven candidate patches for Lean with measurements in
+  [docs/upstream/lean4](docs/upstream/lean4/README.md) (not sent upstream).
 - A `sanitizers` job: tests, examples, the server with live snapshots and
   the flight recorder, `run --allocs --counters --frees`, `explain --why`
   and the stress test, built with ASan and UBSan and with TSan on Linux
@@ -68,6 +82,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Fixed
 
+- `explain` no longer gives the multi-threaded explanation for a copy site
+  where only a few copies were multi-threaded (Lake: 12 of 7,420).
+- With `LEANPROF_PROJECT` set (`--cwd`), absolute source directories were
+  joined onto the project path.
 - `leanprof elab --project`, locating definitions in modules that cannot be
   imported together, kept every module's environment loaded: 16.8 GB on
   leanprof's own package once a module imports all of Lean. Each is now

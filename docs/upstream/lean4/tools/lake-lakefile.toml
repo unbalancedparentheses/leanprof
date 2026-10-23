@@ -1,0 +1,15 @@
+name = "lake"
+defaultTargets = ["lake"]
+moreLeanArgs = ["-Dinterpreter.prefer_native=false"]
+
+[[lean_lib]]
+name = "Lake"
+globs = ["Lake", "Lake.*"]
+
+[[lean_lib]]
+name = "LakeMain"
+
+[[lean_exe]]
+name = "lake"
+root = "LakeMain"
+supportInterpreter = true
