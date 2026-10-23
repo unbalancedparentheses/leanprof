@@ -12,6 +12,28 @@ untouched. The compiler wrapper `scripts/leanprof-cc` adds the flags to every
 package when set as `LEAN_CC`, and `leanprof run` compiles the shims against
 the project's own `lean.h`, so the project needs no dependency.
 
+## Lean's own libraries (`--core`)
+
+Lean's precompiled libraries (`libInit.a`, `libStd.a`, `libLean.a`, ...)
+call the same runtime functions directly, and the `-D` flags never reach
+them. `leanprof run --core` makes copies of these archives with
+`llvm-objcopy --redefine-sym lean_array_push=leanprof_array_push` (and so on
+for every redirected function, read from the wrapper's `-D` list), caches
+them in `.lake/leanprof/core/<toolchain>-<hash>/`, and passes that directory
+to the wrapper as `LEANPROF_CORE_LIB`. The wrapper puts it first among the
+link's `-L` directories, so leanc's `-lInit -lStd -lLean` find the copies.
+This is the static-archive version of GNU ld's `--wrap`.
+
+`--redefine-sym` renames a symbol in every object of the archive, whether
+it is referenced or defined there. That is safe here because none of the
+rewritten archives defines a redirected function (checked with `nm` on
+4.34.1 and 4.35.0: all are defined in `libleanrt.a`, which is never
+rewritten). leanprof's own runtime object is not rewritten either, so a
+shim's call to `lean_array_push` still links to the real function. Had a
+rewritten archive defined one, the link would fail with a duplicate
+`leanprof_*` symbol rather than miscall. CI checks that the copies have no
+reference left to the old names and define no `leanprof_*` symbol.
+
 ## Scopes
 
 Each thread keeps its own tables (no locks on the hot path), a stack of open
@@ -84,14 +106,19 @@ from its JSON messages.
 ## Limits
 
 - **Copies and allocations inside Lean's precompiled standard library are not
-  seen**, unless the code was specialized into your module.
+  seen** by default, unless the code was specialized into your module.
+  `leanprof run --core` sees them by linking against copies of the
+  libraries whose references to the runtime are renamed to the shims (see
+  below). Calls that the runtime makes to itself inside `libleanrt.a` stay
+  invisible, for example the allocations of `String` and `Nat` primitives
+  implemented in C++: renaming a symbol in the archive that defines it would
+  rename the definition too. Seeing those needs a hook in Lean's runtime,
+  such as an event callback or calls through exported function pointers.
 - **No live memory per object.** Memory over time is mimalloc's committed
   memory and the process's resident memory, read about every millisecond
   at scope exits ([memory](memory.md)); frees are seen where compiled code
   drops a last reference (`--frees`), and the objects a cascade frees are
   counted by walking it first, not observed.
-- **`Task.map`/`bind` and `IO.mapTask`/`bindTask`** are not linked to their
-  spawning scope.
 - **Positions are per declaration** for copies and functions, because Lean's
   C output carries no line information.
 - **The compiler may move pure work**: closed terms run at startup, and pure

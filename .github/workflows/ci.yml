@@ -70,6 +70,30 @@ jobs:
           grep -q '"spawned_by":"pureTasks","tasks":16' tasks.json
           grep -q '"spawned_by":"ioTasks","tasks":16' tasks.json
           grep -q '"waits":16' tasks.json
+      - name: Task continuations (Task.map/bind, IO.mapTask/bindTask)
+        run: |
+          lake build taskchains
+          LEANPROF_JSON=chains.json .lake/build/bin/taskchains 20000
+          cat chains.json
+          grep -q '"spawned_by":"mapped","tasks":16' chains.json
+          grep -q '"spawned_by":"bound","tasks":24' chains.json
+          grep -q '"spawned_by":"ioMapped","tasks":8' chains.json
+          grep -q '"spawned_by":"ioBound","tasks":16' chains.json
+      - name: Core-library coverage (run --core)
+        run: |
+          if [ "$RUNNER_OS" = macOS ] && ! ls /opt/homebrew/opt/llvm*/bin/llvm-objcopy; then brew install llvm; fi
+          LEANPROF_QUIET=1 lake exe leanprof run --json plain.json corecopies -- 1000
+          LEANPROF_QUIET=1 lake exe leanprof run --core --json core.json corecopies -- 1000
+          LEANPROF_QUIET=1 lake exe leanprof run --core --json core2.json corecopies -- 1000 2>&1 | tee cached.txt
+          grep -q "(cached)" cached.txt
+          if grep -q '"function":"Array.append"' plain.json; then echo "core copy seen without --core"; exit 1; fi
+          grep -q '"function":"Array.append","symbol":"[^"]*","scope":"appendShared","where":"","kind":"Array","copies":500,' core.json
+          # references renamed, nothing defined under the shims' names, the runtime untouched
+          lib=$(ls -d .lake/leanprof/core/*/ | head -1)
+          nm "$lib/libInit.a" | grep -Eq ' U _?leanprof_array_push$'
+          if nm "$lib/libInit.a" | grep -Eq ' U _?lean_array_push$'; then exit 1; fi
+          if nm "$lib/libInit.a" "$lib/libLean.a" | grep -Eq ' [TDS] _?leanprof_'; then exit 1; fi
+          test ! -e "$lib/libleanrt.a"
       - name: Timeline trace
         run: |
           LEANPROF_QUIET=1 LEANPROF_TRACE=trace.json .lake/build/bin/copybug 300

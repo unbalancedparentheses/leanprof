@@ -18,7 +18,10 @@
 #include <mach/mach_time.h>
 #endif
 
-#define LP_TABLE 8192      /* slots per thread table, power of two */
+#define LP_TABLE 32768     /* slots per thread table, power of two (pages are touched lazily) */
+/* Tables stop taking new keys at 7/8 full: open addressing stays fast, and a
+ * full table costs a short probe instead of a scan of every slot. */
+#define LP_TABLE_LIMIT (LP_TABLE / 8 * 7)
 #define LP_DEPTH 512       /* deepest scope nesting we keep frames for */
 #define LP_SUB 16          /* histogram sub-buckets per power of two */
 #define LP_BUCKETS (64 * LP_SUB)
@@ -82,6 +85,7 @@ typedef struct {
 typedef struct lpf_thread {
     lpf_scope *scopes[LP_TABLE];
     lpf_copy *copies[LP_TABLE];
+    size_t nscopes, ncopies;   /* keys in each table */
     lpf_frame stack[LP_DEPTH];
     uint32_t depth;
     uint64_t dropped;
@@ -204,12 +208,14 @@ static lpf_scope *lpf_scope_get(lpf_thread *t, const void *key, uint8_t kind) {
         lpf_scope *s = t->scopes[i];
         if (LEAN_LIKELY(s != NULL && s->key == key && (s->kind == LP_TASK) == (kind == LP_TASK))) return s;
         if (s == NULL) {
+            if (t->nscopes >= LP_TABLE_LIMIT) break;
             s = calloc(1, sizeof(lpf_scope));
             if (s == NULL) abort();
             s->key = key;
             s->kind = kind;
             s->min = UINT64_MAX;
             t->scopes[i] = s;
+            t->nscopes++;
             return s;
         }
     }
@@ -223,12 +229,14 @@ static lpf_copy *lpf_copy_get(lpf_thread *t, void *pc, const lean_object *site, 
         lpf_copy *c = t->copies[i];
         if (c != NULL && c->pc == pc && c->site == site && c->kind == kind) return c;
         if (c == NULL) {
+            if (t->ncopies >= LP_TABLE_LIMIT) break;
             c = calloc(1, sizeof(lpf_copy));
             if (c == NULL) abort();
             c->pc = pc;
             c->site = site;
             c->kind = kind;
             t->copies[i] = c;
+            t->ncopies++;
             return c;
         }
     }
@@ -648,6 +656,7 @@ LEAN_EXPORT void *leanprof_mi_malloc_small(size_t sz) {
 
 #include "counters.inc.c"
 #include "memory.inc.c" /* frees, memory over time */
+#include "coverage.inc.c" /* Task.map/bind, IO.mapTask/bindTask; notes on --core */
 
 /* ---------- symbol names ----------
  * Inverse of Lean.Name.mangle: `l_` and `lp_<pkg>_` prefixes, then Lean's

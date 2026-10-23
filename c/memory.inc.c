@@ -173,6 +173,7 @@ typedef struct lpf_mem_thread {
     lpf_thread *lt;
     lpf_mem_scope *scopes[LP_TABLE];
     lpf_free_site *sites[LP_TABLE];
+    size_t nscopes, nsites;    /* keys in each table (new keys stop at LP_TABLE_LIMIT) */
     uint64_t dropped;
     int in_free;
     /* scratch for counting a cascade: a stack, and decrements seen per shared object */
@@ -220,9 +221,11 @@ static inline void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now) {
     for (size_t k = 0; k < LP_TABLE; k++, i = (i + 1) & (LP_TABLE - 1)) {
         lpf_mem_scope *ms = m->scopes[i];
         if (ms == NULL) {
+            if (m->nscopes >= LP_TABLE_LIMIT) break;
             ms = m->scopes[i] = calloc(1, sizeof(lpf_mem_scope));
             if (ms == NULL) return;
             ms->scope = s;
+            m->nscopes++;
         }
         if (ms->scope != s) continue;
         ms->calls++;
@@ -333,8 +336,10 @@ static lpf_free_site *lpf_free_site_get(lpf_mem_thread *m, void *pc) {
         lpf_free_site *s = m->sites[i];
         if (s != NULL && s->pc == pc && s->scope == key && s->scope_kind == kind) return s;
         if (s == NULL) {
+            if (m->nsites >= LP_TABLE_LIMIT) break;
             s = m->sites[i] = calloc(1, sizeof(lpf_free_site));
             if (s == NULL) return NULL;
+            m->nsites++;
             s->pc = pc;
             s->scope = key;
             s->scope_kind = kind;

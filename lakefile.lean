@@ -17,7 +17,8 @@ def copyFlags : Array String :=
   #["copy_expand_array_nonlinear", "copy_sarray_nonlinear", "copy_string_nonlinear",
     "array_push", "byte_array_push", "float_array_push",
     "string_push", "string_append", "string_utf8_set",
-    "task_spawn_core", "io_as_task", "io_wait", "task_get"].map
+    "task_spawn_core", "io_as_task", "io_wait", "task_get",
+    "task_map_core", "task_bind_core", "io_map_task", "io_bind_task"].map
     fun f => s!"-Dlean_{f}=leanprof_{f}"
 
 /-- Opt-in allocation counting: route compiled code's allocations through
@@ -56,11 +57,13 @@ target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  -- leanprof.c includes counters.inc.c and memory.inc.c: rebuild when any changes
+  -- leanprof.c includes counters.inc.c, memory.inc.c and coverage.inc.c:
+  -- rebuild when any changes
   let counters ← computeTrace (pkg.dir / "c" / "counters.inc.c")
   let memory ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "memory.inc.c"))
+  let coverage ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "coverage.inc.c"))
   buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall"] "cc"
-    (return ((← getLeanTrace).mix counters).mix memory)
+    (return (((← getLeanTrace).mix counters).mix memory).mix coverage)
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch
@@ -86,3 +89,13 @@ lean_exe minimal where
 `demangle-check BINARY...`, run from that binary's project directory. -/
 lean_exe «demangle-check» where
   root := `Tests.DemangleCheck
+
+lean_exe taskchains where
+  root := `Examples.TaskChains
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags
+
+lean_exe corecopies where
+  root := `Examples.CoreCopies
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags

@@ -113,6 +113,12 @@ constants computed at startup. -/
 def opaqueNat (n : Nat) : IO Nat := do
   return n + (← IO.monoMsNow) * 0
 
+unsafe def depthInTaskImpl (v : Nat) : Nat := unsafeBaseIO depth + v * 0
+
+/-- Scopes open on the thread that evaluates it: a task run by leanprof's
+wrapper has one (its `task <- scope`), an unwrapped one has none. -/
+@[implemented_by depthInTaskImpl] opaque depthInTask (v : Nat) : Nat
+
 def tests : StateT Nat IO Unit := do
   let n500 ← opaqueNat 500
   let n300 ← opaqueNat 300
@@ -221,6 +227,18 @@ def tests : StateT Nat IO Unit := do
   let p1 ← peakMemory
   check "peak memory includes a large array" (p1 ≥ p0 && p1 ≥ big.size * 8) s!"peak={p1} size={big.size}"
   -- ===== end of frees and memory =====
+  -- >>> task continuations (Task.map/bind, IO.mapTask/bindTask); `run --core` is tested in CI
+  let v ← opaqueNat 7
+  let src := Task.spawn fun _ => v
+  check "Task.map runs inside a task scope" ((src.map depthInTask).get ≥ 1)
+  check "Task.bind runs inside a task scope" ((src.bind fun x => .pure (depthInTask x)).get ≥ 1)
+  let t ← IO.mapTask (fun _ => depth) src
+  check "IO.mapTask runs inside a task scope" (match t.get with | .ok d => d ≥ 1 | .error _ => false)
+  let t ← IO.bindTask src fun _ => do return .pure (.ok (← depth))
+  check "IO.bindTask runs inside a task scope" (match t.get with | .ok d => d ≥ 1 | .error _ => false)
+  let t ← IO.mapTask (fun x => pure (x + 1)) src
+  check "IO.mapTask passes the value through" (match t.get with | .ok r => r == 8 | .error _ => false)
+  -- <<< task continuations
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0

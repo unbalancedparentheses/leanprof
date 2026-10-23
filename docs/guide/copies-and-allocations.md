@@ -40,7 +40,48 @@ enclosing scope, and why the value was not exclusive:
 
 Copies made inside Lean's precompiled standard library are not seen, unless
 the code was specialized into your module (loops over ranges and arrays
-usually are).
+usually are), or you use `--core`.
+
+## Copies inside Lean's own libraries (`--core`)
+
+`xs ++ ys` calls `Array.append`, which is compiled into the toolchain's
+`libInit.a` and pushes onto `xs` there. If `xs` is still referenced, that
+copy happens in code leanprof did not compile. `leanprof run --core EXE`
+sees it:
+
+```
+copies of non-exclusive values (each one copied the whole value)
+  copies       bytes       time  %scope  kind        why            in scope           function  (where)
+     500     3.8 MiB  131.0 µs   44.9%  Array       shared         appendShared       Array.append
+```
+
+That is [`Examples/CoreCopies.lean`](../../Examples/CoreCopies.lean): without
+`--core` the report shows no copies. The copy is charged to the core
+function (`Array.append`, which has no position) and to your scope that was
+open at the time. With `--allocs` as well, allocations inside the core
+library are counted too; on a 4.34.1 compiler project this raised the
+count from 4.1 to 5.2 million.
+
+How it works: `--core` copies `libInit.a`, `libStd.a`, `libLean.a`,
+`libLake.a` and `libLeanExport.a` with every reference to a redirected
+runtime function renamed to leanprof's shim (`llvm-objcopy --redefine-sym`),
+and links your program against the copies. The runtime itself (`libleanrt.a`)
+is not rewritten, so the shims still call the real functions. The copies
+take about 260 MB, and are cached in `.lake/leanprof/core/` per toolchain
+and set of options, so the rewrite (a few seconds) happens once.
+
+It needs `llvm-objcopy`: `brew install llvm` on macOS, `apt install llvm`
+on Debian and Ubuntu (GNU `objcopy` also works on Linux), or point
+`LEANPROF_OBJCOPY` at one.
+
+Expect more noise: Lean's own startup (registering builtin attributes and
+environment extensions when the program imports `Lean`) shows up as
+`multi-threaded` copies in functions such as `Lean.PersistentHashMap.insert`.
+Copies made by Lean's module initializers, which are not exported symbols,
+may be named after a nearby function (for example `lean_obj_once_cold`).
+With `--allocs`, a large program can have more allocation sites than
+leanprof's per-thread table holds (8,192); the report then says how many
+events were dropped, and the run is slower.
 
 ## Allocations
 

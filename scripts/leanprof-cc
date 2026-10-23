@@ -31,6 +31,10 @@ set -- \
   -Dlean_io_as_task=leanprof_io_as_task \
   -Dlean_io_wait=leanprof_io_wait \
   -Dlean_task_get=leanprof_task_get \
+  -Dlean_task_map_core=leanprof_task_map_core \
+  -Dlean_task_bind_core=leanprof_task_bind_core \
+  -Dlean_io_map_task=leanprof_io_map_task \
+  -Dlean_io_bind_task=leanprof_io_bind_task \
   "$@"
 # LEANPROF_ALLOCS=1 also counts allocations made by compiled Lean code.
 if [ "${LEANPROF_ALLOCS:-}" = 1 ]; then
@@ -68,7 +72,8 @@ esac
 # leanprof's runtime into projects that do not depend on leanprof
 # (LEANPROF_RUNTIME, set by `leanprof run`), unless the link already has
 # leanprof's runtime library (a checkout of leanprof itself): GNU ld would
-# then see every symbol twice
+# then see every symbol twice. LEANPROF_CORE_LIB (`run --core`) is searched
+# first, so -lInit -lStd -lLean find the rewritten copies there.
 case " $* " in
   *" -c "*) ;;
   *)
@@ -81,6 +86,6 @@ case " $* " in
         esac
       done
     fi
-    set -- -rdynamic "-L$prefix/lib" "$@" ${runtime:+"$runtime"} ;;
+    set -- ${LEANPROF_CORE_LIB:+"-L$LEANPROF_CORE_LIB"} -rdynamic "-L$prefix/lib" "$@" ${runtime:+"$runtime"} ;;
 esac
 exec "$real" "$@"

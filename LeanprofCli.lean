@@ -26,12 +26,14 @@ open Lean System
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
     ".lake/leanprof/report.json. Memory (peak, per scope) is always sampled.\n" ++
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
+    "--core also sees copies, tasks (and with --allocs, allocations) inside Lean's precompiled\n" ++
+    "libraries, by linking against copies rewritten with llvm-objcopy (cached in .lake/leanprof/core).\n" ++
     "--trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build."),
   ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
@@ -126,6 +128,7 @@ structure RunOpts where
   allocs : Bool := false
   counters : Bool := false
   frees : Bool := false
+  core : Bool := false
   exe : Option String := none
   args : Array String := #[]
 
@@ -139,6 +142,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--allocs" :: rest => parseRun { opts with allocs := true } rest
   | "--counters" :: rest => parseRun { opts with counters := true } rest
   | "--frees" :: rest => parseRun { opts with frees := true } rest
+  | "--core" :: rest => parseRun { opts with core := true } rest
   | "--" :: rest => .ok { opts with args := opts.args ++ rest.toArray }
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
@@ -173,13 +177,92 @@ def restoreExe (exe : String) : IO Unit := do
 def cleanupInstrumented (exe : String) : IO Unit := do
   discard <| removeWorkspaceObjects
   restoreExe exe
+/-! ## Core-library coverage (`run --core`)
+
+Lean's precompiled libraries call the runtime directly, so the `-D` flags
+never reach them. `run --core` links against copies of them in which every
+reference to a redirected runtime function is renamed to its `leanprof_*`
+shim, the static-archive equivalent of `ld --wrap`. The functions are defined
+in libleanrt, which is left alone, so the shims still reach the real ones. -/
+
+/-- The `-Dold=leanprof_*` pairs in the compiler wrapper (the one list of
+redirected functions): the base set, plus what `LEANPROF_ALLOCS=1` adds. -/
+def wrapperRenames (allocs : Bool) (frees : Bool := false) : IO (Array (String × String)) := do
+  let text ← IO.FS.readFile ((← packageRoot) / "scripts" / "leanprof-cc")
+  -- the block an env switch guards: from its test to the next `fi`
+  let block (switch : String) : String :=
+    match text.splitOn s!"{switch}:-" with
+    | _ :: r :: _ => (r.splitOn "\nfi").head!
+    | _ => ""
+  let base := (text.splitOn "LEANPROF_ALLOCS:-").head!
+  let alloc := block "LEANPROF_ALLOCS" ++ (if frees then " " ++ block "LEANPROF_FREES" else "")
+  let pairs (s : String) : Array (String × String) :=
+    ((s.replace "\n" " ").splitOn " ").toArray.filterMap fun tok =>
+      match tok.splitOn "=" with
+      | [d, new] => if d.startsWith "-D" && new.startsWith "leanprof_" then
+          some (d.replace "-D" "", new) else none
+      | _ => none
+  return pairs base ++ pairs (if allocs then alloc else if frees then block "LEANPROF_FREES" else "")
+
+/-- An objcopy that can rename symbols in this platform's archives:
+LEANPROF_OBJCOPY, then llvm-objcopy (also versioned, and in Homebrew's and
+Debian's LLVM directories), then GNU objcopy on Linux. -/
+def findObjcopy : IO (Option String) := do
+  if let some p ← IO.getEnv "LEANPROF_OBJCOPY" then return some p
+  let path := ((← IO.getEnv "PATH").getD "").splitOn ":" |>.filter (!·.isEmpty)
+  let versions := (List.range 10).map (23 - ·)
+  let names := "llvm-objcopy" :: versions.map (s!"llvm-objcopy-{·}")
+  let dirs := ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin"] ++ versions.flatMap fun v =>
+    [s!"/opt/homebrew/opt/llvm@{v}/bin", s!"/usr/local/opt/llvm@{v}/bin", s!"/usr/lib/llvm-{v}/bin"]
+  let gnu := if System.Platform.isOSX then [] else path.map (· ++ "/objcopy")
+  let candidates := names.flatMap (fun n => path.map (· ++ "/" ++ n)) ++
+    dirs.map (· ++ "/llvm-objcopy") ++ gnu
+  for c in candidates do
+    if ← FilePath.pathExists c then return some c
+  return none
+
+/-- The toolchain's Lean libraries with references to the redirected runtime
+functions renamed to leanprof's shims, cached in `.lake/leanprof/core/` by
+toolchain and set of renamed symbols. Returns the directory to search first. -/
+def coreLibDir (allocs : Bool) (frees : Bool := false) : IO FilePath := do
+  let some objcopy ← findObjcopy | throw <| IO.userError <|
+    "leanprof run --core needs llvm-objcopy: brew install llvm, apt install llvm (GNU objcopy also " ++
+    "works on Linux), or set LEANPROF_OBJCOPY"
+  let leanOut (arg : String) : IO String := do
+    return (← IO.Process.output { cmd := "lean", args := #[arg] }).stdout.trimAscii.toString
+  let leanPrefix : FilePath := ⟨← leanOut "--print-prefix"⟩
+  let renames ← wrapperRenames allocs frees
+  -- Mach-O symbol names carry a leading underscore
+  let us := if System.Platform.isOSX then "_" else ""
+  let key := hash s!"{leanPrefix} {← leanOut "--githash"} {renames}"
+  let dir := (← IO.currentDir) / ".lake" / "leanprof" / "core" /
+    s!"{leanPrefix.fileName.getD "lean"}-{String.ofList (Nat.toDigits 16 key.toNat)}"
+  IO.FS.createDirAll dir
+  let args := renames.flatMap fun (old, new) => #["--redefine-sym", s!"{us}{old}={us}{new}"]
+  let mut made := 0
+  for lib in ["Init", "Std", "Lean", "Lake", "LeanExport"] do
+    let src := leanPrefix / "lib" / "lean" / s!"lib{lib}.a"
+    let dst := dir / s!"lib{lib}.a"
+    unless (← src.pathExists) && !(← dst.pathExists) do continue
+    let tmp := dir / s!"lib{lib}.a.tmp"
+    -- `lake exe` puts the toolchain's lib on the loader path, and its libLLVM
+    -- is not the one a Homebrew or Debian llvm-objcopy was built against
+    let env := #["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "LD_LIBRARY_PATH"].map (·, none)
+    let out ← IO.Process.output { cmd := objcopy, args := args ++ #[src.toString, tmp.toString], env }
+    if out.exitCode != 0 then
+      throw <| IO.userError s!"{objcopy} failed on {src}:\n{out.stderr}"
+    IO.FS.rename tmp dst
+    made := made + 1
+  IO.eprintln s!"leanprof: Lean's libraries with {renames.size} runtime functions redirected{if made == 0 then " (cached)" else s!" by {objcopy}"}: {dir}"
+  return dir
 
 /-- Build `exe` with the copy shims in every package (and, with `auto`, every
 function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
 build removes the instrumented objects again. -/
 def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false)
-    (counters : Bool := false) (frees : Bool := false) : IO UInt32 := do
+    (counters : Bool := false) (frees : Bool := false) (extraEnv : Array (String × Option String) := #[]) :
+    IO UInt32 := do
   let root ← packageRoot
   let wrapper := root / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
@@ -213,7 +296,7 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
   let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
     ("LEANPROF_ALLOCS", if allocs then some "1" else none),
     ("LEANPROF_COUNTERS", if counters then some "1" else none),
-    ("LEANPROF_FREES", if frees then some "1" else none)] ++ runtimeEnv
+    ("LEANPROF_FREES", if frees then some "1" else none)] ++ runtimeEnv ++ extraEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
     cleanupInstrumented exe
@@ -225,7 +308,10 @@ def exePath (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" 
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
   let some exe := opts.exe | throw <| IO.userError (usageFor "run")
-  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees
+  let coreEnv ← if opts.core then
+      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees).toString)]
+    else pure #[]
+  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees coreEnv
   if rc != 0 then return rc
   -- the report `#leanprof` reads, unless another path was asked for
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
