@@ -647,7 +647,7 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
     lpf_frame *f = &t->stack[d];
     if (LEAN_UNLIKELY(f->traced)) lpf_trace(t, 'E', f->scope ? f->scope->key : NULL, 0, now, 0);
     uint64_t raw = now - f->start;
-    if (d == 0 && (f->scope == NULL || f->scope->kind != LP_INTERNAL)) t->pairs += lpf_w_pair[f->path] + f->desc;
+    if (d == 0 && (f->scope == NULL || f->scope->kind != LP_INTERNAL)) t->pairs += LP_LD(lpf_w_pair[f->path]) + f->desc;
     if (d > 0) {
         lpf_frame *p = &t->stack[d - 1];
         p->child += raw;
@@ -2607,7 +2607,7 @@ static void lpf_report(void) {
             S[k].calls += s->calls;
             /* the probes of its descendants, and its own whole pair (part of
              * which lands in its caller) */
-            S[k].probes += (double)s->outer * (double)lpf_pair_fp[s->path] / 1024.0 + (double)s->desc_total * unit;
+            S[k].probes += (double)s->outer * (double)LP_LD(lpf_pair_fp[s->path]) / 1024.0 + (double)s->desc_total * unit;
             S[k].total += lpf_clamp((double)s->total - (double)s->outer * inner - (double)s->desc_total * unit);
             S[k].self += lpf_clamp((double)s->self - (double)(s->calls + s->fwd) * inner - (double)s->kids * unit);
             S[k].sum += lpf_clamp((double)s->sum - (double)s->calls * inner - (double)s->desc_sum * unit);

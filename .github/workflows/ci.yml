@@ -301,6 +301,7 @@ jobs:
             diff.html
       - name: Compile-time analysis of a whole project (elab --project)
         run: |
+          set -o pipefail  # leanprof's exit status, not tee's
           lake exe leanprof elab --project --heartbeats --out proj1.json | tee proj.txt
           grep -q "slowest files" proj.txt
           grep -q "definitions behind the work" proj.txt
