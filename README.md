@@ -55,6 +55,10 @@ Overhead numbers are from [`bench/`](bench/README.md) (Apple M5 Max). The
 same page shows leanprof finding the cause of LeanProfiler's growing cost:
 its event array is copied on every span.
 
+Real use: [lean-compiler-backend case study](docs/case-studies/lean-compiler-backend.md),
+profiled without adding a dependency: where its run time goes, 121,054 array
+copies in one loop, and one function that is a quarter of its compile cost.
+
 Status: early. Tested with Lean 4.35.0 on macOS arm64; CI also runs Linux.
 See [ROADMAP.md](ROADMAP.md).
 
