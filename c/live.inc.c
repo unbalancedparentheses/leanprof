@@ -854,7 +854,7 @@ static void lpf_live_write(int final) {
 
 static void *lpf_live_main(void *arg) {
     (void)arg;
-    double tick = lpf_ns_per_tick();
+    double tick = lpf_ns_per_tick_rough();
     uint64_t live_every = (uint64_t)((double)lpf_live_ms * 1e6 / tick);
     uint64_t next = lpf_now() + live_every;
     uint64_t poll_ms = lpf_live_path[0] && !lpf_flight ? lpf_live_ms : lpf_live_ms < 50 ? lpf_live_ms : 50;
@@ -955,7 +955,7 @@ static void lpf_live_init(void) {
         else lpf_abs_path(live, lpf_live_path, sizeof lpf_live_path);
         double ms = lpf_env_num("LEANPROF_LIVE_MS", 250);
         lpf_live_ms = ms >= 10 ? (uint64_t)ms : 10;
-        lpf_lv_window = (uint64_t)(lpf_env_num("LEANPROF_LIVE_WINDOW_MS", 1000) * 1e6 / lpf_ns_per_tick());
+        lpf_lv_window = (uint64_t)(lpf_env_num("LEANPROF_LIVE_WINDOW_MS", 1000) * 1e6 / lpf_ns_per_tick_rough());
         lpf_lv_turned = lpf_now();
     }
     if (want_flight) {
@@ -965,7 +965,7 @@ static void lpf_live_init(void) {
         lpf_abs_path(flight != NULL && flight[0] != 0 && strcmp(flight, "1") != 0 ? flight : ".", lpf_flight_dir,
                      sizeof lpf_flight_dir);
         lpf_flight_secs = lpf_env_num("LEANPROF_FLIGHT_SECS", 10);
-        lpf_slow_ticks = (uint64_t)(slow_ms * 1e6 / lpf_ns_per_tick());
+        lpf_slow_ticks = (uint64_t)(slow_ms * 1e6 / lpf_ns_per_tick_rough());
         lpf_slow_max = (unsigned)lpf_env_num("LEANPROF_SLOW_MAX", 10);
         const char *only = getenv("LEANPROF_SLOW_SCOPE");
         if (only != NULL) snprintf(lpf_slow_only, sizeof lpf_slow_only, "%s", only);

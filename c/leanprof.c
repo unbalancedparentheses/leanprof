@@ -107,8 +107,13 @@ typedef struct {
     uint64_t child;            /* raw time in direct children */
     uint64_t kids, desc;       /* overhead of direct children and of all completed
                                 * descendants, in 1/1024 of a direct pair */
-    uint64_t allocs, bytes;    /* allocations while innermost */
-    uint64_t allocs_in, bytes_in; /* including completed children */
+    /* Allocations (only once the program has made one through leanprof's
+     * shims, `counted`): the thread's counts when the frame opened, and
+     * what its completed children made. Without the shims nothing here is
+     * touched, which was 2.5 ns of a 22 ns scope. */
+    uint8_t counted;
+    uint64_t allocs0, bytes0;
+    uint64_t allocs_kids, bytes_kids;
 } lpf_frame;
 
 /* Timeline events, recorded only with LEANPROF_TRACE. */
@@ -133,6 +138,7 @@ typedef struct lpf_thread {
     uint32_t cap;
     uint8_t nogrow;            /* growing failed once: frames from `cap` on are not kept */
     uint32_t depth;
+    uint64_t allocs, bytes;    /* allocations made through the shims on this thread */
     uint64_t dropped;
     uint64_t pairs;            /* probe cost of completed outermost frames, in 1/1024 of a direct pair */
     lpf_event *events;
@@ -191,7 +197,51 @@ static void lpf_label_name(const char *label, char *out, size_t cap);
  * the clock twice. leanprof reads the same 24 MHz counter (CNTVCT_EL0)
  * without waiting. The read may then happen a few cycles early, at both ends
  * of a scope alike, so durations are not biased; calibration measures the
- * probes with the same reads. LEANPROF_SYNC_CLOCK restores the old read. */
+ * probes with the same reads. LEANPROF_SYNC_CLOCK restores the old read.
+ *
+ * On Linux, clock_gettime goes through the vDSO: about 18 ns a read on a
+ * Ryzen 7950X3D, two thirds of a scope. Where the kernel itself keeps time
+ * with the CPU's counter (clocksource `tsc` on x86-64, `arch_sys_counter` on
+ * arm64), leanprof reads that counter directly (RDTSC, 7 ns; CNTVCT_EL0),
+ * unordered as on macOS. The kernel only uses the TSC when it is invariant
+ * and synchronized between cores, and leanprof also checks the CPU's
+ * invariant-TSC bit. The TSC's rate is measured against CLOCK_MONOTONIC (see
+ * lpf_ns_per_tick). Anything else, or LEANPROF_CLOCK=monotonic, keeps
+ * clock_gettime(CLOCK_MONOTONIC). */
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__)) && !defined(LEANPROF_SYNC_CLOCK)
+#define LP_LINUX_COUNTER 1
+#if defined(__x86_64__)
+#include <cpuid.h>
+#include <x86intrin.h>
+#endif
+static int lpf_counter;            /* read the CPU's counter (set once, in lpf_clock_init) */
+static uint64_t lpf_cal_mono, lpf_cal_ticks; /* CLOCK_MONOTONIC and the counter, read together */
+static uint64_t lpf_tick_bits;     /* ns per tick (a double's bits), 0 until measured */
+static double lpf_tick_rough;      /* the same over 50 µs at startup, for intervals and thresholds */
+#endif
+
+#ifndef __APPLE__
+/* not inlined: its address-taken timespec put a stack check into every
+ * function that reads the clock */
+static __attribute__((noinline)) uint64_t lpf_mono_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+#endif
+
+#ifdef LP_LINUX_COUNTER
+static inline uint64_t lpf_counter_read(void) {
+#if defined(__x86_64__)
+    return __rdtsc();
+#else
+    uint64_t v;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v) : : "memory");
+    return v;
+#endif
+}
+#endif
+
 static inline uint64_t lpf_now(void) {
 #if defined(__APPLE__) && defined(__aarch64__) && !defined(LEANPROF_SYNC_CLOCK)
     uint64_t v;
@@ -200,11 +250,54 @@ static inline uint64_t lpf_now(void) {
 #elif defined(__APPLE__)
     return mach_absolute_time();
 #else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+#ifdef LP_LINUX_COUNTER
+    if (LEAN_LIKELY(lpf_counter)) return lpf_counter_read();
+#endif
+    return lpf_mono_ns();
 #endif
 }
+
+#ifdef LP_LINUX_COUNTER
+/* Before the first lpf_now (a constructor): whether to read the counter. */
+static void lpf_clock_init(void) {
+    const char *force = getenv("LEANPROF_CLOCK");
+    if (force != NULL && strcmp(force, "monotonic") == 0) return;
+    char cs[64] = {0};
+    FILE *f = fopen("/sys/devices/system/clocksource/clocksource0/current_clocksource", "r");
+    if (f == NULL) return;
+    if (fgets(cs, sizeof cs, f) == NULL) cs[0] = 0;
+    fclose(f);
+    cs[strcspn(cs, "\n")] = 0;
+#if defined(__x86_64__)
+    unsigned ea, eb, ec, ed;
+    /* CPUID 0x80000007, EDX bit 8: invariant TSC (constant rate, runs in deep sleep) */
+    if (strcmp(cs, "tsc") != 0 || __get_cpuid_max(0x80000000u, NULL) < 0x80000007u) return;
+    __cpuid(0x80000007u, ea, eb, ec, ed);
+    (void)ea; (void)eb; (void)ec;
+    if (!(ed & (1u << 8))) return;
+#else
+    if (strcmp(cs, "arch_sys_counter") != 0) return;
+    uint64_t hz;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(hz));
+    if (hz == 0) return;
+    double t = 1e9 / (double)hz; /* the counter's rate is known: nothing to measure */
+    memcpy(&lpf_tick_bits, &t, sizeof t);
+    lpf_tick_rough = t;
+#endif
+    lpf_cal_mono = lpf_mono_ns();
+    lpf_cal_ticks = lpf_counter_read();
+#if defined(__x86_64__)
+    uint64_t m;
+    while ((m = lpf_mono_ns()) - lpf_cal_mono < 50000) {}
+    uint64_t c = lpf_counter_read();
+    if (c <= lpf_cal_ticks) return;
+    lpf_tick_rough = (double)(m - lpf_cal_mono) / (double)(c - lpf_cal_ticks);
+#endif
+    lpf_counter = 1;
+}
+#else
+static void lpf_clock_init(void) {}
+#endif
 
 static double lpf_ns_per_tick(void) {
 #if defined(__APPLE__) && defined(__aarch64__) && !defined(LEANPROF_SYNC_CLOCK)
@@ -217,8 +310,48 @@ static double lpf_ns_per_tick(void) {
     mach_timebase_info(&tb);
     return (double)tb.numer / (double)tb.denom;
 #else
+#ifdef LP_LINUX_COUNTER
+    if (lpf_counter) {
+        double t;
+        uint64_t bits = __atomic_load_n(&lpf_tick_bits, __ATOMIC_RELAXED);
+        if (bits != 0) {
+            memcpy(&t, &bits, sizeof t);
+            return t;
+        }
+        /* The TSC's rate, over at least 5 ms since startup (most programs
+         * have run that long by their first scope; otherwise this waits):
+         * a read pair is within ~30 ns, so the rate is within 1e-5. The
+         * clock reads between the counter reads bound the pair's skew. */
+        uint64_t m0, m1, c;
+        do {
+            m0 = lpf_mono_ns();
+            c = lpf_counter_read();
+            m1 = lpf_mono_ns();
+        } while (m0 - lpf_cal_mono < 5000000ull || m1 - m0 > 1000);
+        t = ((double)(m0 - lpf_cal_mono) + (double)(m1 - m0) / 2) / (double)(c - lpf_cal_ticks);
+        memcpy(&bits, &t, sizeof t);
+        uint64_t zero = 0; /* the first thread to measure wins: every conversion uses one rate */
+        if (!__atomic_compare_exchange_n(&lpf_tick_bits, &zero, bits, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            memcpy(&t, &zero, sizeof t);
+        return t;
+    }
+#endif
     return 1.0;
 #endif
+}
+
+/* For intervals and thresholds, which need not wait for the measured rate
+ * (on Linux with the TSC, within ~0.1%). */
+static double lpf_ns_per_tick_rough(void) {
+#ifdef LP_LINUX_COUNTER
+    if (lpf_counter && lpf_tick_rough > 0) {
+        uint64_t bits = __atomic_load_n(&lpf_tick_bits, __ATOMIC_RELAXED);
+        double t;
+        memcpy(&t, &bits, sizeof t);
+        return bits != 0 ? t : lpf_tick_rough;
+    }
+#endif
+    return lpf_ns_per_tick();
 }
 
 /* ---------- histogram: 16 sub-buckets per power of two, ~6% error ---------- */
@@ -252,9 +385,8 @@ static pthread_key_t lpf_key; /* its destructor runs lpf_thread_retire when a th
 static pthread_once_t lpf_key_once = PTHREAD_ONCE_INIT;
 static void lpf_key_init(void) { pthread_key_create(&lpf_key, lpf_thread_retire); }
 
-static lpf_thread *lpf_thread_get(void) {
-    lpf_thread *t = lpf_self;
-    if (LEAN_LIKELY(t != NULL)) return t;
+static __attribute__((noinline)) lpf_thread *lpf_thread_new(void) {
+    lpf_thread *t;
     /* An exited thread's records are reused. Kept per thread, they grew
      * without bound with a new thread per dedicated task: about 1 MiB of
      * tables each, and 8 MiB more with the flight recorder on. */
@@ -281,6 +413,11 @@ static lpf_thread *lpf_thread_get(void) {
     return t;
 }
 
+static inline lpf_thread *lpf_thread_get(void) {
+    lpf_thread *t = lpf_self;
+    return LEAN_LIKELY(t != NULL) ? t : lpf_thread_new();
+}
+
 static double lpf_inner_ticks(const lpf_scope *s);
 static double lpf_unit_ticks(void);
 #include "live.inc.c" /* live snapshots (LEANPROF_LIVE), flight recorder (LEANPROF_FLIGHT, LEANPROF_SLOW_MS) */
@@ -305,7 +442,7 @@ static __attribute__((noinline)) int lpf_grow(lpf_thread *t, uint32_t d) {
 
 /* Append a timeline event. Begin events stop short of the limit by the
  * frames open, so every recorded begin can still get its end. */
-static int lpf_trace(lpf_thread *t, uint8_t ph, const void *key, uint8_t kind, uint64_t ts, uint64_t bytes) {
+static __attribute__((noinline)) int lpf_trace(lpf_thread *t, uint8_t ph, const void *key, uint8_t kind, uint64_t ts, uint64_t bytes) {
     if (LEAN_UNLIKELY(lpf_flight)) return lpf_flight_trace(t, ph, key, kind, ts, bytes);
     size_t reserve = (size_t)t->depth + 1;
     size_t limit = ph == 'E' ? lpf_trace_max : (lpf_trace_max > reserve ? lpf_trace_max - reserve : 0);
@@ -547,8 +684,8 @@ static lpf_scope *lpf_new_scope(const void *key, uint8_t kind, uint8_t path) {
  * wrappers, its lambdas) share one scope: as separate scopes merged by name
  * in the report, a call through `f___boxed` counted twice, and the time of a
  * lambda run inside `f` twice. */
-static lpf_scope *lpf_scope_get(lpf_thread *t, const void *key, uint8_t kind, uint8_t path) {
-    size_t i = lpf_hash(key, (const void *)(uintptr_t)(kind == LP_TASK));
+static __attribute__((noinline)) lpf_scope *lpf_scope_find(lpf_thread *t, const void *key, uint8_t kind,
+                                                           uint8_t path, size_t i) {
     for (size_t n = 0; n < LP_TABLE; n++, i = (i + 1) & (LP_TABLE - 1)) {
         lpf_scope *s = t->scopes[i];
         if (LEAN_LIKELY(s != NULL && t->keys[i] == key && (s->kind == LP_TASK) == (kind == LP_TASK))) return s;
@@ -581,6 +718,13 @@ static lpf_scope *lpf_scope_get(lpf_thread *t, const void *key, uint8_t kind, ui
     return NULL;
 }
 
+static inline lpf_scope *lpf_scope_get(lpf_thread *t, const void *key, uint8_t kind, uint8_t path) {
+    size_t i = lpf_hash(key, (const void *)(uintptr_t)(kind == LP_TASK));
+    lpf_scope *s = t->scopes[i]; /* the first slot, nearly always */
+    if (LEAN_LIKELY(s != NULL && t->keys[i] == key && (s->kind == LP_TASK) == (kind == LP_TASK))) return s;
+    return lpf_scope_find(t, key, kind, path, i);
+}
+
 static lpf_copy *lpf_copy_get(lpf_thread *t, void *pc, const lean_object *site, uint8_t kind) {
     size_t i = lpf_hash(pc, site);
     for (size_t n = 0; n < LP_TABLE; n++, i = (i + 1) & (LP_TABLE - 1)) {
@@ -604,7 +748,13 @@ static lpf_copy *lpf_copy_get(lpf_thread *t, void *pc, const lean_object *site, 
 
 /* ---------- scopes ---------- */
 
-__attribute__((no_instrument_function)) static inline void lpf_enter(const void *key, uint8_t kind, uint8_t path) {
+static int lpf_allocs_on; /* an allocation went through the shims (relaxed) */
+
+/* Always inlined into the few functions that enter and exit scopes: a call
+ * to a shared enter or exit pushed and popped half a dozen registers. */
+#define LP_HOT __attribute__((no_instrument_function, always_inline)) static inline
+
+LP_HOT void lpf_enter(const void *key, uint8_t kind, uint8_t path) {
     /* Calibrate on first use, before any frame is open, so the cost lands in
      * no scope; programs that never profile never pay it. */
     if (LEAN_UNLIKELY(!__atomic_load_n(&lpf_calibrated, __ATOMIC_RELAXED)) && kind != LP_INTERNAL &&
@@ -625,7 +775,12 @@ __attribute__((no_instrument_function)) static inline void lpf_enter(const void 
     f->key = key;
     f->path = path;
     f->child = f->kids = f->desc = 0;
-    f->allocs = f->bytes = f->allocs_in = f->bytes_in = 0;
+    f->counted = (uint8_t)__atomic_load_n(&lpf_allocs_on, __ATOMIC_RELAXED);
+    if (LEAN_UNLIKELY(f->counted)) {
+        f->allocs0 = t->allocs;
+        f->bytes0 = t->bytes;
+        f->allocs_kids = f->bytes_kids = 0;
+    }
     uint64_t now = lpf_now();
     LP_ST(f->start, now);
     /* a task's begin event carries its spawning scope's kind from the start */
@@ -635,9 +790,25 @@ __attribute__((no_instrument_function)) static inline void lpf_enter(const void 
 
 static inline uint64_t lpf_sub(uint64_t a, uint64_t b) { return a > b ? a - b : 0; }
 
-static inline void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now); /* memory.inc.c */
+static inline __attribute__((always_inline)) void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now); /* memory.inc.c */
 
-__attribute__((no_instrument_function)) static inline void lpf_exit(void) {
+/* A frame's allocations, when they are counted. */
+static __attribute__((noinline)) void lpf_exit_allocs(lpf_thread *t, lpf_frame *f, lpf_scope *s, uint32_t d) {
+    uint64_t allocs = t->allocs - f->allocs0, bytes = t->bytes - f->bytes0; /* including children */
+    if (d > 0 && t->stack[d - 1].counted) {
+        t->stack[d - 1].allocs_kids += allocs;
+        t->stack[d - 1].bytes_kids += bytes;
+    }
+    if (s == NULL) return;
+    LP_ADD(s->allocs_self, allocs - f->allocs_kids);
+    LP_ADD(s->bytes_self, bytes - f->bytes_kids);
+    if (s->active == 0) { /* lpf_exit has already counted this call out */
+        LP_ADD(s->allocs_total, allocs);
+        LP_ADD(s->bytes_total, bytes);
+    }
+}
+
+LP_HOT void lpf_exit(void) {
     uint64_t now = lpf_now();
     lpf_thread *t = lpf_self;
     if (t == NULL || t->depth == 0) return;
@@ -653,22 +824,18 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
         p->child += raw;
         p->kids += LP_LD(lpf_w_kid[f->path]);
         p->desc += LP_LD(lpf_w_pair[f->path]) + f->desc;
-        p->allocs_in += f->allocs + f->allocs_in;
-        p->bytes_in += f->bytes + f->bytes_in;
     }
     lpf_scope *s = f->scope;
+    if (s != NULL) s->active--;
+    if (LEAN_UNLIKELY(f->counted)) lpf_exit_allocs(t, f, s, d);
     if (s == NULL) return;
     lpf_mem_on_exit(s, f->start, now);
     LP_ADD(s->self, raw - f->child);
     LP_ADD(s->kids, f->kids);
-    LP_ADD(s->allocs_self, f->allocs);
-    LP_ADD(s->bytes_self, f->bytes);
-    if (--s->active == 0) {
+    if (s->active == 0) {
         LP_ADD(s->total, raw);
         LP_ADD(s->desc_total, f->desc);
         LP_ADD(s->outer, 1);
-        LP_ADD(s->allocs_total, f->allocs + f->allocs_in);
-        LP_ADD(s->bytes_total, f->bytes + f->bytes_in);
     }
     if (f->fwd) {
         LP_ADD(s->fwd, 1);
@@ -687,7 +854,7 @@ __attribute__((no_instrument_function)) static inline void lpf_exit(void) {
 
 /* `profile!` on a pure term: time `f ()`. `kind` is LP_INTERNAL when
  * calibration runs this same code. */
-__attribute__((no_instrument_function)) static inline lean_obj_res lpf_scope_run(b_lean_obj_arg site, lean_obj_arg f,
+LP_HOT lean_obj_res lpf_scope_run(b_lean_obj_arg site, lean_obj_arg f,
                                                                                 uint8_t kind) {
     lpf_enter(site, kind, LP_PATH_SCOPE);
     lean_object *r = lean_apply_1(f, lean_box(0));
@@ -814,11 +981,11 @@ static void lpf_calibrate(void) {
         up_child = up->child;
         up_kids = up->kids;
         up_desc = up->desc;
-        up_allocs = up->allocs_in;
-        up_bytes = up->bytes_in;
+        up_allocs = up->allocs_kids;
+        up_bytes = up->bytes_kids;
     }
     uint64_t best_pair[LP_PATHS], best_inner[LP_PATHS];
-    uint64_t warm_until = lpf_now() + (uint64_t)(3e6 / lpf_ns_per_tick()); /* ~3 ms */
+    uint64_t warm_until = lpf_now() + (uint64_t)(3e6 / lpf_ns_per_tick_rough()); /* ~3 ms */
     lpf_enter(&lpf_calibration_key[0], LP_INTERNAL, LP_PATH_DIRECT); /* outer frame: sees the full pair cost */
     while (lpf_now() < warm_until)
         for (int p = 0; p < LP_PATHS; p++) lpf_cal_batch(p, 64);
@@ -845,8 +1012,8 @@ static void lpf_calibrate(void) {
         up->child = up_child;
         up->kids = up_kids;
         up->desc = up_desc;
-        up->allocs_in = up_allocs;
-        up->bytes_in = up_bytes;
+        up->allocs_kids = up_allocs;
+        up->bytes_kids = up_bytes;
     }
     for (int p = 0; p < LP_PATHS; p++)
         if (lpf_pair_fp[p] == 0 || best_pair[p] < lpf_pair_fp[p]) {
@@ -1168,11 +1335,10 @@ LEAN_EXPORT b_lean_obj_res leanprof_task_get(b_lean_obj_arg task) {
 
 static inline void lpf_alloc(void *pc, size_t sz) {
     lpf_thread *t = lpf_thread_get();
-    uint32_t d = t->depth;
-    if (d > 0 && d <= t->cap) {
-        t->stack[d - 1].allocs++;
-        t->stack[d - 1].bytes += sz;
-    }
+    if (LEAN_UNLIKELY(!__atomic_load_n(&lpf_allocs_on, __ATOMIC_RELAXED)))
+        __atomic_store_n(&lpf_allocs_on, 1, __ATOMIC_RELAXED);
+    t->allocs++;
+    t->bytes += sz;
     lpf_copy *c = lpf_copy_get(t, pc, lpf_site(t), LP_ALLOC);
     if (c == NULL) return;
     LP_ADD(c->count[0], 1);
@@ -2722,6 +2888,7 @@ __attribute__((constructor)) static void lpf_init(void) {
         if (n > LP_TRACE_LIMIT) n = LP_TRACE_LIMIT;
         if (n > 2 * LP_DEPTH) lpf_trace_max = n;
     }
+    lpf_clock_init();
     lpf_start = lpf_now();
     lpf_mem_init();
     atexit(lpf_report);
