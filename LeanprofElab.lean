@@ -86,7 +86,7 @@ def leafClass (cls : String) : Bool :=
 
 /-- `[Class] [amount] ...` (or an untimed `[Class] ...` of `leafClass`) at the
 start of a trace line, with its indentation. -/
-def traceLine (line : String) : Option (Nat × String × Option Float × String) := do
+def traceLine (line : String) : Option (Nat × String × Option Float × String.Slice) := do
   -- slices of `line`: no list of characters is built
   let s := line.toSlice
   let body := s.dropWhile (· == ' ')
@@ -98,7 +98,7 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
   let clsS := cls.toString
   if rest.front? != some '[' then
     guard (leafClass clsS)
-    return (indent, clsS, none, rest.toString)
+    return (indent, clsS, none, rest)
   let amtSrc := rest.drop 1
   let amt := amtSrc.takeWhile (· != ']')
   let ip := amt.takeWhile (· != '.')
@@ -106,7 +106,7 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
   match ip.toNat? with
   | none =>
     guard (leafClass clsS)
-    return (indent, clsS, none, rest.toString)
+    return (indent, clsS, none, rest)
   | some i =>
     let f := fp.toNat?.getD 0
     let text := ((amtSrc.dropWhile (· != ']')).drop 1).dropWhile (· == ' ')
@@ -118,7 +118,7 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
     let t2 := t1.drop 1
     guard (t2.front? == some ' ')
     -- `fp` is digits (ASCII) whenever `f` is not 0
-    return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.utf8ByteSize.toFloat), (t2.drop 1).toString)
+    return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.utf8ByteSize.toFloat), t2.drop 1)
 
 /-- Classes whose repeated identical operations are worth reporting. -/
 def repeatable (cls : String) : Bool :=
@@ -158,7 +158,8 @@ def TraceBuilder.addLine (b : TraceBuilder) (line : String) : TraceBuilder := Id
     let cls ← match classes.get? cls with
       | some c => pure c
       | none => do classes := classes.insert cls cls; pure cls
-    let text := if i == 0 || keepsText cls then text else ""
+    -- the description is copied out of the line only where it is read
+    let text := if i == 0 || keepsText cls then text.toString else ""
     let x := amount.getD 0
     nodes := nodes.push { cls, amount := x, timed := amount.isSome, text, depth := indent, parent }
     if let some p := parent then
