@@ -2845,6 +2845,13 @@ static void lpf_report(void) {
     }
     pthread_mutex_unlock(&lpf_lock);
 
+    /* Self is total minus the children. When the children run for about what
+     * their probes cost, subtracting the probes can leave them below zero, and
+     * the parent's self above its total; that excess is subtraction error, not
+     * time, so self stops at the total. */
+    for (size_t k = 0; k < ns; k++)
+        if (S[k].self > S[k].total) S[k].self = S[k].total;
+
     qsort(S, ns, sizeof(lpf_scope_sum), lpf_by_total);
     qsort(C, nc, sizeof(lpf_copy_sum), lpf_by_cost);
     for (size_t k = 0; k < nc; k++)
