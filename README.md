@@ -1,5 +1,12 @@
 # leanprof
 
+> In Lean, `arr.push x` is fast only when nothing else refers to `arr`; if
+> something does, Lean silently copies the whole array first. One stray
+> reference turns a linear loop quadratic, and nothing in your code, your
+> types, or a normal profiler tells you. **leanprof is the only tool that shows
+> you those copies: the line, how many, how many bytes, how much time, and why
+> the value was shared, with the fix.**
+
 A profiler for Lean 4: where a compiled program spends its time, what it
 allocates, which values it copies and why, and what each declaration costs to
 compile. It works on any Lake project without changing it, and shows results
