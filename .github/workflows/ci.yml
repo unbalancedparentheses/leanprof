@@ -127,11 +127,14 @@ jobs:
         run: |
           lake build server copybug
           # live snapshots while the program runs, and a final one at exit
-          LEANPROF_QUIET=1 LEANPROF_LIVE=live.json .lake/build/bin/server 60 20 &
+          # while it runs (a server that runs until stopped, so this cannot race its end)
+          LEANPROF_QUIET=1 LEANPROF_LIVE=running.json .lake/build/bin/server 0 20 &
           pid=$!
           sleep 1.5
-          python3 -c "import json,sys; d=json.load(open('live.json')); print(d['seq'], [(s['name'], s['calls']) for s in d['scopes']]); sys.exit(0 if not d['exited'] and any(s['name']=='handle' and s['calls']>0 for s in d['scopes']) else 1)"
-          wait $pid
+          python3 -c "import json,sys; d=json.load(open('running.json')); print(d['seq'], [(s['name'], s['calls']) for s in d['scopes']]); sys.exit(0 if not d['exited'] and any(s['name']=='handle' and s['calls']>0 for s in d['scopes']) else 1)"
+          kill $pid; wait $pid || true
+          # and the final snapshot at exit
+          LEANPROF_QUIET=1 LEANPROF_LIVE=live.json .lake/build/bin/server 60 20
           python3 -c "import json,sys; d=json.load(open('live.json')); s={x['name']: x['calls'] for x in d['scopes']}; c=sum(x['copies'] for x in d['copies']); t=sum(x['tasks'] for x in d['tasks']); print(s, c, t); sys.exit(0 if d['exited'] and s.get('handle')==60 and c==59 and t==60 else 1)"
           # leanprof top, without a terminal: plain frames
           lake exe leanprof top --plain --interval 300 --frames 3 server -- 60 20 | tee top.txt
@@ -328,7 +331,9 @@ jobs:
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
       - name: Benchmark and accuracy suite (quick)
-        run: python3 bench/run.py --quick --check --md bench-results.md --json bench-results.json
+        # exact counts are checked strictly; time ratios get a wider band on shared CI
+        # machines (3 quick runs; 1.35-1.43x seen from noise alone; locally 0.75-1.35)
+        run: python3 bench/run.py --quick --check --tolerance 0.7,1.6 --md bench-results.md --json bench-results.json
       - name: Results
         if: always()
         run: cat bench-results.md || true

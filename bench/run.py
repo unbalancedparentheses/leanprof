@@ -904,6 +904,8 @@ def main():
                                   "(copied first; default $LCB_DIR; skipped when unset or with --quick)")
     ap.add_argument("--lcb-reps", type=int, default=5)
     ap.add_argument("--no-build", action="store_true", help="reuse the executables of the last build")
+    ap.add_argument("--tolerance", default=None,
+                    help="LO,HI: band for --check's reported/plain totals (default 0.75,1.35)")
     ap.add_argument("--check", action="store_true", help="exit 1 unless leanprof's counts are exact and "
                                                          "its totals are within tolerance of plain time")
     ap.add_argument("--before", help="results JSON of an earlier run, for a before/after table")
@@ -911,6 +913,10 @@ def main():
     ap.add_argument("--json", default=os.path.join(BENCH, "results.json"))
     ap.add_argument("--noisy", action="store_true", help="say in RESULTS.md that the machine was shared")
     a = ap.parse_args()
+    if a.tolerance:
+        global TOL
+        lo, hi = (float(x) for x in a.tolerance.split(","))
+        TOL = (lo, hi)
     reps = a.reps or (3 if a.quick else 7)
     scale = a.scale or (30 if a.quick else 100)
     if a.workloads:
