@@ -146,7 +146,7 @@ jobs:
           grep -q "repeated work" elab.txt
           # a file Lean fails on is reported, not silently counted as nearly free
           printf 'def broken : Nat := "a"\n' > Broken.lean
-          lake exe leanprof elab Broken.lean 2> broken.txt || true
+          lake exe leanprof elab --out broken.json Broken.lean 2> broken.txt || true
           rm Broken.lean
           cat broken.txt
           grep -q "lean failed on Broken.lean" broken.txt

@@ -663,12 +663,15 @@ def sample (argv : List String) : IO UInt32 := do
         if outlined.contains n then
           s? := getNatAt parents s
           continue
+        -- the nearest Lean caller, past `lean_apply_N` and other runtime frames
         if let some sp := spec then
-          unless specSeen.contains sp do
-            let m := specCallers.getD sp {}
-            specCallers := specCallers.insert sp (m.insert n (m.getD n 0 + w))
-            specSeen := specSeen.insert sp
-        spec := if (n.splitOn " (in ").length > 1 then some n else none
+          if leanDecls.contains n then
+            unless specSeen.contains sp do
+              let m := specCallers.getD sp {}
+              specCallers := specCallers.insert sp (m.insert n (m.getD n 0 + w))
+              specSeen := specSeen.insert sp
+            spec := none
+        if (n.splitOn " (in ").length > 1 then spec := some n
         if leaf then
           selfT := selfT.insert n (selfT.getD n 0 + w)
           if let some c := categories.get? n then catT := catT.insert c (catT.getD c 0 + w)
@@ -739,7 +742,7 @@ structure TNode where
   amount : Float           -- seconds or heartbeats, inclusive
   text : String            -- first line of the operation's description
   depth : Nat
-  children : Array Nat := #[]
+  childSum : Float := 0    -- amounts of its direct children
   parent : Option Nat := none
   deriving Inhabited
 
@@ -764,28 +767,45 @@ def traceLine (line : String) : Option (Nat × String × Float × String) := do
     | t => t
   return (indent, String.ofList cls, i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat, String.ofList text)
 
-/-- Parse one message's trace into nodes (index 0 is the root). -/
-def parseTrace (data : String) : Array TNode := Id.run do
-  let mut nodes : Array TNode := #[]
-  let mut stack : Array Nat := #[]  -- open nodes by indentation
-  for line in data.splitOn "\n" do
-    match traceLine line with
-    | some (indent, cls, amount, text) =>
-      while !stack.isEmpty && nodes[stack.back!]!.depth >= indent do
-        stack := stack.pop
-      let parent := stack.back?
-      let i := nodes.size
-      nodes := nodes.push { cls, amount, text, depth := indent, parent }
-      if let some p := parent then
-        nodes := nodes.modify p fun n => { n with children := n.children.push i }
-      stack := stack.push i
-    | none =>
-      -- continuation of a multi-line description: part of the operation
-      if let some last := stack.back? then
+/-- Classes whose repeated identical operations are worth reporting. -/
+def repeatable (cls : String) : Bool :=
+  cls == "Meta.synthInstance" || cls == "Meta.isDefEq" || cls == "Meta.whnf" ||
+    cls == "Meta.isDefEq.delta" || cls == "Elab.step" || cls.startsWith "Meta.Tactic" || cls == "Tactic.simp"
+
+/-- One line of a trace: a new node, or more of the last one's description. -/
+def addTraceLine (st : Array TNode × Array Nat) (line : String) : Array TNode × Array Nat := Id.run do
+  let (nodes, stack) := st
+  let mut nodes := nodes
+  let mut stack := stack  -- open nodes by indentation
+  match traceLine line with
+  | some (indent, cls, amount, text) =>
+    while !stack.isEmpty && nodes[stack.back!]!.depth >= indent do
+      stack := stack.pop
+    let parent := stack.back?
+    let i := nodes.size
+    -- only the texts that are reported are kept: the root's and repeatable operations'
+    let text := if i == 0 || repeatable cls then text else ""
+    nodes := nodes.push { cls, amount, text, depth := indent, parent }
+    if let some p := parent then
+      nodes := nodes.modify p fun n => { n with childSum := n.childSum + amount }
+    stack := stack.push i
+  | none =>
+    -- continuation of a multi-line description: part of the operation
+    if let some last := stack.back? then
+      let n := nodes[last]!
+      if (last == 0 || repeatable n.cls) && n.text.length < 160 then
         let t := String.ofList (line.toList.dropWhile (· == ' '))
-        if !t.isEmpty && nodes[last]!.text.length < 160 then
+        if !t.isEmpty then
           nodes := nodes.modify last fun n => { n with text := n.text ++ " " ++ t }
-  return nodes
+  return (nodes, stack)
+
+/-- Parse one message's trace into nodes (index 0 is the root). The trace of
+a large declaration runs to millions of lines, so they are read one at a
+time rather than split up front. -/
+def parseTrace (data : String) : Array TNode :=
+  let (st, rest) := data.foldl (fun (st, cur) c =>
+    if c == '\n' then (addTraceLine st cur, "") else (st, cur.push c)) ((#[], #[]), "")
+  (addTraceLine st rest).1
 
 /-- Merge operations that differ only in metavariable numbers (`?m.123`). -/
 def normalizeOp (t : String) : String := Id.run do
@@ -810,10 +830,6 @@ def normalizeOp (t : String) : String := Id.run do
     | [] => break
   return String.ofList (out.toList.take 120)
 
-/-- Classes whose repeated identical operations are worth reporting. -/
-def repeatable (cls : String) : Bool :=
-  cls == "Meta.synthInstance" || cls == "Meta.isDefEq" || cls == "Meta.whnf" ||
-    cls == "Meta.isDefEq.delta" || cls == "Elab.step" || cls.startsWith "Meta.Tactic" || cls == "Tactic.simp"
 
 structure LineCost where
   total : Float := 0
@@ -902,7 +918,7 @@ def elabCmd (argv : List String) : IO UInt32 := do
     repeat
       let msgLine ← child.stdout.getLine
       if msgLine.isEmpty then break
-      let some m := (Json.parse msgLine.trimAscii.toString).toOption | continue
+      let some m := (Json.parse msgLine).toOption | continue
       if str m "severity" == "error" then errors := errors.push (str m "data")
       let nodes := parseTrace (str m "data")
       let some root := nodes[0]? | continue
@@ -930,7 +946,7 @@ def elabCmd (argv : List String) : IO UInt32 := do
       -- self time per class; repeated operations; the line's heaviest nested operations
       for i in [0:nodes.size] do
         let n := nodes[i]!
-        let childSum := n.children.foldl (fun acc j => acc + nodes[j]!.amount) 0
+        let childSum := n.childSum
         let self := max 0 (n.amount - childSum) * scale
         byClass := byClass.insert n.cls (byClass.getD n.cls 0 + self)
         if i > 0 && repeatable n.cls then

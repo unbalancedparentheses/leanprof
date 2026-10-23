@@ -109,6 +109,26 @@ checks fail on shared values. Tasks: 21, 67.1 s of run time in total; the
 main thread waits 23.3 s for them in `htmlOutputResultsParallel`
 (`DocGen4/Output.lean:100`).
 
+## Compile time (`leanprof elab --heartbeats`)
+
+doc-gen4 builds quickly (no module takes more than 2.2 s); four of its
+larger modules (`DB.lean`, `DB/Read.lean`, `Output/DocString.lean`,
+`Process/Analyze.lean`) cost 139.8M heartbeats, **53% of it code
+generation**:
+
+- `updateModuleDb` (`DocGen4/DB.lean:503`): 21.3M, half elaboration (a
+  long `do` block with `let rec`s and several `get_elem_tactic` runs of
+  1.7M each), half code generation.
+- `process` (`DocGen4/Process/Analyze.lean:190`): 15.7M, all code
+  generation, for a function of about 60 lines that runs `MetaM` code
+  through `tryCatchRuntimeEx` and `toIO` (the trace does not say which
+  part of the code generator; the monad code it instantiates is the likely
+  cause).
+- `ensureWriteDb` (`DocGen4/DB.lean:411`): 10.0M, 89% code generation.
+
+Nothing here is a problem at this size; the compiler's share is the thing
+to watch as these functions grow.
+
 ## What broke or confused leanprof here, and was fixed
 
 - Building doc-gen4 with probes printed a leanprof report for every module
