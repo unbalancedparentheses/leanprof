@@ -97,9 +97,11 @@ buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
   why: `acc` is stored in `history` at line 21 (`history := history.push acc`) and is updated
        afterwards at line 22 (`acc := acc.push i`): both refer to the same Array, so the Array.push
        copies it.
-  fix: Store the value after its last update, store something smaller (an index, a summary), or,
-       when every intermediate version is needed, keep them in a persistent structure (`List`,
-       `Lean.PersistentArray`) instead of copying the whole value at each step.
+  fix: `acc` only grows (by `push`), so each version stored in `history` is a prefix of the final
+       `acc`: store its length and rebuild version k as `acc.extract 0 history[k]!` when it is
+       needed. If whole versions must be kept, keep them in a persistent structure (`List`,
+       `Lean.PersistentArray`) instead of copying the array at each step.
+         history := history.push acc.size
   where: Examples/CopyBug.lean lines 21, 22
   evidence: .lake/build/ir/Examples/CopyBug.c:186 `v___x_36_ = lean_array_push(v_fst_30_, v_i_26_);`, second reference at .lake/build/ir/Examples/CopyBug.c:183
   confidence: high: the IR takes a second reference on every path to the update; source lines matched by text, not positions

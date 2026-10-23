@@ -17,7 +17,7 @@ def copiesOf (name : String) (x : IO Nat) : IO Unit := do
 public def main (args : List String) : IO Unit := do
   let n ← opaqueNat ((args.head? >>= String.toNat?).getD 1000)
   let k ← opaqueNat 10
-  let modules (_ : Unit) : Std.HashMap Nat Module :=
+  let modules (_ : Unit) : Std.HashMap Nat ModuleInfo :=
     (List.range k).foldl (fun m i => m.insert i { name := toString i, members := #[] }) {}
   let pure' (x : Unit → Nat) : IO Nat := IO.lazyPure x
   copiesOf "nestedBuckets" (pure' fun _ => (nestedBuckets n k).size)
@@ -30,8 +30,8 @@ public def main (args : List String) : IO Unit := do
   copiesOf "addMembers" (pure' fun _ => (addMembers n k (modules ())).size)
   copiesOf "addMembersModify" (pure' fun _ => (addMembersModify n k (modules ())).size)
   copiesOf "addMembersErase" (pure' fun _ => (addMembersErase n k (modules ())).size)
-  copiesOf "withHistory" (pure' fun _ => (withHistory n).2.size)
-  copiesOf "withHistoryLengths" (pure' fun _ => (withHistoryLengths n).2.size)
+  copiesOf "keepHistory" (pure' fun _ => (keepHistory n).2.size)
+  copiesOf "keepHistoryLengths" (pure' fun _ => (keepHistoryLengths n).2.size)
   copiesOf "logGlobal" (logGlobal n)
   copiesOf "logLocal" (logLocal n)
   copiesOf "logMutex" (logMutex n)

@@ -1010,8 +1010,9 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
           s!"({code decl ul}): both refer to the same {kind}, so the {op} copies it.",
         fix := if appendOnly then
             s!"`{n}` only grows (by `push`), so each version stored in `{into}` is a prefix of the final " ++
-            s!"`{n}`: store its length instead and rebuild version k as `{n}.extract 0 {into}[k]!` when it is " ++
-            s!"needed, so `{n}` is never shared. Otherwise, {general}"
+            s!"`{n}`: store its length and rebuild version k as `{n}.extract 0 {into}[k]!` when it is needed. " ++
+            "If whole versions must be kept, keep them in a persistent structure (`List`, " ++
+            "`Lean.PersistentArray`) instead of copying the array at each step."
           else "Change the order or what is stored: " ++ general,
         code := if appendOnly then #[replaceWord storeLine n s!"{n}.size"] else #[],
         cause := "stored-then-updated",

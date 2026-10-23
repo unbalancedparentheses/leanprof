@@ -15,7 +15,7 @@ removes the copies (`lake exe explainpatterns` prints the counts).
 |---|---|---|
 | `nestedBuckets` | element of an outer array updated while the array holds it | `nestedBucketsFixed` (`Array.modify`) |
 | `groupBy`, `groupByOpt`, `addMembers` | value read from a `HashMap`, updated, inserted back | `…Alter`, `…Modify`, `…Erase` |
-| `withHistory` | value stored in another array, then updated | `withHistoryLengths` |
+| `keepHistory` | value stored in another array, then updated | `keepHistoryLengths` |
 | `logGlobal`, `logMutex` | value kept in a global `IO.Ref`/`Std.Mutex` (multi-threaded) | `logLocal`, `logMutexLocal` |
 | `bumpAll` | `for x in xs` while the loop updates `xs` | `bumpAllIndexed` |
 -/
@@ -86,13 +86,13 @@ def groupByOptErase (n k : Nat) : Std.HashMap Nat (Array Nat) := Id.run do
     | none => groups := groups.insert key #[v]
   return groups
 
-structure Module where
+structure ModuleInfo where
   name : String
   members : Array Nat
   deriving Inhabited
 
 /-- A field of a structure read from a map (doc-gen4's `process`). -/
-def addMembers (n k : Nat) (modules : Std.HashMap Nat Module) : Std.HashMap Nat Module := Id.run do
+def addMembers (n k : Nat) (modules : Std.HashMap Nat ModuleInfo) : Std.HashMap Nat ModuleInfo := Id.run do
   let mut res := modules
   for v in [0:n] do
     let key := v % k
@@ -100,14 +100,14 @@ def addMembers (n k : Nat) (modules : Std.HashMap Nat Module) : Std.HashMap Nat 
     res := res.insert key { module with members := module.members.push v }
   return res
 
-def addMembersModify (n k : Nat) (modules : Std.HashMap Nat Module) : Std.HashMap Nat Module := Id.run do
+def addMembersModify (n k : Nat) (modules : Std.HashMap Nat ModuleInfo) : Std.HashMap Nat ModuleInfo := Id.run do
   let mut res := modules
   for v in [0:n] do
     let key := v % k
     res := res.modify key fun module => { module with members := module.members.push v }
   return res
 
-def addMembersErase (n k : Nat) (modules : Std.HashMap Nat Module) : Std.HashMap Nat Module := Id.run do
+def addMembersErase (n k : Nat) (modules : Std.HashMap Nat ModuleInfo) : Std.HashMap Nat ModuleInfo := Id.run do
   let mut res := modules
   for v in [0:n] do
     let key := v % k
@@ -119,21 +119,21 @@ def addMembersErase (n k : Nat) (modules : Std.HashMap Nat Module) : Std.HashMap
 
 /-- `history` keeps every version of `acc`, so each push copies it
 (`Examples/CopyBug.lean`). -/
-def withHistory (n : Nat) : Array Nat × Array (Array Nat) := Id.run do
+def keepHistory (n : Nat) : Array Nat × Array (Array Nat) := Id.run do
   let mut acc : Array Nat := Array.mkEmpty 0
   let mut history : Array (Array Nat) := #[]
   for i in [0:n] do
     history := history.push acc
-    acc := acc.push i
+    acc := acc.push (2 * i)
   return (acc, history)
 
 /-- `acc` only grows, so version `k` is `acc.extract 0 history[k]!`. -/
-def withHistoryLengths (n : Nat) : Array Nat × Array Nat := Id.run do
+def keepHistoryLengths (n : Nat) : Array Nat × Array Nat := Id.run do
   let mut acc : Array Nat := Array.mkEmpty 0
   let mut history : Array Nat := #[]
   for i in [0:n] do
     history := history.push acc.size
-    acc := acc.push i
+    acc := acc.push (2 * i)
   return (acc, history)
 
 /-! ## A value kept in a global `IO.Ref` or `Std.Mutex` (multi-threaded) -/
