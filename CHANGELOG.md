@@ -6,6 +6,26 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### `leanprof explain` prints the fix
+
+- Recognises the causes of copies found in real projects from the compiler's
+  IR and prints the fix as Lean code with the program's own names:
+  an element of an outer array updated while the array holds it
+  (`xs.set! i (xs[i]!.push v)` → `xs.modify i (·.push v)`); a value read
+  from a hash map and inserted back (`m.getD k d` / `m[k]!` / `m[k]?` →
+  `m.alter`, `m.modify`, or erasing the key first); a value stored in another
+  array and then updated (when it only grows, store its length); a value in
+  a global `IO.Ref` or `Std.Mutex`, which Lean never updates in place
+  (a local buffer published once); a `for x in xs` loop that updates `xs`
+  (loop over indices). Other causes keep the general advice.
+- Each recognised cause has an example in `Examples/ExplainPatterns.lean`
+  (`lake exe explainpatterns`), and `Tests/ExplainFixes.lean` checks that
+  `explain` diagnoses it, that the printed code is the fixed version line
+  for line, and that the fixed version makes no copies.
+- `leanprof explain --json`: ranked findings with cause, location, why, fix,
+  fix code, copies and estimated cost, for agents. `explain.json` entries
+  carry the same fields; `#leanprof` hovers show the fix code.
+
 ### Added
 
 - A `sanitizers` job: tests, examples, the server with live snapshots and
@@ -137,6 +157,7 @@ see [the review](docs/reviews/runtime-review.md)):
   report write past its array.
 - The project's package names were read on the live thread while a
   program thread could read them too; they are read at startup.
+||||||| parent of a9e2e63 (Docs: explain's recognised causes with fixes and measured copies, explain --json for agents (guide, research/program.md, CHANGELOG))
 
 ## [0.1.0] - 2026-10-23
 
