@@ -995,6 +995,12 @@ structure MdReport where
   compile : Std.HashMap String Float := {}  -- declaration ↦ heartbeats (or ns)
   wall : Float := 0
 
+/-- A row's function; code without a symbol is reported by address, which
+moves between runs (ASLR), so all of it is one entry. -/
+def fnName (j : Json) : String :=
+  let f := str j "function"
+  if f.startsWith "0x" then "(no symbol)" else f
+
 def loadMdReport (path : String) : IO MdReport := do
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
   let isElab := (j.getObjVal? "elab" >>= Json.getBool?).toOption.getD false
@@ -1011,9 +1017,9 @@ def loadMdReport (path : String) : IO MdReport := do
     for c in getArr j "copies" do
       let n := num c "shared" + num c "multi_threaded"
       if n > 0 then
-        r := { r with copies := add r.copies s!"{str c "function"} [{str c "kind"}] in {str c "scope"}" n }
+        r := { r with copies := add r.copies s!"{fnName c} [{str c "kind"}] in {str c "scope"}" n }
     for a in getArr j "allocations" do
-      r := { r with allocs := add r.allocs s!"{str a "function"} in {str a "scope"}" (num a "allocs") }
+      r := { r with allocs := add r.allocs s!"{fnName a} in {str a "scope"}" (num a "allocs") }
   return r
 
 /-- One row of the summary table, with the entries that changed. -/
@@ -1147,7 +1153,7 @@ def reportMd (argv : List String) : IO UInt32 := do
       (x == 0 || (y - x).abs / x * 100 > o.threshold) && (y - x).abs / 1e6 > o.minMs
     unless d.isEmpty do
       out := out.push ""
-      out := out.push s!"<details><summary>time: {d.size} scopes moved by more than {fmt2 o.threshold}% and {fmt2 o.minMs} ms (noisy)</summary>"
+      out := out.push s!"<details><summary>time: {d.size} {if d.size == 1 then "scope" else "scopes"} moved by more than {fmt2 o.threshold}% and {fmt2 o.minMs} ms (noisy)</summary>"
       out := out.push ""
       out := out.push "| scope | base | head | change |"
       out := out.push "|---|---:|---:|---:|"
