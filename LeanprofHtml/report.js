@@ -47,6 +47,8 @@ function change(b, n, f) {
   return (d > 0 ? "+" : "−") + f(Math.abs(d)) + pct;
 }
 const isPos = (s) => typeof s === "string" && /\.lean:\d+$/.test(s);
+// `File.lean:12:3-12:40` as `12:3-12:40`
+const rangeCols = (s) => s.split(":").slice(-3).join(":");
 function hashStr(s) { let x = 2166136261; for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 16777619); } return x >>> 0; }
 
 // ---------- the reports ----------
@@ -111,6 +113,21 @@ if (elab) {
       f(num(s, "compile_ns")) + ", linters " + f(num(s, "lint_ns")) + (ops ? "\ncostliest operations:" + ops : "");
     const b = best.get(s.pos);
     if (!b || b.t < t) best.set(s.pos, { t, label: "⚙ " + f(t) + " to compile", tip });
+  }
+  // terms and tactics by exact source range (elab with its driver), in the hint of their line
+  const byLine = new Map();
+  for (const r of arr(elab.data, "ranges")) {
+    if (!isPos(r.pos)) continue;
+    if (!byLine.has(r.pos)) byLine.set(r.pos, []);
+    byLine.get(r.pos).push(r);
+  }
+  for (const [p, rs] of byLine) {
+    rs.sort((a, b) => num(b, "amount") - num(a, "amount"));
+    const list = "by exact source range (line:column, inclusive):" + rs.slice(0, 6).map((r) => "\n  " + rangeCols(r.range) + "  " +
+      f(num(r, "amount")) + (num(r, "count") > 1 ? " (" + num(r, "count") + "×)" : "") + "  " + r.kind + " " + (r.syntax || "").split(".").pop() + ": " + r.text).join("");
+    const b = best.get(p);
+    if (b) b.tip += "\n" + list;
+    else best.set(p, { t: num(rs[0], "amount"), label: "⚙ " + f(num(rs[0], "amount")), tip: list });
   }
   for (const [p, b] of best) addHint(p, b.label, b.tip, "compile");
 }
@@ -577,6 +594,12 @@ if (elab) {
       { t: "%", v: (r) => (all ? num(r, "total_ns") / all * 100 : 0), f: fPct, num: true }, ncol("elaboration", "elab_ns", f), ncol("kernel", "kernel_ns", f), ncol("compiler", "compile_ns", f), ncol("linters", "lint_ns", f),
       { t: "costliest operation", v: (r) => (arr(r, "top")[0] ? arr(r, "top")[0].op : ""), f: (v, r) => (v ? h("span", { class: "mono", title: arr(r, "top").map((o) => f(num(o, "amount")) + "  " + o.op).join("\n") }, f(num(arr(r, "top")[0], "amount")) + "  " + v) : ""), wrap: true }],
     { what: "lines" })));
+  if (arr(d, "ranges").length) addTab("ranges", "Source ranges", arr(d, "ranges").length, () => panel(null,
+    "Terms and tactics by exact source range (line:column), from leanprof's in-process driver; inclusive: a term or tactic contains those elaborated inside it." +
+      (d.compact ? " Compact profile: commands, terms and tactics only, not the operations inside them." : ""),
+    table(arr(d, "ranges"), [col("source", "text", (v) => h("span", { class: "mono" }, v), { wrap: true }), col("kind", "kind"),
+      col("syntax", "syntax", (v) => (v || "").split(".").pop()), pcol("line", "pos"), col("range", "range", (v) => rangeCols(v || "")),
+      ncol("total", "amount", f, { bar: true }), ncol("times", "count")], { what: "ranges" })));
   if (arr(d, "repeated").length) addTab("repeated", "Repeated work", arr(d, "repeated").length, () => panel(null, "The same operation (up to metavariable numbers) done more than once: candidates for caching, a local instance or a lemma.",
     table(arr(d, "repeated"), [col("class", "class"), col("operation", "op", (v) => h("span", { class: "mono" }, v), { wrap: true }), ncol("times", "count"), ncol("total", "total", f, { bar: true }), pcol("first at", "first_at")], { what: "operations" })));
   let kinds = arr(d, "kinds"), approx = false;

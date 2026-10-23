@@ -110,6 +110,33 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   let a := a.addMessage "F.lean" 1 (msg "[Elab.command] [7] ✅️ def c := 1" 30)
   check "elab: a command and the command it expands into are not counted twice"
     (near a.grand 111 && near ((a.lines.get? "F.lean:3").map (·.total) |>.getD 0) 111) s!"grand={a.grand}"
+  -- exact source ranges: the driver's source nodes (a tactic sequence, a tactic whose
+  -- macro expansion has its range, a term nested on the same line)
+  check "elab: a source node's description"
+    (parseSrcRange "@12:3-12:40 Lean.Parser.Tactic.simp | simp [a | b]" ==
+      some { range := "12:3-12:40", line := 12, kind := "Lean.Parser.Tactic.simp", text := "simp [a | b]" } &&
+     parseSrcRange "omega" == none && shortKind "Lean.Parser.Tactic.omega" == "omega") ""
+  check "elab: a command named without the `set_option … in` and `open … in` before it"
+    (dropInPrefix "set_option maxHeartbeats 400000 in open Foo Bar in theorem t : True := trivial" ==
+      "theorem t : True := trivial" && dropInPrefix "open Foo" == "open Foo") ""
+  let drv := "[Elab.command] [100] ✅️ theorem t : True := by skip; trivial
+  [Leanprof.tactic] [60] ✅️ @2:3-3:10 Lean.Parser.Tactic.tacticSeq | skip; trivial
+    [Leanprof.tactic] [10] ✅️ @2:3-2:7 Lean.Parser.Tactic.skip | skip
+    [Leanprof.tactic] [45] ✅️ @3:3-3:10 Lean.Parser.Tactic.trivial | trivial
+      [Leanprof.tactic] [40] ✅️ @3:3-3:10 Lean.Parser.Tactic.exact | trivial
+        [Meta.isDefEq] [30] ✅️ True =?= True
+        [Leanprof.term] [2] ✅️ @3:5-3:10 Lean.Parser.Term.app | ivial"
+  let e := ({ exact := true } : Acc).addMessage "F.lean" 1 (msg drv 0)
+  let rc (k : String) : Float := ((e.ranges.get? s!"F.lean:{k}").map (·.total)).getD (-1)
+  check "elab: exact ranges, once per range, without tactic sequences"
+    (near (rc "2:3-2:7") 10 && near (rc "3:3-3:10") 45 && near (rc "3:5-3:10") 2 && rc "2:3-3:10" == -1 &&
+      e.ranges.size == 3) s!"{e.ranges.toList.map fun (k, c) => (k, c.total)}"
+  check "elab: tactics by line from exact ranges, the outermost on each line"
+    ((e.tactics.get? "F.lean:2").map (·.1) == some 10 && (e.tactics.get? "F.lean:3").map (·.1) == some 45 &&
+      e.tacticRanges.get? "F.lean:3" == some "F.lean:3:3-3:10") s!"{e.tactics.toList}"
+  check "elab: source nodes are transparent in self time per kind"
+    (near (e.byClass.getD "Elab.command" 0) 70 && near (e.byClass.getD "Meta.isDefEq" 0) 30 &&
+      !e.byClass.contains "Leanprof.tactic") s!"{e.byClass.toList}"
   check "elab: digit groups" (groupDigits 10000 == "10,000" && groupDigits 1234567 == "1,234,567" && groupDigits 999 == "999") ""
   check "elab: leading constants" (leadingConst "@instFoo to X" == some "instFoo" && leadingConst "inst✝ to X" == none &&
     leadingConst "?m.1 x" == none && leadingConst "Size α" == some "Size") ""

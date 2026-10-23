@@ -70,6 +70,7 @@ def facts():
     sh(LP, "elab", "--heartbeats", "--threshold", "0", "--out", "/tmp/smoke-elab.json", "Examples/ElabHeavy.lean")
     el = load("/tmp/smoke-elab.json")
     out["elab.lines"] = sorted({s["pos"] for s in el["scopes"]})
+    out["elab.ranges"] = sorted({r["range"].split(":", 1)[1].rsplit("-", 1)[0] for r in el.get("ranges", [])})
     out["elab.constants"] = sorted({c["name"] for c in el.get("constants", [])})[:40]
     # html renders
     sh(LP, "html", "-o", "/tmp/smoke.html", "/tmp/smoke-run.json")

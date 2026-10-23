@@ -8,6 +8,22 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Added
 
+- **`leanprof elab` times every term and tactic by its exact source range**
+  (`file:line:col-line:col`). When the project's Lean is the one leanprof
+  was built with, files are elaborated by `leanprof-elab-driver`, Lean's
+  frontend run in-process (the module's setup file and `LEAN_PATH`, as
+  Lake does) with every term and tactic elaborator and every macro
+  wrapped to record the syntax it elaborates. The report lists the
+  costliest tactics and terms by range, `elab.json` has them (`ranges`;
+  `tactics` gain `range`), `#leanprof` lists them in the hover of their
+  line, and `leanprof html` in a "Source ranges" tab. Tactics are no
+  longer found by their text. With another Lean (or `--no-driver`) `elab`
+  runs `lean --json` as before and says why. The driver also formats only
+  the descriptions the report reads, so a full profile costs less than
+  with `lean --json`.
+- `leanprof elab --compact`: only commands, terms and tactics are timed,
+  not the operations inside them, within a few percent of plain `lean`
+  (needs the driver).
 - Rows whose time is near the probes' own cost are marked: `*` after the
   total in the terminal report, `near_probe_cost` (and `probes_ns`) in the
   JSON, in the HTML report and in `#leanprof` hovers ("near the probe cost:
@@ -44,6 +60,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Fixed
 
+- `leanprof elab --project`, locating definitions in modules that cannot be
+  imported together, kept every module's environment loaded: 16.8 GB on
+  leanprof's own package once a module imports all of Lean. Each is now
+  freed after use (3.2 GB).
 - `probe_ns` and the "without the probes" wall time counted 1,024 times
   the probes' cost (descendants are counted in 1/1024 of a pair), so `%wall`
   was taken against a wall time that was far too small: `copybug` showed

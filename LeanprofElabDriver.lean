@@ -1,0 +1,317 @@
+import Lean
+
+/-!
+# `leanprof-elab-driver`: Lean's frontend in-process, with exact source ranges
+
+`leanprof elab` runs this instead of `lean --json` when the project's Lean is the
+one leanprof was built with. It elaborates one file as `lean` (and `lake`)
+would: the module's setup file (options, imports, plugins, shared libraries),
+`LEAN_PATH` for imports, asynchronous elaboration, the kernel. Two things differ:
+
+* every term and tactic elaborator (and every macro) is wrapped, in this process
+  only, so that each elaboration is timed against the exact source range of the
+  syntax it elaborates: a trace node `[Leanprof.term]` or `[Leanprof.tactic]`
+  whose text is `@line:col-line:col kind | source`. Lean's own `trace.profiler`
+  keeps only the positions of whole commands;
+* the traces are kept in memory (`trace.profiler.output`) and printed afterwards
+  in the format `lean --json` uses, one message per trace, formatting only the
+  descriptions `leanprof elab` reads (and those with `pp` limits).
+
+`--compact` keeps `trace.profiler` on outside the wrapped elaborators (commands,
+kernel, compiler, linters) and turns it off inside them: per command, term and
+tactic timings, without the internal operations under them (`isDefEq`, `whnf`,
+instances), which are what make a full profile slow.
+
+The approach (wrapping the elaborator tables of the environment, retaining the
+traces) is the one lean-source-profiler takes (MIT); the code here is written
+for leanprof's report format.
+
+Output: Lean's messages as `lean --json` prints them, then the traces. Exit code
+3: the imports could not be loaded (leanprof then falls back to `lean`).
+-/
+
+open Lean Elab
+
+namespace Leanprof.ElabDriver
+
+/-- Set (in compact mode) where `trace.profiler` is off but source nodes are still recorded. -/
+def compactOpt : Name := `leanprof.compact
+
+/-- The trace classes of the source nodes. -/
+def tacticCls : Name := `Leanprof.tactic
+def termCls : Name := `Leanprof.term
+
+@[extern "lean_internal_get_believer_trust_level"]
+opaque believerTrustLevel (_ : Unit) : UInt32
+
+/-- Run `k` and record it as a trace node of class `cls` carrying `stx`'s range (in its
+`tag`: start and end byte, and the syntax kind), when it takes longer than
+`trace.profiler.threshold`. In compact mode `k` runs with `trace.profiler` off.
+Generated syntax without a source range is not recorded: its time stays in the
+node around it. -/
+@[inline] def withSource {m : Type → Type} {α : Type} [Monad m] [MonadTrace m] [MonadOptions m]
+    [MonadWithOptions m] [MonadRef m] [MonadLiftT BaseIO m] [always : MonadAlwaysExcept Exception m]
+    [ExceptToTraceResult Exception α] (cls : Name) (stx : Syntax) (k : m α) : m α := do
+  let opts ← getOptions
+  let compact := opts.getBool compactOpt
+  unless compact || trace.profiler.get opts do return ← k
+  let some s := stx.getPos? (canonicalOnly := true) | return ← k
+  let some e := stx.getTailPos? (canonicalOnly := true) | return ← k
+  let hb := trace.profiler.useHeartbeats.get opts
+  let _ := always.except
+  let old ← getTraces
+  modifyTraces fun _ => {}
+  let start ← if hb then pure (← IO.getNumHeartbeats).toFloat else pure ((← IO.monoNanosNow).toFloat / 1e9)
+  let res ← observing (if compact && trace.profiler.get opts then
+    withOptions (·.setBool `trace.profiler false) k else k)
+  let stop ← if hb then pure (← IO.getNumHeartbeats).toFloat else pure ((← IO.monoNanosNow).toFloat / 1e9)
+  if stop - start > trace.profiler.threshold.unitAdjusted opts then
+    let data : TraceData := { cls, startTime := start, stopTime := stop, result? := some res.toTraceResult,
+                              tag := s!"{s.byteIdx}:{e.byteIdx}:{stx.getKind}" }
+    let children := (← getTraces).toArray.map (·.msg)
+    modifyTraces fun _ => old.push { ref := stx, msg := .trace data .nil children }
+  else
+    modifyTraces (old ++ ·)
+  MonadExcept.ofExcept res
+
+def wrapTactic (t : Tactic.Tactic) : Tactic.Tactic := fun stx => withSource tacticCls stx (t stx)
+
+def wrapTerm (t : Term.TermElab) : Term.TermElab := fun stx ty => withSource termCls stx (t stx ty)
+
+/-- A macro's expansion, when it has no source range of its own, gets the range of the
+syntax it expands: the elaboration of `decreasing_tactic` is then timed where it is written. -/
+def wrapMacro (mac : Macro) : Macro := fun stx => do
+  let out ← mac stx
+  match stx.getPos? (canonicalOnly := true), stx.getTailPos? (canonicalOnly := true) with
+  | some s, some e =>
+    if (out.getPos? (canonicalOnly := true)).isNone then return out.setInfo (.synthetic s e (canonical := true))
+    return out
+  | _, _ => return out
+
+/-- The environment with every term and tactic elaborator and every macro wrapped. -/
+def instrument (env : Environment) : Environment :=
+  let env := Tactic.tacticElabAttribute.ext.modifyState env fun s =>
+    { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTactic e.value }) }
+  let env := Term.termElabAttribute.ext.modifyState env fun s =>
+    { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTerm e.value }) }
+  macroAttribute.ext.modifyState env fun s =>
+    { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapMacro e.value }) }
+
+/-! ## Printing traces as `lean --json` does -/
+
+/-- Classes whose descriptions `leanprof elab` reads (see `keepsText` there). -/
+def keepsText (cls : Name) : Bool :=
+  let c := cls.toString
+  c == "Meta.synthInstance" || c == "Meta.isDefEq" || c == "Meta.whnf" || c == "Meta.isDefEq.delta" ||
+    c == "Elab.step" || c.startsWith "Meta.Tactic" || c == "Tactic.simp" || c == "Meta.synthInstance.apply" ||
+    c.startsWith "Meta.isDefEq.delta.unfold" || c.startsWith "Elab.async"
+
+/-- Untimed messages that are part of the report (they name a constant). -/
+def leafClass (cls : Name) : Bool :=
+  cls.toString.startsWith "Meta.isDefEq.delta.unfold" || cls == `Meta.Tactic.simp.rewrite
+
+/-- `msg` with its contexts' pretty-printing bounded: a description is cut to 200
+characters anyway, and printing large terms in full is what made traces slow. -/
+partial def bounded (fullNames : Bool) : MessageData → MessageData
+  | .withContext ctx m =>
+    let opts := ctx.opts.set `pp.maxSteps (400 : Nat) |>.set `pp.deepTerms.threshold (8 : Nat)
+      |>.setBool `pp.deepTerms false |>.setBool `pp.proofs false |>.setBool `pp.fullNames fullNames
+    .withContext { ctx with opts } (bounded fullNames m)
+  | .withNamingContext n m => .withNamingContext n (bounded fullNames m)
+  | .compose a b => .compose (bounded fullNames a) (bounded fullNames b)
+  | .nest n m => .nest n (bounded fullNames m)
+  | .group m => .group (bounded fullNames m)
+  | .tagged t m => .tagged t (bounded fullNames m)
+  | m => m
+
+/-- A description on one line: its lines without their indentation, joined, at most 200 characters. -/
+def oneLine (s : String) : String :=
+  let parts := (s.splitOn "\n").filterMap fun l =>
+    let t := l.trimAscii.toString
+    if t.isEmpty then none else some t
+  String.ofList ((" ".intercalate parts).toList.take 200)
+
+def describe (fullNames : Bool) (m : MessageData) : IO String := do
+  try return oneLine ((← (bounded fullNames m).format).pretty 200)
+  catch _ => return ""
+
+/-- Seconds with nine decimals, or heartbeats. -/
+def fmtAmount (hb : Bool) (x : Float) : String :=
+  let x := if x < 0 then 0 else x
+  if hb then toString x.round.toUInt64.toNat
+  else
+    let ns := (x * 1e9).round.toUInt64.toNat
+    let f := toString (ns % 1000000000)
+    s!"{ns / 1000000000}.{String.ofList (List.replicate (9 - f.length) '0')}{f}"
+
+structure Ctx where
+  fm : FileMap
+  src : String
+  hb : Bool
+  fullNames : Bool
+  /-- Describe only commands and source nodes: a compact profile reads nothing else. -/
+  compact : Bool
+
+/-- The source between two byte positions on one line, at most 100 characters. -/
+def excerpt (src : String) (s e : Nat) : String :=
+  let t := String.Pos.Raw.extract src ⟨s⟩ ⟨e⟩
+  let ws := (t.split Char.isWhitespace).filter (!·.isEmpty) |>.map (·.toString)
+  String.ofList ((" ".intercalate ws.toList).toList.take 100)
+
+/-- A source node's description: `@line:col-line:col kind | source` (columns from 1). -/
+def rangeText (c : Ctx) (tag : String) : String :=
+  match tag.splitOn ":" with
+  | s :: e :: kind =>
+    let s := s.toNat!
+    let e := e.toNat!
+    let p := c.fm.toPosition ⟨s⟩
+    let q := c.fm.toPosition ⟨e⟩
+    s!"@{p.line}:{p.column + 1}-{q.line}:{q.column + 1} {":".intercalate kind} | {excerpt c.src s e}"
+  | _ => ""
+
+/-- One trace tree as the lines `lean --json` prints: `[Class] [amount] mark text`,
+indented by depth. Untimed nodes other than those that name a constant are left
+out, their children kept at their depth. `wrap` puts a description back in the
+contexts (environment, local context, names) around it, which it is printed in. -/
+partial def render (c : Ctx) (root : Option String) (depth : Nat) (wrap : MessageData → MessageData)
+    (out : Array String) : MessageData → IO (Array String)
+  | .withContext ctx m => render c root depth (fun x => wrap (.withContext ctx x)) out m
+  | .withNamingContext n m => render c root depth (fun x => wrap (.withNamingContext n x)) out m
+  | .nest _ m | .group m | .tagged _ m => render c root depth wrap out m
+  | .compose a b => do render c root depth wrap (← render c root depth wrap out a) b
+  | .trace data body children => do
+    let mut out := out
+    let indent := String.ofList (List.replicate (2 * depth) ' ')
+    let timed := data.startTime != 0 || data.stopTime != 0
+    if !timed then
+      if leafClass data.cls then
+        out := out.push s!"{indent}[{data.cls}] {← describe c.fullNames (wrap body)}"
+      for ch in children do out ← render c none depth wrap out ch
+      return out
+    let text ←
+      if data.cls == tacticCls || data.cls == termCls then pure (rangeText c data.tag)
+      else if let some r := root then pure r
+      else if depth == 0 || (!c.compact && keepsText data.cls) then describe c.fullNames (wrap body)
+      else pure ""
+    let mark := (data.result?.getD .success).toEmoji
+    out := out.push s!"{indent}[{data.cls}] [{fmtAmount c.hb (data.stopTime - data.startTime)}] {mark} {text}"
+    for ch in children do out ← render c none (depth + 1) wrap out ch
+    return out
+  | _ => return out
+
+/-- Print `lines` as a `lean --json` message at `pos`. -/
+def emit (c : Ctx) (pos : String.Pos.Raw) (lines : Array String) : IO Unit := do
+  let p := c.fm.toPosition pos
+  IO.println (Json.mkObj [("severity", "information"),
+    ("pos", Json.mkObj [("line", p.line), ("column", p.column)]),
+    ("data", Json.str ("\n".intercalate lines.toList))]).compress
+
+/-- Print one retained trace as a `lean --json` message at `pos`. -/
+def emitTrace (c : Ctx) (pos : String.Pos.Raw) (t : TraceElem) : IO Unit := do
+  -- a command is described by its source text (what `lean` prints is its syntax, formatted)
+  let root := match t.ref.getPos?, t.ref.getTailPos? with
+    | some s, some e => if s < e then some (oneLine (String.Pos.Raw.extract c.src s e)) else none
+    | _, _ => none
+  let isCommand := match t.msg with
+    | .withContext _ (.trace d _ _) | .trace d _ _ => d.cls == `Elab.command
+    | _ => false
+  let lines ← render c (if isCommand then root else none) 0 id #[] t.msg
+  unless lines.isEmpty do emit c pos lines
+
+/-! ## Running the frontend -/
+
+structure Args where
+  compact : Bool := false
+  heartbeats : Bool := false
+  threshold : Nat := 1
+  defs : Bool := false
+  counts : Bool := false
+  setup : Option String := none
+  file : String := ""
+
+partial def parseArgs (a : Args) : List String → Except String Args
+  | [] => if a.file.isEmpty then .error "no file" else .ok a
+  | "--compact" :: r => parseArgs { a with compact := true } r
+  | "--heartbeats" :: r => parseArgs { a with heartbeats := true } r
+  | "--defs" :: r => parseArgs { a with defs := true } r
+  | "--counts" :: r => parseArgs { a with counts := true } r
+  | "--threshold" :: v :: r => parseArgs { a with threshold := v.toNat! } r
+  | "--setup" :: f :: r => parseArgs { a with setup := some f } r
+  | f :: r => if f.startsWith "--" then .error s!"unknown option {f}" else parseArgs { a with file := f } r
+
+def printMessages (log : MessageLog) : IO Unit := do
+  for m in log.unreported do
+    unless m.isSilent do IO.println (← m.toJson).compress
+
+partial def lastCmd (s : Language.Lean.CommandParsedSnapshot) : Language.Lean.CommandParsedSnapshot :=
+  match s.nextCmdSnap? with
+  | some n => lastCmd n.get
+  | none => s
+
+def run (a : Args) : IO UInt32 := do
+  initSearchPath (← findSysroot)
+  unsafe enableInitializersExecution
+  let input ← IO.FS.readFile a.file
+  let inputCtx := Parser.mkInputContext input a.file
+  let setup? ← a.setup.mapM ModuleSetup.load
+  let mainModule ← match setup? with
+    | some s => pure s.name
+    | none => try moduleNameOfFileName a.file none catch _ => pure `_stdin
+  -- what `lean -D...` sets for `leanprof elab`
+  let mut opts : Options := {}
+  opts := opts.setBool `trace.profiler true |>.set `trace.profiler.threshold (a.threshold : Nat)
+    |>.set `trace.profiler.output ("leanprof" : String)  -- keep the traces; nothing is written
+    -- every command, even under the threshold: kernel and compiler work is named after it
+    |>.setBool `trace.Elab.command true
+  if a.heartbeats then opts := opts.setBool `trace.profiler.useHeartbeats true
+  if !a.compact && a.defs then
+    for c in [`Meta.isDefEq.delta.unfoldLeft, `Meta.isDefEq.delta.unfoldRight,
+              `Meta.isDefEq.delta.unfoldLeftRight, `Meta.Tactic.simp.rewrite] do
+      opts := opts.setBool (`trace ++ c) true
+    if a.counts then opts := opts.setBool `diagnostics true |>.set `diagnostics.threshold (0 : Nat)
+  if let some s := setup? then opts := opts.mergeBy (fun _ _ v => v) s.options.toOptions
+  opts := Elab.async.setIfNotSet opts true
+  opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
+  if let some s := setup? then s.dynlibs.forM Lean.loadDynlib
+  let (header, parserState, msgs) ← Parser.parseHeader inputCtx
+  let header : HeaderSyntax := header
+  let (env, msgs) ← processHeaderCore header.startPos (setup?.bind (·.imports?) |>.getD header.imports)
+    (setup?.any (·.isModule) || header.isModule) opts msgs inputCtx (trustLevel := believerTrustLevel () + 1)
+    (plugins := setup?.map (·.plugins) |>.getD #[]) (leakEnv := true) (mainModule := mainModule)
+    (package? := setup?.bind (·.package?)) (arts := setup?.map (·.importArts) |>.getD {})
+    (headerStx? := some header)
+  printMessages msgs
+  if msgs.hasErrors then return 3
+  let mut opts' ← Language.Lean.reparseOptions opts
+  -- not a registered option: set after Lean checks them
+  if a.compact then opts' := opts'.setBool compactOpt true
+  let cmdState := Command.mkState (instrument env) {} opts'
+  let cmdState := { cmdState with infoState.enabled := true }
+  let first ← Language.Lean.processCommands inputCtx parserState cmdState
+  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact }
+  -- messages and traces of each snapshot as it completes, in order
+  let lastPos ← IO.mkRef (0 : String.Pos.Raw)
+  let errors ← IO.mkRef false
+  (Language.toSnapshotTree first.get).forM (m := IO) fun snap => do
+    if snap.diagnostics.msgLog.hasErrors then errors.set true
+    printMessages snap.diagnostics.msgLog
+    for t in snap.traces.traces do
+      let pos ← match t.ref.getPos? with
+        | some p => lastPos.set p; pure p
+        | none => lastPos.get
+      emitTrace c pos t
+  -- the kernel's work on the last declarations
+  let _ ← IO.wait (lastCmd first.get).elabSnap.resultSnap.get.cmdState.env.checked
+  return if ← errors.get then 1 else 0
+
+end Leanprof.ElabDriver
+
+def main (args : List String) : IO UInt32 := do
+  if args == ["--githash"] then
+    IO.println Lean.githash
+    return 0
+  match Leanprof.ElabDriver.parseArgs {} args with
+  | .error e =>
+    IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--threshold N] [--setup FILE] FILE.lean"
+    return 2
+  | .ok a => Leanprof.ElabDriver.run a

@@ -20,12 +20,14 @@ def buildWithHistory (n : Nat) ... := profile! "buildWithHistory" Id.run do   �
 | `≈ time CPU · %` | `leanprof sample` | sampled CPU time of a declaration |
 | `⚠ copies · bytes · time` | `leanprof run` | copies of shared values made by this declaration |
 | `⚙ cost to compile` | `leanprof elab` | compile cost of this declaration or line |
-| `⚙ cost` | `leanprof elab` | a tactic step on this line, inside a proof |
+| `⚙ cost` | `leanprof elab` | a tactic or term that starts on this line, inside a proof |
 
 Hover a hint for details: self time, mean and percentiles, why a copy
 happened, or the line's costliest compile-time operations and the
 definitions behind them ("73 ms unfolding `Foo.bar` (Foo.lean:12), reached
-from 40 call sites"). The infoview at
+from 40 call sites"), and the terms and tactics that start on it, each with
+its exact range (`12:3-12:40  41.2 ms  tactic simp: simp [foo]`; see
+[compile time](compile-time.md)). The infoview at
 `#leanprof` lists everything for the file.
 
 The hints describe the code as it was when the report was made; rerun after
