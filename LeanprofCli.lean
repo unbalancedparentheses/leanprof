@@ -299,6 +299,49 @@ def coreLibDir (allocs : Bool) (frees : Bool := false) : IO FilePath := do
   IO.eprintln s!"leanprof: Lean's libraries with {renames.size} runtime functions redirected{if made == 0 then " (cached)" else s!" by {objcopy}"}: {dir}"
   return dir
 
+/-- The environment Lake compiles a program's C in under `leanprof run`
+(`leanc` calling the wrapper), with only the copy flags: how `c/selfcheck.c`
+is compiled, so its copies take the same path as the program's. -/
+def selfCheckEnv (wrapper : FilePath) : Array (String × Option String) :=
+  #[("LEAN_CC", some wrapper.toString)] ++
+    #["LEANPROF_AUTO", "LEANPROF_ALLOCS", "LEANPROF_COUNTERS", "LEANPROF_FREES", "LEANPROF_WHY"].map (·, none)
+
+/-- `leanprof doctor`'s copy-detection check: builds a small C program from
+leanprof's runtime and `c/selfcheck.c` (compiled and linked as `leanprof run`
+does) and runs the self-check. Returns the operations checked and the
+warning (empty when every known copy was counted), or why it could not run. -/
+def selfCheckProbe (root : FilePath) : IO (Except String (String × String)) := do
+  let wrapper := root / "scripts" / "leanprof-cc"
+  let leanPrefix := (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
+  let dir := (← IO.FS.createTempDir)
+  let main := dir / "probe.c"
+  IO.FS.writeFile main <| "#include <lean/lean.h>\n#include <stdio.h>\n" ++
+    "const char *leanprof_self_check_message(void);\nconst char *leanprof_self_check_ops(void);\n" ++
+    "void lean_initialize_runtime_module(void);\n" ++
+    "int main(void) {\n  lean_initialize_runtime_module();\n" ++
+    "  printf(\"%s\\n%s\\n\", leanprof_self_check_ops(), leanprof_self_check_message());\n  return 0;\n}\n"
+  let env := selfCheckEnv wrapper ++ #[("LEANPROF_QUIET", some "1")]
+  let steps : List (String × Array String × Array (String × Option String)) := [
+    ("cc", #["-O0", "-fPIC", "-I", leanPrefix ++ "/include", "-c", (root / "c" / "leanprof.c").toString,
+      "-o", (dir / "rt.o").toString], #[]),
+    ("leanc", #["-c", (root / "c" / "selfcheck.c").toString, "-o", (dir / "sc.o").toString], env),
+    ("leanc", #["-c", main.toString, "-o", (dir / "probe.o").toString], env),
+    ("leanc", #["-o", (dir / "probe").toString, (dir / "probe.o").toString, (dir / "rt.o").toString,
+      (dir / "sc.o").toString], env)]
+  try
+    for (cmd, args, env) in steps do
+      let out ← IO.Process.output { cmd, args, env }
+      if out.exitCode != 0 then
+        return .error s!"{cmd} failed: {out.stderr.take 300}"
+    let out ← IO.Process.output { cmd := (dir / "probe").toString, env := #[("LEANPROF_QUIET", some "1")] }
+    if out.exitCode != 0 then return .error s!"the probe exited with {out.exitCode}: {out.stderr.take 300}"
+    match out.stdout.splitOn "\n" with
+    | ops :: msg :: _ => return .ok (ops, msg)
+    | _ => return .error s!"unexpected output: {out.stdout}"
+  catch e => return .error (toString e)
+  finally
+    discard <| IO.Process.output { cmd := "rm", args := #["-rf", dir.toString] }
+
 /-- Build `exe` with the copy shims in every package (and, with `auto`, every
 function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
@@ -328,10 +371,19 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     let leanPrefix := (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
     IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
     let obj := cwd / ".lake" / "leanprof" / "runtime.o"
-    let out ← IO.Process.output { cmd := "cc", args := #["-O2", "-fPIC", "-I", leanPrefix ++ "/include", "-c",
-      (root / "c" / "leanprof.c").toString, "-o", obj.toString] }
-    if out.exitCode != 0 then
-      throw <| IO.userError s!"compiling leanprof's runtime failed:\n{out.stderr}"
+    let rt := cwd / ".lake" / "leanprof" / "runtime-core.o"
+    let sc := cwd / ".lake" / "leanprof" / "runtime-selfcheck.o"
+    let inc := #["-O2", "-fPIC", "-I", leanPrefix ++ "/include", "-c"]
+    -- the runtime, and its self-check compiled as Lake compiles the program's
+    -- C (leanc with LEAN_CC set to the wrapper; copy flags only), in one object
+    let steps : List (String × Array String × Array (String × Option String)) := [
+      ("cc", inc ++ #[(root / "c" / "leanprof.c").toString, "-o", rt.toString], #[]),
+      ("leanc", #["-O2", "-c", (root / "c" / "selfcheck.c").toString, "-o", sc.toString], selfCheckEnv wrapper),
+      ("ld", #["-r", "-o", obj.toString, rt.toString, sc.toString], #[])]
+    for (cmd, args, env) in steps do
+      let out ← IO.Process.output { cmd, args, env }
+      if out.exitCode != 0 then
+        throw <| IO.userError s!"compiling leanprof's runtime failed ({cmd}):\n{out.stderr}"
     runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
   -- Lake does not notice a new LEAN_CC, so objects built without it must go.
   let removed ← removeWorkspaceObjects
@@ -390,6 +442,7 @@ structure Report where
   exact : Bool := false                            -- heartbeats: compare without a threshold
   scopes : Std.HashMap String (Float × Nat) := {}  -- name@pos ↦ (total ns or heartbeats, calls)
   copies : Std.HashMap String Nat := {}            -- function|kind|scope ↦ copies
+  selfCheck : String := ""                          -- the runtime self-check's warning, if any
 
 def num (j : Json) (k : String) : Float :=
   match j.getObjVal? k with
@@ -401,7 +454,8 @@ def str (j : Json) (k : String) : String :=
 
 def loadReport (path : String) : IO Report := do
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
-  let mut r : Report := { exact := str j "unit" == "heartbeats" }
+  let sc := (j.getObjVal? "self_check").toOption.getD Json.null
+  let mut r : Report := { exact := str j "unit" == "heartbeats", selfCheck := str sc "warning" }
   for s in (j.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[] do
     let key := if (str s "key").isEmpty then s!"{str s "name"} {str s "pos"}" else str s "key"
     -- a declaration's elaboration, kernel and compiler lines share its key
@@ -886,6 +940,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("time_ns", Json.mkObj [("median", toJson (median times)), ("min", toJson (times.foldl min times[0]!)),
       ("max", toJson (times.foldl max 0)), ("runs", toJson times)]),
     ("copies_total", toJson (copyTotal last)), ("copies_stable", Json.bool copiesStable),
+    ("self_check_warning", Json.str last.selfCheck),
     ("copies", keyedArr "copies" (last.copies.toList.map fun (k, n) => (k, toJson n))),
     ("calls", keyedArr "calls" (last.scopes.toList.map fun (k, (_, c)) => (k, toJson c))),
     ("heartbeats_total", match hb with
@@ -900,6 +955,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
   IO.println s!"\nleanprof measure: {exe}, {o.runs} runs"
   IO.println s!"  time     median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}"
   IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"
+  unless last.selfCheck.isEmpty do IO.println s!"  warning  {last.selfCheck}"
   IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD "stdout"}), exit code {codes.back!}"
   if let some xs := hb then
     IO.println s!"  compile  {fmt2 ((xs.foldl (fun a (_, t) => a + t) 0) / 1000)} kHB in {xs.length} declarations"
@@ -1262,6 +1318,18 @@ def doctor : IO UInt32 := do
     let out ← tryCmd "cc" #["-fsyntax-only", "-I", leanPrefix ++ "/include", (root / "c" / "leanprof.c").toString]
     unless ← report (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean"
         s!"{(out.map (·.stderr.take 300 |>.toString)).getD "cc not found"}" do problems := problems + 1
+    -- the runtime's self-check, built and linked as `leanprof run` builds a program
+    if out.any (·.exitCode == 0) then
+      let leanVersion := ((← tryCmd "lean" #["--short-version"]).map (·.stdout.trimAscii.toString)).getD "?"
+      match ← selfCheckProbe root with
+      | .ok (ops, "") =>
+        discard <| report true s!"copy detection works with Lean {leanVersion} ({ops})" ""
+      | .ok (_, warning) =>
+        discard <| report false warning ""
+        problems := problems + 1
+      | .error e =>
+        discard <| report false s!"copy detection self-check could not run: {e}" ""
+        problems := problems + 1
     let probe := tmp.withExtension "c"
     IO.FS.writeFile probe "int f(int x) { return x + 1; }\n"
     let clang ← tryCmd "sh" #["-c", s!"LEANPROF_AUTO=1 {root / "scripts" / "leanprof-cc"} -c {probe} -o {tmp}.o"]
@@ -1341,6 +1409,8 @@ def statCmd (argv : List String) : IO UInt32 := do
   let bc := copies.foldl (fun a c => a + num c "bytes") 0
   let tc := copies.foldl (fun a c => a + num c "copy_ns") 0
   row "copies" s!"{withCommas nc.toUInt64.toNat} of shared values, {fmtBytes bc}, {fmtTime tc}"
+  let warning := str ((j.getObjVal? "self_check").toOption.getD Json.null) "warning"
+  unless warning.isEmpty do row "" s!"warning: {warning}"
   match j.getObjVal? "frees" with
   | .ok f =>
     row "frees" s!"{withCommas (num f "objects").toUInt64.toNat} objects in {withCommas (num f "cascades").toUInt64.toNat} cascades, {fmtTime (num f "free_ns")} (pause p99 {fmtTime (num f "p99_ns")}, max {fmtTime (num f "max_ns")})"

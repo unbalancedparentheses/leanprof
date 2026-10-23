@@ -87,7 +87,7 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       run: |
-        hash=$(cat lean-toolchain lakefile.lean lake-manifest.json LeanprofCli.lean Leanprof.lean Leanprof/*.lean c/leanprof.c | shasum -a 256 | cut -c1-16)
+        hash=$(cat lean-toolchain lakefile.lean lake-manifest.json LeanprofCli.lean Leanprof.lean Leanprof/*.lean c/*.c c/*.h | shasum -a 256 | cut -c1-16)
         echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
     - name: Restore leanprof's command

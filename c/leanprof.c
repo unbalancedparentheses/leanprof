@@ -148,6 +148,8 @@ typedef struct lpf_thread {
     struct lpf_flight_thread *flight;
     void *shares;
     struct lpf_thread *free_next;
+    uint8_t selfcheck;         /* the self-check is running: copies go to selfcheck_seen, not the report */
+    uint32_t selfcheck_seen[LP_KINDS];
     struct lpf_thread *next;
 } lpf_thread;
 
@@ -974,6 +976,7 @@ static inline lpf_pending lpf_begin(void *pc, lean_object *o, uint8_t kind, size
 static inline void lpf_end(const lpf_pending *p) {
     uint64_t elapsed = lpf_now() - p->start;
     lpf_thread *t = lpf_thread_get();
+    if (LEAN_UNLIKELY(t->selfcheck)) { t->selfcheck_seen[p->kind]++; return; }
     const lean_object *site = lpf_site(t);
     if (LEAN_UNLIKELY(lpf_tracing)) lpf_trace(t, 'C', p->pc, p->kind, p->start, p->bytes);
     lpf_copy *c = lpf_copy_get(t, p->pc, site, p->kind);
@@ -1053,6 +1056,113 @@ LEAN_EXPORT lean_obj_res leanprof_string_append(lean_obj_arg s1, b_lean_obj_arg 
 
 LEAN_EXPORT lean_obj_res leanprof_string_utf8_set(lean_obj_arg s, b_lean_obj_arg i, uint32_t c) {
     LP_MAYBE_COPY(LP_STRING, s, lean_string_size(s), lean_string_utf8_set(s, i, c));
+}
+
+/* ---------- self-check ----------
+ * c/selfcheck.c is compiled with the copy flags, like the program's code.
+ * Once, at exit (and for `leanprof doctor`), each of its operations runs on
+ * a shared one-element value: the shims must see one copy each. A copy they
+ * do not see means copies of that kind may be undercounted with this Lean
+ * version (Lean 4.36 made lean_string_push inline, and String copies went
+ * uncounted until leanprof also renamed lean_string_push_cold). The check's
+ * copies go to per-thread counters (lpf_end), never into the report. It
+ * costs six copies of one-element values and a few allocations. */
+#include "selfcheck.h"
+
+#ifndef LEAN_VERSION_STRING
+#define LEAN_VERSION_STRING "?"
+#endif
+
+static const struct {
+    uint8_t kind;
+    const char *op, *call;
+} lpf_sc_ops[LPS_OPS] = {
+    [LPS_ARRAY_PUSH] = {LP_ARRAY, "Array.push", "lean_array_push"},
+    [LPS_ARRAY_SET] = {LP_ARRAY, "Array.set!", "lean_copy_expand_array_nonlinear"},
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 36)
+    [LPS_STRING_PUSH] = {LP_STRING, "String.push", "lean_string_push_cold"},
+#else
+    [LPS_STRING_PUSH] = {LP_STRING, "String.push", "lean_string_push"},
+#endif
+    [LPS_STRING_APPEND] = {LP_STRING, "String.append", "lean_string_append"},
+    [LPS_BYTE_ARRAY_PUSH] = {LP_SCALAR_ARRAY, "ByteArray.push", "lean_byte_array_push"},
+    [LPS_BYTE_ARRAY_SET] = {LP_SCALAR_ARRAY, "ByteArray.set!", "lean_copy_sarray_nonlinear"},
+};
+
+static int lpf_sc_done;
+static char lpf_sc_checked[256]; /* the operations run, for doctor */
+static char lpf_sc_msg[768];     /* the warning; empty when every copy was seen */
+
+static lean_object *lpf_sc_input(uint8_t kind) {
+    if (kind == LP_ARRAY) return lean_array_push(lean_mk_empty_array_with_capacity(lean_box(2)), lean_box(0));
+    if (kind == LP_STRING) return lean_mk_string("a");
+    return lean_byte_array_push(lean_mk_empty_byte_array(lean_box(2)), 0);
+}
+
+static void lpf_sc_append(char *buf, size_t cap, const char *s) {
+    size_t n = strlen(buf);
+    if (n + 1 < cap) snprintf(buf + n, cap - n, "%s", s);
+}
+
+static void lpf_self_check(void) {
+    if (__atomic_exchange_n(&lpf_sc_done, 1, __ATOMIC_ACQ_REL)) return;
+    lpf_thread *t = lpf_thread_get();
+    uint8_t missed[LPS_OPS] = {0};
+    int any = 0;
+    for (unsigned op = 0; op < LPS_OPS; op++) {
+        uint8_t kind = lpf_sc_ops[op].kind;
+        lean_object *x = lpf_sc_input(kind);
+        lean_inc(x); /* shared: the operation must copy it */
+        uint32_t before = t->selfcheck_seen[kind];
+        t->selfcheck = 1;
+        lean_object *r = leanprof_selfcheck_op(op, x);
+        t->selfcheck = 0;
+        lean_dec(x);
+        if (r == NULL) continue; /* not in this Lean version */
+        lean_dec(r);
+        lpf_sc_append(lpf_sc_checked, sizeof lpf_sc_checked, lpf_sc_checked[0] ? ", " : "");
+        lpf_sc_append(lpf_sc_checked, sizeof lpf_sc_checked, lpf_sc_ops[op].op);
+        missed[op] = t->selfcheck_seen[kind] == before;
+        any |= missed[op];
+    }
+    if (!any) return;
+    /* "copies of String may be undercounted with Lean 4.36.0: ..." per kind */
+    for (uint8_t kind = 0; kind < LP_KINDS; kind++) {
+        int n = 0;
+        for (unsigned op = 0; op < LPS_OPS; op++) {
+            if (!missed[op] || lpf_sc_ops[op].kind != kind) continue;
+            char part[192];
+            if (n++ == 0)
+                snprintf(part, sizeof part, "%scopies of %s may be undercounted with Lean %s: a known copy through %s (%s)",
+                         lpf_sc_msg[0] ? "; " : "", lpf_kind_name[kind], LEAN_VERSION_STRING, lpf_sc_ops[op].op,
+                         lpf_sc_ops[op].call);
+            else
+                snprintf(part, sizeof part, ", %s (%s)", lpf_sc_ops[op].op, lpf_sc_ops[op].call);
+            lpf_sc_append(lpf_sc_msg, sizeof lpf_sc_msg, part);
+        }
+        if (n > 0) lpf_sc_append(lpf_sc_msg, sizeof lpf_sc_msg, " was not counted");
+    }
+    lpf_sc_append(lpf_sc_msg, sizeof lpf_sc_msg,
+                  leanprof_selfcheck_flags()
+                      ? " (leanprof's shims do not cover this Lean version; please report it at "
+                        "https://github.com/unbalancedparentheses/leanprof/issues)"
+                      : " (the self-check was compiled without leanprof's copy flags)");
+}
+
+/* The self-check's warning, or "" when every known copy was counted. */
+LEAN_EXPORT lean_obj_res leanprof_self_check(void) {
+    lpf_self_check();
+    return lean_mk_string(lpf_sc_msg);
+}
+
+/* For `leanprof doctor`'s probe: the warning (or "") and what was checked. */
+LEAN_EXPORT const char *leanprof_self_check_message(void) {
+    lpf_self_check();
+    return lpf_sc_msg;
+}
+LEAN_EXPORT const char *leanprof_self_check_ops(void) {
+    lpf_self_check();
+    return lpf_sc_checked;
 }
 
 /* ---------- tasks ----------
@@ -2330,6 +2440,13 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
 static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                           double wall, uint64_t dropped) {
     fprintf(f, "{\"version\":3,\"wall_ns\":%.0f,\"probe_ns\":%.0f,\"overhead_ns\":%.1f,", wall, lpf_probe_ns, lpf_overhead_of(lpf_main_path()));
+    fprintf(f, "\"self_check\":{\"ok\":%s,\"lean\":", lpf_sc_msg[0] ? "false" : "true");
+    lpf_json_str(f, LEAN_VERSION_STRING);
+    fprintf(f, ",\"checked\":");
+    lpf_json_str(f, lpf_sc_checked);
+    fprintf(f, ",\"warning\":");
+    lpf_json_str(f, lpf_sc_msg);
+    fprintf(f, "},");
     fprintf(f, "\"overhead_by_path_ns\":{\"direct\":%.1f,\"auto\":%.1f,\"pure\":%.1f,\"closure\":%.1f,\"monadic\":%.1f},",
             lpf_overhead_of(LP_PATH_DIRECT), lpf_overhead_of(LP_PATH_HOOK), lpf_overhead_of(LP_PATH_PURE),
             lpf_overhead_of(LP_PATH_SCOPE), lpf_overhead_of(LP_PATH_ENTER));
@@ -2527,6 +2644,7 @@ static void lpf_report(void) {
     lpf_calibrate(); /* the CPU is warm now; keeps the lower estimate */
     double tick = lpf_ns_per_tick();
     double wall = (double)(lpf_now() - lpf_start) * tick;
+    lpf_self_check(); /* after the wall time: its ~20 µs are not the program's */
     uint64_t pairs = 0;
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
         if (t->pairs > pairs) pairs = t->pairs;
@@ -2663,6 +2781,8 @@ static void lpf_report(void) {
 
     const char *quiet = getenv("LEANPROF_QUIET");
     if (quiet == NULL || strcmp(quiet, "1") != 0) lpf_print(stderr, S, ns, C, nc, tick, wall, dropped);
+    if (lpf_sc_msg[0] && (quiet == NULL || strcmp(quiet, "1") != 0))
+        fprintf(stderr, "leanprof: warning: %s\n", lpf_sc_msg);
 
     const char *trace = getenv("LEANPROF_TRACE");
     if (trace != NULL && trace[0] != 0) lpf_write_trace(trace, tick);

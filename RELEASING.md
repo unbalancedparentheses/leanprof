@@ -64,7 +64,7 @@ if one was created (`gh release delete v0.2.0`), and tag again.
 leanprof-vX.Y.Z-PLATFORM/
   bin/leanprof              launcher: put this directory on PATH or symlink it
   .lake/build/bin/leanprof  the command itself
-  c/                        runtime source (leanprof.c, *.inc.c, headers),
+  c/                        runtime source (leanprof.c, selfcheck.c, *.inc.c, headers),
                             compiled for each project's Lean version
   scripts/leanprof-cc       compiler wrapper used by `leanprof run`
 ```

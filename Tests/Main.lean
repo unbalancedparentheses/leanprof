@@ -150,6 +150,11 @@ def tests : StateT Nat IO Unit := do
   check "expectNoCopies passes linear code" (r matches .ok _)
   let r ← (expectNoCopies (IO.lazyPure fun _ => (withHistory n50).1.size) |>.toBaseIO)
   check "expectNoCopies rejects shared code" (r matches .error _)
+  -- the self-check: each kind's known copy reaches a shim on this Lean version
+  let before ← copies
+  let w ← selfCheck
+  check "self-check: every known copy is counted on this Lean version" (w == "") w
+  check "self-check copies stay out of the counts" ((← copies) == before) s!"copies={(← copies) - before}"
   -- scopes
   let before ← calls "test.fib"
   let v ← IO.lazyPure fun _ => fib n20
