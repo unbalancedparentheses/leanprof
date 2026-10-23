@@ -107,7 +107,7 @@ project's Lean 4.34.1, after the tokenizer fix:
 | wall time (30 runs × 3, median) | 338–347 ms | 328–346 ms: within noise on a loaded machine |
 | output | | byte-identical on all 160 input/target/option combinations |
 
-Both are on the `perf-cfg-peek` branch and go to `main` once the project's CI passes.
+Both are on `main` (commits a623acc, 8a0d286, 854fcc2) after the project's CI passed on all three runners.
 
 ## Compile time (`leanprof elab --heartbeats`)
 
