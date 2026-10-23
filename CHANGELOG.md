@@ -55,6 +55,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Fixed
 
+- `leanprof elab --project`, locating definitions in modules that cannot be
+  imported together, kept every module's environment loaded: 16.8 GB on
+  leanprof's own package once a module imports all of Lean. Each is now
+  freed after use (3.2 GB).
 - `leanprof run` on another checkout of leanprof itself no longer links the
   runtime twice on Linux (`scripts/leanprof-cc` skips `LEANPROF_RUNTIME`
   when the link already has leanprof's runtime library).

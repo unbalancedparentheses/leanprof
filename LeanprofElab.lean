@@ -934,8 +934,9 @@ def locate (le : LeanEnv) (modules : Array Name) (names : Array String) : IO (St
     let rest := names.filter (!out.contains ·)
     if rest.isEmpty then break
     try
-      let env ← importModules #[m] {} (loadExts := false)
-      out ← lookup le cwd env rest out
+      -- one environment at a time, freed after use: modules that import all of Lean
+      -- (`leanprof-elab-driver`) would otherwise each keep gigabytes mapped
+      out ← unsafe withImportModules #[m] {} fun env => lookup le cwd env rest out
     catch e => IO.eprintln s!"leanprof: definitions in {m.module} not located ({e})"
   return out
 where
