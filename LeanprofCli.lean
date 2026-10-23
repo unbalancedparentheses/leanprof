@@ -130,6 +130,35 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
     else if opts.exe.isNone then parseRun { opts with exe := some a } rest
     else parseRun { opts with args := opts.args.push a } rest
 
+/-- The executable Lake builds for `exe`. -/
+def exePathOf (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
+
+/-- The executable and Lake's records of it, which an instrumented build replaces. -/
+def exeFiles (exe : String) : List FilePath :=
+  exePathOf exe :: ["trace", "hash", "rsp"].map (exePathOf exe).withExtension
+
+def savedDir : FilePath := (".lake" : FilePath) / "leanprof" / "saved"
+
+/-- Keep the normal build of `exe` aside before replacing it with an instrumented one. -/
+def saveExe (exe : String) : IO Unit := do
+  IO.FS.createDirAll savedDir
+  for f in exeFiles exe do
+    if ← f.pathExists then
+      discard <| IO.Process.output { cmd := "cp", args := #["-p", f.toString, (savedDir / f.fileName.get!).toString] }
+
+/-- Put the normal build back, so running `exe` afterwards does not profile it. -/
+def restoreExe (exe : String) : IO Unit := do
+  for f in exeFiles exe do
+    let saved := savedDir / f.fileName.get!
+    if ← saved.pathExists then
+      discard <| IO.Process.output { cmd := "mv", args := #[saved.toString, f.toString] }
+
+/-- Undo an instrumented build: its objects (Lake does not notice a new
+`LEAN_CC`) and its executable. -/
+def cleanupInstrumented (exe : String) : IO Unit := do
+  discard <| removeWorkspaceObjects
+  restoreExe exe
+
 /-- Build `exe` with the copy shims in every package (and, with `auto`, every
 function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
@@ -140,6 +169,12 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
   let wrapper := root / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
     throw <| IO.userError s!"compiler wrapper not found at {wrapper}"
+  let leanOk ← try pure ((← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).exitCode == 0)
+    catch _ => pure false
+  unless leanOk do
+    throw <| IO.userError ("`lean` was not found on PATH: add elan's bin directory " ++
+      "(export PATH=$HOME/.elan/bin:$PATH); `leanprof doctor` checks the setup")
+  saveExe exe
   let cwd ← IO.currentDir
   let linked := (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) ||
     (← IO.FS.realPath root) == (← IO.FS.realPath cwd)
@@ -161,7 +196,7 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     ("LEANPROF_COUNTERS", if counters then some "1" else none)] ++ runtimeEnv
   let rc ← spawnWait "lake" #["build", exe] buildEnv
   if rc != 0 then
-    discard <| removeWorkspaceObjects
+    cleanupInstrumented exe
   return rc
 
 /-- The executable Lake builds for `exe`. -/
@@ -178,7 +213,7 @@ def run (argv : List String) : IO UInt32 := do
   let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)]
   let rc ← spawnWait (exePath exe).toString opts.args runEnv
   unless opts.keep do
-    discard <| removeWorkspaceObjects
+    cleanupInstrumented exe
   return rc
 
 /-! ## compare -/
@@ -797,7 +832,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
         | none => pure (fnv1a out.stdout.toUTF8)
       reports := reports.push <| ← if ← reportPath.pathExists then loadReport reportPath.toString else pure {}
   finally
-    discard <| removeWorkspaceObjects
+    cleanupInstrumented exe
   -- copies and calls are exact: take the last run's, and say if runs disagree
   let last := reports.back?.getD {}
   let copyTotal (r : Report) := r.copies.fold (fun acc _ n => acc + n) 0
