@@ -148,3 +148,14 @@ lean_exe server where
   root := `Examples.Server
   moreLeancArgs := copyFlags
   moreLinkArgs := linkFlags
+
+/-- The causes `leanprof explain` recognises, each next to its fix
+(`Examples/ExplainPatterns.lean`); the tests count both versions' copies. -/
+lean_lib ExplainPatterns where
+  roots := #[`Examples.ExplainPatterns]
+  moreLeancArgs := copyFlags
+
+lean_exe explainpatterns where
+  root := `Examples.ExplainPatternsMain
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags
