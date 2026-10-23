@@ -145,8 +145,10 @@ to watch as these functions grow.
   `Lean.Server.Watchdog.FileWorker.waitForProc (in Std.Mutex.atomically)`:
   a specialization of `Std.Mutex.atomically` that Lean made for its
   language server and doc-gen4 reuses for its database mutex. `sample` now
-  says under such a line which declaration calls it in this run
-  (`DocGen4.DB.mkReadDB`).
+  says under such a line which Lean declaration calls it in this run,
+  past `lean_apply_N` (here `DocGen4.htmlOutputResultsParallel`, 99.7%; and
+  for `DocGen4.DB.ReadStmts.loadArgs (in DocGen4.DB.withDbContext)`, 80% of
+  the run, `DocGen4.DB.mkReadDB`, whose closures call `getContainedNames`).
 - A C++ symbol of 1,500 characters (`std::__1::__hash_table<…>`, 7% of the
   time) was cut to 512 characters and filled a screen; C++ names are now
   shown without template arguments, and Lean's C++ expression code has its
