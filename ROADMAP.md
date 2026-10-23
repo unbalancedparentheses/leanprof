@@ -46,6 +46,18 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
   `CONTRIBUTING.md`.
 - [ ] Easier first run: the installer checks `PATH`, errors say how to fix
   them, CI installs from scratch on a project leanprof has never seen.
+- [ ] Evidence that stands on its own:
+  - the benchmark suite rerun on CI's fixed runners (Linux and macOS, on a
+    schedule) with the results published, next to a run on an idle machine
+    (today's numbers come from one shared machine, often loaded);
+  - real programs whose right answer is known (where the time goes, how many
+    copies), not only synthetic workloads;
+  - a comparison with LeanBench on the job both do: telling whether a change
+    made code slower or faster (noise, seeded regressions, cost).
+- [ ] README states only what was measured: where leanprof is better, where
+  it is not (tiny functions in the exact modes; LeanProfiler's hand-placed
+  spans are more accurate on some workloads; what lean-source-profiler has
+  that leanprof lacks).
 - [ ] Consolidation: command modules in `LeanprofCli/`, one typed report
   module, `c/` split behind `c/internal.h`, CI checks as local scripts,
   formatters and linters, `research/` renamed `autoresearch/`.
@@ -72,6 +84,9 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
   (no deleting compiled files by hand).
 - [ ] `measure` and `judge` through the MCP server; the loop shipped as a
   Claude Code command; the results log used as memory of tried ideas.
+- [ ] Outside confirmation (the maintainer's decision: posting and
+  upstream patches): others reproducing the measurements, and patches found
+  with leanprof accepted upstream.
 - [ ] Evidence: a benchmark of seeded slowdowns the loop must find, a run on
   leanprof itself, and runs on projects it has never seen.
 
