@@ -21,6 +21,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   homepage), this changelog, and a release workflow that attaches the
   command for macOS arm64 and Linux x86-64 to version tags.
 
+### Fixed
+
+- `leanprof run` on another checkout of leanprof itself no longer links the
+  runtime twice on Linux (`scripts/leanprof-cc` skips `LEANPROF_RUNTIME`
+  when the link already has leanprof's runtime library).
+
 ## [0.1.0] - 2026-10-23
 
 The first version, not tagged.
