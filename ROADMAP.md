@@ -111,6 +111,12 @@ benchmark measures them.
   the language server in CI.
 - [ ] Infoview widget with a flame graph of the run.
 
+## M9: compile time
+
+- [x] `leanprof elab`: compile time per declaration from `trace.profiler`
+  (elaboration, kernel, compiler, linters), shown by `#leanprof`.
+- [ ] Drill-down into slow `isDefEq`/`whnf`/instance searches.
+
 ## Upstream
 
 - [ ] Propose optional profiling hooks in the Lean runtime, so copies inside

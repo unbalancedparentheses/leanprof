@@ -44,12 +44,13 @@ nothing.
 | Regression comparison | ✅ exact for copies and calls; thresholded for time | ✅ thresholded | – | ✅ thresholded |
 | Task-aware | ✅ run time and queue wait per spawning scope; blocking waits per call site | ✅ parent links | – | – |
 | Lean-readable names | ✅ | ✅ (you name spans) | mangled | ✅ |
-| Results inline in the editor (running program) | ✅ `#leanprof` inlay hints | – | – | – |
+| Results inline in the editor | ✅ run time, copies and compile time (`#leanprof`) | – | – | – |
+| Compile-time profile per declaration | ✅ `leanprof elab` (elab/kernel/compiler/lint) | – | – | – |
 
-Elaboration (compile-time) profiling is covered by `trace.profiler` and
-[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
-(which also shows compile times in VS Code); `#leanprof` does the same for
-run time.
+For deep compile-time investigations (which `isDefEq` or `whnf` call is
+slow), [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
+and `trace.profiler` go further than `leanprof elab`, which reports per
+declaration.
 Overhead numbers are from [`bench/`](bench/README.md) (Apple M5 Max). The
 same page shows leanprof finding the cause of LeanProfiler's growing cost:
 its event array is copied on every span.
@@ -176,6 +177,18 @@ Hover a hint for self time, mean, p50/p99, or why the copy happened. Both
 `lake exe leanprof run` and `lake exe leanprof sample` write that default
 report (sampled reports show `≈ CPU` instead). The hints describe the code
 as it was when the program ran, so rerun after edits.
+
+### Compile time
+
+```
+lake exe leanprof elab [--top N] FILE.lean...
+```
+
+elaborates the files with Lean's `trace.profiler` and lists compile time per
+declaration, split into elaboration, kernel checking, code generation and
+linters. It writes `.lake/leanprof/elab.json`, which `#leanprof` shows as
+`⚙ 13.0 ms to compile` hints next to the run-time ones, so one line can show
+what it costs to compile and what it costs to run.
 
 ### Sampling: no rebuild, near-zero overhead
 

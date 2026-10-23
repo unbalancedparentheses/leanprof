@@ -10,6 +10,8 @@ import Leanprof.Core
 * `sample`: build normally and run under samply (no instrumentation), then
   report CPU time per Lean declaration with source positions, and rewrite
   samply's symbols so `samply load` shows Lean names.
+* `elab`: elaborate files with `trace.profiler` and report compile time per
+  declaration (elaboration, kernel, compiler, linters), for `#leanprof` too.
 * `compare`: compare two JSON reports. Copies and call counts are exact, so
   any increase is a regression; times use a relative threshold.
 -/
@@ -19,6 +21,7 @@ open Lean System
 def usage : String := "usage:
   lake exe leanprof run [--auto | --auto-all] [--trace FILE] [--json FILE] [--keep] EXE [-- ARGS...]
   lake exe leanprof sample [--rate HZ] [--out FILE] [--top N] EXE [-- ARGS...]
+  lake exe leanprof elab [--top N] FILE.lean...
   lake exe leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json"
 
 /-- leanprof's package directory: this executable is `<root>/.lake/build/bin/leanprof`. -/
@@ -369,12 +372,95 @@ def sample (argv : List String) : IO UInt32 := do
   IO.println "in the editor: add `#leanprof` to a file to see these numbers next to its code"
   return 0
 
+/-! ## elab -/
+
+/-- `[Class] [seconds] ...` at the start of a trace line. -/
+def traceHead (line : String) : Option (String × Float) := do
+  let cs := line.toList.dropWhile (· == ' ')
+  guard (cs.head? == some '[')
+  let cls := (cs.drop 1).takeWhile (· != ']')
+  let rest := ((cs.drop 1).drop (cls.length + 1)).dropWhile (· == ' ')
+  guard (rest.head? == some '[')
+  let secs := (rest.drop 1).takeWhile (· != ']')
+  let ip := secs.takeWhile (· != '.')
+  let fp := (secs.dropWhile (· != '.')).drop 1
+  let i ← (String.ofList ip).toNat?
+  let f := (String.ofList fp).toNat?.getD 0
+  return (String.ofList cls, i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat)
+
+/-- What a command's trace says it is: the text after the status mark. -/
+def commandName (data : String) : String :=
+  let first := (data.toList.takeWhile (· != '\n'))
+  let afterMark := match (String.ofList first).splitOn "️ " with
+    | _ :: rest@(_ :: _) => "️ ".intercalate rest
+    | _ => String.ofList first
+  String.ofList (afterMark.toList.take 60)
+
+structure ElabCost where
+  elaboration : Float := 0
+  kernel : Float := 0
+  compile : Float := 0
+  lint : Float := 0
+  name : String := ""
+
+def ElabCost.total (c : ElabCost) : Float := c.elaboration + c.kernel + c.compile + c.lint
+
+def elabCmd (argv : List String) : IO UInt32 := do
+  let rec parse (top : Nat) (files : List String) : List String → Nat × List String
+    | [] => (top, files.reverse)
+    | "--top" :: v :: rest => parse v.toNat! files rest
+    | f :: rest => parse top (f :: files) rest
+  let (top, files) := parse 25 [] argv
+  if files.isEmpty then throw <| IO.userError usage
+  let mut costs : Std.HashMap String ElabCost := {}  -- "File.lean:line"
+  for file in files do
+    let out ← IO.Process.output { cmd := "lake", args := #["env", "lean", "--json", "-Dtrace.profiler=true",
+      "-Dtrace.profiler.threshold=0", file] }
+    for line in out.stdout.splitOn "\n" do
+      let some m := (Json.parse line).toOption | continue
+      let data := str m "data"
+      let some (cls, secs) := traceHead data | continue
+      let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
+      let key := s!"{file}:{ln}"
+      let c := costs.getD key {}
+      let ns := secs * 1e9
+      let c ← if cls == "Elab.command" then
+          pure { c with elaboration := c.elaboration + ns, name := if c.name.isEmpty then commandName data else c.name }
+        else if cls == "Elab.async" then do
+          -- split the async work by its first nested class
+          let inner := (data.splitOn "\n").drop 1 |>.findSome? traceHead
+          match inner with
+          | some ("Kernel", _) => pure { c with kernel := c.kernel + ns }
+          | some ("Compiler", _) => pure { c with compile := c.compile + ns }
+          | some ("Elab.lint", _) => pure { c with lint := c.lint + ns }
+          | _ => pure { c with elaboration := c.elaboration + ns }
+        else pure c
+      costs := costs.insert key c
+  let rows := (costs.toArray.filter (·.2.total > 0)).qsort (fun a b => a.2.total > b.2.total)
+  let total := rows.foldl (· + ·.2.total) 0
+  IO.println s!"\nleanprof elab: {rows.size} commands, {fmtMs total} total compile time"
+  let padTo (t : String) := t.pushn ' ' (10 - t.length)
+  IO.println s!"\n  {padTo "total"} {padTo "elab"} {padTo "kernel"} {padTo "compiler"} {padTo "lint"} where"
+  let col (ns : Float) := padTo (fmtMs ns)
+  for (k, c) in rows.toList.take top do
+    IO.println s!"  {col c.total} {col c.elaboration} {col c.kernel} {col c.compile} {col c.lint} {k}  {c.name.replace "\n" " "}"
+  let scopes := rows.map fun (k, c) => Json.mkObj [("name", Json.str (c.name.replace "\n" " ")), ("pos", Json.str k),
+    ("total_ns", toJson c.total), ("elab_ns", toJson c.elaboration), ("kernel_ns", toJson c.kernel),
+    ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint)]
+  IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
+  IO.FS.writeFile ".lake/leanprof/elab.json"
+    (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true), ("wall_ns", toJson total),
+      ("scopes", Json.arr scopes), ("copies", Json.arr #[])]).compress
+  IO.println "\nwritten to .lake/leanprof/elab.json; `#leanprof` shows it next to the code"
+  return 0
+
 def main (argv : List String) : IO UInt32 := do
   try
     match argv with
     | "run" :: rest => run rest
     | "compare" :: rest => compare rest
     | "sample" :: rest => sample rest
+    | "elab" :: rest => elabCmd rest
     | _ =>
       IO.eprintln usage
       return 2

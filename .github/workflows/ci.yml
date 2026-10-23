@@ -59,11 +59,13 @@ jobs:
       - name: Inlay hints through the language server
         run: |
           LEANPROF_QUIET=1 lake exe leanprof run copybug -- 2000
+          lake exe leanprof elab Examples/CopyBug.lean
           echo '#leanprof' >> Examples/CopyBug.lean
           python3 scripts/lsp-hints.py "$PWD" Examples/CopyBug.lean | tee hints.txt
           git checkout Examples/CopyBug.lean
           grep -q "line 17: ⏱" hints.txt
           grep -q "line 17: ⚠ 1999 copies" hints.txt
+          grep -q "line 17: ⚙ .* to compile" hints.txt
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |

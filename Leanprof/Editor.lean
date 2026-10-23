@@ -7,11 +7,12 @@ public meta import Lean.Data.Json
 /-!
 # `#leanprof`: results next to the code
 
-`#leanprof` (or `#leanprof "path/to/report.json"`) reads a report written by
-a profiled run (`lake exe leanprof run` and `lake exe leanprof sample` write
-`.lake/leanprof/report.json`) and shows inlay hints at the end of each line
-of this file that the report mentions: time per `profile!` scope or
-function, and copies of shared values per declaration. Hover a hint for
+`#leanprof` (or `#leanprof "path/to/report.json"`) reads the reports in
+`.lake/leanprof/`: `report.json` from a profiled run (`lake exe leanprof run`
+or `sample`) and `elab.json` from `lake exe leanprof elab`. It shows inlay
+hints at the end of each line of this file they mention: run time per
+`profile!` scope or function, copies of shared values per declaration, and
+compile time per declaration. Hover a hint for
 details; the infoview at `#leanprof` lists everything for the file.
 
 The report describes the source as it was when the program ran; after edits,
@@ -73,24 +74,15 @@ def hint (pos : String.Pos.Raw) (label tooltip : String) : CommandElabM Unit :=
 
 syntax (name := leanprofCmd) "#leanprof" (ppSpace str)? : command
 
-@[command_elab leanprofCmd] def elabLeanprof : CommandElab := fun stx => do
-  let path := (stx[1].getOptional?.bind (·.isStrLit?)).getD defaultReport
-  unless ← (path : System.FilePath).pathExists do
-    logInfo m!"no leanprof report at {path}: run `lake exe leanprof run EXE` or `lake exe leanprof sample EXE`"
-    return
+/-- Hints and summary lines for one report. -/
+def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Array String) := do
   let j ← match Json.parse (← (IO.FS.readFile path : IO String)) with
     | .ok j => pure j
     | .error e => throwError "leanprof: cannot parse {path}: {e}"
-  -- this file, relative to the project (where the report's positions start)
-  let cwd ← (IO.currentDir : IO System.FilePath)
-  let fileName ← getFileName
-  let mainModule ← getMainModule
-  let file :=
-    if fileName.startsWith (cwd.toString ++ "/") then (fileName.drop (cwd.toString.length + 1)).toString
-    else mainModule.toString.replace "." "/" ++ ".lean"
-  let fm ← getFileMap
   let wall := num j "wall_ns"
-  let sampled := (j.getObjVal? "sampled").toOption == some (.bool true)
+  let flag (k : String) := (j.getObjVal? k).toOption == some (.bool true)
+  let sampled := flag "sampled"
+  let compile := flag "elab"
   let mut lines : Array String := #[]
   -- many entries can share a line (a function and its specializations): keep the largest
   let mut best : Std.HashMap Nat (Float × String × String) := {}
@@ -100,10 +92,14 @@ syntax (name := leanprofCmd) "#leanprof" (ppSpace str)? : command
     let calls := (num s "calls").toUInt64.toNat
     let pct := if wall > 0 then total / wall * 100 else 0
     let label :=
-      if sampled then s!"≈ {fmtNs total} CPU · {fmt1 pct}%"
+      if compile then s!"⚙ {fmtNs total} to compile"
+      else if sampled then s!"≈ {fmtNs total} CPU · {fmt1 pct}%"
       else s!"⏱ {fmtNs total} · {fmt1 pct}% · {calls}×"
     let tip :=
-      if sampled then s!"{str s "name"}: {fmtNs total} CPU inclusive, {fmtNs (num s "self_ns")} self (sampled)"
+      if compile then
+        s!"compile time: elaboration {fmtNs (num s "elab_ns")}, kernel {fmtNs (num s "kernel_ns")}, " ++
+          s!"compiler {fmtNs (num s "compile_ns")}, linters {fmtNs (num s "lint_ns")}"
+      else if sampled then s!"{str s "name"}: {fmtNs total} CPU inclusive, {fmtNs (num s "self_ns")} self (sampled)"
       else s!"{str s "name"}: {calls} calls, total {fmtNs total}, self {fmtNs (num s "self_ns")}, " ++
         s!"mean {fmtNs (num s "mean_ns")}, p50 {fmtNs (num s "p50_ns")}, p99 {fmtNs (num s "p99_ns")}"
     if (best.get? line).all (·.1 < total) then best := best.insert line (total, label, tip)
@@ -122,9 +118,31 @@ syntax (name := leanprofCmd) "#leanprof" (ppSpace str)? : command
       "was shared between threads), so Lean cannot update it in place."
     hint (endOfLine fm line) label tip
     lines := lines.push s!"{file}:{line}  {label}  ({str c "function"})"
-  if lines.isEmpty then
-    logInfo m!"leanprof: the report at {path} mentions nothing in {file}"
+  return lines
+
+@[command_elab leanprofCmd] def elabLeanprof : CommandElab := fun stx => do
+  -- this file, relative to the project (where the reports' positions start)
+  let cwd ← (IO.currentDir : IO System.FilePath)
+  let fileName ← getFileName
+  let mainModule ← getMainModule
+  let file :=
+    if fileName.startsWith (cwd.toString ++ "/") then (fileName.drop (cwd.toString.length + 1)).toString
+    else mainModule.toString.replace "." "/" ++ ".lean"
+  let fm ← getFileMap
+  let paths : Array String := match stx[1].getOptional?.bind (·.isStrLit?) with
+    | some p => #[p]
+    | none => #[defaultReport, ".lake/leanprof/elab.json"]
+  let mut lines : Array String := #[]
+  let mut found := false
+  for (path : String) in paths do
+    unless ← System.FilePath.pathExists path do continue
+    found := true
+    lines := lines ++ (← showReport path file fm)
+  if !found then
+    logInfo m!"no leanprof report: run `lake exe leanprof run EXE`, `lake exe leanprof sample EXE` or `lake exe leanprof elab FILE`"
+  else if lines.isEmpty then
+    logInfo m!"leanprof: the reports mention nothing in {file}"
   else
-    logInfo m!"leanprof ({path}):\n{"\n".intercalate lines.toList}"
+    logInfo m!"leanprof:\n{"\n".intercalate lines.toList}"
 
 end Leanprof.Editor
