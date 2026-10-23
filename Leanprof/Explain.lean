@@ -400,6 +400,9 @@ inductive Holder where
   /-- `v` is a field of a structure that is kept (reused or rebuilt with it). -/
   | inParent (parent : String) (field : String) (keptBy : Option Stmt)
   | inRef (ref : String)
+  /-- `v` (or the structure it is a field of) was read from a hash map by
+  `read`, which still holds it; `putBack` inserts the result into the map. -/
+  | inMap (read : Stmt) (putBack : Option Stmt)
   | constant
   /-- Nothing in this function: the value arrived shared. -/
   | fromCaller (param : String)
@@ -417,10 +420,31 @@ structure Finding where
   incLine : Option Nat := none
   deriving Inhabited
 
+/-- A hash-map lookup (`getD`, `get!`, `get?`, `find?`, `m[k]!`): the copy
+it returns stays in the map. -/
+def isMapGet (sym : String) : Bool :=
+  ["HashMap", "DHashMap", "TreeMap", "RBMap", "AssocList"].any (has sym ·) &&
+  ["_getD", "_get_x21", "_get_x3f", "_find_x3f", "_findD"].any (has sym ·)
+
+/-- The map lookup that `v` was read from: the value it returned, or a field
+of it (the `some` of `get?`, a field of a structure stored in the map). -/
+partial def mapRead? (f : CFun) (v : String) (fuel : Nat := 3) : Option Stmt := do
+  guard (fuel > 0)
+  let d ← f.stmts.find? (·.lhs == v)
+  if isMapGet d.fn && d.args.size ≥ 2 then return d
+  if d.fn == "lean_ctor_get" then mapRead? f (d.args[0]?.getD "") (fuel - 1)
+  else if d.fn == "" && d.rhs.startsWith "v_" then mapRead? f d.rhs (fuel - 1)
+  else none
+
 /-- Analyze one copying operation. -/
 def analyzeOp (f : CFun) (op : Stmt) (opName : String) : Finding := Id.run do
   let v := op.args[0]!
   let origin := originOf f v
+  -- read out of a hash map that still holds it, and (usually) inserted back
+  if let some rd := mapRead? f v then
+    let putBack := f.stmts.find? fun s => s.idx > op.idx && has s.fn "insert" && compatible s op &&
+      s.args[0]?.any (rd.args.contains ·)
+    return { op, opName, var := v, holder := .inMap rd putBack, strength := if putBack.isSome then 3 else 2 }
   let parent? := match origin with
     | .field p _ => some p
     | .elem c _ false => some c
@@ -647,6 +671,10 @@ structure Explained where
   matched : Bool        -- the lines were found by text matching
   strength : Nat
   cline : Nat           -- the update's line in the C file
+  /-- The recognised cause, for machines (`nested-array-element`, `map-value-reinserted`, ...). -/
+  cause : String := ""
+  /-- The fix as Lean code with the program's own names: alternatives, each one or more lines. -/
+  code : Array String := #[]
   deriving Inhabited
 
 def showLines (ls : Array Nat) : String :=
@@ -694,6 +722,236 @@ def modifyRewrite (line : String) : Option String := do
   guard (rest.startsWith ".")
   return s!"{lhs}{c}.modify {idx} (·{dropRightChars rest 1})"
 
+/-! ### Rewriting source lines into fixes -/
+
+/-- Split at top-level spaces, keeping bracketed groups and string literals whole. -/
+def splitTop (s : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur : List Char := []
+  let mut depth : Int := 0
+  let mut inStr := false
+  for c in s.toList do
+    if inStr then
+      cur := c :: cur
+      if c == '"' then inStr := false
+      continue
+    if c == '"' then inStr := true
+    if c == '(' || c == '[' || c == '{' then depth := depth + 1
+    if c == ')' || c == ']' || c == '}' then depth := depth - 1
+    if c == ' ' && depth == 0 then
+      if !cur.isEmpty then out := out.push (String.ofList cur.reverse)
+      cur := []
+    else cur := c :: cur
+  if !cur.isEmpty then out := out.push (String.ofList cur.reverse)
+  return out
+
+def isWordChar (c : Char) : Bool := c.isAlphanum || c == '_' || c == '\'' || c == '?' || c == '!' || c.val > 127
+
+/-- Replace the identifier `w` (not a field `x.w`, not part of a longer name) by `r`. -/
+def replaceWord (s w r : String) : String := Id.run do
+  let wl := w.toList
+  let mut out : List Char := []
+  let mut rest := s.toList
+  let mut prev : Option Char := none
+  while !rest.isEmpty do
+    if !wl.isEmpty && rest.take wl.length == wl && !(prev.any fun p => isWordChar p || p == '.') &&
+       !((rest.drop wl.length).head?.any isWordChar) then
+      out := r.toList.reverse ++ out
+      prev := wl.getLast?
+      rest := rest.drop wl.length
+    else
+      out := rest.head! :: out
+      prev := rest.head?
+      rest := rest.tail
+  return String.ofList out.reverse
+
+def countWord (s w : String) : Nat :=
+  ((replaceWord s w "\u0001").toList.filter (· == '\u0001')).length
+
+/-- A line without its comment, trimmed. -/
+def codeOf (l : String) : String := trim ((l.splitOn "--").head!)
+
+def indentOf (l : String) : String := String.ofList (l.toList.takeWhile (· == ' '))
+
+/-- `e` in parentheses unless it already is bracketed. -/
+def paren (e : String) : String :=
+  if (e.startsWith "(" && e.endsWith ")") || (e.startsWith "{" && e.endsWith "}") then e else s!"({e})"
+
+def unparen (e : String) : String :=
+  if e.startsWith "(" && e.endsWith ")" then dropRightChars (dropChars e 1) 1 else e
+
+/-- `M.getD K D`, `M.get! K`, `M.get? K`, `M[K]!`, `M[K]?`: map, key, getter
+(`getD`, `get!` or `get?`) and default. -/
+def parseMapGet (e : String) : Option (String × String × String × String) := do
+  let ws := splitTop (trim e)
+  let w0 ← ws[0]?
+  for (suf, g) in [(".getD", "getD"), (".findD", "getD"), (".get!", "get!"), (".find!", "get!"),
+      (".get?", "get?"), (".find?", "get?")] do
+    if w0.endsWith suf && w0 != suf then
+      let k ← ws[1]?
+      return (dropRightChars w0 suf.length, k, g, if g == "getD" then " ".intercalate (ws.toList.drop 2) else "")
+  guard (w0.endsWith "]!" || w0.endsWith "]?")
+  let cs := w0.toList
+  let i ← cs.findIdx? (· == '[')
+  let m := String.ofList (cs.take i)
+  guard (!m.isEmpty && m.toList.all isIdentChar)
+  return (m, String.ofList (((cs.drop (i + 1)).dropLast).dropLast), if w0.endsWith "!" then "get!" else "get?", "")
+
+/-- A value read out of a map and inserted back, as the source shows it. -/
+structure MapUse where
+  map : String          -- the map, as written before `.insert` (`groups`, `s.groups`)
+  key : String
+  value : String        -- the variable bound to the value read
+  getter : String       -- `getD`, `get!` or `get?`
+  dflt : String
+  readLine : Nat
+  insertLine : Nat
+  pre : String          -- the insert line before the map (`groups := `)
+  newValue : String     -- what is inserted back
+  deriving Inhabited
+
+/-- Lines reading a map into a variable: `let a := m.getD k d`, `let a := m[k]!`,
+`if let some a := m[k]?`, `match m[k]? with | some a => …`. -/
+def mapReads (decl : Array (Nat × String)) : Array (Nat × String × String × String × String × String) := Id.run do
+  let mut out := #[]
+  for h : j in [0:decl.size] do
+    let (n, l) := decl[j]
+    let t := codeOf l
+    let bind : Option (String × String) :=
+      if t.startsWith "match " && t.endsWith " with" then
+        let e := dropRightChars (dropChars t 6) 5
+        -- the variable of the `some` branch
+        let v := (decl.extract (j + 1) decl.size).findSome? fun (_, l') =>
+          let t' := codeOf l'
+          if t'.startsWith "| some " then (splitTop (dropChars t' 7))[0]? else none
+        v.map (·, e)
+      else
+        let t := if t.startsWith "if " then dropChars t 3 else t
+        if !t.startsWith "let " then none else
+        let t := dropChars t 4
+        let t := if t.startsWith "some " then dropChars t 5 else t
+        match t.splitOn " := " with
+        | lhs :: rest@(_ :: _) =>
+          let e := " := ".intercalate rest
+          let e := (e.splitOn " | ").head!
+          let e := if e.endsWith " then" then dropRightChars e 5 else e
+          ((splitTop lhs)[0]?).map (·, e)
+        | _ => none
+    if let some (v, e) := bind then
+      if let some (m, k, g, d) := parseMapGet e then
+        out := out.push (n, v, m, k, g, d)
+  return out
+
+/-- The first value read out of a map and inserted back into it. -/
+def findMapUse (decl : Array (Nat × String)) : Option MapUse := do
+  let reads := mapReads decl
+  for (rl, v, m, k, g, d) in reads do
+    for (il, l) in decl do
+      if il ≤ rl then continue
+      let t := codeOf l
+      let parts := t.splitOn ".insert "
+      let some before := parts[0]? | continue
+      if parts.length < 2 then continue
+      let after := ".insert ".intercalate (parts.drop 1)
+      let recvRev := before.toList.reverse.takeWhile isIdentChar
+      let recv := String.ofList recvRev.reverse
+      if recv.isEmpty || lastComponent recv != lastComponent m then continue
+      let ws := splitTop after
+      let some key := ws[0]? | continue
+      if key != k then continue
+      let newValue := " ".intercalate (ws.toList.drop 1)
+      if newValue.isEmpty || countWord newValue v == 0 then continue
+      return { map := recv, key, value := v, getter := g, dflt := d, readLine := rl, insertLine := il,
+               pre := dropRightChars before recv.length, newValue }
+  none
+
+/-- The rewrites of a `MapUse` that hand the value over: `alter` (`getD`),
+`modify` (`get!`), and erasing the key before updating (all three). -/
+def mapRewrites (u : MapUse) : Array String :=
+  let erase := s!"{u.pre}({u.map}.erase {u.key}).insert {u.key} {u.newValue}"
+  match u.getter with
+  | "getD" =>
+    let a := u.value ++ "?"
+    let body := if countWord u.newValue u.value == 1 then
+        s!"some {paren (replaceWord u.newValue u.value s!"({a}.getD {u.dflt})")}"
+      else s!"let {u.value} := {a}.getD {u.dflt}; some {paren u.newValue}"
+    #[s!"{u.pre}{u.map}.alter {u.key} fun {a} => {body}", erase]
+  | "get!" => #[s!"{u.pre}{u.map}.modify {u.key} fun {u.value} => {unparen u.newValue}", erase]
+  | _ => #[erase]
+
+/-- `for X in C do` at line `fl`, with `C` updated by the copying operation
+inside the loop: (for line, its text, X, C, update line). -/
+def loopOverUpdated (decl : Array (Nat × String)) (op : String) :
+    Option (Nat × String × String × String × Nat) := do
+  for h : j in [0:decl.size] do
+    let (fl, l) := decl[j]
+    let t := codeOf l
+    unless t.startsWith "for " && t.endsWith " do" do continue
+    let inner := dropRightChars (dropChars t 4) 3
+    let parts := inner.splitOn " in "
+    let some x := parts[0]? | continue
+    let some c := parts[1]? | continue
+    if parts.length != 2 || c.isEmpty || !c.toList.all isIdentChar then continue
+    let ind := (indentOf l).length
+    -- the loop body: the following lines indented more deeply
+    let body := (decl.extract (j + 1) decl.size).toList.takeWhile fun (_, l') =>
+      (codeOf l').isEmpty || (indentOf l').length > ind
+    if let some (ul, _) := body.find? fun (_, l') => (receivers op l').contains (.name c) then
+      return (fl, l, x, c, ul)
+  none
+
+/-- An index name not used in the declaration. -/
+def freshIndex (decl : Array (Nat × String)) : String :=
+  (["i", "j", "k", "idx", "pos"].find? fun n => !decl.any fun (_, l) => (tokens l).contains n).getD "idx"
+
+/-- A global `IO.Ref` or `Std.Mutex` made by `initialize`, used by the
+declaration: (name, type, initialize line, initial value, use line, use text). -/
+def globalUse (src : Array String) (decl : Array (Nat × String)) :
+    Option (String × String × Nat × String × Nat × String) := do
+  for h : i in [0:src.size] do
+    let t := codeOf src[i]
+    let t := if t.startsWith "builtin_initialize " then dropChars t 19
+      else if t.startsWith "initialize " then dropChars t 11 else ""
+    let parts := t.splitOn " : "
+    let some name := parts[0]? | continue
+    if parts.length < 2 || name.isEmpty || !name.toList.all isIdentChar then continue
+    let rest := " : ".intercalate (parts.drop 1)
+    let ty := trim ((rest.splitOn " ← ").head!)
+    unless has ty "Ref" || has ty "Mutex" do continue
+    let initE := trim (" ← ".intercalate ((rest.splitOn " ← ").drop 1))
+    let ws := splitTop initE
+    let init := if ws.size == 2 && (ws[0]!.endsWith "mkRef" || ws[0]!.endsWith ".new") then ws[1]! else "…"
+    let use := decl.find? fun (_, l) => (tokens l).any fun t => t.startsWith (name ++ ".")
+    if let some (ul, ut) := use then
+      return (name, ty, i + 1, init, ul, codeOf ut)
+  none
+
+/-- `(·.op args)` in `line`, as `buf := buf.op args`. -/
+def sectionUpdate (line buf : String) : Option String := do
+  let parts := line.splitOn "(·."
+  guard (parts.length ≥ 2)
+  let after := "(·.".intercalate (parts.drop 1)
+  -- up to the matching parenthesis
+  let mut depth := 1
+  let mut out : List Char := []
+  for c in after.toList do
+    if c == '(' then depth := depth + 1
+    if c == ')' then
+      depth := depth - 1
+      if depth == 0 then break
+    out := c :: out
+  guard (depth == 0)
+  return s!"{buf} := {buf}.{String.ofList out.reverse}"
+
+/-- Code lines of a fix, printed under `fix:`; alternatives separated by `or:`. -/
+def codeBlock (code : Array String) : String := Id.run do
+  let mut out := ""
+  for h : i in [0:code.size] do
+    if i > 0 then out := out ++ "       or:\n"
+    for l in code[i].splitOn "\n" do
+      out := out ++ s!"         {l}\n"
+  return out
+
 /-- Fix suggestion and explanation text for a finding, with source lines
 found in `decl` (pairs of line number and text). -/
 def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
@@ -736,17 +994,33 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
     match best with
     | some (_, ul, sl, n, into) =>
       let held := if into.isEmpty then target else s!"`{into}`"
+      -- `n` only grows by `push` in this declaration: its versions are its prefixes
+      let assigns := decl.filterMap fun (_, l) =>
+        let ts := tokens l
+        (ts.toList.zipIdx.find? fun (t, i) => t == n && ts[i+1]? == some ":=" &&
+          !(i > 0 && (ts[i-1]! == "mut" || ts[i-1]! == "let"))).map fun (_, i) => ts[i+2]?.getD ""
+      let appendOnly := !into.isEmpty && op.endsWith ".push" && !assigns.isEmpty &&
+        assigns.all (· == n ++ ".push")
+      let storeLine := ((decl.find? (·.1 == sl)).map (codeOf ·.2)).getD ""
+      let general := s!"store `{n}` after its last update, store something smaller than `{n}` (an index, " ++
+        "a summary), or, when every version is needed, keep the versions in a persistent structure (`List`, " ++
+        s!"`Lean.PersistentArray`) instead of copying `{n}` at each step."
       return { base with
         why := s!"`{n}` is stored in {held} at line {sl} ({code decl sl}) and is updated afterwards at line {ul} " ++
           s!"({code decl ul}): both refer to the same {kind}, so the {op} copies it.",
-        fix := "Store the value after its last update, store something smaller (an index, a summary), or, " ++
-          "when every intermediate version is needed, keep them in a persistent structure (`List`, " ++
-          "`Lean.PersistentArray`) instead of copying the whole value at each step.",
+        fix := if appendOnly then
+            s!"`{n}` only grows (by `push`), so each version stored in `{into}` is a prefix of the final " ++
+            s!"`{n}`: store its length and rebuild version k as `{n}.extract 0 {into}[k]!` when it is needed. " ++
+            "If whole versions must be kept, keep them in a persistent structure (`List`, " ++
+            "`Lean.PersistentArray`) instead of copying the array at each step."
+          else "Change the order or what is stored: " ++ general,
+        code := if appendOnly then #[replaceWord storeLine n s!"{n}.size"] else #[],
+        cause := "stored-then-updated",
         lines := #[ul, sl] }
     | none =>
       return { base with
         why := s!"`{v}` is stored in {target} before the {op}, which still needs it, so the update copies it.",
-        fix := "Update the value before storing it, or store something smaller.", lines := #[], matched := false }
+        fix := "Update the value before storing it, or store something smaller.", lines := #[], matched := false, cause := "stored-then-updated" }
   | .inArray c i putBack =>
     let cn := display f c
     -- source lines `C[…]!.op …`, with their containers
@@ -763,10 +1037,45 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
     let rewrites := ls.filterMap fun l => (decl.find? (·.1 == l)).bind fun (_, s) => modifyRewrite s
     let fix := if wb then
         "Use `Array.modify`, which takes the element out of the array before updating it, so the update is " ++
-        "in place" ++ (if rewrites.isEmpty then ": `xs := xs.modify i (·.push v)`."
-          else ": " ++ ", ".intercalate (rewrites.toList.map (s!"`{·}`")) ++ ".")
+        "in place" ++ (if rewrites.isEmpty then ": `xs := xs.modify i (·.push v)`." else ":")
       else "Take the element out first (`modify`, or `swap` it with an empty value), update it, then put it back."
-    return { base with why, fix, lines := ls, matched := !ls.isEmpty }
+    let code := if wb then dedupS rewrites else #[]
+    return { base with why, fix, code, lines := ls, matched := !ls.isEmpty, cause := "nested-array-element" }
+  | .inMap rd putBack =>
+    let mapN := display f (rd.args[0]?.getD "")
+    let what := match sourceName fd.var with
+      | some n => if named n then s!"`{n}`" else s!"the {kind}"
+      | none => s!"the {kind}"
+    match findMapUse decl with
+    | some u =>
+      let part := match sourceName fd.var with
+        | some n => if named n && n != u.value then s!" (`{n}` is a field of it)" else ""
+        | none => ""
+      let how := match u.getter with
+        | "getD" => "`alter` takes the value out of its bucket before calling the function, so the update is in " ++
+          "place; erasing the key before updating also drops the map's reference."
+        | "get!" => "`modify` (the key is present, as `get!` assumes) takes the value out of its bucket before " ++
+          "calling the function, so the update is in place; erasing the key before updating also drops the " ++
+          "map's reference."
+        | _ => "erase the key before updating it, so that the map no longer refers to the value and the " ++
+          "update is in place."
+      return { base with
+        why := s!"`{u.value}` is read out of `{u.map}` at line {u.readLine} ({code decl u.readLine}){part}, and the " ++
+          s!"map still holds it while the {op} updates it, so the update copies the {kind} before it is inserted " ++
+          s!"back at line {u.insertLine} ({code decl u.insertLine}).",
+        fix := "Let the map hand over its only reference: " ++ how ++
+          s!" ({if u.getter == "get?" then "Tested" else "Both tested"} on Lean 4.35 with leanprof's copy " ++
+          "counter: no copies.)",
+        code := mapRewrites u, lines := #[u.readLine, u.insertLine], cause := "map-value-reinserted" }
+    | none =>
+      return { base with
+        why := s!"{what} comes out of a hash map (`{mapN}`) that still holds it" ++
+          (if putBack.isSome then ", and the result is inserted back" else "") ++
+          s!", so the {op} copies the {kind}.",
+        fix := "Take the value out of the map before updating it: `m.alter k fun v? => some …` or " ++
+          "`m.modify k fun v => …` hand over the map's reference; or `m.erase k` before updating and insert " ++
+          "the result back.",
+        lines := #[], matched := false, cause := "map-value-reinserted" }
   | .inParent p k kept =>
     let fname := match sourceName fd.var with
       | some n => n
@@ -791,7 +1100,7 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
       else s!"Take `{fname}` out of the structure before updating it: set the field to an empty value, " ++
         "update the value you took out, and store it back. `modify fun s => { s with f := s.f.push v }` is " ++
         "in place only when nothing else holds `s`."
-    return { base with why, fix, lines := ls ++ withLines, matched := !(ls ++ withLines).isEmpty }
+    return { base with why, fix, lines := ls ++ withLines, matched := !(ls ++ withLines).isEmpty, cause := "field-of-kept-structure" }
   | .usedAfter u =>
     let ls := match sourceName fd.var with
       | some n => if named n then opLines (· == .name n) else #[]
@@ -800,17 +1109,17 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
       why := s!"`{v}` is still used after the {op} (C line {u.cline}: `{u.text}`), so the old value must " ++
         "survive and the update copies it.",
       fix := "Do the later read before the update (compute what it needs first), or update a separate value.",
-      lines := ls, matched := !ls.isEmpty }
+      lines := ls, matched := !ls.isEmpty, cause := "used-after-update" }
   | .inRef r =>
     return { base with
       why := s!"the {kind} was read from an `IO.Ref` (`{display f r}`), which still holds it, so the {op} copies it.",
       fix := "Use `ref.modify (·.push x)` or `ref.modifyGet`: they take the value out of the reference before " ++
         "updating it.",
-      lines := opLines fun _ => true }
+      lines := opLines fun _ => true, cause := "io-ref-read" }
   | .constant =>
     return { base with
       why := s!"the {kind} is a constant (a literal or closed term); the first {op} copies it.",
-      fix := "Usually harmless: it happens once per constant.", lines := opLines fun _ => true }
+      fix := "Usually harmless: it happens once per constant.", lines := opLines fun _ => true, cause := "constant" }
   | .fromCaller p =>
     let pn := display f p
     if has fnText "mapMUnsafe" || has fnText "mapMonoM" || has fnText "Array.mapM" then
@@ -824,8 +1133,20 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
           "write copies the array: one copy per `map` call, not per element.",
         fix := "Usually fine: one copy costs about as much as building the new array. To map in place, take the " ++
           "array out of its structure first (`let items := s.items; let s := { s with items := #[] }`).",
-        lines := ls, matched := !ls.isEmpty }
+        lines := ls, matched := !ls.isEmpty, cause := "map-over-shared-array" }
     let loop := has fnText "forIn" || has fnText "foldl" || has fnText "fold" || has fnText ".loop"
+    if loop then
+      if let some (fl, _, x, c, ul) := loopOverUpdated decl op then
+        let i := freshIndex decl
+        return { base with
+          why := s!"`for {x} in {c}` (line {fl}) holds the array the loop started with until the loop ends, so " ++
+            s!"the first {op} of `{c}` inside it (line {ul}, {code decl ul}) finds `{c}` shared and copies all of " ++
+            "it, once each time the loop runs.",
+          fix := s!"Loop over the indices instead: the loop then holds a range, not `{c}`, and every update is in " ++
+            s!"place. `{c}[{i}]!` reads the current array, which gives the same values when the body only " ++
+            "changes elements it has already visited, or appends.",
+          code := #[s!"for {i} in [0:{c}.size] do\n  let {x} := {c}[{i}]!"],
+          lines := #[fl, ul], cause := "loop-over-updated-array" }
     let ls := opLines fun r => match r with
       | .name n => n == pn || lastComponent n == pn
       | _ => false
@@ -839,10 +1160,10 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
       why
       fix := "Look for the caller (or the code before the loop) that keeps another reference to the value it " ++
         "passes. `leanprof explain --why EXE` records where the second reference was taken.",
-      lines := ls, matched := !ls.isEmpty }
+      lines := ls, matched := !ls.isEmpty, cause := "shared-on-entry" }
   | .unknown =>
     let why := s!"the IR shows no second reference to `{v}` in this function."
-    return { base with why, lines := #[] }
+    return { base with why, lines := #[], cause := "unknown" }
 
 /-! ## Dynamic records (`LEANPROF_WHY=1`) -/
 
@@ -916,6 +1237,8 @@ structure Opts where
   out : String := ".lake/leanprof/explain.json"
   top : Nat := 10
   all : Bool := false
+  /-- Print the findings as JSON on stdout instead of text. -/
+  json : Bool := false
   run : Option String := none
   args : Array String := #[]
 
@@ -925,6 +1248,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--top" :: n :: rest => parseOpts { o with top := n.toNat! } rest
   | "--out" :: f :: rest => parseOpts { o with out := f } rest
   | "--all" :: rest => parseOpts { o with all := true } rest
+  | "--json" :: rest => parseOpts { o with json := true } rest
   | "--why" :: exe :: rest => parseOpts { o with run := some exe } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: _ => .error s!"unknown argument {a}"
@@ -990,17 +1314,62 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
   let src ← if !file.isEmpty && (← (file : FilePath).pathExists) then
       pure ((← IO.FS.readFile file).splitOn "\n").toArray else pure #[]
   let decl := if line > 0 && line ≤ src.size then declLines src (line - 1) else #[]
+  let site := fun (cause why fix : String) (code : Array String) (lines : Array Nat) (conf : String) (strength : Nat) =>
+    Json.mkObj [("symbol", sym), ("function", jstr c "function"), ("where", wherePos), ("kind", kind),
+      ("cause", cause), ("why", why), ("fix", fix), ("fix_code", Json.arr (code.map toJson)),
+      ("file", file), ("lines", Json.arr ((lines.qsort (· < ·)).map toJson)), ("confidence", conf), ("strength", (strength : Json)),
+      ("copies", (copies.toUInt64.toNat : Json)), ("shared", (shared.toUInt64.toNat : Json)),
+      ("multi_threaded", (mt.toUInt64.toNat : Json)), ("bytes", (jnum c "bytes").toUInt64.toNat),
+      ("copy_ns", (jnum c "copy_ns").toUInt64.toNat),
+      -- what fixing the site saves at most: the measured time spent copying (plus the copies' allocation)
+      ("estimated_cost_ns", (jnum c "copy_ns").toUInt64.toNat)]
+  let mut mtGlobal := false
   if mt > 0 then
-    out := out ++ wrap ("  why (multi-threaded): the value was reachable from more than one thread (a `Task` " ++
-      "result or argument, a global `IO.Ref`/`Mutex`, or an `initialize` value). Lean marks such values and " ++
-      "never updates them in place, even with a single reference. fix: build the value in the thread that " ++
-      "updates it and publish it once, keep per-thread state, or use a structure meant for sharing " ++
-      "(`Lean.PersistentArray`, `Std.HashMap` rebuilt per thread).") "    " ++ "\n"
+    match globalUse src decl with
+    | some (g, ty, il, init, ul, ut) =>
+      mtGlobal := true
+      let mutex := has ty "Mutex"
+      let why := s!"`{g}` is a global `{ty}` made by `initialize` (line {il}): Lean marks what it holds as " ++
+        "multi-threaded, because any thread can reach it, and never updates a multi-threaded value in place, " ++
+        s!"even when `{g}` holds the only reference. So every update through `{g}` (line {ul}, `{ut}`) copies the " ++
+        s!"whole {kind}; `modify`, `take` or `atomically` do not change that."
+      let fix := if mutex then
+          s!"Collect the updates in a local `let mut` that only this thread sees (updated in place), and merge " ++
+          s!"them into `{g}` once, instead of once per update; with several threads, give each its own buffer " ++
+          "and merge at the end. (Tested on Lean 4.35 with leanprof's copy counter: no copies per update.)"
+        else
+          s!"Update a value that only this thread can see, and publish it once: a local `IO.mkRef` (or a " ++
+          s!"`let mut`) updated in place, then `{g}.set` when it is complete. If other threads must see every " ++
+          "update, give each thread its own buffer and merge them at the end. (Tested on Lean 4.35 with " ++
+          "leanprof's copy counter: no copies.)"
+      let upd := if mutex then (sectionUpdate ut "buf").getD "buf := …  -- the update, on `buf`"
+        else replaceWord ut g "buf"
+      let code := if mutex then
+          s!"let mut buf := {init}   -- before the loop: private to this thread\n{upd}\n" ++
+          s!"{g}.atomically (modify (· ++ buf))   -- after the loop: publish once"
+        else
+          s!"let buf ← IO.mkRef {init}   -- before the loop: private to this thread\n{upd}\n" ++
+          s!"{g}.set (← buf.get)   -- after the loop: publish once"
+      out := out ++ wrap s!"  why (multi-threaded): {why}" "       " ++ "\n"
+      out := out ++ wrap s!"  fix: {fix}" "       " ++ "\n" ++ codeBlock #[code]
+      out := out ++ s!"  where: {file} {showLines (dedup #[il, ul])}\n"
+      entries := entries.push (site "multi-threaded-global" why fix #[code] (dedup #[il, ul])
+        "high: the copies are counted as multi-threaded; global matched by text" 3)
+    | none =>
+      let why := "the value was reachable from more than one thread (a `Task` result or argument, a global " ++
+        "`IO.Ref`/`Mutex`, or an `initialize` value). Lean marks such values and never updates them in place, " ++
+        "even with a single reference."
+      let fix := "build the value in the thread that updates it and publish it once, keep per-thread state, or " ++
+        "use a structure meant for sharing (`Lean.PersistentArray`, `Std.HashMap` rebuilt per thread)."
+      out := out ++ wrap s!"  why (multi-threaded): {why} fix: {fix}" "    " ++ "\n"
+      entries := entries.push (site "multi-threaded" why fix #[] #[] "medium: the copies are counted as multi-threaded" 2)
   -- static analysis of the copying function
   let mut staticIncs : Array (String × Nat) := #[]
-  let fn? ← if sym.isEmpty then pure none else findFun cache sym file
+  -- every copy was of a multi-threaded global, explained above: the IR has nothing to add
+  let fn? ← if sym.isEmpty || (mtGlobal && shared == 0) then pure none else findFun cache sym file
   match fn? with
   | none =>
+    if mtGlobal && shared == 0 then pure () else
     out := out ++ s!"  no emitted C found for {sym} (precompiled library code is not available)\n"
   | some f =>
     let mut findings := analyzeFun f kind
@@ -1026,14 +1395,12 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
       seen := seen.push ex.why
       let lines := dedup ex.lines
       out := out ++ wrap s!"  why: {ex.why}" "       " ++ "\n"
-      unless ex.fix.isEmpty do out := out ++ wrap s!"  fix: {ex.fix}" "       " ++ "\n"
+      unless ex.fix.isEmpty do out := out ++ wrap s!"  fix: {ex.fix}" "       " ++ "\n" ++ codeBlock ex.code
       unless lines.isEmpty do out := out ++ s!"  where: {file} {showLines (lines.qsort (· < ·))}\n"
       out := out ++ s!"  evidence: {rel}:{ex.cline} `{fd.op.text}`" ++
         (match fd.incLine with | some l => s!", second reference at {rel}:{l}" | none => "") ++ "\n"
       out := out ++ s!"  confidence: {confidence { ex with lines }}\n"
-      entries := entries.push (Json.mkObj [("symbol", sym), ("where", wherePos), ("why", ex.why), ("fix", ex.fix),
-        ("lines", Json.arr (lines.map toJson)), ("confidence", confidence { ex with lines }),
-        ("strength", (ex.strength : Json))])
+      entries := entries.push (site ex.cause ex.why ex.fix ex.code lines (confidence { ex with lines }) ex.strength)
     if hidden > 0 then
       out := out ++ s!"  ({hidden} other update(s) in this function with weaker evidence not shown)\n"
   if persistent > 0 && shared + mt == 0 then
@@ -1072,17 +1439,23 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
   let sites := (jarr j "copies").filter fun c =>
     o.all || jnum c "shared" + jnum c "multi_threaded" > 0
   if sites.isEmpty then
-    IO.println "leanprof explain: the report has no copies of shared values"
+    if o.json then IO.println (Json.mkObj [("report", o.report), ("sites", 0), ("findings", Json.arr #[])]).pretty
+    else IO.println "leanprof explain: the report has no copies of shared values"
     return 0
   let cache ← IO.mkRef ({} : CCache)
   let mut entries : Array Json := #[]
-  IO.println s!"leanprof explain: why {min o.top sites.size} of {sites.size} copy sites copied (from {o.report})\n"
+  unless o.json do
+    IO.println s!"leanprof explain: why {min o.top sites.size} of {sites.size} copy sites copied (from {o.report})\n"
+  let mut rank : Nat := 0
   for c in sites.toList.take o.top do
+    rank := rank + 1
     let (text, js) ← explainSite cache c shares
-    IO.println text
-    if let .arr a := js then entries := entries ++ a
+    unless o.json do IO.println text
+    if let .arr a := js then entries := entries ++ a.map (·.setObjVal! "rank" (rank : Json))
   IO.FS.createDirAll ((o.out : FilePath).parent.getD ".")
   IO.FS.writeFile o.out ((Json.arr entries).compress ++ "\n")
+  if o.json then
+    IO.println (Json.mkObj [("report", o.report), ("sites", sites.size), ("findings", Json.arr entries)]).pretty
   return 0
 
 end Leanprof.Explain

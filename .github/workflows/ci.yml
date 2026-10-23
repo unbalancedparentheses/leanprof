@@ -129,6 +129,10 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof explain --why copybug -- 2000 | tee why.txt
           grep -q "1999×" why.txt
           grep -q "the increment the IR analysis above points to" why.txt
+          # every recognised cause, end to end, as agents read it (Examples/ExplainPatterns.lean)
+          LEANPROF_QUIET=1 lake exe leanprof run explainpatterns -- 1000
+          .lake/build/bin/leanprof explain --json --top 20 > patterns.json
+          python3 -c "import json,sys; d=json.load(open('patterns.json')); c={f['cause'] for f in d['findings'] if f['fix_code']}; need={'nested-array-element','map-value-reinserted','stored-then-updated','multi-threaded-global','loop-over-updated-array'}; print(sorted(c)); sys.exit(0 if need <= c else 1)"
       - name: Automatic mode and dependency-wide copy detection
         run: |
           find .lake -name '*.c.o*' -delete

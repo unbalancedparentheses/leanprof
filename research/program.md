@@ -42,6 +42,15 @@ Repeat until the time budget is spent:
    - `.lake/leanprof/report.json` (from `measure`, or
      `leanprof run --json ...`) lists copies of shared values per function;
      each one copies a whole `Array`, `ByteArray` or `String`.
+   - `leanprof explain --json` reads that report and prints the copy sites
+     as ranked findings: `cause` (`nested-array-element`,
+     `map-value-reinserted`, `stored-then-updated`, `multi-threaded-global`,
+     `loop-over-updated-array`, or a general one), `file` and `lines`, `why`,
+     `fix`, and `fix_code`: the rewrite as Lean code with the program's own
+     names (alternatives; apply one), plus `copies` and `estimated_cost_ns`
+     (time spent copying at that site). A finding with `fix_code` is the
+     cheapest experiment to try first; the fixes for the recognised causes
+     are tested to remove the copies.
    - `leanprof sample EXE -- ARGS` shows CPU time per Lean declaration and
      what the runtime spent its time on (copying, freeing, allocation, ...).
    - `leanprof elab --heartbeats FILES` shows compile cost per line and

@@ -78,9 +78,11 @@ buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
   why: `acc` is stored in `history` at line 21 (`history := history.push acc`) and is updated
        afterwards at line 22 (`acc := acc.push i`): both refer to the same Array, so the Array.push
        copies it.
-  fix: Store the value after its last update, store something smaller (an index, a summary), or,
-       when every intermediate version is needed, keep them in a persistent structure (`List`,
-       `Lean.PersistentArray`) instead of copying the whole value at each step.
+  fix: `acc` only grows (by `push`), so each version stored in `history` is a prefix of the final
+       `acc`: store its length and rebuild version k as `acc.extract 0 history[k]!` when it is
+       needed. If whole versions must be kept, keep them in a persistent structure (`List`,
+       `Lean.PersistentArray`) instead of copying the array at each step.
+         history := history.push acc.size
 ```
 
 ## What it finds

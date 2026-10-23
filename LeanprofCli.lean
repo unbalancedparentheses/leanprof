@@ -70,11 +70,13 @@ def commands : List (String × String × String) := [
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
     "with pass/fail per exact metric. Exit 1 if a metric named by --fail-on (default: copies) regressed."),
-  ("explain", "[--report FILE] [--out FILE] [--top N] [--all] [--why EXE [-- ARGS...]]",
+  ("explain", "[--report FILE] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]]",
     "For each copy of a shared value in the last report, say where the second reference comes from,\n" ++
-    "read from the compiler's IR (.lake/build/ir/*.c), with source lines and a fix when the pattern is\n" ++
-    "known. --why EXE first reruns EXE recording where each copied value became shared. Writes\n" ++
-    ".lake/leanprof/explain.json (or --out FILE) for #leanprof hovers."),
+    "read from the compiler's IR (.lake/build/ir/*.c), with source lines and, when the cause is\n" ++
+    "recognised, the fix as Lean code with the program's own names. --json prints the ranked findings\n" ++
+    "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
+    "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
+    "#leanprof hovers."),
   ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
     "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++

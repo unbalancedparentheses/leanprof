@@ -97,9 +97,11 @@ buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
   why: `acc` is stored in `history` at line 21 (`history := history.push acc`) and is updated
        afterwards at line 22 (`acc := acc.push i`): both refer to the same Array, so the Array.push
        copies it.
-  fix: Store the value after its last update, store something smaller (an index, a summary), or,
-       when every intermediate version is needed, keep them in a persistent structure (`List`,
-       `Lean.PersistentArray`) instead of copying the whole value at each step.
+  fix: `acc` only grows (by `push`), so each version stored in `history` is a prefix of the final
+       `acc`: store its length and rebuild version k as `acc.extract 0 history[k]!` when it is
+       needed. If whole versions must be kept, keep them in a persistent structure (`List`,
+       `Lean.PersistentArray`) instead of copying the array at each step.
+         history := history.push acc.size
   where: Examples/CopyBug.lean lines 21, 22
   evidence: .lake/build/ir/Examples/CopyBug.c:186 `v___x_36_ = lean_array_push(v_fst_30_, v_i_26_);`, second reference at .lake/build/ir/Examples/CopyBug.c:183
   confidence: high: the IR takes a second reference on every path to the update; source lines matched by text, not positions
@@ -109,18 +111,50 @@ It reads the C that Lake keeps in `.lake/build/ir/`: that is Lean's IR after
 reference counting, with the IR's variable names. In the copying function it
 finds each update that can copy (`Array.push`, `set`, `pop`, `swap`,
 `String.push`, `++`, `ByteArray`/`FloatArray` updates), where the updated value
-comes from, and the `lean_inc` that gives it a second owner. The patterns it
-recognizes, with the fix it suggests:
+comes from, and the `lean_inc` that gives it a second owner. When it
+recognises the cause, it prints the fix as Lean code with your names, under
+`fix:` (alternatives separated by `or:`). The causes it recognises are the
+ones found in real projects; each has a copying and a fixed version in
+[`Examples/ExplainPatterns.lean`](../../Examples/ExplainPatterns.lean), and
+the tests ([`Tests/ExplainFixes.lean`](../../Tests/ExplainFixes.lean)) check
+that `explain` names the cause, that the code it prints is the fixed version
+line for line, and that the fixed version makes no copies (Lean 4.35, 400
+updates over 10 keys or slots):
 
-| what the IR shows | example | suggested fix |
-|---|---|---|
-| the value is stored elsewhere (pushed into another array, put in a structure, passed on) and then updated | `history := history.push acc; acc := acc.push i` | update before storing, store less, or keep versions in a `List`/`PersistentArray` |
-| an element is read out of an array that still holds it, updated, and written back | `xs := xs.set! i (xs[i]!.push v)` | `xs := xs.modify i (·.push v)` (printed with your names) |
-| a field is updated while its structure keeps it | `s.name ++ suffix` with `s` kept | take the field out first; for a short string append this copy is just the cost of the result |
-| the value is still used after the update | `let b := a.push x; f a b` | do the later read first |
-| the value comes from an `IO.Ref` that still holds it | `let a ← r.get; r.set (a.push x)` | `r.modify (·.push x)` |
-| nothing in the function takes a second reference | `Array.map` over an array a structure still holds; a loop whose initial state is shared | look at the caller; often one copy per call, which is fine |
-| `multi-threaded` | a value reachable from a `Task`, a global `IO.Ref` or `Mutex` | build it in the thread that updates it, per-thread state |
+| cause (`--json`) | what the IR shows | example | printed fix | copies before → after |
+|---|---|---|---|---|
+| `nested-array-element` | an element read out of an array that still holds it, updated, written back (lean-compiler-backend's `CFG.build`) | `buckets := buckets.set! i (buckets[i]!.push v)` | `buckets := buckets.modify i (·.push v)` | 390 → 0 |
+| `map-value-reinserted` | a value (or a field of one) returned by a hash-map lookup, updated while the map holds it, inserted back (LeanProfiler's `buildRows`, doc-gen4's `process`) | `let members := groups.getD key #[]` then `groups := groups.insert key (members.push v)` | `groups := groups.alter key fun members? => some ((members?.getD #[]).push v)`, or `groups := (groups.erase key).insert key (members.push v)` | 390 → 0 (both) |
+| | | `let module := res[key]!` then `res := res.insert key { module with members := module.members.push v }` | `res := res.modify key fun module => { module with members := … }`, or erase first | 390 → 0 (both) |
+| | | `match groups[key]? with \| some members => groups := groups.insert key (members.push v)` | erase first: `groups := (groups.erase key).insert key (members.push v)` | 390 → 0 |
+| `stored-then-updated` | the value is stored elsewhere (pushed into another array, put in a structure, passed on) and then updated | `history := history.push acc; acc := acc.push i` | when `acc` only grows: `history := history.push acc.size` (version k is `acc.extract 0 history[k]!`); otherwise: update before storing, store less, or keep versions in a `List`/`PersistentArray` | 399 → 0 |
+| `multi-threaded-global` | `multi-threaded` copies, and the function uses a global made by `initialize` (LeanProfiler's capture state) | `events.modify (·.push v)` with `initialize events : IO.Ref (Array Nat)` | `let buf ← IO.mkRef #[]`, `buf.modify (·.push v)`, then `events.set (← buf.get)` once | 399 → 0 |
+| | | `state.atomically (modify (·.push v))` with `initialize state : Std.Mutex (Array Nat)` | `let mut buf := #[]`, `buf := buf.push v`, then `state.atomically (modify (· ++ buf))` once | 399 → 0 per update |
+| `loop-over-updated-array` | the loop's state arrives shared, and the loop is `for x in xs` over the array it updates | `for x in xs do xs := xs.set! j (x + 1)` | `for i in [0:xs.size] do` with `let x := xs[i]!` | 10 → 0 (one full copy per run of the loop) |
+
+Why the global case cannot be fixed with `modify`: a value created by
+`initialize` is marked persistent, and what is later stored in a persistent
+`IO.Ref` (a `Std.Mutex` keeps its state in one) is marked multi-threaded, as
+any thread can reach it. `lean_is_exclusive` is false for multi-threaded
+objects, so every update copies, even with a single reference, and `modify`,
+`take` or `atomically` change nothing (the copy counter shows 999 multi-threaded copies
+for 1,000 `atomically (modify (·.push v))`). The only fix is to update a
+value no other thread can reach and publish it once; with several threads,
+one buffer per thread merged at the end.
+
+`alter` and `modify` on `Std.HashMap` hand the value over: they set the
+bucket to empty before calling your function, so the value has one owner.
+`m.getD`/`m[k]!`/`m[k]?` return a second reference to a value the map keeps.
+
+The other readings keep general advice:
+
+| cause (`--json`) | what the IR shows | example | suggested fix |
+|---|---|---|---|
+| `field-of-kept-structure` | a field is updated while its structure keeps it | `s.name ++ suffix` with `s` kept | take the field out first; for a short string append this copy is just the cost of the result |
+| `used-after-update` | the value is still used after the update | `let b := a.push x; f a b` | do the later read first |
+| `io-ref-read` | the value comes from an `IO.Ref` that still holds it | `let a ← r.get; r.set (a.push x)` | `r.modify (·.push x)` |
+| `shared-on-entry`, `map-over-shared-array` | nothing in the function takes a second reference | `Array.map` over an array a structure still holds; a loop whose initial state is shared | look at the caller; often one copy per call, which is fine |
+| `multi-threaded` | a value reachable from a `Task`, or a global not found in the source | | build it in the thread that updates it, per-thread state |
 
 Each explanation states its confidence: *high* when the IR takes the second
 reference on every path to the update, *medium* on some paths, *low* when the
@@ -156,7 +190,36 @@ so each line is "the last recorded increment". The records go to
 `.lake/leanprof/why.json` (`LEANPROF_WHY_JSON`).
 
 `leanprof explain` also writes `.lake/leanprof/explain.json`; `#leanprof` adds
-the explanation to the copy hint's hover.
+the explanation and the fix code to the copy hint's hover.
+
+### For agents: `leanprof explain --json`
+
+`--json` prints the findings on stdout instead of text, in the order the
+sites are explained (`rank`, from 1), one finding per explanation of a site:
+
+```json
+{"report": ".lake/leanprof/report.json", "sites": 8,
+ "findings": [
+  {"rank": 7, "function": "groupBy (in Std.Legacy.Range.forIn'.loop)", "symbol": "lp_…",
+   "where": "Examples/ExplainPatterns.lean:47", "kind": "Array",
+   "cause": "map-value-reinserted",
+   "file": "Examples/ExplainPatterns.lean", "lines": [51, 52],
+   "why": "`members` is read out of `groups` at line 51 …",
+   "fix": "Let the map hand over its only reference: …",
+   "fix_code": ["groups := groups.alter key fun members? => some ((members?.getD #[]).push v)",
+                "groups := (groups.erase key).insert key (members.push v)"],
+   "confidence": "high: …", "strength": 3,
+   "copies": 1000, "shared": 990, "multi_threaded": 0, "bytes": 396000,
+   "copy_ns": 25750, "estimated_cost_ns": 25750}]}
+```
+
+`fix_code` holds alternatives (apply one); each may span several lines
+(`\n`), and replaces the line(s) given in `lines`, except for the global case,
+whose first and last lines go before and after the loop. It is empty when the
+cause is not recognised. `estimated_cost_ns` is the measured time spent
+copying at the site, what the fix saves at most besides the copies'
+allocation. The autoresearch loop ([research/program.md](../../research/program.md))
+reads this to pick its next experiment.
 
 ## Allocations
 
