@@ -602,7 +602,7 @@ static void lpf_lv_collect(int final) {
         rw->allocs = rw->bytes = rw->ticks = rw->persistent = 0;
         if (rw->hist) memset(rw->hist, 0, LP_BUCKETS * sizeof(uint32_t));
     }
-    double inner = (double)lpf_inner_fp / 1024.0, pair = (double)lpf_pair_fp / 1024.0;
+    double pair = lpf_unit_ticks(); /* leanprof's own cost, removed as the exit report does */
     pthread_mutex_lock(&lpf_lock);
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next) {
         for (size_t i = 0; i < LP_TABLE; i++) {
@@ -613,6 +613,7 @@ static void lpf_lv_collect(int final) {
             lpf_lv *rw = &lpf_lv_rows[row];
             uint64_t calls = LP_LD(s->calls);
             if (calls == 0) continue;
+            double inner = lpf_inner_ticks(s);
             rw->calls += calls;
             if (rw->cls == LV_TASK) {
                 rw->total += lpf_clamp((double)LP_LD(s->sum) - (double)calls * inner - (double)LP_LD(s->desc_sum) * pair);
@@ -623,7 +624,8 @@ static void lpf_lv_collect(int final) {
             }
             rw->total += lpf_clamp((double)LP_LD(s->total) - (double)LP_LD(s->outer) * inner -
                                    (double)LP_LD(s->desc_total) * pair);
-            rw->self += lpf_clamp((double)LP_LD(s->self) - (double)calls * inner - (double)LP_LD(s->kids) * (pair - inner));
+            rw->self += lpf_clamp((double)LP_LD(s->self) - (double)(calls + LP_LD(s->fwd)) * inner -
+                                  (double)LP_LD(s->kids) * pair);
             uint64_t mx = LP_LD(s->max);
             if (mx > rw->max) rw->max = mx;
             rw->allocs += LP_LD(s->allocs_total);
@@ -694,7 +696,7 @@ static void lpf_live_write(int final) {
             "{\"leanprof_live\":1,\"pid\":%d,\"seq\":%u,\"exited\":%s,\"interval_ms\":%llu,\"ts_ns\":%.0f,"
             "\"overhead_ns\":%.1f,\"threads\":%u,",
             (int)getpid(), ++lpf_lv_seq, final ? "true" : "false", (unsigned long long)lpf_live_ms,
-            (double)(now - lpf_start) * tick, (double)lpf_pair_fp / 1024.0 * tick, nthreads);
+            (double)(now - lpf_start) * tick, lpf_unit_ticks() * tick, nthreads);
     fprintf(f, "\"memory\":{\"rss\":%llu,\"commit\":%llu,\"peak_rss\":%llu,\"peak_commit\":%llu},",
             (unsigned long long)rss, (unsigned long long)commit, (unsigned long long)pr, (unsigned long long)pc);
     fprintf(f, "\"cpu\":{\"user_ns\":%.0f,\"sys_ns\":%.0f},",
@@ -796,11 +798,13 @@ static void lpf_live_write(int final) {
     int first = 1;
     for (lpf_thread *t = __atomic_load_n(&lpf_threads, __ATOMIC_ACQUIRE); t != NULL && !final; t = t->next) {
         uint32_t d = LP_LD(t->depth);
-        if (d > LP_DEPTH) d = LP_DEPTH;
+        if (d > LP_DEPTH) d = LP_DEPTH; /* every stack buffer holds at least LP_DEPTH frames */
+        /* one load: the owner may grow its stack meanwhile (old buffers stay valid) */
+        lpf_frame *stack = __atomic_load_n(&t->stack, __ATOMIC_ACQUIRE);
         int any = 0;
         for (uint32_t k = 0; k < d && k < 64; k++) {
-            lpf_scope *s = LP_LD(t->stack[k].scope);
-            uint64_t start = LP_LD(t->stack[k].start);
+            lpf_scope *s = LP_LD(stack[k].scope);
+            uint64_t start = LP_LD(stack[k].start);
             size_t slot = s ? lpf_rec_find(s) : SIZE_MAX;
             if (slot == SIZE_MAX || lpf_recs[slot].row < 0) continue;
             if (!any) fprintf(f, "%s{\"thread\":%u,\"frames\":[", first ? "" : ",", t->id);
