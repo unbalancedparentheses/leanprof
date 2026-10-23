@@ -1,5 +1,6 @@
 import BenchScope
 import BenchKernels
+import Std.Data.HashMap
 
 /-!
 Workloads with known ground truth, for `bench/run.py`.
@@ -149,6 +150,286 @@ def runTasks (name : String) (t n : Nat) (work : Nat → UInt64 → UInt64) : IO
     | .error e => throw e
   return (acc, cpu)
 
+/-! ## Real programs
+
+Three small programs of the kind people write, not loops built to be
+measured. Their phases run one after another; the ground truth for each
+phase's time comes from separate runs of the plain build that time only
+that phase (`wl WORKLOAD SCALE PHASE`: what the phase needs is built before
+the clock starts, and the other phases do not run), so no profiler and no
+other phase is in the process when it is measured. Call counts are derived
+from the input (the generator counts what it writes), not from the code
+that is measured. -/
+
+/-! ### interp: lexer, parser and interpreter for a tiny language
+
+`v0 = 7; v1 = (v0 * 3) + 5; ...`: each statement defines the next variable
+from literals and earlier variables, with `+`, `-`, `*` and parentheses. -/
+
+inductive Tok where
+  | num (n : UInt64)
+  | ident (i : Nat)
+  | plus | minus | star | lp | rp | eq | semi
+  | eof
+  deriving Inhabited
+
+inductive Expr where
+  | lit (v : UInt64)
+  | var (i : Nat)
+  | bin (op : UInt8) (l r : Expr)
+  deriving Inhabited
+
+/-- What the generator wrote: tokens, atoms (literals and variable
+references), binary operators and parenthesized groups. -/
+structure GenCounts where
+  tokens : Nat := 0
+  atoms : Nat := 0
+  bins : Nat := 0
+  groups : Nat := 0
+
+/-- A deterministic pseudo-random step (64-bit LCG). -/
+@[inline] def lcg (x : UInt64) : UInt64 := x * 6364136223846793005 + 1442695040888963407
+
+/-- An expression over `v0 ..< v(i)` of depth at most `d`, as text: binary
+operations below the top are parenthesized, so the parse tree is the one
+generated. -/
+partial def genExpr (i d : Nat) (seed : UInt64) (top : Bool) (out : String) (c : GenCounts) :
+    String × UInt64 × GenCounts :=
+  let s := lcg seed
+  if d == 0 || (s >>> 40) % 3 == 0 then
+    let s' := lcg s
+    let c := { c with tokens := c.tokens + 1, atoms := c.atoms + 1 }
+    if i > 0 && (s' >>> 33) % 2 == 0 then
+      (out ++ "v" ++ toString ((s' >>> 20).toNat % i), s', c)
+    else
+      (out ++ toString ((s' >>> 24) % 1000), s', c)
+  else
+    let op := ["+", "-", "*"][((s >>> 35) % 3).toNat]!
+    let c := { c with tokens := c.tokens + 1, bins := c.bins + 1 }
+    let (out, c) := if top then (out, c) else
+      (out ++ "(", { c with tokens := c.tokens + 2, groups := c.groups + 1 })
+    let (out, s, c) := genExpr i (d - 1) s false out c
+    let (out, s, c) := genExpr i (d - 1) s false (out ++ " " ++ op ++ " ") c
+    ((if top then out else out ++ ")"), s, c)
+
+/-- `n` statements and what they contain. -/
+def genProgram (n : Nat) : String × GenCounts := Id.run do
+  let mut out := ""
+  let mut s : UInt64 := 12345
+  let mut c : GenCounts := {}
+  for i in [0:n] do
+    out := out ++ "v" ++ toString i ++ " = "
+    let (o, s', c') := genExpr i 5 s true out { c with tokens := c.tokens + 3 }  -- `vi`, `=`, `;`
+    out := o ++ ";\n"
+    s := s'
+    c := c'
+  return (out, c)
+
+@[inline] def isDigit (b : UInt8) : Bool := b ≥ 48 && b ≤ 57
+
+/-- The token at `i` (after spaces) and the index after it. -/
+@[noinline] def lexToken (b : ByteArray) (i : Nat) : Tok × Nat := scope! "lexToken" (Id.run do
+  let mut i := i
+  while i < b.size && (b.get! i == 32 || b.get! i == 10) do
+    i := i + 1
+  if i ≥ b.size then return (.eof, i)
+  let ch := b.get! i
+  if isDigit ch then
+    let mut v : UInt64 := 0
+    while i < b.size && isDigit (b.get! i) do
+      v := v * 10 + (b.get! i - 48).toUInt64
+      i := i + 1
+    return (.num v, i)
+  if ch == 118 then  -- `v`
+    i := i + 1
+    let mut v := 0
+    while i < b.size && isDigit (b.get! i) do
+      v := v * 10 + (b.get! i - 48).toNat
+      i := i + 1
+    return (.ident v, i)
+  let t := match ch with
+    | 43 => Tok.plus | 45 => .minus | 42 => .star | 40 => .lp | 41 => .rp | 61 => .eq | _ => .semi
+  return (t, i + 1))
+
+/-- All the tokens of `src`. -/
+@[noinline] def phLex (src : String) (_ : Nat) : Array Tok := scope! "phLex" (Id.run do
+  let b := src.toUTF8
+  let mut out : Array Tok := #[]
+  let mut i := 0
+  repeat
+    let (t, j) := lexToken b i
+    if let .eof := t then break
+    out := out.push t
+    i := j
+  return out)
+
+mutual
+/-- `atom := number | variable | ( expr )` -/
+@[noinline] partial def parseAtom (ts : Array Tok) (i : Nat) : Expr × Nat := scope! "parseAtom" (
+  match ts[i]! with
+  | .num v => (.lit v, i + 1)
+  | .ident k => (.var k, i + 1)
+  | _ =>  -- `(`
+    let (e, j) := parseExpr ts (i + 1)
+    (e, j + 1))
+
+/-- `term := atom (* atom)*` -/
+@[noinline] partial def parseTerm (ts : Array Tok) (i : Nat) : Expr × Nat := Id.run do
+  let (e, j) := parseAtom ts i
+  let mut e := e
+  let mut j := j
+  while j < ts.size && (match ts[j]! with | .star => true | _ => false) do
+    let (r, k) := parseAtom ts (j + 1)
+    e := .bin 2 e r
+    j := k
+  return (e, j)
+
+/-- `expr := term ((+|-) term)*` -/
+@[noinline] partial def parseExpr (ts : Array Tok) (i : Nat) : Expr × Nat := scope! "parseExpr" (Id.run do
+  let (e, j) := parseTerm ts i
+  let mut e := e
+  let mut j := j
+  repeat
+    if j ≥ ts.size then break
+    match ts[j]! with
+    | .plus => let (r, k) := parseTerm ts (j + 1); e := .bin 0 e r; j := k
+    | .minus => let (r, k) := parseTerm ts (j + 1); e := .bin 1 e r; j := k
+    | _ => break
+  return (e, j))
+end
+
+/-- Each statement `v = expr ;` in order. -/
+@[noinline] def phParse (ts : Array Tok) (_ : Nat) : Array Expr := scope! "phParse" (Id.run do
+  let mut out : Array Expr := #[]
+  let mut i := 0
+  while i + 2 < ts.size do
+    let (e, j) := parseExpr ts (i + 2)  -- skip `v =`
+    out := out.push e
+    i := j + 1  -- `;`
+  return out)
+
+@[noinline] partial def evalExpr (env : @& Array UInt64) (e : @& Expr) : UInt64 := scope! "evalExpr" (
+  match e with
+  | .lit v => v
+  | .var k => env[k]!
+  | .bin op l r =>
+    let a := evalExpr env l
+    let b := evalExpr env r
+    if op == 0 then a + b else if op == 1 then a - b else a * b)
+
+/-- Runs the program `rounds` times, `v0`'s literal replaced by the round
+number in all but the first. -/
+@[noinline] def phEval (prog : Array Expr) (rounds : Nat) : UInt64 := scope! "phEval" (Id.run do
+  let mut acc : UInt64 := 0
+  for r in [0:rounds] do
+    let mut env : Array UInt64 := Array.mkEmpty prog.size
+    for e in prog do
+      env := env.push (evalExpr env e + r.toUInt64)
+    acc := acc + env.back!
+  return acc)
+
+/-! ### sortmap: sort a shared array, count keys in a hash map, look them up -/
+
+/-- `n` pseudo-random keys below `k`. -/
+def genKeys (n k : Nat) : Array UInt64 := Id.run do
+  let mut out := Array.mkEmpty n
+  let mut s : UInt64 := 99
+  for _ in [0:n] do
+    s := lcg s
+    out := out.push ((s >>> 21) % k.toUInt64)
+  return out
+
+/-- Moves `a[i]` down the heap of the first `n` elements. -/
+@[noinline] partial def siftDown (a : Array UInt64) (i n : Nat) : Array UInt64 :=
+  let l := 2 * i + 1
+  if l ≥ n then a else
+  let c := if l + 1 < n && a[l + 1]! > a[l]! then l + 1 else l
+  if a[c]! > a[i]! then siftDown (a.swapIfInBounds i c) c n else a
+
+/-- Heap sort in place. The caller still holds `a`, so the first swap (in
+`siftDown`) copies it: exactly one copy per call. -/
+@[noinline] def heapSort (a : Array UInt64) : Array UInt64 := scope! "heapSort" (Id.run do
+  let n := a.size
+  let mut a := a
+  for j in [0:n / 2] do
+    a := siftDown a (n / 2 - 1 - j) n
+  for j in [0:n - 1] do
+    let e := n - 1 - j
+    a := siftDown (a.swapIfInBounds 0 e) 0 e
+  return a)
+
+/-- Sorts the keys `reps` times; the keys stay with the caller. -/
+@[noinline] def phSort (keys : Array UInt64) (reps : Nat) : UInt64 := scope! "phSort" (Id.run do
+  let mut acc : UInt64 := 0
+  for r in [0:reps] do
+    let s := heapSort keys
+    acc := acc + s[r % s.size]! + s.back!
+  return acc)
+
+@[noinline] def bump (m : Std.HashMap UInt64 Nat) (k : UInt64) : Std.HashMap UInt64 Nat :=
+  scope! "bump" (m.insert k (m.getD k 0 + 1))
+
+/-- How many times each key occurs. -/
+@[noinline] def phCount (keys : Array UInt64) (_ : Nat) : Std.HashMap UInt64 Nat := scope! "phCount" (
+  keys.foldl bump {})
+
+@[noinline] def lookupOne (m : @& Std.HashMap UInt64 Nat) (k : UInt64) : Nat := scope! "lookupOne" (m.getD k 0)
+
+/-- `q` lookups of pseudo-random keys, about half of them present. -/
+@[noinline] def phLookup (m : Std.HashMap UInt64 Nat) (q : Nat) : UInt64 := scope! "phLookup" (Id.run do
+  let mut acc := 0
+  let mut s : UInt64 := 7
+  for _ in [0:q] do
+    s := lcg s
+    acc := acc + lookupOne m ((s >>> 21) % (2 * m.size.toUInt64 + 1))
+  return acc.toUInt64)
+
+/-! ### csv: split a CSV text, total it per key, write a report -/
+
+/-- `n` lines `city<k>,<a>,<b>` over `k` cities. -/
+def genCsv (n k : Nat) : String := Id.run do
+  let mut out := ""
+  let mut s : UInt64 := 4242
+  for _ in [0:n] do
+    s := lcg s
+    out := out ++ "city" ++ toString ((s >>> 30) % k.toUInt64) ++ "," ++ toString ((s >>> 10) % 10000) ++
+      "," ++ toString ((s >>> 45) % 100) ++ "\n"
+  return out
+
+structure Row where
+  key : String
+  a : Nat
+  b : Nat
+  deriving Inhabited
+
+@[noinline] def parseRow (line : String) : Row := scope! "parseRow" (
+  match line.splitOn "," with
+  | [k, a, b] => { key := k, a := a.toNat!, b := b.toNat! }
+  | _ => { key := "", a := 0, b := 0 })
+
+@[noinline] def phSplit (text : String) (_ : Nat) : Array Row := scope! "phSplit" (
+  ((text.splitOn "\n").filter (· ≠ "")).toArray.map parseRow)
+
+@[noinline] def addRow (m : Std.HashMap String (Nat × Nat)) (r : Row) : Std.HashMap String (Nat × Nat) :=
+  scope! "addRow" (let (a, b) := m.getD r.key (0, 0); m.insert r.key (a + r.a, b + r.b))
+
+@[noinline] def phAggregate (rows : Array Row) (_ : Nat) : Std.HashMap String (Nat × Nat) :=
+  scope! "phAggregate" (rows.foldl addRow {})
+
+@[noinline] def fmtLine (out : String) (k : String) (v : Nat × Nat) : String := scope! "fmtLine" (
+  out ++ k ++ ": total " ++ toString v.1 ++ ", mean " ++ toString (v.1 / max v.2 1) ++ "\n")
+
+/-- The report, `reps` times over (one line per city, in key order). -/
+@[noinline] def phFormat (m : Std.HashMap String (Nat × Nat)) (reps : Nat) : UInt64 := scope! "phFormat" (Id.run do
+  let keys := (m.toArray.map (·.1)).qsort (· < ·)
+  let mut acc := 0
+  for _ in [0:reps] do
+    let mut out := ""
+    for k in keys do
+      out := fmtLine out k (m.getD k (0, 0))
+    acc := acc + out.length
+  return acc.toUInt64)
+
 end W
 
 /-! ## driver -/
@@ -166,6 +447,25 @@ phase into this function (see `K.repeatU`). -/
   let t1 ← IO.monoNanosNow
   return ({ name, wall := t1 - t0, cpu := t1 - t0 }, r)
 
+/-- Times `f n` for a phase whose result the next phase uses. -/
+@[noinline] def timeStage {α : Type} (name : String) (f : Nat → α) (n : Nat) : IO (Phase × α) := do
+  let t0 ← IO.monoNanosNow
+  let r ← span! name (IO.lazyPure fun _ => f n)
+  let t1 ← IO.monoNanosNow
+  return ({ name, wall := t1 - t0, cpu := t1 - t0 }, r)
+
+/-- A phase of a real program. With `only := some p`, only phase `p` is
+timed: the phases before it run untimed (their results are its input), and
+`done` tells the caller to stop after it. -/
+def stage {α : Type} (only : Option String) (timed : IO.Ref (List (Phase × UInt64)))
+    (name : String) (f : Nat → α) (n : Nat) : IO α := do
+  if only.isNone || only == some name then
+    let (p, r) ← timeStage name f n
+    timed.modify (· ++ [(p, 0)])
+    return r
+  else
+    return f n
+
 def timeTasks (name : String) (act : IO (UInt64 × Nat)) : IO (Phase × UInt64) := do
   let t0 ← IO.monoNanosNow
   let (r, cpu) ← span! name act
@@ -182,10 +482,69 @@ def emit (workload : String) (scale : Nat) (phases : List (Phase × UInt64))
   let ps := phases.map fun (p, _) => s!"\{\"name\":\"{p.name}\",\"wall_ns\":{p.wall},\"cpu_ns\":{p.cpu}}"
   IO.println s!"BENCH_JSON \{\"workload\":\"{workload}\",\"scale\":{scale},\"phases\":[{", ".intercalate ps}],\"calls\":{jsonObj calls},\"allocs\":{jsonObj allocs},\"copies\":{jsonObj copies},\"checksum\":{sum}}"
 
-def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
+/-- Distinct values of `(s >>> 30) % k` over `genCsv`'s sequence. -/
+def csvKeys (n k : Nat) : Nat := Id.run do
+  let mut seen := Array.replicate k false
+  let mut s : UInt64 := 4242
+  for _ in [0:n] do
+    s := W.lcg s
+    seen := seen.set! ((s >>> 30) % k.toUInt64).toNat true
+  return seen.foldl (fun a b => if b then a + 1 else a) 0
+
+/-- The real programs; `only`: time one phase alone (see `W.genProgram`). -/
+def runReal (w : String) (scale : Nat) (sc : Nat → Nat) (only : Option String) : IO UInt32 := do
+  let timed ← IO.mkRef ([] : List (Phase × UInt64))
+  let st {α : Type} := @stage α only timed
+  let finish (calls : List (String × Nat)) (copies : List (String × Nat) := []) : IO UInt32 := do
+    emit w scale (← timed.get) calls (copies := copies)
+    return 0
+  let past (p : String) : Bool := only == some p  -- stop after the phase timed alone
+  match w with
+  | "interp" =>
+    let n := sc 20000
+    let rounds := 20
+    let (src, c) := W.genProgram n
+    let toks ← st "phLex" (W.phLex src) 0
+    if past "phLex" then return ← finish []
+    let prog ← st "phParse" (W.phParse toks) 0
+    if past "phParse" then return ← finish []
+    let r ← st "phEval" (W.phEval prog) rounds
+    if r == 42 then IO.println ""  -- keep the result
+    finish [("phLex", 1), ("phParse", 1), ("phEval", 1), ("lexToken", c.tokens + 1),
+      ("parseExpr", n + c.groups), ("parseAtom", c.atoms + c.groups), ("evalExpr", (c.atoms + c.bins) * rounds)]
+  | "sortmap" =>
+    let n := sc 100000
+    let reps := 2
+    let q := 4 * n
+    let keys := W.genKeys n (n / 2)
+    let r ← st "phSort" (W.phSort keys) reps
+    if past "phSort" then return ← finish []
+    let m ← st "phCount" (W.phCount keys) 0
+    if past "phCount" then return ← finish []
+    let r2 ← st "phLookup" (W.phLookup m) q
+    if r + r2 == 42 then IO.println ""
+    finish [("phSort", 1), ("phCount", 1), ("phLookup", 1), ("heapSort", reps), ("bump", n), ("lookupOne", q)]
+      (copies := [("siftDown", reps)])  -- the first swap of each sort
+  | _ =>  -- csv
+    let n := sc 100000
+    let k := 2000
+    let reps := 40
+    let text := W.genCsv n k
+    let rows ← st "phSplit" (W.phSplit text) 0
+    if past "phSplit" then return ← finish []
+    let m ← st "phAggregate" (W.phAggregate rows) 0
+    if past "phAggregate" then return ← finish []
+    let r ← st "phFormat" (W.phFormat m) reps
+    if r == 42 then IO.println ""
+    let keys := csvKeys n k
+    finish [("phSplit", 1), ("phAggregate", 1), ("phFormat", 1), ("parseRow", n), ("addRow", n),
+      ("fmtLine", keys * reps)]
+
+def runWorkload (w : String) (scale : Nat) (only : Option String := none) : IO UInt32 := do
   -- `* 0` of a clock read: the compiler cannot treat the sizes as constants
   let z := (← IO.monoMsNow) * 0
   let sc (n : Nat) : Nat := n * scale / 100 + z
+  if w == "interp" || w == "sortmap" || w == "csv" then return ← runReal w scale sc only
   match w with
   | "tiny" =>
     let n := sc 10000000
@@ -235,11 +594,11 @@ def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
     let c ← timeTasks "phTasks8" (W.runTasks "taskWork8" 8 n W.taskWork8)
     emit w scale [a, b, c] [("taskWork2", 2), ("taskWork4", 4), ("taskWork8", 8), ("taskStep", 3 * n)]
   | _ =>
-    IO.eprintln s!"unknown workload {w}: tiny, rec, mix, alloc, copy, tasks"
+    IO.eprintln s!"unknown workload {w}: tiny, rec, mix, alloc, copy, tasks, interp, sortmap, csv"
     return 2
   return 0
 
 def main (args : List String) : IO UInt32 := do
   let w := args.headD "tiny"
   let scale := (args[1]? >>= String.toNat?).getD 100
-  LeanProfiler.profileFromEnvironment "wl" (runWorkload w scale)
+  LeanProfiler.profileFromEnvironment "wl" (runWorkload w scale args[2]?)

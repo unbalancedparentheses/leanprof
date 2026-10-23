@@ -33,7 +33,7 @@ BINS = os.path.join(WORK, "bins")
 OUT = os.path.join(WORK, "out")
 LP = os.path.join(ROOT, ".lake", "build", "bin", "leanprof")
 
-WORKLOADS = ["tiny", "rec", "mix", "alloc", "copy", "tasks"]
+WORKLOADS = ["tiny", "rec", "mix", "alloc", "copy", "tasks", "interp", "sortmap", "csv"]
 WORKLOAD_INFO = {
     "tiny": "tight loops of tiny functions (10M + 20M calls)",
     "rec": "recursion 100, 1,000 and 10,000 deep; fib (7M calls)",
@@ -41,6 +41,16 @@ WORKLOAD_INFO = {
     "alloc": "allocation-heavy: lists of structures, binary trees",
     "copy": "copy-heavy: an array copied on every push, against pushes in place",
     "tasks": "the same work on 2, 4 and 8 threads, a tiny scope per step",
+    "interp": "real program: lexer, recursive-descent parser and interpreter of a small language",
+    "sortmap": "real program: heap sort of a shared array (one hidden copy each), hash-map counts and lookups",
+    "csv": "real program: split a CSV text into rows, total per key in a hash map, format a report",
+}
+# Real programs: the ground truth of each phase is its time in separate runs
+# of the plain build that time that phase alone (`wl W SCALE PHASE`).
+REAL = {
+    "interp": ["phLex", "phParse", "phEval"],
+    "sortmap": ["phSort", "phCount", "phLookup"],
+    "csv": ["phSplit", "phAggregate", "phFormat"],
 }
 
 # name -> (description, executable, how it is built or run)
@@ -60,6 +70,10 @@ CONFIGS = {
 }
 LEANPROF_EXACT = ["profile", "run", "auto", "allocs", "counters", "frees"]
 LABEL_ONLY = {"taskStep"}
+# Functions the C compiler inlines into their caller in the plain build, so
+# `run --auto` (which instruments functions after inlining) has no hooks for
+# them: their counts are checked in the `profile!` modes only.
+AUTO_INLINED = {"lookupOne"}
 SHIMS = ["run", "auto", "allocs", "counters", "frees"]  # builds with copy shims
 
 # Tolerance for --check: the sum of leanprof's reported times for a workload's
@@ -288,14 +302,14 @@ def components(bench):
     return out
 
 
-def run_one(cfg, workload, scale, bins=BINS):
+def run_one(cfg, workload, scale, bins=BINS, phase=None):
     desc, exe, how = CONFIGS[cfg]
     tag = f"{cfg}-{workload}"
     rep_json = os.path.join(OUT, tag + ".json")
     if os.path.exists(rep_json):
         os.remove(rep_json)
     env = {"LEANPROF_QUIET": "1"}
-    args = [workload, str(scale)]
+    args = [workload, str(scale)] + ([phase] if phase else [])
     if how == "sample":
         cmd = [LP, "sample", "--out", os.path.join(OUT, tag + ".samply.json"), exe, "--", *args]
     elif how == "samply":
@@ -338,9 +352,11 @@ def med(xs):
     return statistics.median(xs) if xs else None
 
 
-def analyse(runs, configs):
-    """runs[cfg][workload] = list of run results."""
+def analyse(runs, configs, iso=None):
+    """runs[cfg][workload] = list of run results; iso[workload][phase] = the
+    phase's times in runs that time it alone (real programs)."""
     res = {}
+    iso = iso or {}
     for w in WORKLOADS:
         plain = [r for r in runs.get("plain", {}).get(w, []) if r]
         if not plain:
@@ -350,6 +366,12 @@ def analyse(runs, configs):
             for c, ns in components(r["bench"]):
                 truth.setdefault(c, []).append(ns)
         truth = {c: med(v) for c, v in truth.items()}
+        inrun = None
+        if w in iso and all(iso[w].get(c) for c in truth):
+            # in-run phase times of the plain build against the isolated ones:
+            # how much the phases affect each other (caches, the allocator)
+            inrun = {c: truth[c] / med(iso[w][c]) for c in truth}
+            truth = {c: med(iso[w][c]) for c in truth}
         tsum = sum(truth.values())
         tshare = {c: v / tsum for c, v in truth.items()}
         plain_wall = med([sum(p["wall_ns"] for p in r["bench"]["phases"]) for r in plain])
@@ -358,7 +380,11 @@ def analyse(runs, configs):
         expected_allocs = plain[0]["bench"]["allocs"]
         total_scopes = sum(v for k, v in expected_calls.items())
         res[w] = {"truth_ns": truth, "truth_share": tshare, "plain_wall_ns": plain_wall,
-                  "expected_calls": expected_calls, "configs": {}}
+                  "expected_calls": expected_calls, "configs": {},
+                  "truth_method": "isolated runs" if inrun else "in-run clock reads"}
+        if inrun:
+            res[w]["inrun_over_isolated"] = inrun
+            res[w]["isolated_runs"] = min(len(iso[w][c]) for c in truth)
         for cfg in configs:
             rs = [r for r in runs.get(cfg, {}).get(w, []) if r]
             if not rs:
@@ -410,7 +436,7 @@ def analyse(runs, configs):
                         for name, n in expected_calls.items():
                             if cfg == "leanprofiler" and name not in rep["calls"]:
                                 continue  # only phases and tasks are spans
-                            if cfg == "auto" and name in LABEL_ONLY:
+                            if cfg == "auto" and (name in LABEL_ONLY or name in AUTO_INLINED):
                                 continue  # a `profile!` label inside a function, not a function
                             checked += 1
                             got = rep["calls"].get(name, 0)
@@ -478,7 +504,30 @@ def machine():
         except (OSError, StopIteration):
             pass
         osv = platform.platform()
+    extra = {}
+    if sys.platform.startswith("linux"):
+        def rd(path):
+            try:
+                return open(path).read().strip()
+            except OSError:
+                return None
+        extra["kernel"] = platform.release()
+        extra["cores_usable"] = len(os.sched_getaffinity(0))
+        extra["governor"] = rd("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") or "unknown"
+        nt, boost = rd("/sys/devices/system/cpu/intel_pstate/no_turbo"), rd("/sys/devices/system/cpu/cpufreq/boost")
+        extra["turbo"] = ("off" if nt == "1" else "on") if nt is not None else \
+            (("on" if boost == "1" else "off") if boost is not None else "unknown")
+        try:
+            flags = next(l for l in open("/proc/cpuinfo") if l.startswith("flags"))
+            extra["virtual"] = " hypervisor " in flags + " "
+        except (OSError, StopIteration):
+            pass
+    elif sys.platform == "darwin":
+        extra["virtual"] = "Virtual" in cpu or out(["sysctl", "-n", "kern.hv_vmm_present"]) == "1"
+    if os.environ.get("GITHUB_ACTIONS"):
+        extra["runner"] = f"GitHub Actions {os.environ.get('ImageOS', '')} {os.environ.get('ImageVersion', '')}".strip()
     return {
+        **extra,
         "cpu": cpu, "cores": os.cpu_count(), "os": osv, "arch": platform.machine(),
         "lean": out(["lean", "--version"]),
         "cc": out(["cc", "--version"]).splitlines()[0] if out(["cc", "--version"]) else "?",
@@ -493,16 +542,116 @@ def fx(x, digits=2):
     return "–" if x is None else f"{x:.{digits}f}"
 
 
-def write_md(path, meta, res, configs, skipped, lcb, before):
+def load_sources(specs):
+    """`--also [LABEL=]PATH` -> [(label, meta, results)]."""
+    out = []
+    for spec in specs:
+        label, path = spec.split("=", 1) if "=" in spec and not os.path.exists(spec) else (None, spec)
+        d = json.load(open(path))
+        meta = d["meta"]
+        # a machine.txt beside it (written by a dedicated-server runner):
+        # its governor, boost, pinning and load lines become the source's note
+        mt = os.path.join(os.path.dirname(os.path.abspath(path)), "machine.txt")
+        if os.path.exists(mt) and not meta.get("note"):
+            keep = [l.strip() for l in open(mt, errors="replace")
+                    if re.search(r"governor|boost|turbo|pinn|taskset|isolat|load", l, re.I) and l.strip()]
+            if keep:
+                meta["note"] = "; ".join(dict.fromkeys(keep))[:600]
+        out.append((label or meta.get("label") or meta["machine"]["cpu"], meta, d["results"]))
+    return out
+
+
+def machine_line(meta):
+    m = meta["machine"]
+    s = f"{m['cpu']}, {m['cores']} cores"
+    if m.get("cores_usable") and m["cores_usable"] != m["cores"]:
+        s += f" ({m['cores_usable']} usable)"
+    s += f", {m['os']} ({m['arch']})"
+    if m.get("virtual"):
+        s += ", virtual machine"
+    if m.get("runner"):
+        s += f", {m['runner']}"
+    return s
+
+
+def load_line(meta):
+    s = f"start {meta['load_start'].split()[0]}"
+    d = meta.get("load_during")
+    if d:
+        s += f", during {d['min']:.1f}–{d['max']:.1f} (median {d['median']:.1f})"
+    return s + f", end {meta['load_end'].split()[0]}"
+
+
+def across(L, sources):
+    """Several runs (this machine, CI Linux, CI macOS, a dedicated server)
+    side by side: what each machine was, then each tool's numbers."""
+    L.append("## Across machines\n")
+    L.append("The same suite on each machine. Load is the 1-minute load average (on a VM it does not show "
+             "other tenants; steal time does, on Linux). Each cell: error in share of time (pp) · reported "
+             "total over plain time (range over runs) · slowdown; medians of runs.\n")
+    labels = [lab for lab, _, _ in sources]
+    L.append("| | " + " | ".join(labels) + " |")
+    L.append("|---|" + "---|" * len(labels))
+    rows = [
+        ("machine", lambda m: machine_line(m)),
+        ("kernel, governor, turbo", lambda m: ", ".join(str(m["machine"].get(k, "–")) for k in ("kernel", "governor", "turbo"))
+         if m["machine"].get("kernel") else "–"),
+        ("date, commit", lambda m: f"{m['machine']['date']}, `{m['machine']['commit']}`"),
+        ("runs, scale", lambda m: f"{m['reps']}, {m['scale']}%"),
+        ("load average", load_line),
+        ("steal", lambda m: f"{m['steal_pct']:.1f}%" if m.get("steal_pct") is not None else "–"),
+        ("suite time", lambda m: f"{m['elapsed_s'] / 60:.0f} min"),
+    ]
+    for name, f in rows:
+        L.append(f"| {name} | " + " | ".join(f(meta) for _, meta, _ in sources) + " |")
+    exact = []
+    for _, meta, res in sources:
+        bad = sorted({f"{w}/{c}" for w, wr in res.items() for c, o in wr["configs"].items()
+                      if c in LEANPROF_EXACT and (o.get("calls_wrong") or o.get("copies_wrong"))})
+        exact.append("✅ all exact" if not bad else "❌ " + ", ".join(bad))
+    L.append("| leanprof counts | " + " | ".join(exact) + " |")
+    for _, meta, _ in sources:
+        if meta.get("note"):
+            L.append(f"\n{meta.get('label')}: {meta['note']}")
+    L.append("")
+    workloads = []
+    for _, _, res in sources:
+        workloads += [w for w in res if w not in workloads]
+    for c, name in HEAD_TOOLS:
+        if not any(c in (res.get(w) or {}).get("configs", {}) for _, _, res in sources for w in workloads):
+            continue
+        L.append(f"**{name}**\n")
+        L.append("| workload | " + " | ".join(labels) + " |")
+        L.append("|---|" + "---|" * len(labels))
+        for w in workloads:
+            cells = []
+            for _, _, res in sources:
+                o = ((res.get(w) or {}).get("configs") or {}).get(c)
+                if not o:
+                    cells.append("–")
+                    continue
+                cells.append(f"{fx(o.get('share_mae_pp'), 1)} · {fx(o.get('total_ratio'))} "
+                             f"({fx(o.get('total_ratio_min'))}–{fx(o.get('total_ratio_max'))}) · "
+                             f"{fx(o.get('slowdown'))}×")
+            L.append(f"| `{w}` | " + " | ".join(cells) + " |")
+        L.append("")
+
+
+def write_md(path, meta, res, configs, skipped, lcb, before, also=()):
     L = []
     m = meta["machine"]
     L.append("# Benchmark and accuracy results\n")
     L.append(f"Generated by `python3 bench/run.py{' --quick' if meta['quick'] else ''}` "
              f"({meta['reps']} runs of each workload and configuration, interleaved in shuffled order; "
              f"scale {meta['scale']}%). Raw numbers: [`{os.path.basename(meta['json'])}`]({os.path.basename(meta['json'])}).\n")
-    L.append(f"- Machine: {m['cpu']}, {m['cores']} cores, {m['os']} ({m['arch']})")
+    L.append(f"- Machine: {machine_line(meta)}")
+    if m.get("kernel"):
+        L.append(f"- Kernel {m['kernel']}, cpufreq governor {m.get('governor')}, turbo {m.get('turbo')}")
+    if meta.get("note"):
+        L.append(f"- {meta['note']}")
     L.append(f"- {m['lean']}; {m['cc']}; samply {m['samply']}")
-    L.append(f"- leanprof commit `{m['commit']}`, {m['date']}; load average at start {meta['load_start']}, at end {meta['load_end']}")
+    L.append(f"- leanprof commit `{m['commit']}`, {m['date']}; load average (1 min) {load_line(meta)}" +
+             (f"; CPU steal {meta['steal_pct']:.1f}%" if meta.get("steal_pct") is not None else ""))
     L.append(f"- Total suite time {meta['elapsed_s'] / 60:.1f} min\n")
     if meta.get("noisy"):
         L.append("> Other jobs were running on this machine, so timings are noisy. Each cell is the "
@@ -511,6 +660,8 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
     for cfg, why in skipped.items():
         L.append(f"> **{cfg} skipped**: {why}\n")
     headline(L, res, configs)
+    if also:
+        across(L, [(meta.get("label") or m["cpu"], meta, res)] + list(also))
     L.append("## Configurations\n")
     L.append("| config | what runs |\n|---|---|")
     for cfg in configs:
@@ -522,8 +673,16 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
         comps = ", ".join(f"`{c}` {wr['truth_share'][c] * 100:.1f}%" for c in wr["truth_ns"])
         L.append(f"| `{w}` | {WORKLOAD_INFO[w]} | {wr['plain_wall_ns'] / 1e6:.1f} ms | {comps} |")
     L.append("\nGround truth: the plain build's own clock reads around each phase (for `tasks`, "
-             "around each task, summed). A tool's share for a component is its reported inclusive time "
-             "of that function or scope over the sum for all components of the workload.\n")
+             "around each task, summed). For the real programs (`interp`, `sortmap`, `csv`) it is each "
+             "phase's median time in separate runs of the plain build that time that phase alone. A "
+             "tool's share for a component is its reported inclusive time of that function or scope over "
+             "the sum for all components of the workload.\n")
+    iso = [(w, wr) for w, wr in res.items() if wr.get("inrun_over_isolated")]
+    if iso:
+        L.append("Real programs, the plain build's phase time when all phases run in one process over its "
+                 "time alone (how much the phases affect each other): " + "; ".join(
+                     f"`{w}` " + ", ".join(f"`{c}` {v:.2f}" for c, v in wr["inrun_over_isolated"].items())
+                     for w, wr in iso) + ".\n")
 
     cols = [c for c in configs if c != "plain"]
 
@@ -929,6 +1088,19 @@ def demangle_names(names, work):
 # ---------------------------------------------------------------- main
 
 
+def cpu_steal():
+    """Linux: (steal, total) jiffies so far, from /proc/stat; None elsewhere."""
+    try:
+        f = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+        return (f[7] if len(f) > 7 else 0, sum(f[:8]))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def load_now():
+    return " ".join(f"{x:.1f}" for x in os.getloadavg())
+
+
 def main():
     global WORKLOADS
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -949,7 +1121,29 @@ def main():
     ap.add_argument("--md", default=os.path.join(BENCH, "RESULTS.md"))
     ap.add_argument("--json", default=os.path.join(BENCH, "results.json"))
     ap.add_argument("--noisy", action="store_true", help="say in RESULTS.md that the machine was shared")
+    ap.add_argument("--label", help="name of this run's source in the across-machines tables "
+                                    "(default: the CPU model)")
+    ap.add_argument("--note", help="a line about the machine, printed under its details")
+    ap.add_argument("--also", action="append", default=[], metavar="[LABEL=]RESULTS.json",
+                    help="another run's results (another machine, CI) to show side by side; repeatable")
+    ap.add_argument("--from-json", metavar="RESULTS.json",
+                    help="run nothing: write the Markdown report (--md) from this results file")
     a = ap.parse_args()
+    if a.from_json:
+        d = json.load(open(a.from_json))
+        meta = d["meta"]
+        if a.label:
+            meta["label"] = a.label
+        if a.note:
+            meta["note"] = a.note
+        meta["json"] = a.from_json
+        before = before_after(a.before, d["results"], d.get("lcb")) if a.before else None
+        write_md(a.md, meta, d["results"], meta["configs"], d.get("skipped", {}), d.get("lcb"), before,
+                 also=load_sources(a.also))
+        if a.label or a.note:
+            json.dump(d, open(a.from_json, "w"), indent=1, default=str)
+        log(f"wrote {a.md}")
+        return
     if a.tolerance:
         global TOL
         lo, hi = (float(x) for x in a.tolerance.split(","))
@@ -963,7 +1157,8 @@ def main():
         configs.insert(0, "plain")
     os.makedirs(OUT, exist_ok=True)
     start = time.time()
-    load_start = " ".join(f"{x:.1f}" for x in os.getloadavg())
+    load_start = load_now()
+    steal0 = cpu_steal()
 
     skipped = {}
     if not a.no_build:
@@ -981,31 +1176,48 @@ def main():
     configs_run = [c for c in configs if c not in skipped]
 
     runs = {c: {w: [] for w in WORKLOADS} for c in configs_run}
+    iso = {w: {p: [] for p in REAL[w]} for w in WORKLOADS if w in REAL}
     rnd = random.Random(1)
-    jobs = [(c, w) for c in configs_run for w in WORKLOADS]
+    # (config, workload, phase): phase set for the plain runs that time one
+    # phase of a real program alone, the ground truth for its time
+    jobs = [(c, w, None) for c in configs_run for w in WORKLOADS] + \
+        [("plain", w, p) for w in iso for p in REAL[w]]
+    loads = []
     for rep in range(reps):
         rnd.shuffle(jobs)
-        log(f"run {rep + 1}/{reps}")
-        for c, w in jobs:
-            runs[c][w].append(run_one(c, w, scale))
+        log(f"run {rep + 1}/{reps} (load {load_now()})")
+        for c, w, p in jobs:
+            r = run_one(c, w, scale, phase=p)
+            if p is None:
+                runs[c][w].append(r)
+            elif r:
+                iso[w][p].extend(ph["wall_ns"] for ph in r["bench"]["phases"] if ph["name"] == p)
+        loads.append(os.getloadavg()[0])
     # a configuration whose every run failed is reported as skipped
     for c in configs_run:
         if all(r is None for w in WORKLOADS for r in runs[c][w]):
             skipped[c] = "every run failed (see the log)"
 
-    res = analyse(runs, configs_run)
+    res = analyse(runs, configs_run, iso)
     lcb = None
     lcb_dir = a.lcb or os.environ.get("LCB_DIR")
     if lcb_dir and not a.quick:
         lcb = lcb_suite(lcb_dir, a.lcb_reps, configs_run, skipped)
-    meta = {"quick": a.quick, "reps": reps, "scale": scale, "machine": machine(), "json": a.json,
-            "load_start": load_start, "load_end": " ".join(f"{x:.1f}" for x in os.getloadavg()),
-            "elapsed_s": time.time() - start, "noisy": a.noisy, "configs": configs_run}
+    steal1 = cpu_steal()
+    m = machine()
+    meta = {"quick": a.quick, "reps": reps, "scale": scale, "machine": m, "json": a.json,
+            "load_start": load_start, "load_end": load_now(),
+            "load_during": {"min": min(loads), "median": med(loads), "max": max(loads)} if loads else None,
+            "elapsed_s": time.time() - start, "noisy": a.noisy, "configs": configs_run,
+            "label": a.label or m["cpu"], "note": a.note}
+    if steal0 and steal1 and steal1[1] > steal0[1]:
+        meta["steal_pct"] = 100 * (steal1[0] - steal0[0]) / (steal1[1] - steal0[1])
     before = before_after(a.before, res, lcb) if a.before else None
     json.dump({"meta": meta, "skipped": skipped, "results": res, "lcb": lcb,
-               "raw": {c: {w: [r for r in rs] for w, rs in ws.items()} for c, ws in runs.items()}},
+               "raw": {c: {w: [r for r in rs] for w, rs in ws.items()} for c, ws in runs.items()},
+               "raw_isolated": iso},
               open(a.json, "w"), indent=1, default=str)
-    write_md(a.md, meta, res, configs_run, skipped, lcb, before)
+    write_md(a.md, meta, res, configs_run, skipped, lcb, before, also=load_sources(a.also))
     log(f"wrote {a.md} and {a.json} ({(time.time() - start) / 60:.1f} min)")
     if a.check:
         problems = check(res, configs_run)
