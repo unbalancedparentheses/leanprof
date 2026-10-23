@@ -10,7 +10,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 |---|---|
 | `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes, run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
-| `sample [--rate HZ] [--top N] [--out F] [--cwd DIR] EXE [-- ARGS]` | sample with samply, report per Lean declaration; exits with the program's exit code |
+| `sample [--rate HZ] [--top N] [--out F] [--cwd DIR] EXE [-- ARGS]` | sample with samply, report per Lean declaration; exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--no-allocs] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time, output) |
@@ -51,12 +51,13 @@ For programs that link leanprof:
 | `LEANPROF_SLOW_SCOPE=name` | only scopes with this name trigger slow dumps |
 | `LEANPROF_SLOW_MAX=n` | at most `n` slow dumps (default 10) |
 | `LEANPROF_PROJECT=dir` | the project, when the program runs elsewhere (set by `--cwd`): where `.ilean` files and packages are found |
+| `LEANPROF_CORE_DIR=prefix` | a Lean toolchain (`lean --print-prefix`) whose `lib/lean/*.ilean` and `src/lean` give positions of Lean's own functions (set by `run`) |
 
 For `leanprof run --core`:
 
 | variable | effect |
 |---|---|
-| `LEANPROF_OBJCOPY=path` | objcopy used to rewrite Lean's libraries (default: `llvm-objcopy` on `PATH`, then Homebrew's and Debian's LLVM directories, then GNU `objcopy` on Linux) |
+| `LEANPROF_OBJCOPY=path` | objcopy used to rewrite Lean's libraries (default: `llvm-objcopy` on `PATH`, then Homebrew's and Debian's LLVM directories, then GNU `objcopy` on Linux, then rustup's `rust-objcopy`) |
 
 For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 `LEAN_CC`):

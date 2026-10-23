@@ -1,0 +1,63 @@
+diff --git a/src/lake/Lake/Build/Context.lean b/src/lake/Lake/Build/Context.lean
+index e4addd8..9be3d38 100644
+--- a/src/lake/Lake/Build/Context.lean
++++ b/src/lake/Lake/Build/Context.lean
+@@ -74,13 +74,19 @@ Whether the build should show progress information.
+ public def BuildConfig.showProgress (cfg : BuildConfig) : Bool :=
+   (cfg.noBuild ∧ cfg.verbosity == .verbose) ∨ cfg.verbosity != .quiet
+ 
+-/-- Mutable reference of registered build jobs. -/
++/--
++Mutable reference of registered build jobs, newest first.
++
++It is a `List` rather than an `Array`: the reference is shared by the build's threads, so
++the value in it is marked multi-threaded and is never updated in place. Pushing onto an
++`Array` would copy all the jobs registered since the last drain; consing does not.
++-/
+ @[expose] -- for codegen
+-public def JobQueue := IO.Ref (Array OpaqueJob)
++public def JobQueue := IO.Ref (List OpaqueJob)
+ 
+ /-- Returns a new empty job queue. -/
+ @[inline] public def mkJobQueue : BaseIO JobQueue :=
+-  IO.mkRef #[]
++  IO.mkRef []
+ 
+ /-- A Lake context with a build configuration and additional build data. -/
+ public structure BuildContext extends BuildConfig, Context where
+diff --git a/src/lake/Lake/Build/Job/Register.lean b/src/lake/Lake/Build/Job/Register.lean
+index 700ecf9..bc90299 100644
+--- a/src/lake/Lake/Build/Job/Register.lean
++++ b/src/lake/Lake/Build/Job/Register.lean
+@@ -40,7 +40,7 @@ Registers the job for the top-level build monitor,
+   (caption : String) (job : Job α) (optional := false)
+ : m (Job α) := do
+   let job : Job α := {job with caption, optional}
+-  (← getBuildContext).registeredJobs.modify (·.push job)
++  (← getBuildContext).registeredJobs.modify (job :: ·)
+   return job.renew
+ 
+ /-- Wraps stray I/O, logs, and errors in `x` into the produced job.  -/
+diff --git a/src/lake/Lake/Build/Run.lean b/src/lake/Lake/Build/Run.lean
+index 9b9c876..3ea4d96 100644
+--- a/src/lake/Lake/Build/Run.lean
++++ b/src/lake/Lake/Build/Run.lean
+@@ -150,7 +150,8 @@ where
+     else s!"{ms}ms"
+ 
+ def drainQueue : MonitorM (Array OpaqueJob) := do
+-  let newJobs ← (← read).jobs.modifyGet ((·, #[]))
++  -- the queue is newest first
++  let newJobs := (← (← read).jobs.modifyGet ((·, []))).toArray.reverse
+   modify fun s => {s with totalJobs := s.totalJobs + newJobs.size}
+   return newJobs
+ 
+@@ -259,7 +260,7 @@ def monitorJobs'
+ @[inline, deprecated "Deprecated without replacement." (since := "2025-01-08")]
+ public def monitorJobs
+   (initJobs : Array OpaqueJob)
+-  (jobs : IO.Ref (Array OpaqueJob))
++  (jobs : JobQueue)
+   (out : IO.FS.Stream)
+   (failLv outLv : LogLevel)
+   (minAction : JobAction)

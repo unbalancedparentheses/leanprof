@@ -1,0 +1,23 @@
+diff --git a/src/lake/Lake/Config/Module.lean b/src/lake/Lake/Config/Module.lean
+index 1f8d74e..235e902 100644
+--- a/src/lake/Lake/Config/Module.lean
++++ b/src/lake/Lake/Config/Module.lean
+@@ -56,7 +56,17 @@ public def LeanLib.findModuleBySrc? (path : FilePath) (self : LeanLib) : Option
+ 
+ /-- Locate the named, buildable, importable, local module in the package.  -/
+ public def Package.findModule? (mod : Name) (self : Package) : Option Module :=
+-  self.leanLibs.findSomeRev? (·.findModule? mod)
++  -- Same as `self.leanLibs.findSomeRev? (·.findModule? mod)`, without allocating the array
++  -- of the package's libraries or a library value per candidate: this runs for every
++  -- import of every module, in each package of the workspace.
++  self.targetDecls.findSomeRev? fun t =>
++    let {name := n, kind := k, config, pkg_eq, ..} := t
++    if kind_eq : k = LeanLib.configKind then
++      let config : ConfigType LeanLib.configKind self.keyName n := kind_eq ▸ pkg_eq ▸ config
++      let config : LeanLibConfig n := config
++      if config.isBuildableModule mod then some {lib := ⟨self, n, config⟩, name := mod} else none
++    else
++      none
+ 
+ /-- Get an `Array` of the library's modules (as specified by its globs). -/
+ public def LeanLib.getModuleArray (self : LeanLib) : IO (Array Module) :=

@@ -1346,7 +1346,10 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
       -- what fixing the site saves at most: the measured time spent copying (plus the copies' allocation)
       ("estimated_cost_ns", (jnum c "copy_ns").toUInt64.toNat)]
   let mut mtGlobal := false
-  if mt > 0 then
+  if mt > 0 && mt * 10 < shared then
+    -- a few copies of values that other threads could see: say so, not why all copied
+    out := out ++ s!"  ({mt.toUInt64} of the copies were of values shared with other threads; the others are explained below)\n"
+  else if mt > 0 then
     match globalUse src decl with
     | some (g, ty, il, init, ul, ut) =>
       mtGlobal := true
@@ -1444,6 +1447,13 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
       let same := staticIncs.any fun (file, l) => l == r.line && (r.file.endsWith file || file.endsWith (rel r.file))
       out := out ++ wrap s!"    {r.count}×  {← describeShare cache r}  [{rel r.file}:{r.line}]" "          " ++
         (if same then "\n          (the increment the IR analysis above points to)" else "") ++ "\n"
+  -- an `IO.Ref` shared between threads: every value put in it is marked
+  -- multi-threaded, so each `modify (·.push x)` copies everything in it
+  if mt > 0 && (out.splitOn "lean_st_ref_take").length > 1 then
+    out := out ++ wrap ("  the value comes out of an `IO.Ref` that more than one thread uses: `IO.Ref.set` " ++
+      "marks what it stores multi-threaded, so every `ref.modify (·.push x)` copies the whole array, " ++
+      "quadratic in the number of pushes between drains. fix: cons onto a `List` in the reference " ++
+      "(reverse it when draining), or keep a buffer per thread.") "    " ++ "\n"
   return (out, Json.arr entries)
 
 def explainCmd (argv : List String) (runLeanprof : Array String → Array (String × Option String) → IO UInt32) :

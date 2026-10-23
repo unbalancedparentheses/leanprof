@@ -1537,7 +1537,7 @@ static char lpf_root_pkg[256];
  * the program runs elsewhere (`leanprof run --cwd`). */
 static const char *lpf_proj_path(const char *rel, char *out, size_t cap) {
     const char *proj = getenv("LEANPROF_PROJECT");
-    if (proj == NULL || proj[0] == 0) snprintf(out, cap, "%s", rel);
+    if (proj == NULL || proj[0] == 0 || rel[0] == '/') snprintf(out, cap, "%s", rel);
     else snprintf(out, cap, "%s/%s", proj, rel);
     return out;
 }
@@ -1921,6 +1921,33 @@ static void lpf_index_dir(const char *dir, const char *prefix, const char *pkg, 
     closedir(d);
 }
 
+/* Lean's own declarations (Init, Std, Lean, Lake): their `.ilean` files are in
+ * a toolchain's lib/lean and their sources in its src/lean. They are read on
+ * the first name the project does not know, from the toolchain prefix that
+ * leanprof_set_core_dir or LEANPROF_CORE_DIR gives (`leanprof sample`, `run`). */
+static char lpf_core_dir[1024];
+static int lpf_core_indexed;
+
+LEAN_EXPORT lean_obj_res leanprof_set_core_dir(b_lean_obj_arg dir) {
+    snprintf(lpf_core_dir, sizeof lpf_core_dir, "%s", lean_string_cstr(dir));
+    lpf_core_indexed = 0;
+    return lean_box(0);
+}
+
+/* Index Lean's own declarations once; whether any were added. */
+static int lpf_index_core(void) {
+    if (lpf_core_indexed) return 0;
+    lpf_core_indexed = 1;
+    const char *dir = lpf_core_dir[0] ? lpf_core_dir : getenv("LEANPROF_CORE_DIR");
+    if (dir == NULL || dir[0] == 0) return 0;
+    char lib[1200], src[1200];
+    snprintf(lib, sizeof lib, "%s/lib/lean", dir);
+    snprintf(src, sizeof src, "%s/src/lean/", dir);
+    size_t before = lpf_ndecls;
+    lpf_index_dir(lib, src, NULL, 0);
+    return lpf_ndecls > before;
+}
+
 /* file:line of a reported function name, or "" when unknown. */
 static const char *lpf_where(const char *fn, char *out, size_t cap) {
     pthread_mutex_lock(&lpf_where_lock);
@@ -1951,10 +1978,14 @@ static const char *lpf_where(const char *fn, char *out, size_t cap) {
     char *in = strstr(name, " (in ");
     if (in != NULL) *in = 0;
     out[0] = 0;
-    for (size_t i = 0; i < lpf_ndecls; i++) {
-        if (strcmp(lpf_decls[i].name, name) == 0) {
-            snprintf(out, cap, "%s:%u", lpf_decls[i].file, lpf_decls[i].line);
-            break;
+    for (int pass = 0; pass < 2 && out[0] == 0; pass++) {
+        /* the second pass also looks among Lean's own declarations */
+        if (pass == 1 && !lpf_index_core()) break;
+        for (size_t i = 0; i < lpf_ndecls; i++) {
+            if (strcmp(lpf_decls[i].name, name) == 0) {
+                snprintf(out, cap, "%s:%u", lpf_decls[i].file, lpf_decls[i].line);
+                break;
+            }
         }
     }
     pthread_mutex_unlock(&lpf_where_lock);

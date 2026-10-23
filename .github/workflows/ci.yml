@@ -108,7 +108,8 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof run --core --json core2.json corecopies -- 1000 2>&1 | tee cached.txt
           grep -q "(cached)" cached.txt
           if grep -q '"function":"Array.append"' plain.json; then echo "core copy seen without --core"; exit 1; fi
-          grep -q '"function":"Array.append","symbol":"[^"]*","scope":"appendShared","where":"","kind":"Array","copies":500,' core.json
+          # Lean's own function, placed in the toolchain's sources (LEANPROF_CORE_DIR)
+          grep -q '"function":"Array.append","symbol":"[^"]*","scope":"appendShared","where":"[^"]*/src/lean/Init/Data/Array/Basic.lean:[0-9]*","kind":"Array","copies":500,' core.json
           # references renamed, nothing defined under the shims' names, the runtime untouched
           lib=$(ls -d .lake/leanprof/core/*/ | head -1)
           nm "$lib/libInit.a" | grep -Eq ' U _?leanprof_array_push$'

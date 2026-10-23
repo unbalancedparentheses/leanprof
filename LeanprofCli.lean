@@ -49,7 +49,9 @@ def commands : List (String × String × String) := [
   ("sample", "[--rate HZ] [--top N] [--out FILE] [--cwd DIR] EXE [-- ARGS...]",
     "Run EXE under samply (no probes) and report CPU time per Lean declaration with file:line,\n" ++
     "plus where the Lean runtime's time went. `samply load` on the saved profile opens a flame\n" ++
-    "graph with Lean names. Needs samply (brew install samply / cargo install samply)."),
+    "graph with Lean names. EXE is a target of this project or a path to any program, such as\n" ++
+    "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
+    "Needs samply (brew install samply / cargo install samply)."),
   ("elab", "[--heartbeats] [--compact] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
@@ -257,7 +259,8 @@ def wrapperRenames (allocs : Bool) (frees : Bool := false) : IO (Array (String �
 
 /-- An objcopy that can rename symbols in this platform's archives:
 LEANPROF_OBJCOPY, then llvm-objcopy (also versioned, and in Homebrew's and
-Debian's LLVM directories), then GNU objcopy on Linux. -/
+Debian's LLVM directories), then GNU objcopy on Linux, then the llvm-objcopy
+that rustup's toolchains ship as `rust-objcopy` (when it runs on its own). -/
 def findObjcopy : IO (Option String) := do
   if let some p ← IO.getEnv "LEANPROF_OBJCOPY" then return some p
   let path := ((← IO.getEnv "PATH").getD "").splitOn ":" |>.filter (!·.isEmpty)
@@ -270,6 +273,17 @@ def findObjcopy : IO (Option String) := do
     dirs.map (· ++ "/llvm-objcopy") ++ gnu
   for c in candidates do
     if ← FilePath.pathExists c then return some c
+  -- rustup: ~/.rustup/toolchains/*/lib/rustlib/*/bin/rust-objcopy; some need
+  -- their toolchain's libLLVM on the loader path, so only one that runs counts
+  let some home ← IO.getEnv "HOME" | return none
+  let tcs : FilePath := home ++ "/.rustup/toolchains"
+  for tc in (← (try tcs.readDir catch _ => pure #[])).qsort (·.fileName > ·.fileName) do
+    for host in (← (try (tc.path / "lib" / "rustlib").readDir catch _ => pure #[])) do
+      let c := host.path / "bin" / "rust-objcopy"
+      unless ← c.pathExists do continue
+      let ok ← try pure ((← IO.Process.output { cmd := c.toString, args := #["--version"] }).exitCode == 0)
+        catch _ => pure false
+      if ok then return some c.toString
   return none
 
 /-- The toolchain's Lean libraries with references to the redirected runtime
@@ -360,6 +374,16 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
 /-- The executable Lake builds for `exe`. -/
 def exePath (exe : String) : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
 
+/-- The prefix of the Lean toolchain whose sources and `.ilean` files describe
+Lean's own code in `bin`: the toolchain `bin` is in, else `lean --print-prefix`. -/
+def toolchainPrefix (bin : FilePath) : IO (Option String) := do
+  if let some pre := bin.parent >>= (·.parent) then
+    if ← (pre / "lib" / "lean" / "Lean.ilean").pathExists then return some pre.toString
+  try
+    let out ← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }
+    return if out.exitCode == 0 then some out.stdout.trimAscii.toString else none
+  catch _ => return none
+
 def absPath (p : FilePath) : IO FilePath := do
   if p.isAbsolute then return p
   return (← IO.currentDir) / p
@@ -373,6 +397,8 @@ def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Opti
   for (k, v) in env do
     env' := env'.push (k, ← if k == "LEANPROF_JSON" || k == "LEANPROF_TRACE" then fix v else pure v)
   if opts.cwd.isSome then env' := env'.push ("LEANPROF_PROJECT", some (← IO.currentDir).toString)
+  -- positions of Lean's own functions (copies inside its libraries with `--core`)
+  if let some pre ← toolchainPrefix (exePath exe) then env' := env'.push ("LEANPROF_CORE_DIR", some pre)
   spawnWait (← absPath (exePath exe)).toString opts.args env' (opts.cwd.map (·))
 
 def run (argv : List String) : IO UInt32 := do
@@ -654,12 +680,23 @@ def dyldInfoSymbols (path arch : String) : IO (Array (Nat × Nat × String)) := 
   return (List.range syms.size).toArray.map fun i =>
     (syms[i]!.1, (syms[i + 1]?.map (·.1)).getD (syms[i]!.1 + 4), syms[i]!.2)
 
+/-- Lean's own shared libraries, which hold compiled Lean code (`lean`,
+`lake` and the language server of a toolchain link them). -/
+def isLeanSharedLib (name : String) : Bool :=
+  name.startsWith "libleanshared" || name.startsWith "libInit_shared" || name.startsWith "libLake_shared"
+
 def sample (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseSample {} argv)
-  let some exe := o.exe | throw <| IO.userError (usageFor "sample")
-  let rc ← spawnWait "lake" #["build", exe] #[]
-  if rc != 0 then return rc
-  let bin : FilePath := (".lake" : FilePath) / "build" / "bin" / exe
+  let some target := o.exe | throw <| IO.userError (usageFor "sample")
+  -- a path (`/…/bin/lean`, `./prog`) is sampled as it is; a name is a target of this project
+  let isPath := target.contains '/'
+  let bin : FilePath ← if isPath then absPath target else pure ((".lake" : FilePath) / "build" / "bin" / target)
+  let exe := bin.fileName.getD target
+  if isPath then
+    unless ← bin.pathExists do throw <| IO.userError s!"{target}: no such file"
+  else
+    let rc ← spawnWait "lake" #["build", target] #[]
+    if rc != 0 then return rc
   let out : FilePath := o.out.getD s!".lake/leanprof/{exe}.json"
   if let some dir := out.parent then IO.FS.createDirAll dir
   if ← out.pathExists then IO.FS.removeFile out
@@ -679,7 +716,11 @@ def sample (argv : List String) : IO UInt32 := do
   let syms ← IO.ofExcept (Json.parse (← IO.FS.readFile symsPath))
   let strings := (getArr syms "string_table").map fun j => j.getStr?.toOption.getD "?"
   Leanprof.setSymbols (← binarySymbols bin)
-  -- per library: symbol table, and whether it is the profiled binary
+  -- positions of Lean's own declarations, from the toolchain the binary is part
+  -- of (`…/bin/lean`), else from the project's
+  if let some pre ← toolchainPrefix bin then Leanprof.setCoreDir pre
+  -- per library: symbol table, and whether it holds the program's Lean code
+  -- (the binary itself, or Lean's shared libraries for `lean` and `lake`)
   let libsMeta := getArr profile "libs"
   let symData := getArr syms "data"
   let mut libTables : Array (Array (Nat × Nat × String)) := #[]
@@ -690,7 +731,7 @@ def sample (argv : List String) : IO UInt32 := do
     libTables := libTables.push <| ← match entry with
       | some e => pure (libSymbols e strings)
       | none => try dyldInfoSymbols (str l "path") (str l "arch") catch _ => pure #[]
-    libIsMain := libIsMain.push (dn == exe)
+    libIsMain := libIsMain.push (dn == exe || isLeanSharedLib dn)
   -- CPU time per display name: self (leaf) and inclusive (anywhere in the stack)
   let mut selfT : Std.HashMap String Float := {}
   let mut inclT : Std.HashMap String Float := {}
@@ -1256,6 +1297,11 @@ def doctor : IO UInt32 := do
   discard <| report (samply.any (·.exitCode == 0))
     s!"{(samply.map (·.stdout.trimAscii.toString)).getD "samply"} (for `leanprof sample`)"
     "optional: brew install samply, or cargo install samply"
+  -- objcopy, for `run --core`
+  let objcopy ← findObjcopy
+  discard <| report objcopy.isSome
+    s!"{objcopy.getD "llvm-objcopy"} (for `leanprof run --core`)"
+    "optional: brew install llvm, apt install llvm, rustup component add llvm-tools, or set LEANPROF_OBJCOPY"
   IO.println (if problems == 0 then "everything leanprof needs is here" else s!"{problems} problem(s)")
   return if problems == 0 then 0 else 1
 
