@@ -103,7 +103,8 @@ def run (argv : List String) : IO UInt32 := do
 /-! ## compare -/
 
 structure Report where
-  scopes : Std.HashMap String (Float × Nat) := {}  -- name@pos ↦ (total ns, calls)
+  exact : Bool := false                            -- heartbeats: compare without a threshold
+  scopes : Std.HashMap String (Float × Nat) := {}  -- name@pos ↦ (total ns or heartbeats, calls)
   copies : Std.HashMap String Nat := {}            -- function|kind|scope ↦ copies
 
 def num (j : Json) (k : String) : Float :=
@@ -116,9 +117,9 @@ def str (j : Json) (k : String) : String :=
 
 def loadReport (path : String) : IO Report := do
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
-  let mut r : Report := {}
+  let mut r : Report := { exact := str j "unit" == "heartbeats" }
   for s in (j.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[] do
-    let key := s!"{str s "name"} {str s "pos"}"
+    let key := if (str s "key").isEmpty then s!"{str s "name"} {str s "pos"}" else str s "key"
     r := { r with scopes := r.scopes.insert key (num s "total_ns", (num s "calls").toUInt64.toNat) }
   for c in (j.getObjVal? "copies" >>= Json.getArr?).toOption.getD #[] do
     let n := (num c "shared").toUInt64.toNat + (num c "multi_threaded").toUInt64.toNat
@@ -152,11 +153,15 @@ def compare (argv : List String) : IO UInt32 := do
     match base.scopes.get? k, new.scopes.get? k with
     | some (bt, bc), some (nt, nc) =>
       let pct := if bt > 0 then (nt - bt) / bt * 100 else 0
-      let slower := pct > thr && (nt - bt) / 1e6 > minMs
+      -- heartbeats do not vary between runs, but editing one declaration moves
+      -- its neighbours by a few: count increases above 1% and 1,000 heartbeats
+      let slower := if base.exact && new.exact then nt - bt > max (bt * 0.01) 1000
+        else pct > thr && (nt - bt) / 1e6 > minMs
       let callsChanged := bc != nc
       let mark := if slower || callsChanged then "REGRESSION" else if pct < -thr then "faster" else "ok"
       if slower || callsChanged then regressions := regressions + 1
-      IO.println s!"  {mark}  {k}: {fmtMs bt} -> {fmtMs nt} ({fmt2 pct}%), calls {bc} -> {nc}"
+      let amt (x : Float) := if base.exact then s!"{fmt2 (x / 1000)} kHB" else fmtMs x
+      IO.println s!"  {mark}  {k}: {amt bt} -> {amt nt} ({fmt2 pct}%), calls {bc} -> {nc}"
     | none, some (nt, nc) => IO.println s!"  new  {k}: {fmtMs nt}, calls {nc}"
     | some (bt, _), none => IO.println s!"  gone {k}: was {fmtMs bt}"
     | none, none => pure ()
@@ -372,85 +377,244 @@ def sample (argv : List String) : IO UInt32 := do
   IO.println "in the editor: add `#leanprof` to a file to see these numbers next to its code"
   return 0
 
-/-! ## elab -/
+/-! ## elab
 
-/-- `[Class] [seconds] ...` at the start of a trace line. -/
-def traceHead (line : String) : Option (String × Float) := do
-  let cs := line.toList.dropWhile (· == ' ')
+`trace.profiler` attaches, to each source position, a tree of timed
+operations printed as indented lines: `[Class] [amount] mark text`, where the
+amount is seconds, or heartbeats with `trace.profiler.useHeartbeats`.
+-/
+
+/-- One operation in a trace tree. -/
+structure TNode where
+  cls : String
+  amount : Float           -- seconds or heartbeats, inclusive
+  text : String            -- first line of the operation's description
+  depth : Nat
+  children : Array Nat := #[]
+  parent : Option Nat := none
+  deriving Inhabited
+
+/-- `[Class] [amount] ...` at the start of a trace line, with its indentation. -/
+def traceLine (line : String) : Option (Nat × String × Float × String) := do
+  let cs := line.toList
+  let indent := (cs.takeWhile (· == ' ')).length
+  let cs := cs.drop indent
   guard (cs.head? == some '[')
   let cls := (cs.drop 1).takeWhile (· != ']')
   let rest := ((cs.drop 1).drop (cls.length + 1)).dropWhile (· == ' ')
   guard (rest.head? == some '[')
-  let secs := (rest.drop 1).takeWhile (· != ']')
-  let ip := secs.takeWhile (· != '.')
-  let fp := (secs.dropWhile (· != '.')).drop 1
+  let amt := (rest.drop 1).takeWhile (· != ']')
+  let ip := amt.takeWhile (· != '.')
+  let fp := (amt.dropWhile (· != '.')).drop 1
   let i ← (String.ofList ip).toNat?
   let f := (String.ofList fp).toNat?.getD 0
-  return (String.ofList cls, i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat)
+  let text := ((rest.drop 1).drop (amt.length + 1)).dropWhile (· == ' ')
+  -- drop the status mark (✅️, ❌️, 💥️: a symbol and a variation selector)
+  let text := match text with
+    | _ :: '️' :: ' ' :: t => t
+    | t => t
+  return (indent, String.ofList cls, i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat, String.ofList text)
 
-/-- What a command's trace says it is: the text after the status mark. -/
-def commandName (data : String) : String :=
-  let first := (data.toList.takeWhile (· != '\n'))
-  let afterMark := match (String.ofList first).splitOn "️ " with
-    | _ :: rest@(_ :: _) => "️ ".intercalate rest
-    | _ => String.ofList first
-  String.ofList (afterMark.toList.take 60)
+/-- Parse one message's trace into nodes (index 0 is the root). -/
+def parseTrace (data : String) : Array TNode := Id.run do
+  let mut nodes : Array TNode := #[]
+  let mut stack : Array Nat := #[]  -- open nodes by indentation
+  for line in data.splitOn "\n" do
+    match traceLine line with
+    | some (indent, cls, amount, text) =>
+      while !stack.isEmpty && nodes[stack.back!]!.depth >= indent do
+        stack := stack.pop
+      let parent := stack.back?
+      let i := nodes.size
+      nodes := nodes.push { cls, amount, text, depth := indent, parent }
+      if let some p := parent then
+        nodes := nodes.modify p fun n => { n with children := n.children.push i }
+      stack := stack.push i
+    | none =>
+      -- continuation of a multi-line description: part of the operation
+      if let some last := stack.back? then
+        let t := String.ofList (line.toList.dropWhile (· == ' '))
+        if !t.isEmpty && nodes[last]!.text.length < 160 then
+          nodes := nodes.modify last fun n => { n with text := n.text ++ " " ++ t }
+  return nodes
 
-structure ElabCost where
+/-- Merge operations that differ only in metavariable numbers (`?m.123`). -/
+def normalizeOp (t : String) : String := Id.run do
+  let mut out : List Char := []
+  let mut cs := t.toList
+  while !cs.isEmpty do
+    match cs with
+    | '?' :: rest =>
+      let name := rest.takeWhile (fun c => c.isAlpha || c == '_')
+      let after := rest.drop name.length
+      if after.head? == some '.' && ((after.drop 1).head?.map Char.isDigit).getD false then
+        out := out ++ '?' :: name ++ ['.', 'n']
+        cs := (after.drop 1).dropWhile Char.isDigit
+      else
+        out := out ++ ['?']
+        cs := rest
+    | c :: rest =>
+      out := out ++ [c]
+      cs := rest
+    | [] => break
+  return String.ofList (out.take 120)
+
+/-- Classes whose repeated identical operations are worth reporting. -/
+def repeatable (cls : String) : Bool :=
+  cls == "Meta.synthInstance" || cls == "Meta.isDefEq" || cls == "Meta.whnf" ||
+    cls == "Meta.isDefEq.delta" || cls == "Elab.step" || cls.startsWith "Meta.Tactic" || cls == "Tactic.simp"
+
+structure LineCost where
+  total : Float := 0
   elaboration : Float := 0
   kernel : Float := 0
   compile : Float := 0
   lint : Float := 0
   name : String := ""
+  top : Array (Float × String) := #[]  -- most expensive nested operations
 
-def ElabCost.total (c : ElabCost) : Float := c.elaboration + c.kernel + c.compile + c.lint
+/-- The declared name in a command's text (`theorem foo ...` gives `foo`),
+when it has one. -/
+def declName (text : String) : Option String := Id.run do
+  let words := (text.splitOn " ").filter (· != "")
+  let kws := ["def", "theorem", "lemma", "abbrev", "instance", "structure", "inductive", "class", "opaque",
+    "axiom"]
+  for i in [0:words.length] do
+    if kws.contains words[i]! then
+      if let some w := words[i + 1]? then
+        if !(w.startsWith "(" || w.startsWith "[" || w.startsWith "{" || w.startsWith ":" || w.startsWith "⦃") then
+          return some w
+      return none
+  return none
+
+/-- `File.lean:12` as (file, line). -/
+def splitPos (k : String) : String × Nat :=
+  match k.splitOn ":" with
+  | [f, l] => (f, l.toNat!)
+  | _ => (k, 0)
+
+/-- Name of the declaration that starts closest above `key` in its file. -/
+def ownerName (named : Array (String × LineCost)) (key : String) : String := Id.run do
+  let (f, l) := splitPos key
+  let mut best := 0
+  let mut name := ""
+  for (k, c) in named do
+    let (f', l') := splitPos k
+    if f' == f && l' ≤ l && l' ≥ best then
+      best := l'
+      name := c.name
+  return name
+
+structure OpCost where
+  count : Nat := 0
+  total : Float := 0
+  maxOne : Float := 0
+  firstAt : String := ""
 
 def elabCmd (argv : List String) : IO UInt32 := do
-  let rec parse (top : Nat) (files : List String) : List String → Nat × List String
-    | [] => (top, files.reverse)
-    | "--top" :: v :: rest => parse v.toNat! files rest
-    | f :: rest => parse top (f :: files) rest
-  let (top, files) := parse 25 [] argv
+  let rec parse (top : Nat) (hb : Bool) (files : List String) : List String → Nat × Bool × List String
+    | [] => (top, hb, files.reverse)
+    | "--top" :: v :: rest => parse v.toNat! hb files rest
+    | "--heartbeats" :: rest => parse top true files rest
+    | f :: rest => parse top hb (f :: files) rest
+  let (top, hb, files) := parse 15 false [] argv
   if files.isEmpty then throw <| IO.userError usage
-  let mut costs : Std.HashMap String ElabCost := {}  -- "File.lean:line"
+  -- amounts: nanoseconds, or heartbeats (exact, the same on every run)
+  let scale : Float := if hb then 1 else 1e9
+  let fmtAmt (x : Float) : String := if hb then s!"{fmt2 (x / 1000)} kHB" else fmtMs x
+  let mut lines : Std.HashMap String LineCost := {}
+  let mut byClass : Std.HashMap String Float := {}
+  let mut ops : Std.HashMap (String × String) OpCost := {}
+  let mut grand : Float := 0
   for file in files do
-    let out ← IO.Process.output { cmd := "lake", args := #["env", "lean", "--json", "-Dtrace.profiler=true",
-      "-Dtrace.profiler.threshold=0", file] }
-    for line in out.stdout.splitOn "\n" do
-      let some m := (Json.parse line).toOption | continue
-      let data := str m "data"
-      let some (cls, secs) := traceHead data | continue
+    let mut args := #["env", "lean", "--json", "-Dtrace.profiler=true", "-Dtrace.profiler.threshold=0"]
+    if hb then args := args.push "-Dtrace.profiler.useHeartbeats=true"
+    let out ← IO.Process.output { cmd := "lake", args := args.push file }
+    for msgLine in out.stdout.splitOn "\n" do
+      let some m := (Json.parse msgLine).toOption | continue
+      let nodes := parseTrace (str m "data")
+      let some root := nodes[0]? | continue
       let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
       let key := s!"{file}:{ln}"
-      let c := costs.getD key {}
-      let ns := secs * 1e9
-      let c ← if cls == "Elab.command" then
-          pure { c with elaboration := c.elaboration + ns, name := if c.name.isEmpty then commandName data else c.name }
-        else if cls == "Elab.async" then do
-          -- split the async work by its first nested class
-          let inner := (data.splitOn "\n").drop 1 |>.findSome? traceHead
-          match inner with
-          | some ("Kernel", _) => pure { c with kernel := c.kernel + ns }
-          | some ("Compiler", _) => pure { c with compile := c.compile + ns }
-          | some ("Elab.lint", _) => pure { c with lint := c.lint + ns }
-          | _ => pure { c with elaboration := c.elaboration + ns }
-        else pure c
-      costs := costs.insert key c
-  let rows := (costs.toArray.filter (·.2.total > 0)).qsort (fun a b => a.2.total > b.2.total)
-  let total := rows.foldl (· + ·.2.total) 0
-  IO.println s!"\nleanprof elab: {rows.size} commands, {fmtMs total} total compile time"
-  let padTo (t : String) := t.pushn ' ' (10 - t.length)
-  IO.println s!"\n  {padTo "total"} {padTo "elab"} {padTo "kernel"} {padTo "compiler"} {padTo "lint"} where"
-  let col (ns : Float) := padTo (fmtMs ns)
+      let rootAmt := root.amount * scale
+      grand := grand + rootAmt
+      -- per line: total and kind
+      let mut c := lines.getD key {}
+      c := { c with total := c.total + rootAmt }
+      if root.cls == "Elab.async" then
+        match (nodes[1]?.map (·.cls)) with
+        | some "Kernel" => c := { c with kernel := c.kernel + rootAmt }
+        | some "Compiler" => c := { c with compile := c.compile + rootAmt }
+        | some "Elab.lint" => c := { c with lint := c.lint + rootAmt }
+        | _ => c := { c with elaboration := c.elaboration + rootAmt }
+      else
+        c := { c with elaboration := c.elaboration + rootAmt }
+        if root.cls == "Elab.command" && c.name.isEmpty then c := { c with name := String.ofList (root.text.toList.take 60) }
+      -- self time per class; repeated operations; the line's heaviest nested operations
+      for i in [0:nodes.size] do
+        let n := nodes[i]!
+        let childSum := n.children.foldl (fun acc j => acc + nodes[j]!.amount) 0
+        let self := max 0 (n.amount - childSum) * scale
+        byClass := byClass.insert n.cls (byClass.getD n.cls 0 + self)
+        if i > 0 && repeatable n.cls then
+          -- only the outermost of a nest of the same class
+          let nested := Id.run do
+            let mut p := n.parent
+            let mut found := false
+            while true do
+              let some q := p | break
+              if nodes[q]!.cls == n.cls then found := true; break
+              p := nodes[q]!.parent
+            return found
+          unless nested do
+            let k := (n.cls, normalizeOp n.text)
+            let o := ops.getD k {}
+            let amt := n.amount * scale
+            ops := ops.insert k { count := o.count + 1, total := o.total + amt, maxOne := max o.maxOne amt,
+                                  firstAt := if o.firstAt.isEmpty then key else o.firstAt }
+            c := { c with top := c.top.push (amt, s!"[{n.cls}] {normalizeOp n.text}") }
+      -- the line's heaviest operations, ignoring those under 1% of it
+      c := { c with top := (((c.top.filter (·.1 ≥ c.total * 0.01)).qsort (fun a b => a.1 > b.1)).toList.take 5).toArray }
+      lines := lines.insert key c
+  let pad (t : String) (w : Nat) := t.pushn ' ' (w - t.length)
+  let pct (x : Float) := s!"{fmt2 (if grand > 0 then x / grand * 100 else 0)}%"
+  IO.println s!"\nleanprof elab: {files.length} files, {fmtAmt grand} {if hb then "(heartbeats, exact)" else "compile time"}"
+  -- where compile time went
+  IO.println "\n  where compile time went (self, by operation kind)"
+  for (cls, x) in ((byClass.toArray.qsort (fun a b => a.2 > b.2)).toList.take top) do
+    IO.println s!"  {pad (fmtAmt x) 12} {pad (pct x) 8} {cls}"
+  -- costliest lines
+  -- kernel and compiler work can sit on a line of its own: name it after the
+  -- declaration that starts closest above it
+  let named := lines.toArray.filter (!·.2.name.isEmpty)
+  let lineCosts : Array (String × LineCost) := lines.toArray.map fun (k, c) =>
+    if c.name.isEmpty then (k, { c with name := ownerName named k }) else (k, c)
+  let rows := (lineCosts.filter (·.2.total > 0)).qsort (fun a b => a.2.total > b.2.total)
+  IO.println s!"\n  costliest lines (elab / kernel / compiler / lint)"
   for (k, c) in rows.toList.take top do
-    IO.println s!"  {col c.total} {col c.elaboration} {col c.kernel} {col c.compile} {col c.lint} {k}  {c.name.replace "\n" " "}"
+    IO.println s!"  {pad (fmtAmt c.total) 12} {pad (fmtAmt c.elaboration) 11}/ {pad (fmtAmt c.kernel) 10}/ {pad (fmtAmt c.compile) 10}/ {pad (fmtAmt c.lint) 10} {k}  {c.name.replace "\n" " "}"
+    for (amt, op) in c.top.toList.take 3 do
+      IO.println s!"      {pad (fmtAmt amt) 12} {String.ofList (op.toList.take 100)}"
+  -- repeated work
+  let reps := (ops.toArray.filter (·.2.count > 1)).qsort (fun a b => a.2.total > b.2.total)
+  if !reps.isEmpty then
+    IO.println "\n  repeated work (the same operation done more than once)"
+    for ((cls, op), o) in reps.toList.take top do
+      IO.println s!"  {pad (fmtAmt o.total) 12} {pad s!"{o.count}×" 6} [{cls}] {String.ofList (op.toList.take 90)}  (first at {o.firstAt})"
+  -- for #leanprof and compare
   let scopes := rows.map fun (k, c) => Json.mkObj [("name", Json.str (c.name.replace "\n" " ")), ("pos", Json.str k),
+    -- what `compare` matches on: the declaration, so edits that move lines still compare
+    ("key", Json.str ((declName c.name).map (fun d => s!"{(splitPos k).1} {d}") |>.getD k)),
     ("total_ns", toJson c.total), ("elab_ns", toJson c.elaboration), ("kernel_ns", toJson c.kernel),
-    ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint)]
+    ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint),
+    ("top", Json.arr (c.top.map fun (a, op) => Json.mkObj [("amount", toJson a), ("op", Json.str op)]))]
+  let repeated := reps.map fun ((cls, op), o) => Json.mkObj [("class", Json.str cls), ("op", Json.str op),
+    ("count", toJson o.count), ("total", toJson o.total), ("first_at", Json.str o.firstAt)]
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
   IO.FS.writeFile ".lake/leanprof/elab.json"
-    (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true), ("wall_ns", toJson total),
-      ("scopes", Json.arr scopes), ("copies", Json.arr #[])]).compress
+    (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true),
+      ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
+      ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("copies", Json.arr #[])]).compress
   IO.println "\nwritten to .lake/leanprof/elab.json; `#leanprof` shows it next to the code"
   return 0
 

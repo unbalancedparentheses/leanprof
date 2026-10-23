@@ -115,7 +115,12 @@ benchmark measures them.
 
 - [x] `leanprof elab`: compile time per declaration from `trace.profiler`
   (elaboration, kernel, compiler, linters), shown by `#leanprof`.
-- [ ] Drill-down into slow `isDefEq`/`whnf`/instance searches.
+- [x] Full trace trees: self cost by operation kind, costliest lines with
+  their heaviest nested operations, repeated identical operations.
+- [x] `--heartbeats`: deterministic compile cost; `compare` flags increases
+  above 1% and 1,000 heartbeats, matched by declaration name.
+- [ ] Links from slow operations to the definitions they unfold.
+- [ ] Whole-project runs (every module of a package) with a summary.
 
 ## Upstream
 

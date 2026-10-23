@@ -66,6 +66,17 @@ jobs:
           grep -q "line 17: ⏱" hints.txt
           grep -q "line 17: ⚠ 1999 copies" hints.txt
           grep -q "line 17: ⚙ .* to compile" hints.txt
+      - name: Compile-time analysis
+        run: |
+          lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean | tee elab.txt
+          grep -q "repeated work" elab.txt
+          cp .lake/leanprof/elab.json base.json
+          lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean
+          lake exe leanprof compare base.json .lake/leanprof/elab.json
+          sed -i.bak 's/(List.range 40).foldl (· + ·) 0 = 780/(List.range 60).foldl (· + ·) 0 = 1770/' Examples/ElabHeavy.lean
+          lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean
+          git checkout Examples/ElabHeavy.lean
+          if lake exe leanprof compare base.json .lake/leanprof/elab.json; then echo "expected a regression"; exit 1; fi
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |

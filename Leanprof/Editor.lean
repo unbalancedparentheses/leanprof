@@ -83,6 +83,8 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
   let flag (k : String) := (j.getObjVal? k).toOption == some (.bool true)
   let sampled := flag "sampled"
   let compile := flag "elab"
+  let heartbeats := str j "unit" == "heartbeats"
+  let amount (x : Float) := if heartbeats then s!"{fmt1 (x / 1000)} kHB" else fmtNs x
   let mut lines : Array String := #[]
   -- many entries can share a line (a function and its specializations): keep the largest
   let mut best : Std.HashMap Nat (Float × String × String) := {}
@@ -92,13 +94,15 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     let calls := (num s "calls").toUInt64.toNat
     let pct := if wall > 0 then total / wall * 100 else 0
     let label :=
-      if compile then s!"⚙ {fmtNs total} to compile"
+      if compile then s!"⚙ {amount total} to compile"
       else if sampled then s!"≈ {fmtNs total} CPU · {fmt1 pct}%"
       else s!"⏱ {fmtNs total} · {fmt1 pct}% · {calls}×"
     let tip :=
       if compile then
-        s!"compile time: elaboration {fmtNs (num s "elab_ns")}, kernel {fmtNs (num s "kernel_ns")}, " ++
-          s!"compiler {fmtNs (num s "compile_ns")}, linters {fmtNs (num s "lint_ns")}"
+        let ops := (arr s "top").toList.map fun o => s!"\n  {amount (num o "amount")}  {str o "op"}"
+        s!"compile cost: elaboration {amount (num s "elab_ns")}, kernel {amount (num s "kernel_ns")}, " ++
+          s!"compiler {amount (num s "compile_ns")}, linters {amount (num s "lint_ns")}" ++
+          (if ops.isEmpty then "" else "\ncostliest operations:" ++ String.join ops)
       else if sampled then s!"{str s "name"}: {fmtNs total} CPU inclusive, {fmtNs (num s "self_ns")} self (sampled)"
       else s!"{str s "name"}: {calls} calls, total {fmtNs total}, self {fmtNs (num s "self_ns")}, " ++
         s!"mean {fmtNs (num s "mean_ns")}, p50 {fmtNs (num s "p50_ns")}, p99 {fmtNs (num s "p99_ns")}"

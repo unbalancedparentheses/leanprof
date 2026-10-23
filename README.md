@@ -45,12 +45,12 @@ nothing.
 | Task-aware | ✅ run time and queue wait per spawning scope; blocking waits per call site | ✅ parent links | – | – |
 | Lean-readable names | ✅ | ✅ (you name spans) | mangled | ✅ |
 | Results inline in the editor | ✅ run time, copies and compile time (`#leanprof`) | – | – | – |
-| Compile-time profile per declaration | ✅ `leanprof elab` (elab/kernel/compiler/lint) | – | – | – |
+| Compile-time profile | ✅ per line and operation kind, repeated work, exact heartbeat regressions | – | – | – |
 
-For deep compile-time investigations (which `isDefEq` or `whnf` call is
-slow), [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
-and `trace.profiler` go further than `leanprof elab`, which reports per
-declaration.
+For compile time, [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
+also links slow operations to the imported definitions involved and has
+profiled all of Mathlib; `leanprof elab` adds the operation-kind breakdown,
+repeated-work detection and exact heartbeat regression checks.
 Overhead numbers are from [`bench/`](bench/README.md) (Apple M5 Max). The
 same page shows leanprof finding the cause of LeanProfiler's growing cost:
 its event array is copied on every span.
@@ -183,14 +183,37 @@ as it was when the program ran, so rerun after edits.
 ### Compile time
 
 ```
-lake exe leanprof elab [--top N] FILE.lean...
+lake exe leanprof elab [--heartbeats] [--top N] FILE.lean...
 ```
 
-elaborates the files with Lean's `trace.profiler` and lists compile time per
-declaration, split into elaboration, kernel checking, code generation and
-linters. It writes `.lake/leanprof/elab.json`, which `#leanprof` shows as
-`⚙ 13.0 ms to compile` hints next to the run-time ones, so one line can show
-what it costs to compile and what it costs to run.
+elaborates the files with Lean's `trace.profiler`, parses the full trace
+trees (every `isDefEq`, `whnf`, instance search, tactic step, kernel check
+and compiler pass, with its self and total cost) and reports:
+
+- **where compile time went**: self cost by kind of operation (instance
+  search, `isDefEq`, `whnf`, tactic steps, kernel, compiler, linters);
+- **the costliest lines**, each with its most expensive nested operations
+  (`omega`, a `decide` that has to `whnf` a whole `foldl`, ...);
+- **repeated work**: the same operation done many times, such as one instance
+  problem solved 16 times, which points at a missing instance, a cache miss
+  or a definition that should be reducible.
+
+```
+  repeated work (the same operation done more than once)
+  1.39 ms      16×    [Meta.synthInstance] HAdd Nat Nat Nat  (first at Examples/ElabHeavy.lean:11)
+  0.99 ms      2×     [Meta.synthInstance] Decidable (Lean.Omega.Coeffs.isZero [1] ∨ ...)  (first at Examples/ElabHeavy.lean:27)
+```
+
+With `--heartbeats` the numbers are Lean heartbeats instead of time. They
+are the same on every run, so `leanprof compare` can check compile cost in
+CI without noise: a declaration whose cost grows by more than 1% (and 1,000
+heartbeats; editing one declaration moves its neighbours by a few) is a
+regression. Declarations are matched by name, so edits that move lines
+still compare.
+
+The report goes to `.lake/leanprof/elab.json`, which `#leanprof` shows as
+`⚙ 17.3 kHB to compile` hints; hovering lists the line's costliest
+operations.
 
 ### Sampling: no rebuild, near-zero overhead
 

@@ -39,5 +39,8 @@ while time.time() < deadline:
         for h in m.get("result") or []:
             lab = h["label"] if isinstance(h["label"], str) else "".join(p["value"] for p in h["label"])
             print(f'line {h["position"]["line"] + 1}: {lab}')
+            if os.environ.get("SHOW_TOOLTIPS") and h.get("tooltip"):
+                tip = h["tooltip"] if isinstance(h["tooltip"], str) else h["tooltip"].get("value", "")
+                print("    " + tip.replace("\n", "\n    "))
         break
 proc.kill()
