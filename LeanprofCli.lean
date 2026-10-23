@@ -799,13 +799,75 @@ def addTraceLine (st : Array TNode × Array Nat) (line : String) : Array TNode �
           nodes := nodes.modify last fun n => { n with text := n.text ++ " " ++ t }
   return (nodes, stack)
 
-/-- Parse one message's trace into nodes (index 0 is the root). The trace of
-a large declaration runs to millions of lines, so they are read one at a
-time rather than split up front. -/
-def parseTrace (data : String) : Array TNode :=
-  let (st, rest) := data.foldl (fun (st, cur) c =>
-    if c == '\n' then (addTraceLine st cur, "") else (st, cur.push c)) ((#[], #[]), "")
-  (addTraceLine st rest).1
+/-- Reading Lean's `--json` messages (see `nextMessage`). -/
+structure MsgReader where
+  chunk : ByteArray := .empty  -- bytes read, from `pos` on not yet used
+  pos : Nat := 0
+  rest : ByteArray := .empty   -- the current message without its `data` text
+  line : ByteArray := .empty   -- the current line of `data`, decoded
+  head : ByteArray := .empty   -- the start of `data` (for error messages)
+  trace : Array TNode × Array Nat := (#[], #[])
+  mode : Nat := 0              -- 0 outside `data`, 1 inside, 2 after a backslash, 3 to 6 in `\uXXXX`
+  hex : Nat := 0
+
+/-- The next of Lean's `--json` messages (one per line) on `h`: the message
+without its `data` text, the first 2,000 bytes of `data`, and `data` parsed
+as a trace. `data` is decoded and parsed a line at a time, never held whole:
+a declaration's full trace can be gigabytes in one message. -/
+partial def nextMessage (h : IO.FS.Stream) (ref : IO.Ref MsgReader) :
+    IO (Option (Json × String × Array TNode)) := do
+  let key := "\"data\":\"".toUTF8
+  let push (r : MsgReader) (b : UInt8) : MsgReader :=
+    { r with line := r.line.push b, head := if r.head.size < 2000 then r.head.push b else r.head }
+  let flush (r : MsgReader) : MsgReader :=
+    { r with trace := addTraceLine r.trace (String.fromUTF8? r.line |>.getD ""), line := .empty }
+  let finish (r : MsgReader) : Option (Json × String × Array TNode) :=
+    (String.fromUTF8? r.rest).bind (Json.parse · |>.toOption) |>.map
+      fun m => (m, String.fromUTF8? r.head |>.getD "", r.trace.1)
+  let mut r ← ref.swap {}
+  repeat
+    if r.pos ≥ r.chunk.size then
+      let chunk ← h.read 1048576
+      if chunk.isEmpty then
+        ref.set {}
+        if r.rest.isEmpty then return none
+        return finish r
+      r := { r with chunk, pos := 0 }
+    let b := r.chunk[r.pos]!
+    r := { r with pos := r.pos + 1 }
+    match r.mode with
+    | 0 =>
+      if b == 10 then  -- the end of the message
+        let out := finish r
+        ref.set { chunk := r.chunk, pos := r.pos }
+        match out with
+        | some x => return some x
+        | none => r ← ref.swap {}
+      else
+        r := { r with rest := r.rest.push b }
+        let n := r.rest.size
+        if n ≥ key.size && (List.range key.size).all (fun k => r.rest[n - key.size + k]! == key[k]!) then
+          r := { r with mode := 1 }
+    | 1 =>
+      if b == 34 then  -- `"`: the end of `data`
+        r := { flush r with rest := r.rest.push 34, mode := 0 }
+      else if b == 92 then r := { r with mode := 2 }
+      else r := push r b
+    | 2 =>
+      r := { r with mode := 1 }
+      if b == 110 then  -- `\n`: the next line
+        r := flush r
+        r := { r with head := if r.head.size < 2000 then r.head.push 10 else r.head }
+      else if b == 116 then r := push r 9
+      else if b == 117 then r := { r with mode := 3, hex := 0 }
+      else if b == 34 || b == 92 || b == 47 then r := push r b
+    | k =>
+      let d := if b ≤ 57 then b.toNat - 48 else if b ≤ 70 then b.toNat - 55 else b.toNat - 87
+      r := { r with hex := r.hex * 16 + d, mode := k + 1 }
+      if k == 6 then
+        r := { r with mode := 1 }
+        for c in (String.singleton (Char.ofNat r.hex)).toUTF8 do r := push r c
+  return none
 
 /-- Merge operations that differ only in metavariable numbers (`?m.123`). -/
 def normalizeOp (t : String) : String := Id.run do
@@ -915,12 +977,11 @@ def elabCmd (argv : List String) : IO UInt32 := do
     let stderr ← IO.asTask child.stderr.readToEnd
     let srcLines := ((← (some <$> IO.FS.readFile file) <|> pure none).getD "").splitOn "\n" |>.toArray
     let mut errors : Array String := #[]
+    let reader ← IO.mkRef ({} : MsgReader)
+    let out := IO.FS.Stream.ofHandle child.stdout
     repeat
-      let msgLine ← child.stdout.getLine
-      if msgLine.isEmpty then break
-      let some m := (Json.parse msgLine).toOption | continue
-      if str m "severity" == "error" then errors := errors.push (str m "data")
-      let nodes := parseTrace (str m "data")
+      let some (m, head, nodes) ← nextMessage out reader | break
+      if str m "severity" == "error" then errors := errors.push head
       let some root := nodes[0]? | continue
       let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
       let key := s!"{file}:{ln}"

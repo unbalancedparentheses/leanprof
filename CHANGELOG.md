@@ -70,6 +70,11 @@ Found on real projects (see the case studies):
   now, and says when Lean fails on a file. Lines are named by their source
   instead of the trace's pretty-printed command (which can be `failed to
   pretty print term`), and the header says what a kHB is.
+- `leanprof elab` read each of Lean's messages whole and then parsed it:
+  concrete's `Check.lean` prints a 2.4 GB trace in one message, and
+  leanprof needed 15.5 GB. Messages are now decoded a line at a time as they
+  arrive, only reported texts are kept, and the table of operations is
+  bounded: 167 MB for the same report.
 - Building with probes printed a report from every `lean` process that
   loaded an instrumented precompiled module (doc-gen4's dependencies); the
   build now runs with reports off and without the user's `LEANPROF_JSON`

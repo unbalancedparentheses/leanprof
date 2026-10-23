@@ -85,7 +85,25 @@ traversal.)
 
 ## Compile time (`leanprof elab --heartbeats`)
 
-COMPILE
+`Concrete/Check/Check.lean` (3,425 lines, among the slowest modules to
+build) costs 291.1M heartbeats, **51% of it code generation**:
+
+- **One `mutual` block of `partial def`s, lines 449–2628 (the expression
+  and statement checker), is 69% of the file**: 145.2M heartbeats to
+  compile (reported at line 456) and 56.0M to elaborate, 36.0M of it the
+  `do match e with ...` body of `checkExprCore`. The block is elaborated
+  with `set_option backward.do.legacy true` because, as the comment above
+  it says, the new `do` elaborator exceeds the default heartbeat limit on
+  it; with the legacy one it uses 56,025 kHB, 28% of that limit.
+- Repeated instance problems inside it: `Bind ?m` 1,120 times, `Pure ?m`
+  756 times, `HAppend String String String` 820 times; `Type =?= Type` is
+  checked 12,999 times in the file.
+- Splitting the block into smaller mutual groups (most functions do not
+  call each other) would cut both costs and let them build in parallel;
+  its code generation is the larger half.
+
+Its full trace is 2.4 GB of JSON in one message, which is what made
+`leanprof elab` itself run out of memory (below).
 
 ## What broke or confused leanprof here, and was fixed
 
@@ -110,7 +128,8 @@ COMPILE
   scope tables do not stay in cache and each call costs several times what
   the calibration measures. This is now said in the guide (call counts stay
   exact; take times from `sample`).
-- `leanprof elab` held the whole output of Lean in memory and then split
-  it: on concrete's largest files, whose full traces run to gigabytes, it
-  reached 8.8 GB before it was stopped. It now reads Lean's
-  messages one at a time.
+- `leanprof elab` needed 15.5 GB of memory for `Concrete/Check/Check.lean`:
+  Lean prints the full trace of its large `mutual` block as one 2.4 GB
+  message, which leanprof read whole, parsed as JSON and split into lines.
+  It now decodes each message a line at a time as it arrives and keeps only
+  the operations it reports: 167 MB, with the same report.
