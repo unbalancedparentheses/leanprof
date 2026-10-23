@@ -90,6 +90,10 @@ lean_lib LeanprofHtml where
 /-- `leanprof top`, `dump` and `mcp`, imported by the command line. -/
 lean_lib LeanprofLive
 
+/-- `leanprof elab`, imported by the command, and its tests (run by `tests`). -/
+lean_lib LeanprofElab where
+  roots := #[`LeanprofElab, `Tests.Elab]
+
 /-- `lake exe leanprof run|compare`. -/
 lean_exe leanprof where
   root := `LeanprofCli

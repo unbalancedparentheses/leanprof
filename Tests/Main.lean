@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain
+import Leanprof import Leanprof.Explain import Tests.Elab
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -260,6 +260,8 @@ def tests : StateT Nat IO Unit := do
   let lines := found.flatMap (·.lines)
   check "explain: source lines of the store and the push" (lines.contains 17 && lines.contains 18) s!"{lines}"
   -- END leanprof explain
+  -- leanprof elab: reading traces (Tests/Elab.lean)
+  Tests.Elab.run fun n ok d => check n ok d
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0

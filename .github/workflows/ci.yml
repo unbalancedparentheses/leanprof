@@ -194,13 +194,32 @@ jobs:
           grep -q "line 17: ⚙ .* to compile" hints.txt
       - name: Compile-time analysis
         run: |
-          lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean | tee elab.txt
+          lake exe leanprof elab --heartbeats --threshold 0 Examples/ElabHeavy.lean | tee elab.txt
           grep -q "repeated work" elab.txt
+          # the definitions behind the work, located in Lean's sources; tactic lines
+          grep -q "isDefEq unfolds  Lean.Omega.Coeffs.isZero  (Init/Omega/Coeffs.lean:" elab.txt
+          grep -q "whnf reduces     List.foldl  (Init/Prelude.lean:" elab.txt
+          grep -q "instance tried   instHAdd  (Init/Prelude.lean:" elab.txt
+          grep -q "Examples/ElabHeavy.lean:28  refine" elab.txt
+          lake exe leanprof elab --heartbeats --counts --out counts.json Examples/ElabHeavy.lean | tee counts.txt
+          grep -q "most unfolded" counts.txt
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('.lake/leanprof/elab.json'))
+          c = {x['name']: x for x in d['constants']}
+          k = {x['name']: x for x in json.load(open('counts.json'))['constants']}
+          print(c.get('List.foldl'), k.get('List.rec'))
+          line = [s for s in d['scopes'] if s['pos'] == 'Examples/ElabHeavy.lean:19'][0]
+          ok = (k['List.rec']['kernel'] > 100 and c['List.foldl']['where'].startswith('Init/Prelude.lean:')
+                and any(u['name'] == 'List.foldl' for u in line['unfolded'])
+                and any(t['pos'] == 'Examples/ElabHeavy.lean:22' for t in d['tactics']))
+          sys.exit(0 if ok else 1)
+          PY
           cp .lake/leanprof/elab.json base.json
-          lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean
+          lake exe leanprof elab --heartbeats --threshold 0 Examples/ElabHeavy.lean
           lake exe leanprof compare base.json .lake/leanprof/elab.json
           sed -i.bak 's/(List.range 40).foldl (· + ·) 0 = 780/(List.range 60).foldl (· + ·) 0 = 1770/' Examples/ElabHeavy.lean
-          lake exe leanprof elab --heartbeats Examples/ElabHeavy.lean
+          lake exe leanprof elab --heartbeats --threshold 0 Examples/ElabHeavy.lean
           git checkout Examples/ElabHeavy.lean
           if lake exe leanprof compare base.json .lake/leanprof/elab.json; then echo "expected a regression"; exit 1; fi
           lake exe leanprof report-md --fail-on none base.json .lake/leanprof/elab.json | tee elab.md
@@ -225,6 +244,37 @@ jobs:
           path: |
             leanprof-report.html
             diff.html
+      - name: Compile-time analysis of a whole project (elab --project)
+        run: |
+          lake exe leanprof elab --project --heartbeats --out proj1.json | tee proj.txt
+          grep -q "slowest files" proj.txt
+          grep -q "definitions behind the work" proj.txt
+          lake exe leanprof elab --project --heartbeats --module-glob 'Leanprof.*' --out glob.json
+          python3 - <<'PY'
+          import json, sys
+          p, g = json.load(open('proj1.json')), json.load(open('glob.json'))
+          mods = {f['module'] for f in p['files']}
+          gm = {f['module'] for f in g['files']}
+          print(sorted(mods), sorted(gm))
+          ok = (p['project'] and {'Leanprof.Core', 'Leanprof.Editor'} <= mods
+                and gm and all(m.startswith('Leanprof.') for m in gm)
+                and any(c['where'].startswith('Init/') for c in p['constants']))
+          sys.exit(0 if ok else 1)
+          PY
+          # heartbeats repeat: a second run is no regression, per declaration and per module
+          lake exe leanprof elab --project --heartbeats --no-build --out proj2.json > /dev/null
+          lake exe leanprof compare proj1.json proj2.json | tee cmp.txt
+          grep -q "module Leanprof.Editor" cmp.txt
+          # a module made slower is a regression
+          python3 - <<'PY'
+          import json
+          d = json.load(open('proj2.json'))
+          for f in d['files']:
+              if f['module'] == 'Leanprof.Editor':
+                  f['total_ns'] *= 1.5
+          json.dump(d, open('proj3.json', 'w'))
+          PY
+          if lake exe leanprof compare proj1.json proj3.json; then echo "expected a regression"; exit 1; fi
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |
