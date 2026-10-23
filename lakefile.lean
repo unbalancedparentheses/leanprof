@@ -72,6 +72,9 @@ extern_lib leanprof_c pkg := do
 lean_exe overhead where
   root := `Examples.Overhead
 
+/-- `leanprof elab`, imported by the command (and by the tests). -/
+lean_lib LeanprofElab
+
 /-- `lake exe leanprof run|compare`. -/
 lean_exe leanprof where
   root := `LeanprofCli
