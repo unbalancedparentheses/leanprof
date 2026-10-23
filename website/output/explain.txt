@@ -1,0 +1,17 @@
+$ leanprof explain
+
+buildWithHistory (in Std.Legacy.Range.forIn'.loop)  Examples/CopyBug.lean:17
+  Array copies: 1999 shared, 2 of a constant; 15.3 MiB, 3.10 ms copying
+  why: `acc` is stored in `history` at line 21 (`history := history.push acc`) and is updated
+       afterwards at line 22 (`acc := acc.push i`): both refer to the same Array, so the Array.push
+       copies it.
+  fix: Store the value after its last update, store something smaller (an index, a summary), or,
+       when every intermediate version is needed, keep them in a persistent structure (`List`,
+       `Lean.PersistentArray`) instead of copying the whole value at each step.
+  where: Examples/CopyBug.lean lines 21, 22
+  evidence: .lake/build/ir/Examples/CopyBug.c:166 `v___x_30_ = lean_array_push(v_fst_24_, v_i_20_);`, second reference at .lake/build/ir/Examples/CopyBug.c:163
+  confidence: high: the IR takes a second reference on every path to the update; source lines matched by text, not positions
+  (1 other update(s) in this function with weaker evidence not shown)
+  note: 2 copies were of a constant (a literal such as `#[]` or `""`, a closed term, or the shared
+        elements of `Array.replicate n #[]`): the first update of each copies it once, which is
+        expected.

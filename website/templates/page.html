@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="{{up}}favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<link rel="stylesheet" href="{{up}}style.css">
+</head>
+<body class="{{body_class}}">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="bar">
+    <a class="mark" href="{{up}}index.html">leanprof</a>
+    <nav aria-label="Site">
+      {{nav}}
+      <a href="https://github.com/unbalancedparentheses/leanprof">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+{{body}}
+</main>
+<footer class="bottom">
+  <div class="bar">
+    <p>leanprof, a profiler for Lean 4. MIT license. Built from the
+    <a href="https://github.com/unbalancedparentheses/leanprof">repository</a>'s Markdown on every push to main.</p>
+  </div>
+</footer>
+</body>
+</html>

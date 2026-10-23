@@ -5,7 +5,7 @@ package leanprof where
   version := v!"0.1.0"
   description := "Profiler for compiled Lean 4 programs: time per scope, hidden copies of shared arrays and strings, allocations, tasks and compile cost, with exact regression checks for CI"
   keywords := #["profiler", "performance", "devtool", "cli", "benchmarking", "ci"]
-  homepage := "https://github.com/unbalancedparentheses/leanprof/tree/main/docs/guide"
+  homepage := "https://unbalancedparentheses.github.io/leanprof"
   license := "MIT"
   licenseFiles := #["LICENSE"]
   readmeFile := "README.md"

@@ -1,5 +1,7 @@
 # leanprof
 
+[Website and documentation](https://unbalancedparentheses.github.io/leanprof)
+
 > In Lean, `arr.push x` is fast only when nothing else refers to `arr`; if
 > something does, Lean silently copies the whole array first. One stray
 > reference turns a linear loop quadratic, and nothing in your code, your

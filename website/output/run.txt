@@ -1,0 +1,14 @@
+$ leanprof run copybug
+
+leanprof: 4 scopes, wall 26.7 ms, 9.9 ns overhead per scope subtracted
+
+     calls      total       self  %wall       mean        p50        p99  scope  (where)
+         1     3.1 ms     3.1 ms  11.8%     3.1 ms     3.0 ms     3.0 ms  buildWithHistory  (Examples/CopyBug.lean:17)
+         1 108.6 µs*   67.4 µs   0.4%  108.6 µs   98.3 µs   98.3 µs  report  (Examples/CopyBug.lean:35)
+     10945  41.1 µs*   41.1 µs   0.2%      44 ns       0 ns     304 ns  fib  (Examples/CopyBug.lean:15)
+         1   10.9 µs   10.9 µs   0.0%   10.9 µs   10.8 µs   10.8 µs  build  (Examples/CopyBug.lean:25)
+* near the probe cost: use `leanprof sample` for this function's time
+
+copies of non-exclusive values (each one copied the whole value)
+  copies       bytes       time  %scope  kind        why            in scope           function  (where)
+    2001    15.3 MiB     3.1 ms   98.8%  Array       shared         buildWithHistory   buildWithHistory (in Std.Legacy.Range.forIn'.loop)  (Examples/CopyBug.lean:17)

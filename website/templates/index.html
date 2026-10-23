@@ -1,0 +1,116 @@
+<section class="hero">
+  <div class="lede">
+    <h1>One stray reference, and <code>arr.push</code> copies the whole array.</h1>
+    <div class="opening">{{opening}}</div>
+    <p class="cta"><a class="button" href="docs/guide/getting-started.html">Get started</a>
+    <a href="https://github.com/unbalancedparentheses/leanprof">Source on GitHub</a></p>
+  </div>
+
+  <div class="evidence">
+    <figure class="pane src">
+      <figcaption><span class="file">Examples/CopyBug.lean</span> A loop that looks linear. Line 21 keeps a reference to <code>acc</code>; line 22 pushes to it.</figcaption>
+      <pre class="code listing"><code>{{source}}</code></pre>
+    </figure>
+    <figure class="pane term">
+      <figcaption>Every copy, with the line, how many, how many bytes and how much time.</figcaption>
+      <pre class="code terminal"><code>{{run}}</code></pre>
+    </figure>
+    <figure class="pane term">
+      <figcaption>Why the value was shared, from the compiler's own output, and the fix.</figcaption>
+      <pre class="code terminal"><code>{{explain}}</code></pre>
+    </figure>
+    <p class="note">Unedited output of leanprof on <a href="https://github.com/unbalancedparentheses/leanprof/blob/main/Examples/CopyBug.lean">Examples/CopyBug.lean</a> from this repository. A normal profiler would show <code>buildWithHistory</code> as slow; only leanprof shows that 98% of its time is copying.</p>
+  </div>
+</section>
+
+<section class="why" id="why">
+  <h2>Why leanprof</h2>
+  <div class="intro">{{why_intro}}</div>
+  <div class="points">{{why}}</div>
+</section>
+
+<section class="start" id="quickstart">
+  <h2>Three commands</h2>
+  <p>No changes to your project and no dependency: leanprof builds its runtime for your Lean version (4.34 and later) and puts your normal build back afterwards.</p>
+  <ol class="steps">
+    <li><p>Install the command.</p>
+<pre class="code"><code><span class="gp">$ </span>git clone https://github.com/unbalancedparentheses/leanprof <span class="o">&amp;&amp;</span> sh leanprof/scripts/install.sh</code></pre></li>
+    <li><p>In your Lake project, run an executable with its arguments.</p>
+<pre class="code"><code><span class="gp">$ </span>leanprof run myapp -- args</code></pre></li>
+    <li><p>Ask why each copy happened.</p>
+<pre class="code"><code><span class="gp">$ </span>leanprof explain</code></pre></li>
+  </ol>
+  <p>Then <code>leanprof sample</code> for CPU time with Lean names, <code>leanprof stat</code> for one screen of everything, and <code>leanprof elab</code> for compile time. The <a href="docs/guide/getting-started.html">getting started guide</a> walks through each.</p>
+</section>
+
+<section class="see" id="report">
+  <h2>Where you read it</h2>
+  <figure class="shot">
+    <a href="docs/images/html-report.png"><img src="docs/images/html-report.png" alt="leanprof html: a sampled flame graph of the example program with compile-time tiles, sortable tables and source lines" width="1400" loading="lazy"></a>
+    <figcaption><code>leanprof html</code> puts every report into one page you can open offline or share: flame graph, sortable tables, source lines with the findings, and a base-versus-new comparison. <a href="docs/guide/html-report.html">The HTML report</a>.</figcaption>
+  </figure>
+  <figure class="editor">
+    <figcaption>In VS Code, <code>#leanprof</code> shows the last reports as inlay hints at the end of each line: run time, copies and compile time together. <a href="docs/guide/editor.html">In the editor</a>.</figcaption>
+    <pre class="code"><code>{{hint_code}}{{hint_hints}}</code></pre>
+  </figure>
+</section>
+
+<section class="results" id="results">
+  <h2>On real code</h2>
+  <p>Profiled from outside, without changing the projects. Every number below is from the linked write-up.</p>
+
+  <article class="result">
+    <header>
+      <h3><a href="docs/case-studies/lean-compiler-backend.html">lean-compiler-backend</a></h3>
+      <p class="tool"><code>run --allocs</code>, <code>explain</code></p>
+    </header>
+    <div>
+      <p>A QBE-compatible compiler written in Lean. Its tokenizer made 4,066,775 of the 11,946,202 allocations needed to compile zlib. The fix, <a href="https://github.com/unbalancedparentheses/lean-compiler-backend/commit/4864dd2">commit 4864dd2</a>, is now on the project's main branch: 8,572,024 allocations for the whole run, −28%, with byte-identical output.</p>
+      <p>The first version of that fix was 30 times slower, and one <code>leanprof run</code> showed why: 91,020 copies of the token array, 6.84 GiB. <code>leanprof explain</code> also traced 121,054 copies in <code>CFG.build</code> to arrays pushed while still held by an outer array.</p>
+    </div>
+  </article>
+
+  <article class="result">
+    <header>
+      <h3><a href="docs/case-studies/doc-gen4.html">doc-gen4</a></h3>
+      <p class="tool"><code>sample</code>, <code>run</code></p>
+    </header>
+    <div>
+      <p>In the pass that renders the API docs to HTML, two thirds of its CPU time is one SQL query, <code>getContainedNames</code>, whose cost grows with the square of the number of declarations in a module. And 12.7% of the CPU time is threads waiting for SQLite's global memory mutex, which <code>SQLITE_DEFAULT_MEMSTATUS=0</code> removes.</p>
+      <p>In the analysis pass, every declaration copies its module's member array: 29,026 copies, 69.9 MiB, quadratic in the size of a module.</p>
+    </div>
+  </article>
+
+  <article class="result">
+    <header>
+      <h3><a href="bench/README.html#why-leanprofilers-cost-grows">LeanProfiler</a></h3>
+      <p class="tool">compiler wrapper</p>
+    </header>
+    <div>
+      <p>Another Lean profiler, whose cost per span grows with the number of events recorded: 4.6 µs at 1,000 events, 20.1 µs at 4,000, 88.5 µs at 16,000 (leanprof over the same counts: 15.9–17.8, 8.9–17.0 and 10.0–11.6 ns).</p>
+      <p>leanprof found why without a single annotation in LeanProfiler: 12003 copies, 123.0 MiB, in <code>reserveSpan</code> for 4,000 spans. Its state lives in a mutex and is read with a second reference, so every span copies every event recorded so far.</p>
+    </div>
+  </article>
+
+  <article class="result">
+    <header>
+      <h3><a href="docs/case-studies/batteries.html">Batteries</a></h3>
+      <p class="tool"><code>elab --project</code></p>
+    </header>
+    <div>
+      <p>The compile time of all 195 modules, profiled in 17.0 s, against 13.3 s for <code>lake build</code> from clean. lean-source-profiler took 88.5 s in compact mode and 129.5 s in detailed mode, on 263 files with tests and scripts (<a href="docs/case-studies/compile-time-vs-lean-source-profiler.html">comparison</a>).</p>
+      <p>Termination and bounds proofs are about a quarter of all elaboration: <code>decreasing_tactic</code> alone is 216.5 M heartbeats, 14.4%. An iterator definition is unfolded 24,369 times from ordinary RBTree proofs.</p>
+    </div>
+  </article>
+  <p class="more">Also: <a href="docs/case-studies/verso.html">verso</a>, <a href="docs/case-studies/lean-regex.html">lean-regex</a>, <a href="docs/case-studies/concrete.html">concrete</a>, and the <a href="bench/RESULTS.html">accuracy benchmark</a> against workloads with known answers.</p>
+</section>
+
+<section class="compare" id="compare">
+  <h2>How it compares</h2>
+  {{compare}}
+</section>
+
+<section class="docs-index" id="docs">
+  <h2>Documentation</h2>
+  {{docs_index}}
+</section>
