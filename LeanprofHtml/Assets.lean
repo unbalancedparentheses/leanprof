@@ -15,6 +15,15 @@ def js : String := include_str "report.js"
 def escapeHtml (s : String) : String :=
   ((s.replace "&" "&amp;").replace "<" "&lt;").replace ">" "&gt;"
 
+/-- `s` with every `<` written `\u003c`, a byte at a time (`String.replace` is
+several times slower on a report of megabytes). -/
+def escapeLt (s : String) : String := Id.run do
+  let rep := "\\u003c".toUTF8
+  let mut out := ByteArray.emptyWithCapacity (s.utf8ByteSize + 64)
+  for x in s.toUTF8 do
+    out := if x == 60 then out ++ rep else out.push x
+  return String.fromUTF8! out
+
 /-- The page for `data` (compressed JSON). `<` is escaped, so nothing in the
 data can close its script element. -/
 def page (title data : String) : String :=
@@ -23,7 +32,7 @@ def page (title data : String) : String :=
   "<meta name=\"generator\" content=\"leanprof html\">\n" ++
   s!"<title>{escapeHtml title}</title>\n<style>\n{css}</style>\n</head>\n<body>\n" ++
   "<div id=\"app\"><noscript>This report needs JavaScript.</noscript></div>\n" ++
-  s!"<script id=\"leanprof-data\" type=\"application/json\">{data.replace "<" "\\u003c"}</script>\n" ++
+  s!"<script id=\"leanprof-data\" type=\"application/json\">{escapeLt data}</script>\n" ++
   s!"<script>\n{js}</script>\n</body>\n</html>\n"
 
 end LeanprofHtml
