@@ -19,42 +19,43 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
 
 ## v0.1.0: honest numbers, installable
 
-- [ ] Merge the open work: accuracy (probe-cost flags, `%wall`, recursive
+- [x] Merge the open work: accuracy (probe-cost flags, `%wall`, recursive
   self time), hardening (sanitizers in CI), exact compile-time ranges, Lake
   and language-server and Mathlib case studies, the website.
-- [ ] Allocations judged exactly: `judge` and `compare` count allocations
-  (exact, like copies), and the default report shows them next to copies.
-  The first `CFG.build` fix in lean-compiler-backend cut copies but added
-  59,514 allocations; today's `judge` would have kept it.
-- [ ] Each finding states its share of the run (`these copies took 0.4% of
+- [x] Allocations judged exactly: `measure`, `judge` and `compare`
+  include allocations by instrumented compiled Lean code. Reports show them
+  alongside copies when allocation counting is enabled. Core-library and
+  constant-copy coverage remains a limitation (see the autoresearch case study).
+- [x] Each finding states its share of the run (`these copies took 0.4% of
   the run`), and reports and `explain` rank by that, not by counts: a 10%
   cut in allocations there did not change wall time.
-- [ ] Copies of empty or tiny values (the first push into an empty slot)
+- [x] Copies of empty or tiny values (the first push into an empty slot)
   grouped or hidden; tables sorted by bytes and time.
 - [ ] Self-check on every run: one known copy must be detected, otherwise
   warn that copies may be undercounted on this Lean version (Lean 4.36
   inlined `lean_string_push` and String copies silently went uncounted).
-- [ ] The smoke check profiles a project other than leanprof (the release
+- [x] The smoke check profiles a project other than leanprof (the release
   package once lacked runtime files and the check, run on leanprof itself,
   passed).
-- [ ] Times too small to measure are reported as such, never as 0.
+- [x] Times too small to measure are reported as such, never as 0.
 - [ ] Release binaries for Linux arm64 and macOS x86-64; Windows documented
   as unsupported.
 - [ ] Security review of the MCP server, the GitHub Action and the install
   script.
-- [ ] Issue and PR templates, `SECURITY.md`, a Lean version support policy,
+- [x] Issue and PR templates, `SECURITY.md`, a Lean version support policy,
   `CONTRIBUTING.md`.
-- [ ] Easier first run: the installer checks `PATH`, errors say how to fix
+- [x] Easier first run: the installer checks `PATH`, errors say how to fix
   them, CI installs from scratch on a project leanprof has never seen.
 - [ ] Evidence that stands on its own:
   - the benchmark suite rerun on CI's fixed runners (Linux and macOS, on a
     schedule) with the results published, next to a run on an idle machine
-    (today's numbers come from one shared machine, often loaded);
+    (dedicated Linux results are now recorded in `bench/RESULTS.md`;
+    scheduled publication is still outstanding);
   - real programs whose right answer is known (where the time goes, how many
     copies), not only synthetic workloads;
-  - a comparison with LeanBench on the job both do: telling whether a change
-    made code slower or faster (noise, seeded regressions, cost).
-- [ ] README states only what was measured: where leanprof is better, where
+  - [x] A comparison with LeanBench on regression verdicts (noise, seeded
+    regressions, cost): see [the case study](docs/case-studies/leanbench.md).
+- [x] README states only what was measured: where leanprof is better, where
   it is not (tiny functions in the exact modes; LeanProfiler's hand-placed
   spans are more accurate on some workloads; what lean-source-profiler has
   that leanprof lacks).
@@ -76,14 +77,15 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
   inputs and must agree (as the 160-combination check did for
   lean-compiler-backend); several workload sizes, and a final check of the
   whole branch on inputs the loop never saw.
-- [ ] `explain` prints the concrete fix for each cause: `Array.modify` or
+- [x] `explain` prints the concrete fix for each cause: `Array.modify` or
   swapping out an element held by an outer array, `alter` or erasing a
   value read from a hash map, keeping data out of a shared `IO.Ref` for
   multi-threaded copies; machine-readable ranked suggestions for agents.
 - [ ] Profiling dependencies rebuilds them with copy counting automatically
   (no deleting compiled files by hand).
-- [ ] `measure` and `judge` through the MCP server; the loop shipped as a
-  Claude Code command; the results log used as memory of tried ideas.
+- [x] `measure` and `judge` through the MCP server.
+- [ ] The loop shipped as a Claude Code command; the results log used as
+  memory of tried ideas.
 - [ ] Outside confirmation (the maintainer's decision: posting and
   upstream patches): others reproducing the measurements, and patches found
   with leanprof accepted upstream.
@@ -167,7 +169,7 @@ benchmark measures them.
   in one session, with confidence intervals on time.
 - [x] `leanprof compare`: copies and calls compared exactly, time with a
   threshold; exits 1 on regressions.
-- [ ] Allocations in the exact comparison (after M5).
+- [x] Allocations in the exact comparison (after M5).
 - [ ] Benchmarks report copies and allocations next to time; LeanBench
   integration.
 
@@ -184,10 +186,10 @@ keeps only improvements ([research/program.md](research/program.md)).
   (`research/demo/run.sh`) run in CI.
 - [ ] Interleave base and candidate runs (needs two builds side by side) so
   time verdicts survive machine-load drift during long sessions.
-- [ ] Allocations in the verdict (after M5).
+- [x] Allocations in the verdict (after M5).
 - [ ] Hints in the summary: the top copy sites and sampled hotspots, so the
   agent's next experiment starts from the measurement.
-- [ ] Run against real projects (Mathlib-free programs, compilers,
+- [x] Run against real projects (Mathlib-free programs, compilers,
   parsers) and publish what the loop found.
 
 ## M5: allocations
@@ -204,7 +206,8 @@ keeps only improvements ([research/program.md](research/program.md)).
   push at line 21 copies").
 - [ ] Integrate Lean's linearity markers (`lean_array_mark_linear` and
   friends): report violations instead of panicking; `expectLinear` in tests.
-- [ ] Boxing, closure application (`lean_apply_n`) and RC-operation counts.
+- [ ] Boxing and RC-operation counts; closure applications and failed reuse
+  are already available through `--counters`.
 
 ## M7: traces, tasks and live views
 
@@ -216,7 +219,8 @@ keeps only improvements ([research/program.md](research/program.md)).
 - [x] Attribute `Task.spawn`/`IO.asTask` work to the spawning scope; queue
   wait (spawn to start); blocking `IO.wait`/`Task.get` per call site; tasks
   on their worker threads in the timeline.
-- [ ] `Task.map`/`bind`, `IO.mapTask`/`bindTask`; `Std.Channel` throughput.
+- [x] `Task.map`/`bind`, `IO.mapTask`/`bindTask`.
+- [ ] `Std.Channel` throughput.
 - [ ] One Firefox Profiler file merging samply's sampled stacks, exact scope
   timings and copies as markers.
 - [x] Live terminal view and an MCP server so agents can query a running

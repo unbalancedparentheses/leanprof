@@ -143,6 +143,26 @@ new summary.
   what you would try next.
 - Leave the branch with only KEEP commits and a clean tree.
 
+## Qualify a kept branch before merging
+
+Build the original baseline and final candidate from clean checkouts. Check the
+whole branch on inputs and option combinations beyond the optimization workload,
+including malformed inputs: diagnostics and refusal behavior are part of the
+contract. Run the full test suite on both under the same pinned toolchain. If a
+host-specific baseline failure exists, record it by test name and compare the
+candidate's failure and log; do not turn it into an unexplained skipped test.
+
+Review every removed validation against all return paths of the function said
+to guarantee it. In the compiler case study, SSA construction validated renamed
+functions but returned already-SSA functions unchecked. A focused regression
+test caught the missing check even though hundreds of CLI comparisons passed.
+
+Confirm speedups on ordinary binaries without probes, after builds and tests
+finish. Warm both binaries, alternate their order, save every run and machine
+load, and check outputs. A confidence interval from one machine does not cover
+other workloads or platforms. Keep allocation reductions separate from runtime
+speedups. The [LCB qualification scripts](lcb/README.md) provide a concrete example.
+
 ## Demo
 
 `research/demo/run.sh` runs this loop with two scripted experiments instead

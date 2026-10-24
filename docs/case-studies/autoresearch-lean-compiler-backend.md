@@ -10,7 +10,7 @@ fixes merged). The result is the branch
 [`autoresearch/zlib-2026-10-23`](https://github.com/unbalancedparentheses/lean-compiler-backend/tree/autoresearch/zlib-2026-10-23):
 12 commits, not merged into main.
 
-**Result:** 25 experiments, 12 kept. The zlib workload makes 16.3% fewer
+**Original experiment result:** 29 experiments, 12 kept. The zlib workload makes 16.3% fewer
 allocations (7,719,273 → 6,460,575; 200.1 → 167.7 MiB) and 55% fewer copies
 of shared values (86,449 → 38,911). Wall time fell 24% (median of 30 runs
 each, 648 → 492 ms, measured with probes, base and head alternating). The
@@ -105,10 +105,12 @@ measured unchanged code. It is not counted.)
   `Memory.promote`, `Optimize.module`, each back end's `emitModule` and
   `emitFunction`). Each repeated validation also rebuilt the CFG, so each
   removal cut `CFG.build`'s copies by exactly 108, which is what judge saw.
-  The public functions still validate. Only internal paths whose input was
-  provably just validated (same value, nothing in between) skip it, and
-  error precedence is unchanged. After these changes `validateFunction` is
-  12.5% of CPU.
+  Existing public entry points retain validation; the new `Validated` helpers
+  require callers to supply already-validated inputs. Review found one exception
+  to the original justification: `SSA.construct` returns already-SSA input
+  unchecked, so memory promotion still needs validation on that path. The
+  reviewed candidate restores it (see the qualification below). In the original
+  experiment, `validateFunction` fell to 12.5% of sampled CPU.
 
 ## Totals
 
@@ -205,7 +207,9 @@ from `sample` showed it.
 
 ## Reproducing
 
-The scripts used (measure, identity check, per-step TEST runner, experiment
-runner) were kept outside both repositories during the session; the fixed
-commands are in the Setup table above. The branch's commits each say which
-experiment they came from and how many allocations they removed.
+The original experiment scripts were kept outside both repositories. The
+[qualification scripts](../../research/lcb/README.md) now reproduce clean builds,
+plain-binary timings, all 340 output comparisons, 200 malformed-input comparisons,
+and full per-step tests using the exact input files already archived in the
+compiler repository. The original fixed commands remain in the Setup table.
+Each optimization commit records its experiment and allocation reduction.
