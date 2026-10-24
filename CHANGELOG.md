@@ -6,6 +6,17 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Compiler qualification and release preparation
+
+- Reproducible clean-build compiler comparison, 540 output/diagnostic checks,
+  full per-stage logs, and plain-binary timing evidence in `research/lcb/`.
+  The reviewed compiler optimizations are merged, with a corrected validation
+  fast path and 22% less median wall time on the measured workload.
+- Contribution and supported-toolchain guidance, security reporting guidance,
+  issue/PR templates, and a roadmap reconciled with implemented features.
+- Extend the existing TSan allocator-reuse suppression to Lean's inlined fresh
+  object header initialization; profiler task functions remain unsuppressed.
+
 ### `leanprof explain` prints the fix
 
 - Recognises the causes of copies found in real projects from the compiler's

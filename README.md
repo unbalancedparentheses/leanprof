@@ -30,8 +30,10 @@ All profiled from outside, without changing the projects:
   measurably change: fewer allocations is not always a faster program.
   Then the [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
   found that each function was validated about ten times on its way through
-  the compiler, each time rebuilding its CFG: its 12 kept changes (on a
-  branch, for review) cut wall time by 24% and allocations by another 16%.
+  the compiler, each time rebuilding its CFG. Its 12 kept changes initially cut
+  measured wall time by 24% and allocations by another 16%. After review and a
+  validation correction, the series is merged: [fresh ordinary builds](research/lcb/results/README.md)
+  confirm **22% less median wall time**, with 540 matching output/diagnostic cases.
 - **[doc-gen4](docs/case-studies/doc-gen4.md)**: one SQL query that grows with
   the square of a module's declarations takes two thirds of the HTML pass.
 - **[verso](docs/case-studies/verso.md)**: about 23% of rendering is
@@ -176,13 +178,14 @@ the CPU frequency fixed ([results](bench/RESULTS.md)).
   exact ranges need the Lean it was built with), records every term by
   default, and has its own viewer and published datasets.
 
-**Early evidence, not yet confirmed:** the autoresearch loop, an agent that
-changes the code and keeps a change only when `leanprof judge` says so, made
-[lean-compiler-backend 24% faster](docs/case-studies/autoresearch-lean-compiler-backend.md)
-on its own in about three hours (median of 30 runs each, 648 → 492 ms, with
-byte-identical output on 340 combinations), on a busy machine and with the
-changes not yet reviewed or merged. Nothing here has been reproduced by
-anyone else yet.
+**Reviewed result, still awaiting independent replication:** the autoresearch
+loop found 12 compiler optimizations in about three hours. Review caught a
+missing validation check and restored it before merging. Fresh ordinary builds
+then took [22% less median wall time](research/lcb/results/README.md)
+(811 → 631 ms, 30 runs each, alternating order), with 540 output/diagnostic
+comparisons passing and green compiler CI on three platforms. The machine was
+shared; this remains one workload measured by this project, not an outside
+reproduction.
 
 ## How it compares
 

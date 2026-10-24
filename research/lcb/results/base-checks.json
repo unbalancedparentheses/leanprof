@@ -1,0 +1,596 @@
+[
+  {
+    "stage": "identity, unit tests, CLI, inventory, proof audit",
+    "exit_code": 0,
+    "seconds": 9.750202459050342,
+    "log": "000.log"
+  },
+  {
+    "stage": "python3 scripts/test.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 7.079096874920651,
+    "log": "001.log"
+  },
+  {
+    "stage": "python3 scripts/integer.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 42.09827479196247,
+    "log": "002.log"
+  },
+  {
+    "stage": "python3 scripts/control.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 11.764108999981545,
+    "log": "003.log"
+  },
+  {
+    "stage": "python3 scripts/ssa.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 11.571801125071943,
+    "log": "004.log"
+  },
+  {
+    "stage": "python3 scripts/mutable_integer_widths.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.485522083006799,
+    "log": "005.log"
+  },
+  {
+    "stage": "python3 scripts/large_cfg.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 11.46332979190629,
+    "log": "006.log"
+  },
+  {
+    "stage": "python3 scripts/liveness.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 9.886358625022694,
+    "log": "007.log"
+  },
+  {
+    "stage": "python3 scripts/allocation.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 17.806240707985125,
+    "log": "008.log"
+  },
+  {
+    "stage": "python3 scripts/instruction_selection.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 52.32313016697299,
+    "log": "009.log"
+  },
+  {
+    "stage": "python3 scripts/signed_division_one.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 3.0031785840401426,
+    "log": "010.log"
+  },
+  {
+    "stage": "python3 scripts/unsigned_strength.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.594822540995665,
+    "log": "011.log"
+  },
+  {
+    "stage": "python3 scripts/memory_promotion.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.7083675829926506,
+    "log": "012.log"
+  },
+  {
+    "stage": "python3 scripts/prefix_collisions.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.7891496670199558,
+    "log": "013.log"
+  },
+  {
+    "stage": "python3 scripts/promotion_bindings.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 2.9133840419817716,
+    "log": "014.log"
+  },
+  {
+    "stage": "python3 scripts/first_path.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 10.087678084033541,
+    "log": "015.log"
+  },
+  {
+    "stage": "python3 scripts/first_path_fuzz.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 16.876374166924506,
+    "log": "016.log"
+  },
+  {
+    "stage": "python3 scripts/symbols.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.3734990829834715,
+    "log": "017.log"
+  },
+  {
+    "stage": "python3 scripts/global_addresses.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 2.20677341602277,
+    "log": "018.log"
+  },
+  {
+    "stage": "python3 scripts/memory_forward.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 2.515717624919489,
+    "log": "019.log"
+  },
+  {
+    "stage": "python3 scripts/redundant_extensions.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 2.9510550840059295,
+    "log": "020.log"
+  },
+  {
+    "stage": "python3 scripts/arm_load_extensions.py",
+    "exit_code": 0,
+    "seconds": 2.2855219580233097,
+    "log": "021.log"
+  },
+  {
+    "stage": "python3 scripts/arm_extuw.py",
+    "exit_code": 0,
+    "seconds": 5.4287357500288635,
+    "log": "022.log"
+  },
+  {
+    "stage": "python3 scripts/arm_indexed_load.py",
+    "exit_code": 0,
+    "seconds": 6.709977874998003,
+    "log": "023.log"
+  },
+  {
+    "stage": "python3 scripts/arm_scaled_load.py",
+    "exit_code": 0,
+    "seconds": 8.759086708072573,
+    "log": "024.log"
+  },
+  {
+    "stage": "python3 scripts/arm_phi_identity.py",
+    "exit_code": 0,
+    "seconds": 6.923965667025186,
+    "log": "025.log"
+  },
+  {
+    "stage": "python3 scripts/arm_leaf_bank.py --compiler .lake/build/bin/lcb --work .build/native-arm-leaf",
+    "exit_code": 0,
+    "seconds": 2.7165508329635486,
+    "log": "026.log"
+  },
+  {
+    "stage": "python3 scripts/arm_branch_layout.py",
+    "exit_code": 0,
+    "seconds": 9.796949332929216,
+    "log": "027.log"
+  },
+  {
+    "stage": "python3 scripts/address_selection.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 3.5589542919769883,
+    "log": "028.log"
+  },
+  {
+    "stage": "python3 scripts/branch_selection.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 3.3557787080062553,
+    "log": "029.log"
+  },
+  {
+    "stage": "python3 scripts/data.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.827417292050086,
+    "log": "030.log"
+  },
+  {
+    "stage": "python3 scripts/syntax_edges.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.905170917045325,
+    "log": "031.log"
+  },
+  {
+    "stage": "python3 scripts/integer_patterns.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 3.3138863330241293,
+    "log": "032.log"
+  },
+  {
+    "stage": "python3 scripts/section_names.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 3.5874495409661904,
+    "log": "033.log"
+  },
+  {
+    "stage": "python3 scripts/elf_section_names.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 0.6849162080325186,
+    "log": "034.log"
+  },
+  {
+    "stage": "python3 scripts/custom_tls_sections.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 0.8256760410731658,
+    "log": "035.log"
+  },
+  {
+    "stage": "python3 scripts/retained_tls.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 0.748210082994774,
+    "log": "036.log"
+  },
+  {
+    "stage": "python3 scripts/elf_exclude.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.055838541011326,
+    "log": "037.log"
+  },
+  {
+    "stage": "python3 scripts/data_definition_limit.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 6.7730405000038445,
+    "log": "038.log"
+  },
+  {
+    "stage": "python3 scripts/large_aggregate_abi.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 8.535460749990307,
+    "log": "039.log"
+  },
+  {
+    "stage": "python3 scripts/elf_retain.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 0.2657198329688981,
+    "log": "040.log"
+  },
+  {
+    "stage": "python3 scripts/data_relocations.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 12.469807625049725,
+    "log": "041.log"
+  },
+  {
+    "stage": "python3 scripts/data_matrix.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 5.247643833979964,
+    "log": "042.log"
+  },
+  {
+    "stage": "python3 scripts/float_constants.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 18.663713917019777,
+    "log": "043.log"
+  },
+  {
+    "stage": "python3 scripts/floating.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 30.11665883299429,
+    "log": "044.log"
+  },
+  {
+    "stage": "python3 scripts/conversions.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 39.507214042008854,
+    "log": "045.log"
+  },
+  {
+    "stage": "python3 scripts/float_abi.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 11.578115417039953,
+    "log": "046.log"
+  },
+  {
+    "stage": "python3 scripts/float_variadic.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 3.9413395420415327,
+    "log": "047.log"
+  },
+  {
+    "stage": "python3 scripts/aggregate_layout.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.1442970830248669,
+    "log": "048.log"
+  },
+  {
+    "stage": "python3 scripts/aggregate_abi.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 11.100757292006165,
+    "log": "049.log"
+  },
+  {
+    "stage": "python3 scripts/aggregate_edges.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 8.709681916981936,
+    "log": "050.log"
+  },
+  {
+    "stage": "python3 scripts/aggregate_signature_aliases.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 3.4199233340332285,
+    "log": "051.log"
+  },
+  {
+    "stage": "python3 scripts/subword.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 15.634678666014224,
+    "log": "052.log"
+  },
+  {
+    "stage": "python3 scripts/tls.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 6.639764124993235,
+    "log": "053.log"
+  },
+  {
+    "stage": "python3 scripts/names.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.637790790991858,
+    "log": "054.log"
+  },
+  {
+    "stage": "python3 scripts/quoted_names.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.583959458977915,
+    "log": "055.log"
+  },
+  {
+    "stage": "python3 scripts/debug_locations.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.496287874993868,
+    "log": "056.log"
+  },
+  {
+    "stage": "python3 scripts/linkage.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 5.442628999939188,
+    "log": "057.log"
+  },
+  {
+    "stage": "python3 scripts/upstream_development.py",
+    "exit_code": 0,
+    "seconds": 10.392507540993392,
+    "log": "058.log"
+  },
+  {
+    "stage": "python3 scripts/symbol_address_pressure.py",
+    "exit_code": 0,
+    "seconds": 6.407300167018548,
+    "log": "059.log"
+  },
+  {
+    "stage": "python3 scripts/scalar_result_discard.py",
+    "exit_code": 0,
+    "seconds": 6.336871334002353,
+    "log": "060.log"
+  },
+  {
+    "stage": "python3 scripts/unused_call_results.py",
+    "exit_code": 0,
+    "seconds": 6.128524207975715,
+    "log": "061.log"
+  },
+  {
+    "stage": "python3 scripts/upstream_suite.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 74.31948599999305,
+    "log": "062.log"
+  },
+  {
+    "stage": "python3 scripts/linux_arm64.py",
+    "exit_code": 0,
+    "seconds": 45.016014082939364,
+    "log": "063.log"
+  },
+  {
+    "stage": "python3 scripts/linux_targets.py",
+    "exit_code": 0,
+    "seconds": 57.08712604094762,
+    "log": "064.log"
+  },
+  {
+    "stage": "python3 scripts/linux_targets.py --target riscv64-linux",
+    "exit_code": 0,
+    "seconds": 40.64044708397705,
+    "log": "065.log"
+  },
+  {
+    "stage": "python3 scripts/macos_x86.py",
+    "exit_code": 0,
+    "seconds": 327.7231587920105,
+    "log": "066.log"
+  },
+  {
+    "stage": "python3 scripts/memory.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 38.86344791599549,
+    "log": "067.log"
+  },
+  {
+    "stage": "python3 scripts/large_frames.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 5.922590750036761,
+    "log": "068.log"
+  },
+  {
+    "stage": "python3 scripts/large_objects.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.1389907500706613,
+    "log": "069.log"
+  },
+  {
+    "stage": "python3 scripts/large_data.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.3019508329452947,
+    "log": "070.log"
+  },
+  {
+    "stage": "python3 scripts/dynamic_alloc.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 6.198320291005075,
+    "log": "071.log"
+  },
+  {
+    "stage": "python3 scripts/zero_alloc.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 4.021393459057435,
+    "log": "072.log"
+  },
+  {
+    "stage": "python3 scripts/module_scale.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.0960010000271723,
+    "log": "073.log"
+  },
+  {
+    "stage": "python3 scripts/control_flow.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.169073292054236,
+    "log": "074.log"
+  },
+  {
+    "stage": "python3 scripts/constant_fold.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 1.1622128329472616,
+    "log": "075.log"
+  },
+  {
+    "stage": "python3 scripts/blit.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 13.617466124938801,
+    "log": "076.log"
+  },
+  {
+    "stage": "python3 scripts/large_blit.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 7.345623166998848,
+    "log": "077.log"
+  },
+  {
+    "stage": "python3 scripts/blit_guard_pages.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 2.421762290992774,
+    "log": "078.log"
+  },
+  {
+    "stage": "python3 scripts/calls.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 13.719415792031214,
+    "log": "079.log"
+  },
+  {
+    "stage": "python3 scripts/argument_limits.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 58.141088459058665,
+    "log": "080.log"
+  },
+  {
+    "stage": "python3 scripts/dynamic_outgoing.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 19.961510582943447,
+    "log": "081.log"
+  },
+  {
+    "stage": "python3 scripts/rv_load_normalization.py",
+    "exit_code": 0,
+    "seconds": 0.3847722919890657,
+    "log": "082.log"
+  },
+  {
+    "stage": "python3 scripts/indirect.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 11.865098583046347,
+    "log": "083.log"
+  },
+  {
+    "stage": "python3 scripts/variadic.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 10.305511040962301,
+    "log": "084.log"
+  },
+  {
+    "stage": "python3 scripts/environment.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 10.410051333950832,
+    "log": "085.log"
+  },
+  {
+    "stage": "python3 scripts/unused_environment.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 22.963140000007115,
+    "log": "086.log"
+  },
+  {
+    "stage": "python3 scripts/empty_variadic_calls.py",
+    "exit_code": 0,
+    "seconds": 0.7945267501054332,
+    "log": "087.log"
+  },
+  {
+    "stage": "python3 scripts/unused_environment_variadic.py",
+    "exit_code": 0,
+    "seconds": 6.963161541032605,
+    "log": "088.log"
+  },
+  {
+    "stage": "python3 scripts/stack_args.py \"$@\"",
+    "exit_code": 0,
+    "seconds": 44.28410662501119,
+    "log": "089.log"
+  },
+  {
+    "stage": "python3 scripts/fuzz.py --optimize \"$@\"",
+    "exit_code": 0,
+    "seconds": 33.29457016696688,
+    "log": "090.log"
+  },
+  {
+    "stage": "python3 scripts/rv_immediates.py",
+    "exit_code": 0,
+    "seconds": 0.3507517909165472,
+    "log": "091.log"
+  },
+  {
+    "stage": "python3 scripts/branch_fallthrough.py",
+    "exit_code": 0,
+    "seconds": 0.28757395793218166,
+    "log": "092.log"
+  },
+  {
+    "stage": "python3 scripts/rv_result_normalization.py",
+    "exit_code": 0,
+    "seconds": 0.4373823329806328,
+    "log": "093.log"
+  },
+  {
+    "stage": "python3 scripts/amd_leaf_bank.py --compiler .lake/build/bin/lcb --work .build/native-amd-leaf",
+    "exit_code": 0,
+    "seconds": 0.46307616704143584,
+    "log": "094.log"
+  },
+  {
+    "stage": "python3 scripts/amd_word_normalization.py",
+    "exit_code": 0,
+    "seconds": 0.3513054159702733,
+    "log": "095.log"
+  },
+  {
+    "stage": "python3 scripts/amd_folded_loads.py",
+    "exit_code": 0,
+    "seconds": 0.4421111249830574,
+    "log": "096.log"
+  },
+  {
+    "stage": "python3 scripts/amd_immediates.py",
+    "exit_code": 0,
+    "seconds": 0.5509960000636056,
+    "log": "097.log"
+  },
+  {
+    "stage": "python3 scripts/emission_only.py",
+    "exit_code": 0,
+    "seconds": 111.06474270799663,
+    "log": "098.log"
+  }
+]

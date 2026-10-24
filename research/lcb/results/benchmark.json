@@ -1,0 +1,674 @@
+{
+  "timestamp_utc": "2026-10-24T02:24:25.460209+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cpu_count": 18,
+  "load_start": [
+    6.23486328125,
+    7.98193359375,
+    7.4775390625
+  ],
+  "runs": [
+    {
+      "pair": 0,
+      "variant": "base",
+      "seconds": 0.9199792500585318,
+      "load": [
+        5.970703125,
+        7.86669921875,
+        7.4423828125
+      ]
+    },
+    {
+      "pair": 0,
+      "variant": "candidate",
+      "seconds": 0.6597192500485107,
+      "load": [
+        5.970703125,
+        7.86669921875,
+        7.4423828125
+      ]
+    },
+    {
+      "pair": 1,
+      "variant": "candidate",
+      "seconds": 0.6325990420300514,
+      "load": [
+        5.970703125,
+        7.86669921875,
+        7.4423828125
+      ]
+    },
+    {
+      "pair": 1,
+      "variant": "base",
+      "seconds": 0.7953487079357728,
+      "load": [
+        5.970703125,
+        7.86669921875,
+        7.4423828125
+      ]
+    },
+    {
+      "pair": 2,
+      "variant": "base",
+      "seconds": 0.780131958075799,
+      "load": [
+        5.970703125,
+        7.86669921875,
+        7.4423828125
+      ]
+    },
+    {
+      "pair": 2,
+      "variant": "candidate",
+      "seconds": 0.5695192089769989,
+      "load": [
+        5.970703125,
+        7.86669921875,
+        7.4423828125
+      ]
+    },
+    {
+      "pair": 3,
+      "variant": "candidate",
+      "seconds": 0.566224499954842,
+      "load": [
+        5.970703125,
+        7.86669921875,
+        7.4423828125
+      ]
+    },
+    {
+      "pair": 3,
+      "variant": "base",
+      "seconds": 0.7916922500589862,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 4,
+      "variant": "base",
+      "seconds": 0.7826155839720741,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 4,
+      "variant": "candidate",
+      "seconds": 0.5715938330395147,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 5,
+      "variant": "candidate",
+      "seconds": 0.5760664169210941,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 5,
+      "variant": "base",
+      "seconds": 0.782948917010799,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 6,
+      "variant": "base",
+      "seconds": 0.8096670830855146,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 6,
+      "variant": "candidate",
+      "seconds": 0.580009917030111,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 7,
+      "variant": "candidate",
+      "seconds": 0.6444081660592929,
+      "load": [
+        5.8125,
+        7.80224609375,
+        7.421875
+      ]
+    },
+    {
+      "pair": 7,
+      "variant": "base",
+      "seconds": 0.8593771660234779,
+      "load": [
+        5.9072265625,
+        7.78857421875,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 8,
+      "variant": "base",
+      "seconds": 0.8878700829809532,
+      "load": [
+        5.9072265625,
+        7.78857421875,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 8,
+      "variant": "candidate",
+      "seconds": 0.6570897080237046,
+      "load": [
+        5.9072265625,
+        7.78857421875,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 9,
+      "variant": "candidate",
+      "seconds": 0.6511184999253601,
+      "load": [
+        5.9072265625,
+        7.78857421875,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 9,
+      "variant": "base",
+      "seconds": 0.8675304170465097,
+      "load": [
+        5.9072265625,
+        7.78857421875,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 10,
+      "variant": "base",
+      "seconds": 0.9213014170527458,
+      "load": [
+        5.9072265625,
+        7.78857421875,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 10,
+      "variant": "candidate",
+      "seconds": 0.663440166041255,
+      "load": [
+        6.23486328125,
+        7.8251953125,
+        7.43359375
+      ]
+    },
+    {
+      "pair": 11,
+      "variant": "candidate",
+      "seconds": 0.6565379169769585,
+      "load": [
+        6.23486328125,
+        7.8251953125,
+        7.43359375
+      ]
+    },
+    {
+      "pair": 11,
+      "variant": "base",
+      "seconds": 0.8120324589544907,
+      "load": [
+        6.23486328125,
+        7.8251953125,
+        7.43359375
+      ]
+    },
+    {
+      "pair": 12,
+      "variant": "base",
+      "seconds": 0.7767082910286263,
+      "load": [
+        6.23486328125,
+        7.8251953125,
+        7.43359375
+      ]
+    },
+    {
+      "pair": 12,
+      "variant": "candidate",
+      "seconds": 0.5590324170188978,
+      "load": [
+        6.23486328125,
+        7.8251953125,
+        7.43359375
+      ]
+    },
+    {
+      "pair": 13,
+      "variant": "candidate",
+      "seconds": 0.5631158750038594,
+      "load": [
+        6.23486328125,
+        7.8251953125,
+        7.43359375
+      ]
+    },
+    {
+      "pair": 13,
+      "variant": "base",
+      "seconds": 0.7556934159947559,
+      "load": [
+        6.23486328125,
+        7.8251953125,
+        7.43359375
+      ]
+    },
+    {
+      "pair": 14,
+      "variant": "base",
+      "seconds": 0.763503999914974,
+      "load": [
+        6.1357421875,
+        7.77783203125,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 14,
+      "variant": "candidate",
+      "seconds": 0.5912557080155239,
+      "load": [
+        6.1357421875,
+        7.77783203125,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 15,
+      "variant": "candidate",
+      "seconds": 0.6029137090081349,
+      "load": [
+        6.1357421875,
+        7.77783203125,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 15,
+      "variant": "base",
+      "seconds": 0.8472058329498395,
+      "load": [
+        6.1357421875,
+        7.77783203125,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 16,
+      "variant": "base",
+      "seconds": 0.898403708008118,
+      "load": [
+        6.1357421875,
+        7.77783203125,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 16,
+      "variant": "candidate",
+      "seconds": 0.6571386660216376,
+      "load": [
+        6.1357421875,
+        7.77783203125,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 17,
+      "variant": "candidate",
+      "seconds": 0.6478552090702578,
+      "load": [
+        6.1357421875,
+        7.77783203125,
+        7.4189453125
+      ]
+    },
+    {
+      "pair": 17,
+      "variant": "base",
+      "seconds": 0.8043207920854911,
+      "load": [
+        6.04443359375,
+        7.7314453125,
+        7.404296875
+      ]
+    },
+    {
+      "pair": 18,
+      "variant": "base",
+      "seconds": 0.8218368749367073,
+      "load": [
+        6.04443359375,
+        7.7314453125,
+        7.404296875
+      ]
+    },
+    {
+      "pair": 18,
+      "variant": "candidate",
+      "seconds": 0.6289184590568766,
+      "load": [
+        6.04443359375,
+        7.7314453125,
+        7.404296875
+      ]
+    },
+    {
+      "pair": 19,
+      "variant": "candidate",
+      "seconds": 0.6013711250852793,
+      "load": [
+        6.04443359375,
+        7.7314453125,
+        7.404296875
+      ]
+    },
+    {
+      "pair": 19,
+      "variant": "base",
+      "seconds": 0.8485442909877747,
+      "load": [
+        6.04443359375,
+        7.7314453125,
+        7.404296875
+      ]
+    },
+    {
+      "pair": 20,
+      "variant": "base",
+      "seconds": 0.9160652909195051,
+      "load": [
+        6.04443359375,
+        7.7314453125,
+        7.404296875
+      ]
+    },
+    {
+      "pair": 20,
+      "variant": "candidate",
+      "seconds": 0.7681950420374051,
+      "load": [
+        6.04443359375,
+        7.7314453125,
+        7.404296875
+      ]
+    },
+    {
+      "pair": 21,
+      "variant": "candidate",
+      "seconds": 0.7413702920312062,
+      "load": [
+        6.28076171875,
+        7.75244140625,
+        7.41357421875
+      ]
+    },
+    {
+      "pair": 21,
+      "variant": "base",
+      "seconds": 0.9612589590251446,
+      "load": [
+        6.28076171875,
+        7.75244140625,
+        7.41357421875
+      ]
+    },
+    {
+      "pair": 22,
+      "variant": "base",
+      "seconds": 0.8849929580464959,
+      "load": [
+        6.28076171875,
+        7.75244140625,
+        7.41357421875
+      ]
+    },
+    {
+      "pair": 22,
+      "variant": "candidate",
+      "seconds": 0.6411534999497235,
+      "load": [
+        6.28076171875,
+        7.75244140625,
+        7.41357421875
+      ]
+    },
+    {
+      "pair": 23,
+      "variant": "candidate",
+      "seconds": 0.5752917500212789,
+      "load": [
+        6.28076171875,
+        7.75244140625,
+        7.41357421875
+      ]
+    },
+    {
+      "pair": 23,
+      "variant": "base",
+      "seconds": 0.7850854999851435,
+      "load": [
+        6.28076171875,
+        7.75244140625,
+        7.41357421875
+      ]
+    },
+    {
+      "pair": 24,
+      "variant": "base",
+      "seconds": 0.7674199159955606,
+      "load": [
+        6.09765625,
+        7.68994140625,
+        7.3935546875
+      ]
+    },
+    {
+      "pair": 24,
+      "variant": "candidate",
+      "seconds": 0.6204380409326404,
+      "load": [
+        6.09765625,
+        7.68994140625,
+        7.3935546875
+      ]
+    },
+    {
+      "pair": 25,
+      "variant": "candidate",
+      "seconds": 0.6748288749950007,
+      "load": [
+        6.09765625,
+        7.68994140625,
+        7.3935546875
+      ]
+    },
+    {
+      "pair": 25,
+      "variant": "base",
+      "seconds": 0.8370974999852479,
+      "load": [
+        6.09765625,
+        7.68994140625,
+        7.3935546875
+      ]
+    },
+    {
+      "pair": 26,
+      "variant": "base",
+      "seconds": 0.7939399169990793,
+      "load": [
+        6.09765625,
+        7.68994140625,
+        7.3935546875
+      ]
+    },
+    {
+      "pair": 26,
+      "variant": "candidate",
+      "seconds": 0.6633485000347719,
+      "load": [
+        6.09765625,
+        7.68994140625,
+        7.3935546875
+      ]
+    },
+    {
+      "pair": 27,
+      "variant": "candidate",
+      "seconds": 0.6204700421076268,
+      "load": [
+        6.09765625,
+        7.68994140625,
+        7.3935546875
+      ]
+    },
+    {
+      "pair": 27,
+      "variant": "base",
+      "seconds": 0.7644651249283925,
+      "load": [
+        6.00927734375,
+        7.64501953125,
+        7.37939453125
+      ]
+    },
+    {
+      "pair": 28,
+      "variant": "base",
+      "seconds": 0.7979696670081466,
+      "load": [
+        6.00927734375,
+        7.64501953125,
+        7.37939453125
+      ]
+    },
+    {
+      "pair": 28,
+      "variant": "candidate",
+      "seconds": 0.6267240419983864,
+      "load": [
+        6.00927734375,
+        7.64501953125,
+        7.37939453125
+      ]
+    },
+    {
+      "pair": 29,
+      "variant": "candidate",
+      "seconds": 0.6626880830153823,
+      "load": [
+        6.00927734375,
+        7.64501953125,
+        7.37939453125
+      ]
+    },
+    {
+      "pair": 29,
+      "variant": "base",
+      "seconds": 0.9403882500482723,
+      "load": [
+        6.00927734375,
+        7.64501953125,
+        7.37939453125
+      ]
+    }
+  ],
+  "identity": [],
+  "binaries": {
+    "base": {
+      "path": "/private/tmp/leanprof-lcb-base/.lake/build/bin/lcb",
+      "sha256": "e35162b89e3a051625471be98f6b141a743e36b5220e4f7363a804a18e98ce7b",
+      "build_identity": "f525f6ce2800cbc908e911f21e538bf47c877045646763ec620a5cf9345e5253"
+    },
+    "candidate": {
+      "path": "/private/tmp/leanprof-lcb-candidate-clean/.lake/build/bin/lcb",
+      "sha256": "7f6da46e5cc80635c88c0b1d5c908259d32cc862eda24a136e93e79b31c33b2d",
+      "build_identity": "5676e95f7a9c8de9e95488afa7a33c590a0e39f96e3415f5b853068f735fd369"
+    }
+  },
+  "inputs": {
+    "adler32.ssa": "5155fd74e1cf136b6cecda82a5e03ba5201325360817627c470c8925e35b9a4b",
+    "compress.ssa": "4e00641a064caa0dea3d552de9e327af2aaa1678e6bde8cf45010288e8b3e2fb",
+    "crc32.ssa": "fa355853ed0a81d621e2bfbc1f19d37b3b7587455492dd084e9bfaf3244f912b",
+    "deflate.ssa": "dd7103a53095b69d403e78a4f97a5c30e7c35954f00044d19f6f4670e0e9e3a2",
+    "gzclose.ssa": "cdc2c546fbdd5d26b18ea18ea70d3289b3c482ee8d2a66a61afa66e7fb3e0fae",
+    "gzlib.ssa": "4a5fdf4c6f4f3374c8d87df76e78d08f4abcc82ebf3b80521182cfd7108cf148",
+    "gzread.ssa": "e1d8b0b101c59b3a43313800d0ae5ae0bc98deaa1e266a5d8f6026d179e48ca5",
+    "gzwrite.ssa": "ff286a0d997e2342b3874c2827280cf89d4de0039b978595c3beabccc27919d9",
+    "infback.ssa": "88886c9d6a8b386fdbafd0b2678cbde80b204a97e7602ccc3d476e5aa6b9396b",
+    "inffast.ssa": "02a481c123605dfe9f32ef0a5e9653d93390476e51d0db0a001bdea75a9026a6",
+    "inflate.ssa": "a4784b6f21232249dfa88d7530dd1393453b7ad63fc7cb95a1df933fb9844e71",
+    "inftrees.ssa": "903ef5dbcd23d76222e7c9b8165ddc445da75b0f020b3ae88b9a4d83fdd11fb2",
+    "test-example.ssa": "3e0a6a9b949f731a7f585d84f54de8865bf9f0a77344933b7c5d7aa547cc346f",
+    "test-minigzip.ssa": "c26963fcafd80cf88c5f4627ecbbf714c66b39f6c306a8372ca5cfb93f7ecd7f",
+    "trees.ssa": "efb6566c7382e9f7c6801ab577385a89632b1828dbe05b5c3db0bfbbd196d3be",
+    "uncompr.ssa": "493f52b9262f733abed0cf0b327da7920615639e02a611c9338751161ff41a68",
+    "zutil.ssa": "09d3e7a1c1ee69dc4c085fa36e145ec4b4a96a8e2a69b9f7b38ed9d73e3261b5"
+  },
+  "benchmark_arguments": [
+    "--target",
+    "aarch64-macos",
+    "--optimize",
+    "--allocate",
+    "/Users/unbalancedparen/projects/leanprof-wt/lcb-ar/zlib/deflate.ssa",
+    "/Users/unbalancedparen/projects/leanprof-wt/lcb-ar/zlib/inflate.ssa",
+    "/Users/unbalancedparen/projects/leanprof-wt/lcb-ar/zlib/trees.ssa",
+    "/Users/unbalancedparen/projects/leanprof-wt/lcb-ar/zlib/crc32.ssa"
+  ],
+  "benchmark_signature": {
+    "exit_code": 0,
+    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "assembly": "e675dea3ae1fc14f7b335ea47d8c49ccf7a89da4d1dee628ad78fa2f5af368d9"
+  },
+  "median_seconds": {
+    "base": 0.8108497710200027,
+    "candidate": 0.630758750543464
+  },
+  "paired_median_reduction_percent": 25.738068960459724,
+  "paired_bootstrap_95_percent_interval": [
+    22.717652567539947,
+    26.980360143138384
+  ],
+  "benchmark_load_end": [
+    6.00927734375,
+    7.64501953125,
+    7.37939453125
+  ]
+}

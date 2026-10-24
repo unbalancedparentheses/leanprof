@@ -8,7 +8,8 @@ started where [the hand-made fixes](lean-compiler-backend.md) left off
 (main at `854fcc2`, with the tokenizer, `CFG.build` and `Parser.peek`
 fixes merged). The result is the branch
 [`autoresearch/zlib-2026-10-23`](https://github.com/unbalancedparentheses/lean-compiler-backend/tree/autoresearch/zlib-2026-10-23):
-12 commits, not merged into main.
+12 optimization commits. The series was subsequently reviewed, corrected and
+merged into `main` at `ac8324e`; see [qualification results](../../research/lcb/results/README.md).
 
 **Original experiment result:** 29 experiments, 12 kept. The zlib workload makes 16.3% fewer
 allocations (7,719,273 → 6,460,575; 200.1 → 167.7 MiB) and 55% fewer copies
@@ -17,6 +18,23 @@ each, 648 → 492 ms, measured with probes, base and head alternating). The
 output is byte-identical on 340 input/target/option combinations. Most of
 the gain came from one finding: each function was validated about ten times
 on its way through the compiler, and each validation rebuilt the CFG.
+
+## Review and clean-build qualification
+
+The reviewed candidate (`ac8324e`) restores a validation check on memory
+promotion's already-SSA path. Both baseline and candidate passed all 99 local
+check stages; the candidate also passed macOS, Linux x86-64 and Linux arm64 CI.
+All 540 differential comparisons passed (340 zlib cases and 200 malformed-input
+cases), and the corrected series is now on the compiler's `main`.
+
+Thirty ordinary-binary runs per side, from fresh pinned-toolchain builds, measured
+**810.85 → 630.76 ms median wall time (−22.21%)**. The median paired reduction
+was 25.74% (within-session bootstrap interval 22.72–26.98%). This was a quieter
+shared host, not an independent replication. The original allocation/copy counts
+below remain measurements of `f9ed557`, not the corrected candidate.
+
+[Full review, raw runs, output signatures and test logs](../../research/lcb/results/README.md)
+· [reproduction commands](../../research/lcb/README.md)
 
 ## Setup
 

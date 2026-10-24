@@ -5,6 +5,7 @@ Supply freshly built binaries and the original 17 zlib SSA inputs. No profiler
 is invoked. Benchmark first on an otherwise idle machine, then check identity.
 """
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -60,7 +61,8 @@ def main():
         ap.error('--inputs must contain exactly the 17 original zlib SSA files')
     binaries = {'base': args.base.resolve(), 'candidate': args.candidate.resolve()}
     env = {k: v for k, v in os.environ.items() if not k.startswith('LEANPROF_')}
-    report = dict(platform=platform.platform(), cpu_count=os.cpu_count(),
+    report = dict(timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                  platform=platform.platform(), cpu_count=os.cpu_count(),
                   load_start=os.getloadavg(), runs=[], identity=[],
                   binaries={k: {'path': str(p), 'sha256': digest(p.read_bytes()),
                                 'build_identity': subprocess.check_output(

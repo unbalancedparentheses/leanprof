@@ -3,6 +3,7 @@
 These scripts reproduce the plain-build timing and correctness comparison in
 the [case study](../../docs/case-studies/autoresearch-lean-compiler-backend.md).
 They use Python's standard library and invoke the binaries directly.
+The [reviewed results and raw evidence](results/README.md) are saved alongside them.
 
 The baseline is `854fcc2` in `unbalancedparentheses/lean-compiler-backend`.
 The original optimization head is `f9ed557`. The reviewed candidate is
