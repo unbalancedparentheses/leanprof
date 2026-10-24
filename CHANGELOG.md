@@ -6,6 +6,19 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Interleaved timing and paired verdicts
+
+- `measure-pair` runs two prebuilt binaries in alternating AB/BA order, with
+  separate working directories, warmups, binary fingerprints, output checks
+  and machine-load recording. It adds no probes and performs no rebuilds.
+- `judge PAIR.json` uses a distribution-free 95% interval for the median paired
+  percentage change. Output/diagnostic mismatches, missing output files and
+  failed runs prevent KEEP; overload disables the timing verdict.
+- Pure tests cover drift, confidence endpoints and failure cases; a CLI test
+  verifies process ordering, arguments, working directories and stale output.
+- Refresh the competitive priorities and qualify historical compile-time
+  comparisons against lean-source-profiler's newer native compact capture.
+
 ### Compiler qualification and release preparation
 
 - Reproducible clean-build compiler comparison, 540 output/diagnostic checks,

@@ -14,7 +14,8 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--heartbeats-files F…] [--check-output F] [--no-allocs] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time, output) |
-| `judge [--min-change PCT] BASE.json NEW.json` | KEEP (exit 0) or DISCARD (exit 1) |
+| `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output F] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries; no builds or added probes |
+| `judge [--min-change PCT] BASE.json NEW.json` or `judge [--min-change PCT] PAIR.json` | KEEP (exit 0) or DISCARD (exit 1); paired sessions use a 95% median interval |
 | `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
 | `html [-o F] [--trace F] [--profile F] [REPORT.json…]` | one self-contained HTML page: summary, flame graph, tables, source, comparison of two reports ([HTML report](html-report.md)) |
 | `top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS] \| --attach F \| --pid PID` | live view of a running program, refreshed like `top` ([live](live.md)) |
@@ -196,3 +197,14 @@ Prebuilt commands for macOS arm64 and Linux x86-64 are attached to each
 [release](https://github.com/unbalancedparentheses/leanprof/releases);
 [RELEASING.md](../../RELEASING.md) says how to make one and what the
 archives contain.
+
+### Paired measurement sessions
+
+`paired.json` (`"leanprof": "measure-pair"`, version 1) stores one chronological
+session. `samples` contains `pair`, `side`, `time_ns`, `exit_code`,
+`stdout_hash`, `stderr_hash`, `output_hash`, and `output_present` for every run.
+The file also records resolved binary paths, before/after-checked binary
+fingerprints, per-side working directories, common arguments, warmup/run counts
+and per-pair machine load. No exact runtime metrics are inferred from plain
+binaries. See [interleaved timing](ci-and-regressions.md#interleaved-timing-of-ordinary-binaries)
+for the confidence interval, exit codes and assumptions.

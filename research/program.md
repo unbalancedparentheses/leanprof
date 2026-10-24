@@ -158,7 +158,10 @@ functions but returned already-SSA functions unchecked. A focused regression
 test caught the missing check even though hundreds of CLI comparisons passed.
 
 Confirm speedups on ordinary binaries without probes, after builds and tests
-finish. Warm both binaries, alternate their order, save every run and machine
+finish. Use `leanprof measure-pair --base BASE_BINARY --candidate NEW_BINARY
+--out paired.json -- ARGS`, then `leanprof judge paired.json` (see the
+[paired measurement guide](../docs/guide/ci-and-regressions.md#interleaved-timing-of-ordinary-binaries)).
+This timing-only check complements the exact-metric verdict; it does not replace it. Warm both binaries, alternate their order, save every run and machine
 load, and check outputs. A confidence interval from one machine does not cover
 other workloads or platforms. Keep allocation reductions separate from runtime
 speedups. The [LCB qualification scripts](lcb/README.md) provide a concrete example.

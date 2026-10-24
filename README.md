@@ -122,7 +122,7 @@ of the run, to agents.
 | A running program, live; the last seconds as a timeline | `leanprof top myapp`, `leanprof dump PID` |
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats]` |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats; PR comments | `leanprof compare`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
-| Keep or discard a change, for automated optimization loops | `leanprof measure`, `leanprof judge` |
+| Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
 | Everything next to the code, or in one shareable page | `#leanprof`, [VS Code](docs/guide/vscode.md), `leanprof html` |
 
@@ -146,9 +146,10 @@ the CPU frequency fixed ([results](bench/RESULTS.md)).
 - **Small slowdowns.** On the quiet Linux machine leanprof caught a 2%
   slowdown 5 times in 5 with no false alarm in 20 unchanged runs; LeanBench
   at a 5% threshold caught none of the 2% and 2 of 5 at 4.8%.
-- **Compile-time speed.** All of Batteries profiled in 17 s, against 103–152 s
-  for lean-source-profiler, with per-line, term and tactic costs and the
-  definitions unfolded behind them.
+- **Compile-time speed in the recorded comparison.** All of Batteries profiled
+  in 17 s, against 103–152 s for the tested lean-source-profiler revision.
+  Its newer native compact mode needs a fresh comparison; these historical
+  numbers do not establish a lead over its current version.
 - **Overhead against LeanProfiler.** A profiled scope costs about 8 ns on the
   Mac (51 ns on Linux, see below) and stays constant however long the program
   runs; LeanProfiler's span grows from 4.6 µs to 88 µs as
@@ -172,11 +173,16 @@ the CPU frequency fixed ([results](bench/RESULTS.md)).
   frame pointers; being fixed.
 - **`--auto` on Linux** is 6–8 points off on allocation- and copy-heavy
   workloads; being fixed.
-- **Cost per verdict.** LeanBench needs 0.6 s per verdict to leanprof's 6.5 s,
-  and times the benchmarked action itself, not the whole process.
-- **lean-source-profiler** still has a driver for every Lean version (leanprof's
-  exact ranges need the Lean it was built with), records every term by
-  default, and has its own viewer and published datasets.
+- **Cost per verdict in the instrumented comparison.** LeanBench needed 0.6 s
+  per verdict to leanprof's 6.5 s, and times the benchmarked action itself.
+  `measure-pair` now avoids instrumentation and rebuilds for timing-only
+  comparisons, but still measures the whole process; its comparative cost
+  has not yet been benchmarked.
+- **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)** now
+  defaults to cached native compact capture, with detailed traces optional,
+  and has a repository viewer and published large-project datasets. Our
+  comparison needs refreshing. leanprof's exact ranges need the Lean it was
+  built with.
 
 **Reviewed result, still awaiting independent replication:** the autoresearch
 loop found 12 compiler optimizations in about three hours. Review caught a

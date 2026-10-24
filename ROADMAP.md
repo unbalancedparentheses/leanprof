@@ -17,6 +17,10 @@ Status (2026-10-23): M1–M9 are largely done; what remains before and after
 the first releases is in the next two sections, which come from profiling
 real projects with leanprof (see [case studies](docs/case-studies/)).
 
+The [competitive priorities](docs/research/competitive-priorities.md) define
+what evidence is still needed to become the best choice across these jobs,
+including refreshed comparisons against current alternatives.
+
 ## v0.1.0: honest numbers, installable
 
 - [x] Merge the open work: accuracy (probe-cost flags, `%wall`, recursive
@@ -70,9 +74,10 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
   problems with fixes.
 - [ ] `leanprof autoresearch`: sets the project up (workload, tests, output
   check) and starts the loop in Claude Code, or prints the next steps.
-- [ ] A stricter verdict: interleaved base and candidate runs, more runs only
-  when unclear, a statistical test with a confidence interval; exact
-  allocation counts and, on Linux, instruction counts.
+- [x] Interleaved plain-binary timing: `measure-pair` alternates AB/BA and
+  `judge PAIR.json` uses a paired 95% median interval. Exact allocation
+  checks remain in the existing instrumented `measure` workflow.
+- [ ] Adaptive sampling with valid stopping rules, and Linux instruction counts.
 - [ ] Correctness beyond one output file: base and candidate run on many
   inputs and must agree (as the 160-combination check did for
   lean-compiler-backend); several workload sizes, and a final check of the
@@ -184,8 +189,9 @@ keeps only improvements ([research/program.md](research/program.md)).
   first, time only when the runs do not overlap.
 - [x] `research/program.md` for agents, and a scripted demo
   (`research/demo/run.sh`) run in CI.
-- [ ] Interleave base and candidate runs (needs two builds side by side) so
-  time verdicts survive machine-load drift during long sessions.
+- [x] Interleave prebuilt baseline/candidate binaries with `measure-pair`;
+  judge timing with a paired median interval. Gradual drift is reduced,
+  not eliminated; real-world verdict calibration remains to be measured.
 - [x] Allocations in the verdict (after M5).
 - [ ] Hints in the summary: the top copy sites and sampled hotspots, so the
   agent's next experiment starts from the measurement.
