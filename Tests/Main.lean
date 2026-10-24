@@ -322,6 +322,55 @@ def tests : StateT Nat IO Unit := do
   check "judge: allocations that vary between runs count only beyond their range" (v.worse.isEmpty) v.render
   let v := Judge.judge base { summary 2999 0 [] [50, 51, 52] with allocs := none }
   check "judge: allocations counted in one summary only are not compared" (v.worse.isEmpty) v.render
+  -- Interleaved pairs cancel a common drift that makes the two ranges overlap.
+  let paired (factor : Nat) (overload : Bool := false) : Lean.Json := Id.run do
+    let mut samples := #[]
+    for i in [:20] do
+      for offset in [:2] do
+        let baseSide := (i + offset) % 2 == 0
+        let time := (100 + i * 10) * (if baseSide then 100 else factor)
+        samples := samples.push <| Lean.Json.mkObj [
+          ("pair", Lean.toJson i), ("side", Lean.toJson (if baseSide then "base" else "candidate")),
+          ("time_ns", Lean.toJson time), ("exit_code", Lean.toJson (0 : Nat)),
+          ("output_present", Lean.Json.bool true), ("stdout_hash", "same"),
+          ("stderr_hash", "same"), ("output_hash", "same")]
+    return Lean.Json.mkObj [("leanprof", "measure-pair"), ("version", Lean.toJson (1 : Nat)),
+      ("runs", Lean.toJson (20 : Nat)), ("samples", Lean.Json.arr samples),
+      ("machine", Lean.Json.mkObj [("overloaded", Lean.Json.bool overload)])]
+  let judgePair (j : Lean.Json) := (Judge.judgePaired j).toOption
+  check "paired: common drift with a 10% improvement is KEEP"
+    ((judgePair (paired 90)).any (·.keep))
+  check "paired: common drift without a change is DISCARD"
+    ((judgePair (paired 100)).any (!·.keep))
+  check "paired: regression is DISCARD"
+    ((judgePair (paired 110)).any fun v => !v.keep && !v.worse.isEmpty)
+  check "paired: overload disables timing verdict"
+    ((judgePair (paired 90 true)).any (!·.keep))
+  check "paired: minimum change applies to the confidence interval"
+    (((Judge.judgePaired (paired 99) 2).toOption).any (!·.keep))
+  let corrupt (key : String) (value : Lean.Json) : Lean.Json := Id.run do
+    let j := paired 90
+    let rows := (j.getObjValAs? (Array Lean.Json) "samples").toOption.getD #[]
+    return j.setObjVal! "samples" (Lean.Json.arr (rows.modify 0 (·.setObjVal! key value)))
+  for key in ["stdout_hash", "stderr_hash", "output_hash"] do
+    check s!"paired: changed {key} blocks KEEP"
+      ((judgePair (corrupt key "different")).any (!·.keep))
+  check "paired: failed run blocks KEEP"
+    ((judgePair (corrupt "exit_code" (Lean.toJson (1 : Nat)))).any (!·.keep))
+  check "paired: missing output blocks KEEP"
+    ((judgePair (corrupt "output_present" (Lean.Json.bool false))).any (!·.keep))
+  check "paired: invalid order is rejected"
+    ((Judge.judgePaired (corrupt "side" "candidate")).toOption.isNone)
+  check "paired: zero duration is rejected"
+    ((Judge.judgePaired (corrupt "time_ns" (Lean.toJson (0 : Nat)))).toOption.isNone)
+  check "paired: incomplete result is rejected"
+    ((Judge.judgePaired ((paired 90).setObjVal! "runs" (Lean.toJson (21 : Nat)))).toOption.isNone)
+  check "paired: five pairs cannot give a finite 95% interval"
+    ((Judge.pairedInterval #[1, 2, 3, 4, 5]).isNone)
+  check "paired: six pairs use the entire range"
+    ((Judge.pairedInterval #[1, 2, 3, 4, 5, 6]) == some (3.5, 1, 6))
+  check "paired: twenty pairs use the sixth and fifteenth order statistics"
+    ((Judge.pairedInterval ((List.range 20).toArray.map (·.toFloat))) == some (9.5, 5, 14))
   -- END leanprof judge
   -- leanprof elab: reading traces (Tests/Elab.lean)
   Tests.Elab.run fun n ok d => check n ok d

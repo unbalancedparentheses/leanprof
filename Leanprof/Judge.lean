@@ -213,6 +213,76 @@ def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
   else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
   return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes }
 
+/-- Distribution-free 95% interval for the population median of paired percent
+changes. Endpoints are order statistics: choose the largest k for which
+40 * sum(j=0..k, choose(n,j)) <= 2^n. Each excluded tail has probability
+at most 0.025 under independent pairs. No normality or symmetry is assumed.
+With fewer than six pairs there is no finite interval at this confidence. -/
+def pairedInterval (changes : Array Float) : Option (Float × Float × Float) := Id.run do
+  let n := changes.size
+  if n < 6 || n > 1000 then return none
+  let sorted := changes.qsort (· < ·)
+  let mut choose := 1
+  let mut tail := 0
+  let mut endpoint : Option Nat := none
+  for k in [:n / 2] do
+    tail := tail + choose
+    if 40 * tail ≤ 2 ^ n then endpoint := some k
+    choose := choose * (n - k) / (k + 1)
+  let some k := endpoint | return none
+  let med := if n % 2 == 1 then sorted[n / 2]! else
+    (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2
+  return some (med, sorted[k]!, sorted[n - k - 1]!)
+
+/-- Judge one plain-binary interleaved session. Validate its ordering and every
+sample's output/exit status before using paired times. Separate sessions cannot
+accidentally be presented as pairs of compatible standalone summaries. -/
+def judgePaired (j : Json) (minChange : Float := 1) : Except String Verdict := do
+  unless str j "leanprof" == "measure-pair" do throw "not a `leanprof measure-pair` result"
+  unless (j.getObjValAs? Nat "version").toOption == some 1 do throw "unsupported paired result version"
+  let samples ← j.getObjValAs? (Array Json) "samples"
+  let runs ← j.getObjValAs? Nat "runs"
+  unless runs ≥ 6 && runs ≤ 1000 && samples.size == 2 * runs do
+    throw "paired result needs 6..1000 complete pairs"
+  let machine ← j.getObjVal? "machine"
+  let overloaded ← machine.getObjValAs? Bool "overloaded"
+  let mut worse : Array String := #[]
+  let mut better : Array String := #[]
+  let mut notes : Array String := #["plain binaries: copies, allocations and compile heartbeats were not measured"]
+  let mut changes : Array Float := #[]
+  let mut expected : Option (String × String × String) := none
+  for i in [:runs] do
+    let mut times : Array Nat := #[]
+    for offset in [:2] do
+      let row := samples[2 * i + offset]!
+      let side := if (i + offset) % 2 == 0 then "base" else "candidate"
+      unless (← row.getObjValAs? Nat "pair") == i && str row "side" == side do
+        throw "paired samples must follow alternating AB/BA order"
+      let elapsed ← row.getObjValAs? Nat "time_ns"
+      unless elapsed > 0 && elapsed ≤ 18446744073709551615 do throw "invalid paired duration"
+      times := times.push elapsed
+      let code ← row.getObjValAs? Nat "exit_code"
+      if code != 0 then worse := worse.push s!"pair {i}, {side}: exit code {code}"
+      unless ← row.getObjValAs? Bool "output_present" do
+        worse := worse.push s!"pair {i}, {side}: checked output file missing"
+      let stdout ← row.getObjValAs? String "stdout_hash"
+      let stderr ← row.getObjValAs? String "stderr_hash"
+      let output ← row.getObjValAs? String "output_hash"
+      unless !stdout.isEmpty && !stderr.isEmpty && !output.isEmpty do throw "missing paired output hash"
+      let signature := (stdout, stderr, output)
+      if let some original := expected then
+        if signature != original then worse := worse.push s!"pair {i}, {side}: output or diagnostics changed"
+      else expected := some signature
+    let (base, candidate) := if i % 2 == 0 then (times[0]!, times[1]!) else (times[1]!, times[0]!)
+    changes := changes.push ((candidate.toFloat / base.toFloat - 1) * 100)
+  let some (med, lo, hi) := pairedInterval changes | throw "not enough pairs for a 95% median interval"
+  let description := s!"paired time: median change {fmt2 med}%, 95% median interval [{fmt2 lo}%, {fmt2 hi}%] ({runs} pairs)"
+  if overloaded then notes := notes.push (description ++ " (not judged: machine overloaded)")
+  else if hi < -minChange then better := better.push description
+  else if lo > minChange then worse := worse.push description
+  else notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
+  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes }
+
 /-- The verdict as `judge` prints it. -/
 def Verdict.render (v : Verdict) : String := Id.run do
   let mut out := if v.keep then "KEEP\n" else "DISCARD\n"
