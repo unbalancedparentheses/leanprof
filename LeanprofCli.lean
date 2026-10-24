@@ -69,7 +69,11 @@ def commands : List (String × String × String) := [
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
     "For `judge` and autoresearch loops."),
-  ("judge", "[--min-change PCT] BASE.json NEW.json",
+  ("measure-pair", "--base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
+    "Measure two prebuilt binaries in alternating AB/BA order (default 20 pairs, 3 warmups).\n" ++
+    "No builds or probes are added. Save every timing, exit status and output hash in one session.\n" ++
+    "Use `judge PAIR.json` for a paired 95% median interval; at least 6 pairs are required."),
+  ("judge", "[--min-change PCT] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, allocations, heartbeats or time got worse. Time counts only\n" ++
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
@@ -116,7 +120,8 @@ def summary : String → String
   | "elab" => "compile cost per line and declaration, repeated work, exact heartbeats"
   | "compare" => "compare two reports, exit 1 on regressions (for CI)"
   | "measure" => "run a program several times into one summary (for judge / autoresearch)"
-  | "judge" => "KEEP or DISCARD a change from two measure summaries"
+  | "measure-pair" => "interleave two prebuilt binaries for paired timing and correctness checks"
+  | "judge" => "KEEP or DISCARD from measure summaries or one paired session"
   | "report-md" => "Markdown summary of base and head reports, for pull-request comments"
   | "explain" => "why each copy happened: where the second reference comes from, and a fix"
   | "html" => "one self-contained HTML report: flame graph, tables, source, comparison"
@@ -1070,6 +1075,103 @@ def measureCmd (argv : List String) : IO UInt32 := do
   IO.println s!"written to {o.out}"
   return 0
 
+structure PairOpts where
+  base : String := ""
+  candidate : String := ""
+  baseCwd : String := "."
+  candidateCwd : String := "."
+  runs : Nat := 20
+  warmup : Nat := 3
+  checkOutput : Option String := none
+  out : String := ".lake/leanprof/paired.json"
+  args : Array String := #[]
+
+partial def parsePair (o : PairOpts) : List String → Except String PairOpts
+  | [] => .ok o
+  | "--base" :: x :: rest => parsePair {o with base := x} rest
+  | "--candidate" :: x :: rest => parsePair {o with candidate := x} rest
+  | "--base-cwd" :: x :: rest => parsePair {o with baseCwd := x} rest
+  | "--candidate-cwd" :: x :: rest => parsePair {o with candidateCwd := x} rest
+  | "--out" :: x :: rest => parsePair {o with out := x} rest
+  | "--check-output" :: x :: rest => parsePair {o with checkOutput := some x} rest
+  | "--runs" :: x :: rest => do
+    let some n := x.toNat? | throw "--runs must be an integer from 6 to 1000"
+    unless n ≥ 6 && n ≤ 1000 do throw "--runs must be an integer from 6 to 1000"
+    parsePair {o with runs := n} rest
+  | "--warmup" :: x :: rest => do
+    let some n := x.toNat? | throw "--warmup must be an integer from 0 to 1000"
+    unless n ≤ 1000 do throw "--warmup must be an integer from 0 to 1000"
+    parsePair {o with warmup := n} rest
+  | "--" :: rest => .ok {o with args := rest.toArray}
+  | x :: _ => .error s!"unknown or incomplete measure-pair option: {x}"
+
+def measurePairCmd (argv : List String) : IO UInt32 := do
+  let o ← IO.ofExcept (parsePair {} argv)
+  unless !o.base.isEmpty && !o.candidate.isEmpty do
+    throw <| IO.userError (usageFor "measure-pair")
+  -- Resolve binaries before changing cwd: relative paths belong to the caller.
+  let binaries ← #[o.base, o.candidate].mapM fun p => IO.FS.realPath (FilePath.mk p)
+  let dirs ← #[o.baseCwd, o.candidateCwd].mapM fun p => IO.FS.realPath (FilePath.mk p)
+  let binaryHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
+  let (initialLoad, cpus) ← machineLoad
+  let mut maxLoad := initialLoad
+  let mut samples : Array Json := #[]
+  let mut loads : Array Json := #[]
+  let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none),
+    ("LEANPROF_TRACE", none), ("LEANPROF_LIVE", none), ("LEANPROF_FLIGHT", none)]
+  -- Warmups are a separate phase, so measured pair zero always starts AB.
+  for phase in [:2] do
+    let count := if phase == 0 then o.warmup else o.runs
+    for pair in [:count] do
+      for offset in [:2] do
+        let side := (pair + offset) % 2
+        let checked := o.checkOutput.map fun p => dirs[side]! / p
+        if let some p := checked then
+          if ← p.pathExists then IO.FS.removeFile p
+        let t0 ← IO.monoNanosNow
+        let result ← IO.Process.output { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env }
+        let elapsed := (← IO.monoNanosNow) - t0
+        if phase == 0 then
+          if result.exitCode != 0 then throw <| IO.userError s!"warmup failed for {binaries[side]!}: {result.stderr}"
+          continue
+        let present ← match checked with
+          | some p => p.pathExists
+          | none => pure true
+        let output ← match checked with
+          | some p => if present then pure (fnv1a (← IO.FS.readBinFile p)) else pure "missing"
+          | none => pure (fnv1a result.stdout.toUTF8)
+        samples := samples.push <| Json.mkObj [
+          ("pair", toJson pair), ("side", Json.str (if side == 0 then "base" else "candidate")),
+          ("time_ns", toJson elapsed), ("exit_code", toJson result.exitCode.toNat),
+          ("stdout_hash", Json.str (fnv1a result.stdout.toUTF8)),
+          ("stderr_hash", Json.str (fnv1a result.stderr.toUTF8)),
+          ("output_hash", Json.str output), ("output_present", Json.bool present)]
+      let (load, _) ← machineLoad
+      maxLoad := match maxLoad, load with
+        | some a, some b => some (max a b)
+        | none, x | x, none => x
+      if phase == 1 then loads := loads.push (match load with | some v => toJson v | none => Json.null)
+  let overloaded := match maxLoad, cpus with | some l, some c => l > c.toFloat | _, _ => false
+  let finalHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
+  unless finalHashes == binaryHashes do throw <| IO.userError "a benchmark binary changed during measurement"
+  let j := Json.mkObj [("version", toJson (1 : Nat)), ("leanprof", "measure-pair"),
+    ("mode", "plain"), ("runs", toJson o.runs), ("warmup", toJson o.warmup),
+    ("base", Json.str binaries[0]!.toString), ("candidate", Json.str binaries[1]!.toString),
+    ("base_hash", Json.str binaryHashes[0]!), ("candidate_hash", Json.str binaryHashes[1]!),
+    ("base_cwd", Json.str dirs[0]!.toString), ("candidate_cwd", Json.str dirs[1]!.toString),
+    ("args", toJson o.args), ("output_source", Json.str (o.checkOutput.getD "stdout")),
+    ("samples", Json.arr samples),
+    ("machine", Json.mkObj [("overloaded", Json.bool overloaded),
+      ("load_avg_1m", match maxLoad with | some v => toJson v | none => Json.null),
+      ("cpus", match cpus with | some v => toJson v | none => Json.null),
+      ("pair_loads", Json.arr loads)])]
+  if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
+  IO.FS.writeFile o.out (j.pretty ++ "\n")
+  IO.println s!"leanprof measure-pair: {o.runs} pairs, alternating AB/BA; written to {o.out}"
+  IO.print (← IO.ofExcept (Leanprof.Judge.judgePaired j)).render
+  -- Like measure, collection succeeds even when the candidate is discarded.
+  return 0
+
 def loadSummary (path : String) : IO Leanprof.Judge.Summary := do
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
   match Leanprof.Judge.Summary.ofJson j with
@@ -1079,11 +1181,18 @@ def loadSummary (path : String) : IO Leanprof.Judge.Summary := do
 /-- KEEP or DISCARD a change, from the summaries before and after it (the
 rules are in `Leanprof.Judge`). Exits 0 for KEEP. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
-  let (minChange, argv) := match argv with
-    | "--min-change" :: v :: rest => ((parseDecimal? v).getD 1, rest)
-    | _ => ((1 : Float), argv)
-  let [basePath, newPath] := argv | throw <| IO.userError (usageFor "judge")
-  let v := Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange
+  let (minChange, argv) ← match argv with
+    | "--min-change" :: v :: rest => do
+      let some pct := parseDecimal? v | throw <| IO.userError "--min-change must be a percentage from 0 to 100"
+      unless pct ≤ 100 do throw <| IO.userError "--min-change must be a percentage from 0 to 100"
+      pure (pct, rest)
+    | _ => pure ((1 : Float), argv)
+  let v ← match argv with
+    | [pairPath] => do
+      let j ← IO.ofExcept (Json.parse (← IO.FS.readFile pairPath))
+      IO.ofExcept (Leanprof.Judge.judgePaired j minChange)
+    | [basePath, newPath] => pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange)
+    | _ => throw <| IO.userError (usageFor "judge")
   IO.print v.render
   return if v.keep then 0 else 1
 
@@ -1464,6 +1573,7 @@ def main (argv : List String) : IO UInt32 := do
     | "run" :: rest => run rest
     | "stat" :: rest => statCmd rest
     | "measure" :: rest => measureCmd rest
+    | "measure-pair" :: rest => measurePairCmd rest
     | "judge" :: rest => judgeCmd rest
     | "compare" :: rest => compare rest
     | "report-md" :: rest => reportMd rest

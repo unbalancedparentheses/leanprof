@@ -172,6 +172,59 @@ machine whole runs drift together, and on a shared 18-core Mac at load 30–68,
 unchanged code ([LeanBench case study](../case-studies/leanbench.md)).
 Copies, heartbeats and the output are still judged.
 
+### Interleaved timing of ordinary binaries
+
+Build baseline and candidate in separate checkouts, then measure the existing
+binaries together. This avoids rebuilding or adding probes between timing runs:
+
+```sh
+leanprof measure-pair \
+  --base ../base/.lake/build/bin/myapp \
+  --candidate ../candidate/.lake/build/bin/myapp \
+  --base-cwd ../base --candidate-cwd ../candidate \
+  --runs 20 --out paired.json -- INPUT
+leanprof judge paired.json
+leanprof judge --min-change 2 paired.json
+```
+
+Binary paths resolve relative to the directory where you invoke leanprof.
+Both programs receive the same argument vector, without shell interpretation;
+their working directories may differ. Build both normally first and let build
+and test jobs finish. `measure-pair` does not modify either build.
+
+The default is three warmup pairs followed by 20 measured pairs, alternating
+baseline/candidate and candidate/baseline order. `--runs` accepts 6–1000 pairs;
+`--warmup` accepts 0–1000. The session records every duration, exit status,
+stdout/stderr fingerprint, working directory and per-pair machine load. Binary
+fingerprints are checked before and after collection to detect rebuilds during
+the session; these FNV fingerprints are not cryptographic attestations.
+
+For file output, use `--check-output result.dat` (relative to each program's
+working directory). The old file is removed before each run, and a missing new
+file prevents KEEP. Stdout and stderr must also remain stable across both
+programs and all measured runs. Nonzero exits prevent KEEP. Warmup failures
+abort collection. `measure-pair` exits 0 after collecting a complete session,
+even for DISCARD; use `judge`'s exit status (0 KEEP, 1 DISCARD, 2 invalid input).
+
+`judge paired.json` computes each pair's percentage change and reports a
+distribution-free 95% confidence interval for its population median, using
+binomial order statistics. A timing improvement counts only when the entire
+interval is below `-min-change` (default 1%); a regression counts when the entire
+interval is above `+min-change`. Otherwise timing is inconclusive. Overload
+during any sampled boundary disables the timing verdict.
+
+The interval assumes independent pairs. Alternation reduces gradual drift; it
+does not eliminate periodic interference, thermal effects or systematic bias.
+Choose the run count before measurement; repeatedly rerunning until KEEP is
+not a valid 95% procedure. Timing includes process startup and output capture.
+There is no automatic early stopping or per-scope timing in this command.
+
+This is a timing-only session: it does not count copies, allocations or compile
+heartbeats. Keep the existing `measure`/`judge BASE NEW` checks for exact metrics,
+and require both correctness/metric checks and the paired timing result before
+accepting an optimization. Two standalone summaries are never silently treated
+as an interleaved session.
+
 ## Autoresearch
 
 `measure` and `judge` are the measurement and verdict of an

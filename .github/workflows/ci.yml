@@ -214,6 +214,8 @@ jobs:
           if lake exe leanprof report-md --fail-on bogus small.json large.json; then echo "expected an error"; exit 1; fi
       - name: Autoresearch demo (measure and judge)
         run: sh research/demo/run.sh
+      - name: Interleaved measurement and paired verdicts
+        run: python3 scripts/check-pair.py .lake/build/bin/leanprof
       - name: Inlay hints through the language server
         run: |
           LEANPROF_QUIET=1 lake exe leanprof run copybug -- 2000
