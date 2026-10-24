@@ -24,3 +24,9 @@ race:mi_
 # block over through atomics TSan cannot see (taskchains: a task's context
 # read by its worker, freed, and its block reused by the spawning thread)
 race_top:lean_alloc_ctor_memory
+# The same allocation/reuse report can be attributed to the inlined header
+# initializer instead (CI run 40045798658, taskchains). The write is inside
+# lean_alloc_ctor before the new context is published; the previous reader is
+# lpf_task_run on the old context. Keep this limited to header initialization,
+# rather than suppressing lpf_task_wrap/lpf_task_run or all leanprof frames.
+race_top:lean_set_st_header
