@@ -28,6 +28,10 @@ All profiled from outside, without changing the projects:
   (−35%) with byte-identical output on 160 input and option combinations.
   `explain` printed the `CFG.build` fix (121,054 copies). Wall time did not
   measurably change: fewer allocations is not always a faster program.
+  Then the [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
+  found that each function was validated about ten times on its way through
+  the compiler, each time rebuilding its CFG: its 12 kept changes (on a
+  branch, for review) cut wall time by 24% and allocations by another 16%.
 - **[doc-gen4](docs/case-studies/doc-gen4.md)**: one SQL query that grows with
   the square of a module's declarations takes two thirds of the HTML pass.
 - **[verso](docs/case-studies/verso.md)**: about 23% of rendering is
@@ -172,9 +176,13 @@ the CPU frequency fixed ([results](bench/RESULTS.md)).
   exact ranges need the Lean it was built with), records every term by
   default, and has its own viewer and published datasets.
 
-**Not shown yet:** that leanprof makes programs faster on its own (the
-autoresearch loop's first real runs are in progress), and results reproduced
-by anyone else.
+**Early evidence, not yet confirmed:** the autoresearch loop, an agent that
+changes the code and keeps a change only when `leanprof judge` says so, made
+[lean-compiler-backend 24% faster](docs/case-studies/autoresearch-lean-compiler-backend.md)
+on its own in about three hours (median of 30 runs each, 648 → 492 ms, with
+byte-identical output on 340 combinations), on a busy machine and with the
+changes not yet reviewed or merged. Nothing here has been reproduced by
+anyone else yet.
 
 ## How it compares
 
