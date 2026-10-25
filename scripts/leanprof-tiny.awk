@@ -33,6 +33,8 @@ function scan(k,    body, rest, name, a, j, args, v) {
     rest = body
     sub(/_start:/, "", rest)
     if (rest ~ /goto / || rest ~ /\n[A-Za-z_][A-Za-z0-9_]*:/) return 0
+    # loops written any other way (Lean's C loops with goto, but be safe)
+    if (rest ~ /(^|[^A-Za-z0-9_])(while|for|do)[ \t\n]*[({]/) return 0
     if (gsub(/;/, ";", rest) > 60) return 0
     # boxed scalars this function unboxes: freeing those is bounded
     delete boxed
@@ -48,7 +50,7 @@ function scan(k,    body, rest, name, a, j, args, v) {
         name = substr(v, RSTART, RLENGTH - 1)
         args = substr(v, RSTART + RLENGTH)
         v = args
-        if (name == "if" || name == "return" || name == "sizeof" || name == "switch" || name == "while") continue
+        if (name == "if" || name == "return" || name == "sizeof" || name == "switch") continue
         if (name in allow || name ~ prefixes) continue
         if (name ~ /^lean_dec(_ref)?$/) {
             a = args
