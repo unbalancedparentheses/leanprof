@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Tests.Elab import Tests.ExplainFixes import Tests.Regress
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -482,6 +482,29 @@ def tests : StateT Nat IO Unit := do
   Tests.Elab.run fun n ok d => check n ok d
   -- why a declaration or copy site got worse (Tests/Regress.lean)
   Tests.Regress.run fun n ok d => check n ok d
+  -- `leanprof` with no arguments: the targets of a lakefile, and what it profiles
+  let leanCfg := "import Lake\nopen Lake DSL\n\npackage p where\n  -- testDriver := \"commented\"\n" ++
+    "  moreLeancArgs := #[\"--x\"] /- lean_exe hidden -/\n\n@[default_target] lean_lib P\n\n" ++
+    "lean_exe «my-app» where\n  root := `Main\n\n@[test_driver] lean_exe tests where\n  root := `Tests\n"
+  let t := Workload.parseLean leanCfg
+  check "workload: lakefile.lean targets, comments skipped"
+    (t.exes == #["my-app", "tests"] && t.libs == #["P"] && t.testDriver == some "tests") s!"{repr t}"
+  check "workload: the one executable besides the test driver"
+    (Workload.choose t == .exe "my-app" "the project's only executable")
+  let tomlCfg := "name = \"importGraph\"\ndefaultTargets = [\"ImportGraph\", \"graph\"]\ntestRunner = \"ImportGraphTest\"\n\n" ++
+    "[[require]]\nname = \"Cli\"\n\n[[lean_lib]]\nname = \"ImportGraph\"\n\n# a comment\n[[lean_exe]]\nname = \"graph\"\nroot = \"MainGraph\"\n\n" ++
+    "[[lean_exe]]\nname = \"unused\"\n\n[[lean_lib]]\nname = \"ImportGraphTest\"\n"
+  let t2 := Workload.parseToml tomlCfg
+  check "workload: lakefile.toml targets (not the [[require]] name)"
+    (t2.exes == #["graph", "unused"] && t2.libs == #["ImportGraph", "ImportGraphTest"] &&
+      t2.testDriver == some "ImportGraphTest") s!"{repr t2}"
+  check "workload: two executables are not chosen between"
+    (Workload.choose t2 == .ambiguous #["graph", "unused"] none)
+  check "workload: a library with a library test driver profiles compile time"
+    (Workload.choose (Workload.parseToml "name = \"Cli\"\ntestDriver = \"CliTest\"\n[[lean_lib]]\nname = \"Cli\"\n") == .elab)
+  check "workload: only the test driver"
+    (Workload.choose { exes := #["tests"], testDriver := some "tests" } matches .exe "tests" _)
+  check "workload: nothing to profile" (Workload.choose {} == .nothing)
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0

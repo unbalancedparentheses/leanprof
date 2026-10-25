@@ -81,6 +81,16 @@ def other_project():
                env=dict(os.environ, LEANPROF_JSON=os.path.join(work, "plain.json")))
         out["smoke.restored"] = not os.path.exists(os.path.join(work, "plain.json")) and p.stdout.split()[0] == "10"
         out["smoke.doctor"] = sh(lp, "doctor", check=False, cwd=work).returncode
+        # `leanprof` with no arguments: the only executable, counted with probes
+        # when there is no samply (sampling is not deterministic), then findings
+        # and the normal build back
+        q = sh(lp, "--", "2000", check=False, cwd=work, env=dict(ENV, LEANPROF_SAMPLY="none"))
+        out["smoke.noargs"] = [q.returncode, "profiling `smoke` 2000 (the project's only executable)" in q.stdout,
+                               "copies of a shared Array in buildWithHistory" in q.stdout,
+                               "leanprof explain" in q.stdout]
+        p = sh(os.path.join(work, ".lake", "build", "bin", "smoke"), "10", cwd=work,
+               env=dict(os.environ, LEANPROF_JSON=os.path.join(work, "plain.json")))
+        out["smoke.noargs_restored"] = not os.path.exists(os.path.join(work, "plain.json"))
     finally:
         shutil.rmtree(work, ignore_errors=True)
         shutil.rmtree(pkg, ignore_errors=True)
