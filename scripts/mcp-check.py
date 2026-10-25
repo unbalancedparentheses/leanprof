@@ -92,6 +92,27 @@ check("measure_pair", not err and "6 pairs" in text, text)
 text, err = tool("judge", pair=".lake/leanprof/mcp-pair.json", min_change="1")
 check("judge (paired)", not err and "paired time" in text, text)
 
+# refused: arbitrary programs, writes outside the project, signals to every process
+text, err = tool("measure_pair", base="/bin/echo", candidate="/bin/echo", runs=6)
+check("measure_pair refuses a binary Lake did not build", err and "not a binary built by Lake" in text, text)
+text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
+                 base_cwd="/", runs=6)
+check("measure_pair refuses a working directory that is not a Lake project", err and "not a Lake project" in text, text)
+text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
+                 check_output="../x", runs=6)
+check("measure_pair refuses an output file outside the project", err and "inside the project" in text, text)
+text, err = tool("run", executable="copybug", json="/tmp/leanprof-mcp-outside.json")
+check("run refuses a report path outside the project", err and "inside the project" in text, text)
+text, err = tool("measure", executable="copybug", out="../outside.json")
+check("measure refuses a summary path outside the project", err and "inside the project" in text, text)
+text, err = tool("run", executable="--core")
+check("run refuses an option as the executable", err and "not an executable name" in text, text)
+for pid in ["-1", "0", "../../etc/x"]:
+    text, err = tool("dump", pid=pid)
+    check(f"dump refuses pid {pid!r}", err and "not a process id" in text, text)
+    text, err = tool("live", pid=pid)
+    check(f"live refuses pid {pid!r}", err and "not a process id" in text, text)
+
 # a running program: live snapshot and flight-recorder dump
 env = dict(os.environ, LEANPROF_LIVE="1", LEANPROF_FLIGHT=".lake/leanprof", LEANPROF_QUIET="1")
 server = subprocess.Popen([".lake/build/bin/server", "0", "20"], env=env, stdout=subprocess.DEVNULL)

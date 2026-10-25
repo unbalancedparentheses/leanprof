@@ -44,7 +44,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: unbalancedparentheses/leanprof@main
+        with:
+          fetch-depth: 0               # base and head without fetching again
+          persist-credentials: false   # the pull request's code runs in this job
+      - uses: unbalancedparentheses/leanprof@main   # or a release tag
         with:
           executable: myapp              # a lean_exe target
           args: bench-input --size 1000
@@ -109,6 +112,12 @@ the job summary.
 the action then leaves the report in the job summary (open the workflow
 run) and says so in a notice. Use `pull_request`, not `pull_request_target`,
 for such workflows: the action builds and runs the pull request's code.
+For the same reason, check out with `persist-credentials: false` (otherwise
+`actions/checkout` leaves the job's token in `.git/config`, where that code
+can read it) and give the workflow only `contents: read` and
+`pull-requests: write`. The comment step is the only one that receives the
+token. Pin the action to a release tag rather than `@main` so a later change
+to this repository cannot change what your workflow runs.
 
 ### Rendering the comment locally
 

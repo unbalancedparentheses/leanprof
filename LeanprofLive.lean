@@ -95,8 +95,16 @@ def pidAlive (pid : String) : IO Bool := do
     return out.exitCode == 0
   catch _ => return false
 
+/-- A process id as `kill` must receive it: digits only, not 0. Anything else
+(`-1`, `0`, a path) would signal every process or a process group, or name a
+file outside the temporary directory. -/
+def checkPid (pid : String) : IO Unit := do
+  unless !pid.isEmpty && pid.all Char.isDigit && pid.any (· != '0') do
+    throw <| IO.userError s!"not a process id: {pid}"
+
 /-- The snapshot file of a program started with `LEANPROF_LIVE=1`. -/
 def livePathFor (pid : String) : IO FilePath := do
+  checkPid pid
   let p : FilePath := s!"{← tmpDir}/leanprof-{pid}.live.json"
   if ← p.pathExists then return p
   let q : FilePath := s!"/tmp/leanprof-{pid}.live.json"
@@ -411,6 +419,7 @@ def markerPath (pid : String) : IO (Option FilePath) := do
 
 /-- Signal `pid` to dump its flight recorder and wait for the trace; returns its path. -/
 def dumpPid (pid : String) (timeoutMs : Nat := 10000) : IO String := do
+  checkPid pid
   let some marker ← markerPath pid | throw <| IO.userError <|
     s!"process {pid} is not running with leanprof's flight recorder (no {← tmpDir}/leanprof-{pid}.flight): " ++
     "start it with LEANPROF_FLIGHT=1 (or LEANPROF_FLIGHT=DIR, LEANPROF_SLOW_MS=MS)"
@@ -648,7 +657,7 @@ def tools : Array Json := #[
   tool "live" ("What a running program is doing now: its latest live snapshot (it must run with LEANPROF_LIVE), " ++
     "with rates over a short interval and the scopes each thread is inside.")
     [("pid", sProp "process id (snapshot in $TMPDIR/leanprof-PID.live.json, from LEANPROF_LIVE=1)"),
-     ("path", sProp "snapshot file (LEANPROF_LIVE=path)"), ("seconds", nProp "interval for rates (default 1)")] [],
+     ("path", sProp "snapshot file (LEANPROF_LIVE=path)"), ("seconds", nProp "interval for rates (default 1, at most 60)")] [],
   tool "dump" "Write a running program's flight recorder (LEANPROF_FLIGHT) to a Perfetto trace of its last seconds; returns the path."
     [("pid", sProp "process id")] ["pid"]]
 
@@ -678,14 +687,26 @@ def inDir (cwd : Option String) (p : String) : FilePath :=
   | some d => if p.startsWith "/" then p else (d : FilePath) / p
   | none => p
 
+/-- A file the server writes or deletes for its client: relative to the project
+and without `..`, so a tool call cannot overwrite or remove files elsewhere. -/
+def projectPath (what p : String) : IO String := do
+  let fp : FilePath := p
+  if fp.isAbsolute || fp.components.contains ".." || p.isEmpty then
+    throw <| IO.userError s!"{what} must be a path inside the project (relative, without ..): {p}"
+  return p
+
+def isLakeProject (dir : FilePath) : IO Bool := do
+  return (← (dir / "lakefile.lean").pathExists) || (← (dir / "lakefile.toml").pathExists)
+
 def callTool (name : String) (a : Json) : IO Json := do
   let cwd := argStr a "cwd"
   let exeArgs : IO (Array String) := do
     let some exe := argStr a "executable" | throw <| IO.userError "missing argument: executable"
+    if exe.startsWith "-" then throw <| IO.userError s!"not an executable name: {exe}"
     return #[exe, "--"] ++ argStrs a "args"
   match name with
   | "run" =>
-    let json := argStr a "json" |>.getD ".lake/leanprof/report.json"
+    let json ← projectPath "json" (argStr a "json" |>.getD ".lake/leanprof/report.json")
     let flags := [("auto", "--auto"), ("allocs", "--allocs"), ("counters", "--counters"), ("frees", "--frees"),
       ("core", "--core")].filterMap fun (k, f) => if argBool a k then some f else none
     let (rc, out, err) ← runSelf (#["run", "--json", json] ++ flags.toArray ++ (← exeArgs)) cwd
@@ -708,7 +729,7 @@ def callTool (name : String) (a : Json) : IO Json := do
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
     return textResult s!"{out}\n{tailText err 10}" (rc != 0)
   | "measure" =>
-    let outFile := argStr a "out" |>.getD ".lake/leanprof/measure.json"
+    let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++
       (← exeArgs)) cwd
     return textResult s!"summary {outFile}\n{out}\n{tailText err 10}" (rc != 0)
@@ -739,7 +760,18 @@ def callTool (name : String) (a : Json) : IO Json := do
   | "measure_pair" =>
     let (some b, some c) := (argStr a "base", argStr a "candidate")
       | throw <| IO.userError "missing argument: base or candidate"
-    let outFile := argStr a "out" |>.getD ".lake/leanprof/paired.json"
+    let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/paired.json")
+    -- Only what a Lake project built, run in a Lake project: the tool must not
+    -- become a way to run any program, or to delete files (measure-pair
+    -- removes the checked output file before each run).
+    for bin in [b, c] do
+      let real ← try IO.FS.realPath (inDir cwd bin) catch _ => throw <| IO.userError s!"no such binary: {bin}"
+      unless (real.toString.splitOn "/.lake/build/bin/").length > 1 do
+        throw <| IO.userError s!"{bin} is not a binary built by Lake (.lake/build/bin/)"
+    for k in ["base_cwd", "candidate_cwd"] do
+      if let some d := argStr a k then
+        unless ← isLakeProject (inDir cwd d) do throw <| IO.userError s!"{k} is not a Lake project: {d}"
+    if let some f := argStr a "check_output" then discard <| projectPath "check_output" f
     let opt (k flag : String) := (argStr a k).map (#[flag, ·]) |>.getD #[]
     let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
     let (rc, out, err) ← runSelf (#["measure-pair", "--base", b, "--candidate", c, "--out", outFile] ++
@@ -761,7 +793,7 @@ def callTool (name : String) (a : Json) : IO Json := do
       | none, none => throw <| IO.userError "give pid or path"
     let some first ← readJson? path
       | return textResult s!"no live snapshot at {path} (start the program with LEANPROF_LIVE=1)" true
-    if !bool first "exited" then IO.sleep ((argNat a "seconds").getD 1 * 1000).toUInt32
+    if !bool first "exited" then IO.sleep ((min ((argNat a "seconds").getD 1) 60) * 1000).toUInt32
     let cur := (← readJson? path).getD first
     let prev := if num cur "seq" != num first "seq" then some first else none
     return textResult ("\n".intercalate (render path.toString prev cur 220 60 (some 10)).toList)

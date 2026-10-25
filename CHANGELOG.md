@@ -6,6 +6,22 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Security review
+
+- [Review](docs/reviews/security-review.md) of the MCP server, the GitHub
+  Action and the install script.
+- MCP: `measure_pair` runs only binaries in a `.lake/build/bin/` directory,
+  in Lake projects; files the server writes or deletes must be inside the
+  project; `live` and `dump` (and `leanprof dump`, `top --pid`) accept only a
+  single process id; an option is not taken as the executable; `live` waits
+  at most 60 s. `scripts/mcp-check.py` checks each refusal.
+- Action: line breaks in names can no longer end the inline code in the
+  comment; the verdict step gets its values as environment variables; the
+  guide recommends `persist-credentials: false`, minimal permissions and a
+  pinned tag.
+- Install: the launcher quotes the path it runs; the checksum lookup is an
+  exact name match; the download directory is removed on failure.
+
 ### Interleaved timing and paired verdicts
 
 - `measure-pair` runs two prebuilt binaries in alternating AB/BA order, with

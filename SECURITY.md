@@ -9,7 +9,10 @@ or backport guarantee; fixes target the current development branch.
 Profiling builds and runs the target project's code. Use projects you trust,
 or an isolated environment appropriate for running untrusted software. The MCP
 server exposes profiling operations to its client; configure it only for clients
-and working directories you trust. Reports can contain source paths, names and
+and working directories you trust. It refuses to run binaries Lake did not build,
+to write files outside the project and to signal anything but a single process.
+The [security review](docs/reviews/security-review.md) lists what each component
+guards against and the risks accepted by design. Reports can contain source paths, names and
 program diagnostics: inspect them before sharing.
 
 Release archives include SHA256 checksums for integrity checking. These are

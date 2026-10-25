@@ -1213,8 +1213,13 @@ def fmtCount (x : Float) : String := groupDigits x.abs.round.toUInt64.toNat
 def fmtHeartbeats (x : Float) : String :=
   if x.abs ≥ 1e6 then s!"{fmt2 (x / 1e6)} MHB" else s!"{fmt2 (x / 1000)} kHB"
 
-/-- A name for a Markdown table cell. -/
-def mdCode (s : String) : String := s!"`{(s.replace "`" "'").replace "|" "\\|"}`"
+/-- A name as inline code in a Markdown table. Names come from the profiled
+code (a pull request's, in the Action): a backtick, `|` or line break would
+end the code span or the row and let the rest be read as Markdown or HTML in
+the comment. -/
+def mdCode (s : String) : String :=
+  let s := ((s.replace "`" "'").replace "|" "\\|").map fun c => if c == '\n' || c == '\r' then ' ' else c
+  s!"`{s}`"
 
 /-- `+12 (+3.40%)`: the change from `b` to `n`, formatted with `f`. -/
 def fmtChange (f : Float → String) (b n : Float) : String :=

@@ -46,8 +46,9 @@ including refreshed comparisons against current alternatives.
 - [x] Times too small to measure are reported as such, never as 0.
 - [ ] Release binaries for Linux arm64 and macOS x86-64; Windows documented
   as unsupported.
-- [ ] Security review of the MCP server, the GitHub Action and the install
-  script.
+- [x] Security review of the MCP server, the GitHub Action and the install
+  script ([review](docs/reviews/security-review.md)): 12 findings fixed or
+  documented. Follow-up: build provenance attestations for releases.
 - [x] Issue and PR templates, `SECURITY.md`, a Lean version support policy,
   `CONTRIBUTING.md`.
 - [x] Easier first run: the installer checks `PATH`, and errors say how to
