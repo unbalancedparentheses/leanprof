@@ -20,6 +20,7 @@ with the events), leanprof's stays under 50 ns at every count (constant).
 import argparse
 import os
 import re
+import shutil
 import statistics
 import sys
 
@@ -42,8 +43,11 @@ os.makedirs(work, exist_ok=True)
 
 # exact: every span copies every event recorded so far
 out = os.path.join(work, "copies.json")
+had_build = os.path.exists(os.path.join(BENCH, "build"))
 sh([LP, "run", "--json", out, "bench", "--", "leanprofiler", "1", "4000"], cwd=BENCH,
    env={"LEAN_PROFILE": "1", "LEANPROF_QUIET": "1"})
+if not had_build:  # LeanProfiler writes its trace and summary to ./build
+    shutil.rmtree(os.path.join(BENCH, "build"), ignore_errors=True)
 # the two rows bench/README.md shows (by copy site; reserveSpan has a second
 # site, its own Array.push, with 4,001 more, not in the published table)
 cp = {(x["function"], x["where"].split("LeanProfiler/", 1)[-1]): x for x in read_json(out)["copies"]}
