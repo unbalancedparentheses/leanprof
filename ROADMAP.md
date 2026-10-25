@@ -253,11 +253,6 @@ provenance and one complete experiment operation come first.
   cause, supporting locations, expected affected metric, semantic constraints
   and a concrete validation experiment. Observations kept apart from
   hypotheses; improvements verified by measurement, not predicted.
-- [ ] **Experiment memory.** An append-only log of hypothesis, patch
-  fingerprint, workload, checks, measurements, verdict and rejection reason,
-  searched before new attempts so failures are not repeated; old conclusions
-  invalidated when code or workloads change; held-out evaluation kept apart
-  from the inputs that guide optimization.
 
 ### Evidence
 
@@ -268,11 +263,6 @@ provenance and one complete experiment operation come first.
   in unfamiliar projects. Publish correctness, time to verified improvement,
   failed diagnoses and reproduction instructions next to current-version
   comparisons.
-- [ ] **Evaluate agents using leanprof.** Fixed tasks with known bottlenecks
-  plus unseen real projects; the same model and budget with ordinary tools
-  versus leanprof. Publish correct fixes, false KEEPs, missed issues, tool
-  failures, calls/tokens and elapsed time. A speedup with weakened tests,
-  proofs or changed required behavior counts as a failure.
 
 Claims about overhead and accuracy are only made after M2's head-to-head
 benchmark measures them.
