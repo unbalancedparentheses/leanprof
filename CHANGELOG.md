@@ -6,6 +6,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Runtime and cleanup fixes from the 2026-10-25 code review
+
+- `--auto`'s tiny-function rule (`scripts/leanprof-tiny.awk`) no longer
+  counts `lean_ctor_release` (it can free a whole list or tree) or
+  `lean_nat_add`, `lean_nat_sub` and `lean_nat_succ` (big-number code,
+  linear in their operands) as O(1); a `Nat` comparison counts only against
+  a constant small number. Functions using them are timed again.
+
 ### Compile time: a project view and published profiles
 
 - `leanprof html` on a compile-time report opens on a project view: project,

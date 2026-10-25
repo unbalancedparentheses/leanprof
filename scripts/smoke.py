@@ -138,6 +138,50 @@ _start:
 return l_loop(v_n_9_);
 }
 }
+LEAN_EXPORT lean_object* l_releases(lean_object* v_p_10_){
+_start:
+{
+lean_ctor_release(v_p_10_, 0);
+return v_p_10_;
+}
+}
+LEAN_EXPORT lean_object* l_natAdd(lean_object* v_a_11_, lean_object* v_b_12_){
+_start:
+{
+lean_object* v_c_13_;
+v_c_13_ = lean_nat_add(v_a_11_, v_b_12_);
+return v_c_13_;
+}
+}
+LEAN_EXPORT lean_object* l_natSucc(lean_object* v_a_14_){
+_start:
+{
+return lean_nat_succ(v_a_14_);
+}
+}
+LEAN_EXPORT uint8_t l_natEq(lean_object* v_a_15_, lean_object* v_b_16_){
+_start:
+{
+uint8_t v_c_17_;
+v_c_17_ = lean_nat_dec_eq(v_a_15_, v_b_16_);
+return v_c_17_;
+}
+}
+LEAN_EXPORT uint8_t l_isZero(lean_object* v_a_18_){
+_start:
+{
+lean_object* v_z_19_; uint8_t v_c_20_;
+v_z_19_ = lean_unsigned_to_nat(0u);
+v_c_20_ = lean_nat_dec_eq(v_a_18_, v_z_19_);
+return v_c_20_;
+}
+}
+LEAN_EXPORT uint8_t l_belowTen(lean_object* v_a_21_){
+_start:
+{
+return lean_nat_dec_lt(v_a_21_, lean_box(10));
+}
+}
 """
 
 

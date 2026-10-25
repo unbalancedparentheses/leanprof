@@ -9,6 +9,8 @@
   "main": 1
  },
  "auto.tiny_rules": [
+  "l_belowTen",
+  "l_isZero",
   "l_tiny",
   "l_tiny___boxed"
  ],

@@ -136,7 +136,10 @@ A function of a nanosecond or two costs several times its work in
 probes, so before compiling, the wrapper marks such functions in the C that
 Lean emits `no_instrument_function` (`scripts/leanprof-tiny.awk`:
 straight-line code that calls only O(1) `lean.h` operations and other such
-functions, and frees nothing but boxed scalars) and lists their addresses
+functions, and frees nothing but boxed scalars; `lean_ctor_release`, which
+can free a whole structure, and `Nat` arithmetic, which falls back to
+big-number code, do not count, and a `Nat` comparison counts only against
+a constant small number) and lists their addresses
 in a section the report reads (`--time-tiny` turns this off). A scope that
 turns out to cost about as much as its probes (checked every 1,024
 outermost calls; not recursive ones) goes light: about one call in 64 is
