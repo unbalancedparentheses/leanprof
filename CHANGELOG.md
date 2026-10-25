@@ -203,6 +203,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   deleted in that directory before the first run. Every directory it runs
   in or writes to, defaults included, must now be a Lake project, and
   `check_output` must be inside both run directories.
+- Action: the comment step pasted the `comment-tag` input into its jq
+  program. A tag with `"` broke the lookup (the error was suppressed, so
+  each run posted another comment), and a tag with jq syntax could match,
+  then edit, another comment. The marker is now compared in Python, as
+  data. `scripts/comment-check.sh` (in CI) runs the step against a fake
+  `gh`; with the old step, both tags fail it.
 
 ### Smaller fixes and maintenance
 

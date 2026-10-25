@@ -52,13 +52,15 @@ pid `-1`.
 ## Follow-up: bypasses found by a later code review (2026-10-25)
 
 A code review of the tree after these fixes found that the restrictions on
-paths and options could still be bypassed. All three reproduced, and are fixed:
+paths and options could still be bypassed, and that the Action's comment
+step pasted an input into a jq program. All four reproduced, and are fixed:
 
 | # | Component | Finding | Severity | Status |
 |---|---|---|---|---|
 | 13 | MCP | `measure_pair` checked `base_cwd` and `candidate_cwd` only when given. Both default to the top-level `cwd`, which was not checked: with `cwd` a directory outside any project, absolute paths to Lake-built binaries and `check_output: "important.txt"`, the file was deleted there before the first run. | high | fixed: the directories it really runs in (`cwd`, or the server's own, and both defaults) must be Lake projects, and `check_output` must be inside both run directories |
 | 14 | MCP | The path checks of findings 2 and 3 were lexical. `out: "external/result.json"`, with `external` a symbolic link in the project pointing elsewhere, wrote outside the project; so did a path that is itself a link. | medium | fixed: the nearest existing directory above the path, links resolved, must be inside the working directory, and the path itself must not be a link (dangling links on the way are refused too) |
 | 15 | MCP | `elab`'s `files` were appended to `leanprof elab`'s options, which it reads anywhere: `["--out", "/outside/report.json", "Main.lean"]` wrote the report outside the project. | medium | fixed: a file starting with `-` is refused (`leanprof elab` has no `--`); also for `compare`'s and `judge`'s report paths |
+| 16 | Action | The comment step found its earlier comment with `gh api --jq` and the marker (from the `comment-tag` input) pasted into the jq program. A tag with `"` broke the query, whose error was suppressed, so every run posted a new comment; a tag such as `x") or (true) or ("` made the predicate match any comment, and the step then edited the first one. The tag comes from the workflow author, not the pull request. | low | fixed: the jq program is fixed text and the marker is compared in Python, as data; `scripts/comment-check.sh` (in CI) runs the step against a fake `gh` with both tags |
 
 `scripts/mcp-check.py` checks all three: `measure_pair` with a `cwd` that
 is not a project (with and without explicit side directories), a report
