@@ -147,10 +147,14 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
 - **Small slowdowns.** On the quiet Linux machine leanprof caught a 2%
   slowdown 5 times in 5 with no false alarm in 20 unchanged runs; LeanBench
   at a 5% threshold caught none of the 2% and 2 of 5 at 4.8%.
-- **Compile-time speed in the recorded comparison.** All of Batteries profiled
-  in 17 s, against 103–152 s for the tested lean-source-profiler revision.
-  Its newer native compact mode needs a fresh comparison; these historical
-  numbers do not establish a lead over its current version.
+- **Full compile-time profiles.** Per file, a full profile (internal
+  operations, the definitions behind the work, terms and tactics by range)
+  costs 1.3 to 1.9 times less than lean-source-profiler's detailed mode
+  ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md),
+  its latest release 0.3.0, on the shared Mac). Compact profiles cost about
+  the same in both. All of Batteries took 17 s against 103–152 s, mostly
+  because leanprof elaborates files in parallel and lean-source-profiler one
+  at a time.
 - **Overhead against LeanProfiler.** A profiled scope costs about 8 ns on the
   Mac (23 ns on Linux, see below) and stays constant however long the program
   runs; LeanProfiler's span grows from 4.6 µs to 88 µs as
@@ -187,11 +191,12 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   `measure-pair` now avoids instrumentation and rebuilds for timing-only
   comparisons, but still measures the whole process; its comparative cost
   has not yet been benchmarked.
-- **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)** now
-  defaults to cached native compact capture, with detailed traces optional,
-  and has a repository viewer and published large-project datasets. Our
-  comparison needs refreshing. leanprof's exact ranges need the Lean it was
-  built with.
+- **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)**
+  has a repository viewer and published Mathlib-scale datasets, which
+  leanprof lacks. The comparison above is against its latest release (0.3.0),
+  whose default is the compact mode measured there; its main branch has
+  since changed its dataset tooling and explorer, not re-tested here.
+  leanprof's exact ranges need the Lean it was built with.
 
 **Reviewed result, still awaiting independent replication:** the autoresearch
 loop found 12 compiler optimizations in about three hours. Review caught a
