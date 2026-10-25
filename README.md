@@ -159,7 +159,7 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   the same in both. All of Batteries took 17 s against 103–152 s, mostly
   because leanprof elaborates files in parallel and lean-source-profiler one
   at a time.
-- **Overhead against LeanProfiler.** A profiled scope costs about 8 ns on the
+- **Overhead against LeanProfiler.** A profiled scope costs about 6–7 ns on the
   Mac (23 ns on Linux, see below) and stays constant however long the program
   runs; LeanProfiler's span grows from 4.6 µs to 88 µs as
   events accumulate (25 ns with recording off).
@@ -177,7 +177,7 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
 **Even, or behind:**
 
 - **Probe cost on Linux: about 23 ns per scope** (51 ns before it read the
-  CPU's counter instead of `clock_gettime`), against 8 ns on the Mac. Tiny
+  CPU's counter instead of `clock_gettime`), against 6–7 ns on the Mac. Tiny
   functions still run about 18× slower under `profile!` there.
 - **Time of tiny functions in the exact modes.** When a call costs about as
   much as its probes, its time can be off by half either way; such rows are
@@ -191,7 +191,8 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   what a probe costs inside the program beyond its calibrated cost, which
   no subtraction sees. `leanprof sample` is the tool for those functions.
 - **Sampling** is as accurate as samply (it runs samply underneath; on the
-  Mac within 0.1–1.9 points of each function's true share, samply 0.5–2.9)
+  Mac within 0.2–3.3 points of each function's true share over four suite
+  runs on 2026-10-25, samply 0.3–4.4)
   and adds Lean names, file:line and the runtime breakdown (on Linux, see
   deep recursion above).
 - **`--auto` on Linux** is 2.6–3.2 points off on allocation- and copy-heavy
@@ -228,7 +229,7 @@ reproduction.
 | | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler) | samply / perf | [LeanBench](https://github.com/alok/LeanBench) |
 |---|---|---|---|---|---|
 | Run time | exact and sampled | manual spans | – | sampled | wall time per named benchmark: mean, stddev, percentiles |
-| Overhead while recording | about 8 ns per scope on the Mac, 23 ns on Linux; constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low | none (times the plain build, two clock reads per sample) |
+| Overhead while recording | about 6–7 ns per scope on the Mac, 23 ns on Linux; constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low | none (times the plain build, two clock reads per sample) |
 | Works without changing the project | ✅ | – | ✅ | ✅ | – (a dependency and a bench module) |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names | your benchmark names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – | – |

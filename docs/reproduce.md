@@ -205,14 +205,16 @@ reduction is checked.
 
 `scripts/reproduce.sh bench-suite` (about 5 minutes). `bench/run.py --reps 7
 --check`, reports written under `.lake/reproduce/`, compared with
-`bench/results.json` (the Mac, load 7–17, leanprof `575ba1c`).
+`bench/results.json` (the Mac, load 2.3–2.8, leanprof `4bdc762`, after the
+outliner fix below; the results further down were checked against the
+earlier table, load 7–17, leanprof `575ba1c`).
 
 | | published | kind |
 |---|---|---|
 | call and copy counts exact in every leanprof mode and workload | | exact |
 | reported totals within 0.75–1.35 of plain where scopes do real work | | range |
-| each headline cell, share error for `profile!`, `--auto`, `sample`, samply, LeanProfiler (README: `sample` 0.1–1.9 pp, samply 0.5–2.9) | RESULTS.md headline | range: up to max(2×, +1 pp) |
-| cost per scope, `tiny`, `profile!` (README: "about 8 ns") | 8.3 ns (accept 4–17 ns) | range |
+| each headline cell, share error for `profile!`, `--auto`, `sample`, samply, LeanProfiler (README: `sample` 0.2–3.3 pp, samply 0.3–4.4) | RESULTS.md headline | range: up to max(2×, +1 pp) |
+| cost per scope, `tiny`, `profile!` (README: "about 6–7 ns") | 6.3 ns (accept 4–17 ns) | range |
 
 The Linux accuracy figures (README "Sampling deep recursion on Linux",
 "`--auto` on Linux", "Like-for-like with LeanProfiler") need the dedicated
@@ -263,6 +265,15 @@ What did not reproduce:
   (`sample` and samply on `rec`, `mix`, `copy`, 1.3 to 2.4 pp against 0.1 to
   0.7) include samply itself, which leanprof does not change: those are
   this machine's noise.
+
+  Cause and fix (branch `mac-accuracy`): since `a009129` inlined enter and
+  exit into every probe, Apple clang's machine outliner (on for arm64 at
+  -O2) turned the program's probes into chains of calls to shared outlined
+  pieces while calibration's copies stayed straight-line, so each real
+  probe cost ~5 ns more than calibrated. With `-mno-outline` on macOS,
+  `--auto` on `alloc` is 3.2–3.3 pp and `profile!` on `rec` 2.3–2.5 pp
+  (bench/README.md, "Mac: probes outlined by the compiler"); the table and
+  `bench/results.json` were re-published from that run.
 - **Heartbeats "within 2 in a million" across runs** (Batteries). Pairs of
   whole-project `--heartbeats` runs differed by 0.4 to 5.1 per million in
   nine pairs here (3.1 in the final run), so the README's "compile
