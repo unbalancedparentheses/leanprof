@@ -60,6 +60,11 @@ profile_side() {
     elif [ $prc != 0 ]; then
       echo "::warning::$LP_EXE exited with $prc on $side"
     fi
+    # why each copy happened, from this checkout's emitted C (only read, never run)
+    if [ $rc = 0 ] && [ "$LP_EXPLAIN" = true ]; then
+      "$lp" explain --report "$out/$side.json" --top 1000 --out "$out/$side-explain.json" > /dev/null ||
+        echo "::warning::leanprof explain failed on $side; copies are compared without causes"
+    fi
   fi
   if [ $rc = 0 ] && [ -n "$LP_ELAB_FILES" ]; then
     # imports must be built for `lake env lean`
@@ -69,7 +74,9 @@ profile_side() {
     if [ ${#files[@]} = 0 ]; then
       echo '{"version":3,"elab":true,"unit":"heartbeats","wall_ns":0,"scopes":[],"copies":[]}' > "$out/$side-elab.json"
     else
-      "$lp" elab --heartbeats --top 5 --out "$out/$side-elab.json" "${files[@]}" ||
+      local eflags=()
+      [ "$LP_EXPLAIN" = true ] && eflags=(--counts)
+      "$lp" elab --heartbeats ${eflags[@]+"${eflags[@]}"} --top 5 --out "$out/$side-elab.json" "${files[@]}" ||
         { echo "::warning::leanprof elab failed on $side"; rc=1; }
     fi
   fi
@@ -98,14 +105,16 @@ else
   pairs=()
   [ -n "$LP_EXE" ] && pairs+=("$out/base.json" "$out/head.json")
   [ -n "$LP_ELAB_FILES" ] && pairs+=("$out/base-elab.json" "$out/head-elab.json")
+  why=()
+  [ -s "$out/head-explain.json" ] && why=(--explain "$out/head-explain.json")
   echo "::group::leanprof compare"
   i=0
   while [ $i -lt ${#pairs[@]} ]; do
-    "$lp" compare "${pairs[$i]}" "${pairs[$((i + 1))]}" | tee -a "$out/compare.txt"
+    "$lp" compare ${why[@]+"${why[@]}"} "${pairs[$i]}" "${pairs[$((i + 1))]}" | tee -a "$out/compare.txt"
     i=$((i + 2))
   done
   echo "::endgroup::"
-  "$lp" report-md --fail-on "$LP_FAIL_ON" --title "$title" "${pairs[@]}" > "$report"
+  "$lp" report-md --fail-on "$LP_FAIL_ON" --title "$title" ${why[@]+"${why[@]}"} "${pairs[@]}" > "$report"
   case $? in
     0) ;;
     1) regressed=true ;;

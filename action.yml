@@ -30,6 +30,13 @@ inputs:
       copies, allocs, calls, heartbeats; or none.
     required: false
     default: copies
+  explain:
+    description: >-
+      Say why each regression happened: run `leanprof elab` with `--counts` (exact unfold, instance
+      and simp-lemma counts; elaboration up to twice as slow) and `leanprof explain` on each
+      commit's report, and name the causes in the comment.
+    required: false
+    default: "true"
   working-directory:
     description: Directory of the Lake project, relative to the repository root.
     required: false
@@ -87,7 +94,7 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       run: |
-        hash=$(cat lean-toolchain lakefile.lean lake-manifest.json LeanprofCli.lean Leanprof.lean Leanprof/*.lean c/*.c c/*.h | shasum -a 256 | cut -c1-16)
+        hash=$(cat lean-toolchain lakefile.lean lake-manifest.json LeanprofCli.lean LeanprofElab*.lean Leanprof.lean Leanprof/*.lean c/*.c c/*.h | shasum -a 256 | cut -c1-16)
         echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
     - name: Restore leanprof's command
@@ -112,6 +119,7 @@ runs:
         LP_ALLOCS: ${{ inputs.allocs }}
         LP_ELAB_FILES: ${{ inputs.elab-files }}
         LP_FAIL_ON: ${{ inputs.fail-on }}
+        LP_EXPLAIN: ${{ inputs.explain }}
         LP_WORKDIR: ${{ inputs.working-directory }}
         LP_SETUP: ${{ inputs.setup }}
         LP_TITLE: ${{ inputs.title }}
