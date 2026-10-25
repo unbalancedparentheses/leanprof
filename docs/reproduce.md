@@ -230,6 +230,8 @@ Run from a clean clone of the `reproduce` branch (leanprof `main` at
 `c60adf2` plus these scripts), on the same kind of machine as the published
 Mac numbers, an Apple M5 Max shared with other agents' builds (load 3 to 12
 during the runs). Timed parts held a lock shared with the other timing jobs.
+After merging `main` at `79ee65d` (no runtime changes), `exact` and
+`lcb-fixes` were run again and passed.
 
 | claim | result | notes |
 |---|---|---|
