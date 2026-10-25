@@ -8,7 +8,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
+| `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--cwd DIR] EXE [-- ARGS]` | sample with samply, report per Lean declaration; exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
@@ -40,6 +40,8 @@ For programs that link leanprof:
 | `LEANPROF_TRACE=path` | also write a Perfetto timeline |
 | `LEANPROF_TRACE_MAX=n` | timeline events kept per thread (default 1,048,576; with the flight recorder, the ring's size, default 262,144) |
 | `LEANPROF_NO_CALIBRATION=1` | raw times, leanprof's own cost not subtracted |
+| `LEANPROF_TIME_ALL=1` | time every call of scopes too small to time (by default timed on one call in about 64, and counted on all) |
+| `LEANPROF_AUTO_TINY=1` | what `--time-tiny` sets: `--auto` also instruments functions too small to time |
 | `LEANPROF_CLOCK=monotonic` | on Linux, time with `clock_gettime(CLOCK_MONOTONIC)` instead of the CPU's counter (TSC or `CNTVCT_EL0`) |
 | `LEANPROF_ILEAN_DIR=dir` | where to find `.ilean` files for positions |
 | `LEANPROF_STAT=1` | write the report even when nothing was recorded (set by `stat`) |

@@ -6,6 +6,29 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Tiny functions
+
+- `run --auto` leaves functions too small to time untimed: straight-line
+  code (no loop or join point) that calls only O(1) `lean.h` operations and
+  other such functions of its file, and frees nothing but boxed scalars
+  (`scripts/leanprof-tiny.awk`, run by the compiler wrapper on the C Lean
+  emits). Their probes cost several times their work, in their own time and
+  in every function's around them. The report lists them ("too small to
+  time left untimed"; `untimed` in the JSON); their time is in their
+  callers'. `--time-tiny` times and counts them as before. Mac, `tiny`
+  workload: 9.5–10.2 → 0.6–1.2 points off, 7.8–8.2× → 0.98× slower.
+- Light scopes: a scope near the probe cost (the `*` rows) that is not
+  recursive is, after its first 1,024 calls, timed on about one call in 64
+  at random and only counted on the others; its times are the timed calls'
+  scaled up, its counts stay exact, and the cheaper untimed pair (4.6 ns
+  against 6.6 ns on the M5 Max) is subtracted from its callers.
+  `LEANPROF_TIME_ALL=1` times every call. `tiny` under `profile!` 7.7–7.9× →
+  6.2× slower, `tasks` 2.8× → 2.4×; share errors unchanged within the noise.
+  `timedCalls` says how many calls of a label were timed; percentiles are
+  over the timed calls.
+- Scope frames are one cache line (64 bytes, from 104): 10,000 levels of
+  recursion with three functions each under `--auto` kept 3 MiB of frames.
+
 ### Fresh installs, more platforms
 
 - Release archives for macOS x86-64 and Linux arm64, next to macOS arm64 and

@@ -162,6 +162,20 @@ clock, boost off; see [bench/README.md](../../bench/README.md)):
   on how busy the machine is) is a large part of its time: loops of 1 ns
   functions are reported at 0.5–1.4 times their time, and steps of a few
   ns on 2 to 8 threads at 1.2–1.5 times.
+- **`--auto` leaves tiny functions untimed.** Straight-line functions of
+  a few operations (no loop, no call but O(1) runtime operations and other
+  such functions, nothing freed but boxed scalars) get no probes; the report
+  lists them under "too small to time left untimed" (`untimed` in the
+  JSON), and their time is in their callers'. On the `tiny` benchmark that
+  takes `--auto` from 9.5–10.2 to 0.6–1.2 points off and from 8× to 0.98×
+  slower. `--time-tiny` times (and counts) them.
+- **Tiny scopes are timed on a sample.** A scope near the probe cost that
+  is not recursive is, after its first 1,024 calls, timed on about one call
+  in 64 (at random) and only counted on the others, which costs less (4.6
+  against 6.6 ns on the M5 Max). Its counts stay exact and its times are
+  the timed calls' scaled up; `LEANPROF_TIME_ALL=1` times every call. This
+  makes such loops about 1.25× faster; it does not make their share more
+  accurate (see below).
 - **Such rows are marked.** A row whose probes (its own and those of the
   scopes inside it) cost at least 0.3 of the time left after subtracting
   them gets a `*` after its total, `"near_probe_cost": true` in the JSON,
@@ -174,7 +188,12 @@ clock, boost off; see [bench/README.md](../../bench/README.md)):
   percentage points of each function's true share of time, like samply.
 
 So: take counts, copies, allocations and causes from the exact modes, and
-the time of starred rows from `sample`. `LEANPROF_NO_CALIBRATION=1` shows
+the time of starred rows from `sample`. What is left for those rows is what
+a probe costs inside the program beyond what calibration measures (register
+spills around the call, the core it runs on): on the shared M5 Max in
+October 2026 the `tiny` and `rec` workloads under `profile!` came out at
+1.2–4.9 times their time, so their share was 8–10 points off whatever
+leanprof subtracted. `LEANPROF_NO_CALIBRATION=1` shows
 raw times. On Apple Silicon leanprof reads the CPU's counter directly: it
 runs at 1 GHz on an M5 and at 24 MHz (41.7 ns per tick) on earlier chips,
 where percentiles of very short scopes are coarse. On Linux it reads the

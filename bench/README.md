@@ -74,7 +74,7 @@ compiling zlib (on a copy of the project; `leanprof run` rebuilds it): slowdown
 per configuration, and how `run --auto` and `sample` agree with samply on the
 inclusive time of its top declarations (there is no ground truth there).
 
-### Findings (Apple M5 Max, shared with other jobs; see RESULTS.md)
+### Findings (Apple M5 Max, shared with other jobs, 2026-10-23 at `575ba1c`; RESULTS.md now holds the third round's run)
 
 - **Call and copy counts are exact** in every leanprof mode on every
   workload (see the first round of fixes below).
@@ -167,6 +167,79 @@ or better everywhere, but the program is 1.1–1.4× slower against
 LeanProfiler's 1.0–1.05×: leanprof calibrates its probes for 10–15 ms
 at the first scope, inside the first phase, which these 40–120 ms
 workloads see.
+
+### Third round: tiny functions (Apple M5 Max, 2026-10-25)
+
+The dedicated Linux host was unreachable, so these are Mac numbers: the
+machine was shared (load average 3–10), every suite run held a lock that
+kept other agents' benchmarks off it, and before (`b94b0f4`) and after ran
+interleaved, twice each (7 runs per cell; the two values are the two
+suites' medians; [RESULTS.md](RESULTS.md) is the second after-run, and
+[results-tiny-before.json](results-tiny-before.json) the second before-run):
+
+| | before | after |
+|---|---|---|
+| `tiny` share error, `--auto` | 9.5 / 10.2 pp | 0.6 / 1.2 pp |
+| `tiny` slowdown, `--auto` | 7.8× / 8.2× | 0.98× / 0.98× |
+| `tiny` share error, `profile!` | 9.4 / 10.6 pp | 9.6 / 8.9 pp |
+| `tiny` slowdown, `profile!` | 7.7× / 7.9× | 6.2× / 6.2× |
+| `rec` share error, `profile!` / `--auto` | 7.9 / 5.2, 8.3 / 5.4 pp | 7.9 / 6.2, 8.4 / 6.4 pp |
+| `rec` slowdown, `--auto` | 4.1× / 4.3× | 3.7× / 3.6× |
+| `rec` reported total, `--auto` | 2.21 / 2.33 | 2.09 / 2.04 |
+| `tasks` slowdown, `profile!` / `--auto` | 2.8× / 4.5×, 2.8× / 4.5× | 2.4× / 3.3×, 2.5× / 3.5× |
+| `mix`, `alloc`, `copy` | | the same within the noise |
+
+What changed:
+
+1. **`--auto` leaves tiny functions untimed.** A function that takes a
+   nanosecond costs several times that in probes, and what the subtraction
+   gets wrong lands in it and in every function around it. The compiler
+   wrapper now marks, in the C that Lean emits, straight-line functions that
+   call only O(1) `lean.h` operations and other such functions of the file
+   and free nothing but boxed scalars (`scripts/leanprof-tiny.awk`)
+   `no_instrument_function`. `K.tinyA` and `K.tinyB` (and their boxed
+   wrappers) have no probes, so `phTinyA`/`phTinyB` are timed as they run
+   (0.93–1.00 of their time). The report lists such functions, and their
+   calls are not counted (the suite's count check skips them and says so);
+   `--time-tiny` puts them back. The rules are conservative: nothing with a
+   loop, a closure call, a call to another file or a `lean_dec` of an
+   object qualifies, so `K.spin`, `deepRec`, `fib`, `mkTree` keep their
+   probes, and `rec` and `alloc` under `--auto` do not change.
+2. **Light scopes.** A scope near the probe cost that is not recursive is,
+   after its first 1,024 calls, timed on about one call in 64 at random and
+   only counted on the others (no clock reads, no histogram); its times are
+   the timed calls' scaled up and its counts stay exact. The untimed pair is
+   calibrated like the others (4.6 against 6.6 ns for a pure `profile!`)
+   and subtracted from the callers. Tiny loops run about 1.25× faster under
+   `profile!` and `tasks` 1.2–1.35× faster.
+3. **Frames are one cache line** (64 bytes, from 104 over two lines), for
+   the deep-recursion case below.
+
+**Negative results.** Light scopes do not make tiny scopes' share more
+accurate: on the same binary, interleaved, `tiny` under `profile!` was 7.9
+against 9.0 points off with and without them (ranges overlapping), `rec`
+under `--auto` 9.8 against 8.9. What is left is not the probes' measured
+cost but what a probe costs in the program beyond it (the caller saving
+registers around the call, the core it runs on): on this Mac `profile!`
+reports `tiny` at 2.0–3.4 and `fib` at 4.7–5.7 times their time whatever is
+subtracted, about 3 ns per scope left over. In `rec` under `--auto` the deep
+phases now come out closer to their time (1.67–1.88 against 1.85–2.18) but
+`phFib` (recursive, so never light) does not, and the share error, which is
+relative, went up by a point.
+
+**`rec` under `--auto` on Linux (10.4 points, from 7.1).** The per-component
+rows in [linux/](linux/README.md) show what moved: `phDeep10k` was 1.63
+before and 1.73 after, but `phDeep100` and `phDeep1k` went from 0.95 and
+1.11 to 0.74 and 0.82 (cheaper probes, still subtracted as measured in a
+loop, so slightly too much), and `phFib` from 0.00 to 0.48. The shares
+recomputed from those ratios give 7.3 and 10.3 points: the error grew
+because the shallow phases moved down while the deepest stayed up. The
+deepest is over-reported only under `--auto` (0.98 with `profile!`): at
+10,000 levels with three probed functions each the frames were 3 MiB, three
+times the 7950X3D's 1 MiB L2, against about 1 MiB with `profile!`'s one
+scope per level. The 64-byte frames bring that to 1.9 MiB; whether that is
+enough was not measured (the host was unreachable), and on the M5 Max,
+whose L2 holds all of it, depth changes nothing either way.
 
 ### Second round: accuracy and overhead (2026-10-23)
 

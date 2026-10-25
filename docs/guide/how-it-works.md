@@ -114,6 +114,16 @@ scopes, and log-scale histograms. leanprof measures what one enter/exit pair
 costs (after a warm-up, fastest of many batches, the first time something is
 profiled and again at exit) and subtracts it from every enclosing scope.
 Automatic mode uses clang's `-finstrument-functions-after-inlining` hooks.
+A function of a nanosecond or two costs several times its work in
+probes, so before compiling, the wrapper marks such functions in the C that
+Lean emits `no_instrument_function` (`scripts/leanprof-tiny.awk`:
+straight-line code that calls only O(1) `lean.h` operations and other such
+functions, and frees nothing but boxed scalars) and lists their addresses
+in a section the report reads (`--time-tiny` turns this off). A scope that
+turns out to cost about as much as its probes (checked every 1,024
+outermost calls; not recursive ones) goes light: about one call in 64 is
+timed, the rest only counted, without reading the clock, and its times are
+the timed calls' scaled up.
 
 ## Names and positions
 

@@ -177,15 +177,24 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   functions still run about 18× slower under `profile!` there.
 - **Time of tiny functions in the exact modes.** When a call costs about as
   much as its probes, its time can be off by half either way; such rows are
-  marked `*`. LeanProfiler, timing only whole phases, was more accurate
-  there; `leanprof sample` is the tool for those functions.
+  marked `*`. `run --auto` now leaves straight-line functions of a few
+  operations untimed (listed in the report), so the functions around them
+  are timed without their probes: on the Mac's `tiny` workload 0.6–1.2
+  points off and 0.98× slower, against 9.5–10.2 points and 7.8–8.2× before.
+  Under `profile!` such scopes are timed on a sample of their calls
+  (6.2× slower instead of 7.8×), but their share is still 9–10 points off
+  there, and `rec` under `--auto` 6.2–6.4 (5.2–5.4 before): what is left is
+  what a probe costs inside the program beyond its calibrated cost, which
+  no subtraction sees. `leanprof sample` is the tool for those functions.
 - **Sampling** is as accurate as samply (it runs samply underneath; on the
   Mac within 0.1–1.9 points of each function's true share, samply 0.5–2.9)
   and adds Lean names, file:line and the runtime breakdown (on Linux, see
   deep recursion above).
 - **`--auto` on Linux** is 2.6–3.2 points off on allocation- and copy-heavy
   workloads (6.5–8.2 before the Linux fixes; samply 0.5) and 10.4 points
-  off on deep recursion (7.1 before): use `sample` or `profile!` there.
+  off on deep recursion (7.1 before: the shallow phases are now slightly
+  over-subtracted while the deepest is still over-reported, see
+  [bench/README.md](bench/README.md)): use `sample` or `profile!` there.
 - **Cost per verdict in the instrumented comparison.** LeanBench needed 0.6 s
   per verdict to leanprof's 6.5 s, and times the benchmarked action itself.
   `measure-pair` now avoids instrumentation and rebuilds for timing-only
