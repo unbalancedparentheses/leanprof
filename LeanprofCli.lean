@@ -67,9 +67,10 @@ def commands : List (String × String × String) := [
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
     "by more than PCT% (default 10) and MS ms (default 1)."),
-  ("measure", "[--runs N] [--warmup N] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--no-deps] [--out FILE] EXE [-- ARGS...]",
+  ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
+    "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
     "For `judge` and autoresearch loops."),
   ("measure-pair", "--base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
     "Measure two prebuilt binaries in alternating AB/BA order (default 20 pairs, 3 warmups).\n" ++
@@ -574,6 +575,8 @@ structure Report where
   selfCheck : String := ""                          -- the runtime self-check's warning, if any
   allocs : Std.HashMap String Nat := {}            -- function in scope ↦ allocations (empty: not counted)
   allocBytes : Nat := 0
+  /-- total ns per scope name, over every position with that name (for `measure --scope`) -/
+  named : Std.HashMap String Float := {}
   /-- time fields too small to measure, per scope key (`too_small` in the JSON) -/
   tooSmall : Std.HashMap String (Array String) := {}
 
@@ -595,7 +598,8 @@ def loadReport (path : String) : IO Report := do
     let key := if (str s "key").isEmpty then s!"{str s "name"} {str s "pos"}" else str s "key"
     -- a declaration's elaboration, kernel and compiler lines share its key
     let (t, c) := r.scopes.getD key (0, 0)
-    r := { r with scopes := r.scopes.insert key (t + num s "total_ns", c + (num s "calls").toUInt64.toNat) }
+    r := { r with scopes := r.scopes.insert key (t + num s "total_ns", c + (num s "calls").toUInt64.toNat),
+                  named := r.named.insert (str s "name") (r.named.getD (str s "name") 0 + num s "total_ns") }
     let small := ((s.getObjVal? "too_small" >>= Json.getArr?).toOption.getD #[]).filterMap (·.getStr?.toOption)
     if !small.isEmpty then r := { r with tooSmall := r.tooSmall.insert key small }
   -- project reports (`elab --project`): each module's total, as `module M`
@@ -1082,6 +1086,7 @@ structure MeasureOpts where
   hbFiles : Array String := #[]
   checkOutput : Option String := none
   allocs : Bool := true
+  scope : Option String := none
   out : String := ".lake/leanprof/measure.json"
   deps : Bool := true
   exe : Option String := none
@@ -1092,6 +1097,7 @@ partial def parseMeasure (o : MeasureOpts) : List String → Except String Measu
   | "--runs" :: v :: rest => parseMeasure { o with runs := max 1 v.toNat! } rest
   | "--warmup" :: v :: rest => parseMeasure { o with warmup := v.toNat! } rest
   | "--out" :: f :: rest => parseMeasure { o with out := f } rest
+  | "--scope" :: n :: rest => parseMeasure { o with scope := some n } rest
   | "--check-output" :: f :: rest => parseMeasure { o with checkOutput := some f } rest
   | "--no-deps" :: rest => parseMeasure { o with deps := false } rest
   | "--no-allocs" :: rest => parseMeasure { o with allocs := false } rest
@@ -1171,7 +1177,14 @@ def measureCmd (argv : List String) : IO UInt32 := do
       let out ← IO.Process.output { cmd := (exePath exe).toString, args := o.args, env }
       let t1 ← IO.monoNanosNow
       if i < o.warmup then continue
-      times := times.push (t1 - t0)
+      let report ← if ← reportPath.pathExists then loadReport reportPath.toString else pure {}
+      -- --scope: the scope's own total, without start-up and setup
+      times := times.push <| ← match o.scope with
+        | none => pure (t1 - t0)
+        | some s => match report.named.get? s with
+          | some ns => pure ns.toUInt64.toNat
+          | none => throw <| IO.userError (s!"scope {s} is not in the report of {exe} " ++
+              s!"(mark it with profile! \"{s}\"; its scopes: {report.named.toList.map (·.1)})")
       codes := codes.push out.exitCode
       if out.exitCode != 0 && codes.size == 1 then
         IO.eprintln s!"leanprof: {exe} exited with {out.exitCode}:\n{out.stderr}"
@@ -1179,7 +1192,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
         | some f => do
           if ← (f : FilePath).pathExists then pure (fnv1a (← IO.FS.readBinFile f)) else pure "missing"
         | none => pure (fnv1a out.stdout.toUTF8)
-      reports := reports.push <| ← if ← reportPath.pathExists then loadReport reportPath.toString else pure {}
+      reports := reports.push report
   finally
     cleanupInstrumented exe
   let (load1, _) ← machineLoad
@@ -1214,6 +1227,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
   let summary := Json.mkObj [
     ("version", toJson (1 : Nat)), ("leanprof", Json.str "measure"),
     ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs),
+    ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("exit_code", toJson codes.back!.toNat),
     ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD "stdout")),
       ("hash", Json.str hashes.back!), ("stable", Json.bool outputStable)]),
@@ -1241,7 +1255,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     if !d.toString.isEmpty then IO.FS.createDirAll d
   IO.FS.writeFile o.out (summary.pretty ++ "\n")
   IO.println s!"\nleanprof measure: {exe}, {o.runs} runs"
-  IO.println s!"  time     median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}, mean {fmtMs mean} ± {fmtMs stddev}"
+  IO.println s!"  time     {match o.scope with | some s => s!"scope {s}: " | none => ""}median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}, mean {fmtMs mean} ± {fmtMs stddev}"
   if let (some l, some c) := (loadMax, cpus) then
     IO.println s!"  machine  load average {fmt2 l} on {c} CPUs{if overloaded then " (overloaded: judge will not use time)" else ""}"
   IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"

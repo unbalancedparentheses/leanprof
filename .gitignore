@@ -6,3 +6,4 @@
 /dist
 /_site
 /bench/leanbench/project/.lake
+/bench/leanbench/scoped/.lake

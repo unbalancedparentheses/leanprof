@@ -325,6 +325,11 @@ def tests : StateT Nat IO Unit := do
   let v := Judge.judge (summary 2999 1000000 [999000, 1001000] [50, 51, 52])
     (summary 2999 1000500 [1000500, 1000200] [50, 51, 52])
   check "judge: allocations that vary between runs count only beyond their range" (v.worse.isEmpty) v.render
+  let v := Judge.judge base { summary 2999 1000000 [1000000] [40, 41, 42] with scope := "build" }
+  check "judge: a scope's time against the whole process's is DISCARD"
+    (!v.keep && v.worse.contains "different times measured: the whole process vs scope build") v.render
+  let v := Judge.judge { base with scope := "build" } { summary 2999 1000000 [1000000] [40, 41, 42] with scope := "build" }
+  check "judge: the same scope, every run faster, is KEEP" v.keep v.render
   let v := Judge.judge base { summary 2999 0 [] [50, 51, 52] with allocs := none }
   check "judge: allocations counted in one summary only are not compared" (v.worse.isEmpty) v.render
   -- Interleaved pairs cancel a common drift that makes the two ranges overlap.
