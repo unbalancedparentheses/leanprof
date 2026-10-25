@@ -6,6 +6,29 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Smaller fixes and maintenance
+
+- `leanprof doctor`'s copy-detection self-check could not run on Linux
+  ("fatal error: 'stdio.h'"): its probe was compiled with Lean's own `leanc`,
+  whose sysroot has no libc headers. The probe declares `puts` instead.
+- `leanprof help` ran `measure-pair` into its description; the command
+  column is wider.
+- `scripts/leanprof-tiny.awk` (which functions `--auto` leaves untimed)
+  treats any function with a `while`, `for` or `do` loop as not tiny. Lean's
+  C loops with `goto`, so no real function changed (57 untimed in
+  leanprof's own IR before and after), but the rule no longer relies on it.
+- The Linux benchmark results behind the README's Linux numbers are in the
+  repository (`bench/linux/before` and `after`, a dedicated Ryzen 9
+  7950X3D); the README had linked the Mac's results for them.
+- README: the compile-time comparison was against lean-source-profiler's
+  latest release (0.3.0), whose default is the compact mode it measured;
+  per file, full profiles cost 1.3–1.9 times less than its detailed mode and
+  compact ones about the same, and the Batteries gap (17 s against 103–152
+  s) is mostly parallel elaboration.
+- The VS Code extension's build tooling pins `@azure/msal-node` 7.1.1 (an
+  advisory on the 6.x that `vsce` pulled in; not part of the `.vsix`).
+- The Lean versions workflow retries a toolchain download that timed out.
+
 ### Tiny functions
 
 - `run --auto` leaves functions too small to time untimed: straight-line
