@@ -360,6 +360,9 @@ def tests : StateT Nat IO Unit := do
     ((judgePair (paired 110)).any fun v => !v.keep && !v.worse.isEmpty)
   check "paired: overload disables timing verdict"
     ((judgePair (paired 90 true)).any (!·.keep))
+  check "paired: --allow-overloaded judges an overloaded session, and says so"
+    (((Judge.judgePaired (paired 90 true) 1 true).toOption).any fun v =>
+      v.keep && v.better.any (fun b => (b.splitOn "--allow-overloaded").length > 1))
   check "paired: minimum change applies to the confidence interval"
     (((Judge.judgePaired (paired 99) 2).toOption).any (!·.keep))
   let corrupt (key : String) (value : Lean.Json) : Lean.Json := Id.run do

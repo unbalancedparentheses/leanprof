@@ -21,6 +21,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   5%). On lean-compiler-backend, `List.reverseAux` at 3.9% of CPU was 98%
   under `Assembly.emitData`, a `lines := lines ++ [line]` loop; fixing it made
   compiling crc32 15% faster.
+- `judge --allow-overloaded PAIR.json` (and `allow_overloaded` for the MCP
+  `judge` tool): judges a paired session's time although the load average
+  exceeded the CPU count, and says so in the verdict. On the shared Mac the
+  load stayed at 18–20 on 18 CPUs, so no paired session could ever be
+  judged on time (one gave −5.2%, interval [−7.7%, −2.1%], "not judged").
 - `explain` after `sample`: `sample` writes `.lake/leanprof/report.json` (for
   `#leanprof`) without copy counts, and `explain` then said "the report has no
   copies of shared values". It now says the report is a sampled one and to

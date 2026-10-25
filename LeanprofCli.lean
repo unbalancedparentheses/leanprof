@@ -75,11 +75,12 @@ def commands : List (String × String × String) := [
     "Measure two prebuilt binaries in alternating AB/BA order (default 20 pairs, 3 warmups).\n" ++
     "No builds or probes are added. Save every timing, exit status and output hash in one session.\n" ++
     "Use `judge PAIR.json` for a paired 95% median interval; at least 6 pairs are required."),
-  ("judge", "[--min-change PCT] BASE.json NEW.json | PAIR.json",
+  ("judge", "[--min-change PCT] [--allow-overloaded] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, allocations, heartbeats or time got worse. Time counts only\n" ++
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
-    "machine was overloaded while measuring."),
+    "machine was overloaded while measuring (--allow-overloaded judges a paired session anyway, for a\n" ++
+    "machine that is always shared; the verdict says so)."),
   ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
@@ -1393,16 +1394,24 @@ def loadSummary (path : String) : IO Leanprof.Judge.Summary := do
 /-- KEEP or DISCARD a change, from the summaries before and after it (the
 rules are in `Leanprof.Judge`). Exits 0 for KEEP. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
-  let (minChange, argv) ← match argv with
-    | "--min-change" :: v :: rest => do
+  let mut minChange : Float := 1
+  let mut allowOverloaded := false
+  let mut argv := argv
+  repeat
+    match argv with
+    | "--min-change" :: v :: rest =>
       let some pct := parseDecimal? v | throw <| IO.userError "--min-change must be a percentage from 0 to 100"
       unless pct ≤ 100 do throw <| IO.userError "--min-change must be a percentage from 0 to 100"
-      pure (pct, rest)
-    | _ => pure ((1 : Float), argv)
+      minChange := pct
+      argv := rest
+    | "--allow-overloaded" :: rest =>
+      allowOverloaded := true
+      argv := rest
+    | _ => break
   let v ← match argv with
     | [pairPath] => do
       let j ← IO.ofExcept (Json.parse (← IO.FS.readFile pairPath))
-      IO.ofExcept (Leanprof.Judge.judgePaired j minChange)
+      IO.ofExcept (Leanprof.Judge.judgePaired j minChange allowOverloaded)
     | [basePath, newPath] => pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange)
     | _ => throw <| IO.userError (usageFor "judge")
   IO.print v.render

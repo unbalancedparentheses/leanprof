@@ -653,7 +653,8 @@ def tools : Array Json := #[
     "time), or from one measure_pair session (output and a paired 95% median interval on time).")
     [("base", sProp "baseline measure summary"), ("new", sProp "new measure summary"),
      ("pair", sProp "measure_pair session, instead of base and new"),
-     ("min_change", sProp "smallest time change in percent that counts (default 1)")] [],
+     ("min_change", sProp "smallest time change in percent that counts (default 1)"),
+     ("allow_overloaded", bProp "judge a paired session's time even though the machine was overloaded")] [],
   tool "live" ("What a running program is doing now: its latest live snapshot (it must run with LEANPROF_LIVE), " ++
     "with rates over a short interval and the scopes each thread is inside.")
     [("pid", sProp "process id (snapshot in $TMPDIR/leanprof-PID.live.json, from LEANPROF_LIVE=1)"),
@@ -784,7 +785,8 @@ def callTool (name : String) (a : Json) : IO Json := do
       | none, some b, some n => pure #[b, n]
       | _, _, _ => throw <| IO.userError "give pair, or base and new"
     let minChange := (argStr a "min_change").map (#["--min-change", ·]) |>.getD #[]
-    let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ files) cwd
+    let allow := if argBool a "allow_overloaded" then #["--allow-overloaded"] else #[]
+    let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ allow ++ files) cwd
     return textResult s!"{out}{err}" (rc > 1)
   | "live" =>
     let path ← match argStr a "path", argStr a "pid" with
