@@ -20,7 +20,7 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   under (the nearest project frame of each sample, up to three with at least
   5%). On lean-compiler-backend, `List.reverseAux` at 3.9% of CPU was 98%
   under `Assembly.emitData`, a `lines := lines ++ [line]` loop; fixing it made
-  compiling crc32 15% faster.
+  compiling crc32 14.6% faster.
 - `judge --allow-overloaded PAIR.json` (and `allow_overloaded` for the MCP
   `judge` tool): judges a paired session's time although the load average
   exceeded the CPU count, and says so in the verdict. On the shared Mac the
