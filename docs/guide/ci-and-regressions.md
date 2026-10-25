@@ -138,7 +138,7 @@ This repository's own pull requests run the action on `copybug`
 For deciding whether one change is an improvement:
 
 ```
-leanprof measure [--runs N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--out FILE] EXE [-- ARGS]
+leanprof measure [--runs N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--core] [--out FILE] EXE [-- ARGS]
 leanprof judge BASE.json NEW.json
 ```
 
@@ -149,6 +149,12 @@ and per run, compile heartbeats of the given files, the exit code, and a
 hash of stdout (or of `FILE`). Counting allocations costs about 6 ns each
 (lean-compiler-backend, 20 million allocations: 10% slower); both summaries
 pay it alike, so time comparisons stay fair. `--no-allocs` turns it off.
+Copies and allocations are those of the project's compiled code; `--core`
+also counts those inside Lean's precompiled libraries (as `run --core`, with
+llvm-objcopy), where a change's effect can be entirely: lean-compiler-backend's
+`emitData` fix removed quadratic work done in Lean's `List` code, which
+`measure` without `--core` does not see. `judge` refuses to compare a `--core`
+summary with one measured without it.
 `judge` prints KEEP or DISCARD with reasons and exits 0 or 1:
 
 - **DISCARD** if the exit code or output changed, copies or allocations

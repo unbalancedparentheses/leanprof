@@ -6,6 +6,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Known issues from dogfooding lean-compiler-backend and concrete
+
+- `measure --core` (and MCP `measure` with `core`): copies and allocations
+  inside Lean's precompiled libraries count too, as with `run --core`. A
+  real lean-compiler-backend speedup (`emitData`) was entirely in such code,
+  invisible to `judge`'s allocation rule. Summaries record `core`, and
+  `judge` discards a comparison of a `--core` summary with a plain one.
+
 ### Smaller fixes and maintenance
 
 - `leanprof doctor`'s copy-detection self-check could not run on Linux

@@ -116,6 +116,13 @@ jobs:
           if nm "$lib/libInit.a" | grep -Eq ' U _?lean_array_push$'; then exit 1; fi
           if nm "$lib/libInit.a" "$lib/libLean.a" | grep -Eq ' [TDS] _?leanprof_'; then exit 1; fi
           test ! -e "$lib/libleanrt.a"
+          # measure --core: the copies inside libInit count, and judge will not
+          # compare a --core summary with a plain one
+          LEANPROF_QUIET=1 lake exe leanprof measure --runs 1 --warmup 0 --out m-plain.json corecopies -- 1000
+          LEANPROF_QUIET=1 lake exe leanprof measure --core --runs 1 --warmup 0 --out m-core.json corecopies -- 1000
+          python3 -c "import json; p=json.load(open('m-plain.json')); c=json.load(open('m-core.json')); print(p['copies_total'], c['copies_total'], p['allocs_total'], c['allocs_total']); assert c['core'] and not p['core'] and c['copies_total'] == p['copies_total'] + 500 and c['allocs_total'] > p['allocs_total']"
+          if lake exe leanprof judge m-plain.json m-core.json > judge.txt; then exit 1; fi
+          grep -q -- "--core" judge.txt
       - name: Timeline trace
         run: |
           LEANPROF_QUIET=1 LEANPROF_TRACE=trace.json .lake/build/bin/copybug 300

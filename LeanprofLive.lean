@@ -632,7 +632,8 @@ def tools : Array Json := #[
     [("files", aProp "Lean files"), ("heartbeats", bProp "count heartbeats (deterministic) instead of time"),
      ("top", nProp "lines shown")] ["files"],
   tool "measure" "Run an executable several times with probes into one summary, for judge."
-    (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)")])
+    (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)"),
+      ("core", bProp "also count copies and allocations inside Lean's own libraries")])
     ["executable"],
   tool "report" "Summarize a leanprof report (run, sample or elab JSON) or a live snapshot: the hottest rows of each section."
     [("path", sProp "report file (default .lake/leanprof/report.json)"), ("top", nProp "rows per section (default 5)")] [],
@@ -738,7 +739,7 @@ def callTool (name : String) (a : Json) : IO Json := do
   | "measure" =>
     let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++
-      (← exeArgs)) cwd
+      (if argBool a "core" then #["--core"] else #[]) ++ (← exeArgs)) cwd
     return textResult s!"summary {outFile}\n{out}\n{tailText err 10}" (rc != 0)
   | "report" =>
     let path := argStr a "path" |>.getD ".lake/leanprof/report.json"

@@ -366,6 +366,14 @@ def tests : StateT Nat IO Unit := do
   check "judge: the same scope, every run faster, is KEEP" v.keep v.render
   let v := Judge.judge base { summary 2999 0 [] [50, 51, 52] with allocs := none }
   check "judge: allocations counted in one summary only are not compared" (v.worse.isEmpty) v.render
+  let v := Judge.judge base { summary 2999 1200000 [1200000] [40, 41, 42] with core := true }
+  check "judge: a --core summary against one without is DISCARD"
+    (!v.keep && v.worse.any (fun w => (w.splitOn "--core").length > 1)) v.render
+  let v := Judge.judge { base with core := true } { summary 2999 980000 [980000] [50, 51, 52] with core := true }
+  check "judge: two --core summaries are compared" v.keep v.render
+  check "judge: a summary's core flag is read"
+    (((Judge.Summary.ofJson (Lean.Json.mkObj [("leanprof", "measure"), ("core", Lean.Json.bool true)])).toOption.map
+      (·.core)) == some true)
   -- Interleaved pairs cancel a common drift that makes the two ranges overlap.
   let paired (factor : Nat) (overload : Bool := false) : Lean.Json := Id.run do
     let mut samples := #[]

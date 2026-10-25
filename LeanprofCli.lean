@@ -67,9 +67,11 @@ def commands : List (String × String × String) := [
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
     "by more than PCT% (default 10) and MS ms (default 1)."),
-  ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--no-deps] [--out FILE] EXE [-- ARGS...]",
+  ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
+    "--core also counts copies and allocations inside Lean's precompiled libraries (as `run --core`);\n" ++
+    "judge compares only summaries measured the same way.\n" ++
     "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
     "For `judge` and autoresearch loops."),
   ("measure-pair", "--base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
@@ -1131,6 +1133,7 @@ structure MeasureOpts where
   hbFiles : Array String := #[]
   checkOutput : Option String := none
   allocs : Bool := true
+  core : Bool := false
   scope : Option String := none
   out : String := ".lake/leanprof/measure.json"
   deps : Bool := true
@@ -1146,6 +1149,7 @@ partial def parseMeasure (o : MeasureOpts) : List String → Except String Measu
   | "--check-output" :: f :: rest => parseMeasure { o with checkOutput := some f } rest
   | "--no-deps" :: rest => parseMeasure { o with deps := false } rest
   | "--no-allocs" :: rest => parseMeasure { o with allocs := false } rest
+  | "--core" :: rest => parseMeasure { o with core := true } rest
   | "--heartbeats-files" :: rest =>
     -- every `.lean` argument that follows
     let fs := rest.takeWhile (·.endsWith ".lean")
@@ -1201,12 +1205,21 @@ def keyedArr (field : String) (xs : List (String × Json)) : Json :=
 def measureCmd (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseMeasure {} argv)
   let some exe := o.exe | throw <| IO.userError (usageFor "measure")
-  let rc ← buildWithShims exe none (allocs := o.allocs) (deps := o.deps)
+  -- --core: Lean's libraries linked with their runtime calls redirected, so
+  -- copies and allocations inside them (`List`, `Array`, `HashMap` code
+  -- compiled into libInit, libStd, libLean) are counted too
+  let coreEnv ← if o.core then
+      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir o.allocs).toString)]
+    else pure #[]
+  let rc ← buildWithShims exe none (allocs := o.allocs) (extraEnv := coreEnv) (deps := o.deps)
   if rc != 0 then return rc
   let dir : FilePath := ".lake" / "leanprof"
   IO.FS.createDirAll dir
   let reportPath := dir / "report.json"  -- the last run's stays, for `#leanprof`
-  let env := (← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", some reportPath.toString)]
+  let coreDir ← if o.core then
+      pure ((← toolchainPrefix (exePath exe)).toArray.map (("LEANPROF_CORE_DIR", some ·)))
+    else pure #[]
+  let env := (← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", some reportPath.toString)] ++ coreDir
   let mut times : Array Nat := #[]
   let mut hashes : Array String := #[]
   let mut codes : Array UInt32 := #[]
@@ -1271,7 +1284,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     hb := some ((← loadReport hbPath.toString).scopes.toList.map fun (k, (t, _)) => (k, t))
   let summary := Json.mkObj [
     ("version", toJson (1 : Nat)), ("leanprof", Json.str "measure"),
-    ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs),
+    ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs), ("core", Json.bool o.core),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("exit_code", toJson codes.back!.toNat),
     ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD "stdout")),
@@ -1305,7 +1318,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     IO.println s!"  machine  load average {fmt2 l} on {c} CPUs{if overloaded then " (overloaded: judge will not use time)" else ""}"
   IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"
   if o.allocs then
-    IO.println s!"  allocs   {allocTotal last} by compiled Lean code{if allocsStable then "" else s!" (runs: {allocRuns.toList})"}"
+    IO.println s!"  allocs   {allocTotal last} by compiled Lean code{if o.core then ", Lean's libraries included" else " of the project (--core adds Lean's libraries)"}{if allocsStable then "" else s!" (runs: {allocRuns.toList})"}"
   unless last.selfCheck.isEmpty do IO.println s!"  warning  {last.selfCheck}"
   IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD "stdout"}), exit code {codes.back!}"
   if let some xs := hb then
