@@ -106,9 +106,13 @@ users than the rest of v0.2.0, and take priority over its long tail.
 Ranked; the first two are planned next to the gap-closing work, the rest
 after v0.2.0.
 
-- [ ] **`leanprof fix`.** Apply the fix `explain` prints, then prove it:
+- [x] **`leanprof fix`.** Apply the fix `explain` prints, then prove it:
   identical output, tests pass, `judge` says KEEP. Leave a commit with the
-  evidence. For people, not only agents.
+  evidence. For people, not only agents. Done for the three causes whose
+  code replaces lines (`nested-array-element`, `map-value-reinserted`,
+  `loop-over-updated-array`; [guide](docs/guide/fix.md)). Still open: edits
+  for `stored-then-updated` and `multi-threaded-global`, which need the
+  code that reads the value or the loop's bounds.
 - [ ] **Regressions explained.** When the Action fails a pull request, say
   which declaration got more expensive and which unfold, instance search or
   `simp` lemma caused it, from `elab --heartbeats` on the changed modules
