@@ -14,7 +14,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--scope NAME] [--heartbeats-files F…] [--check-output F] [--no-allocs] [--core] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time of the process or, with `--scope`, of one `profile!` scope, output; `self_check_warning`, empty unless copies may be undercounted) |
-| `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output F] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries; no builds or added probes |
+| `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output F] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries until the time verdict is settled (at most N pairs, default 30); `--scope` times one `Leanprof.bench` region; no builds or added probes |
 | `judge [--min-change PCT] BASE.json NEW.json` or `judge [--min-change PCT] PAIR.json` | KEEP (exit 0) or DISCARD (exit 1); paired sessions use a 95% median interval |
 | `explain [--report F] [--out F] [--top N] [--all] [--json] [--why EXE [-- ARGS]]` | why each copy of a shared value happened, with the fix as Lean code when the cause is recognised ([copies](copies-and-allocations.md#why-it-was-shared-leanprof-explain)) |
 | `fix [--exe EXE [-- ARGS]] [--test CMD] [--check-output F] [--finding N] [--all] [--dry-run] [--report F] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]` | apply the fix `explain` prints for the costliest mechanically fixable copy, on a new git branch. It builds, tests, compares the output, measures, times the plain binaries in pairs and judges. KEEP commits with the evidence (exit 0); DISCARD deletes the branch (exit 1). The checkout ends as it started; a tree with uncommitted changes is refused ([fix](fix.md)) |
@@ -65,6 +65,7 @@ For programs that link leanprof:
 | `LEANPROF_SLOW_MAX=n` | at most `n` slow dumps (default 10) |
 | `LEANPROF_PROJECT=dir` | the project, when the program runs elsewhere (set by `--cwd`): where `.ilean` files and packages are found |
 | `LEANPROF_CORE_DIR=prefix` | a Lean toolchain (`lean --print-prefix`) whose `lib/lean/*.ilean` and `src/lean` give positions of Lean's own functions (set by `run`) |
+| `LEANPROF_BENCH_OUT=file` | `Leanprof.bench "NAME"` appends `NAME<TAB>NANOSECONDS` to this file after each region (set by `measure-pair --scope`; any program may write the same lines without the dependency) |
 
 For `leanprof run --core`:
 
@@ -219,9 +220,13 @@ archives contain.
 
 ### Paired measurement sessions
 
-`paired.json` (`"leanprof": "measure-pair"`, version 1) stores one chronological
+`paired.json` (`"leanprof": "measure-pair"`, version 2) stores one chronological
 session. `samples` contains `pair`, `side`, `time_ns`, `exit_code`,
-`stdout_hash`, `stderr_hash`, `output_hash`, and `output_present` for every run.
+`stdout_hash`, `stderr_hash`, `output_hash`, and `output_present` for every run
+(with `--scope`, `time_ns` is the region's time and `process_ns` the whole run's).
+`design` records the sequential rule (`max_runs`, `first_look`, `look_every`,
+`alpha`), `runs` the pairs measured, and `scope` and `min_change` what was
+asked; `judge` also reads version 1 sessions (one look after all pairs).
 The file also records resolved binary paths, before/after-checked binary
 fingerprints, per-side working directories, common arguments, warmup/run counts
 and per-pair machine load. No exact runtime metrics are inferred from plain

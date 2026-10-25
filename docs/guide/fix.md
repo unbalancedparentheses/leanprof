@@ -39,8 +39,8 @@ leanprof fix --dry-run                    # the same from the last report
      copies or allocations went down (exact counts), and nothing got worse:
      allocations, copies, compile heartbeats, and time when every run is
      slower;
-   - `leanprof measure-pair` (20 pairs of the plain binaries in AB/BA
-     order, `--pairs N`) finds them no slower and with the same output. A
+   - `leanprof measure-pair` (at most 30 pairs of the plain binaries in AB/BA
+     order, stopping once settled, `--pairs N`) finds them no slower and with the same output. A
      significant speedup is reported. One is not required, because removing
      small copies often saves less time than the noise.
 5. **KEEP**: the edit is committed on the branch, with the evidence in the

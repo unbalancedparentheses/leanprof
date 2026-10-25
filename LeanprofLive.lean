@@ -694,11 +694,14 @@ def tools : Array Json := #[
     [("base", sProp "baseline report"), ("new", sProp "new report"), ("threshold", nProp "time threshold in percent (default 10)")]
     ["base", "new"],
   tool "measure_pair" ("Run two prebuilt binaries in alternating AB/BA order (no builds, no probes) into one " ++
-    "paired session for judge: every timing, exit code and output hash.")
+    "paired session for judge, stopping once the time verdict is settled: every timing, exit code and output hash.")
     [("base", sProp "baseline binary"), ("candidate", sProp "candidate binary"),
      ("args", aProp "arguments for both binaries"), ("base_cwd", sProp "working directory of the baseline"),
-     ("candidate_cwd", sProp "working directory of the candidate"), ("runs", nProp "pairs, 6 to 1000 (default 20)"),
-     ("warmup", nProp "warmup pairs (default 3)"), ("check_output", sProp "output file compared instead of stdout"),
+     ("candidate_cwd", sProp "working directory of the candidate"), ("runs", nProp "most pairs, 6 to 1000 (default 30); stops early once the time verdict is settled"),
+     ("fixed", bProp "measure exactly runs pairs, no early stop"),
+     ("min_change", sProp "smallest time change in percent that counts (default 1)"),
+     ("scope", sProp "time only the region the program wraps in Leanprof.bench with this name"),
+     ("warmup", nProp "warmup pairs (default 1)"), ("check_output", sProp "output file compared instead of stdout"),
      ("out", sProp "session file (default .lake/leanprof/paired.json)")] ["base", "candidate"],
   tool "judge" ("KEEP or DISCARD a change: from two measure summaries (output, copies, allocations, heartbeats, " ++
     "time), or from one measure_pair session (output and a paired 95% median interval on time).")
@@ -841,6 +844,7 @@ def callTool (name : String) (a : Json) : IO Json := do
     let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
     let (rc, out, err) ← runSelf (#["measure-pair", "--base", b, "--candidate", c, "--out", outFile] ++
       opt "base_cwd" "--base-cwd" ++ opt "candidate_cwd" "--candidate-cwd" ++ opt "check_output" "--check-output" ++
+      opt "min_change" "--min-change" ++ opt "scope" "--scope" ++ (if argBool a "fixed" then #["--fixed"] else #[]) ++
       num "runs" "--runs" ++ num "warmup" "--warmup" ++ #["--"] ++ argStrs a "args") cwd
     return textResult s!"session {outFile}\n{out}\n{tailText err 10}" (rc != 0)
   | "judge" =>

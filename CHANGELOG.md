@@ -6,6 +6,25 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Faster time verdicts: sequential `measure-pair`, `--scope`, `Leanprof.bench`
+
+- `measure-pair` stops as soon as the time verdict is settled — slower or
+  faster by more than `--min-change` (default 1%), or within ±1% — looking
+  after 6, 8, 10, … pairs, at most `--runs` (now 30). The rule is a
+  group-sequential sign test with exact boundaries and linear alpha
+  spending, so each of the three claims is wrong at most 2.5% of the time
+  however the session stopped (Tests: exact spent error, and by simulation a
+  true +1% median called slower 2.1% and within ±1% 2.2% of the time).
+  `--fixed` measures exactly `--runs` pairs. Sessions are version 2 and
+  record the design; `judge` reads both versions.
+- `measure-pair --scope NAME` times one region of a plain build: the program
+  wraps it in `Leanprof.bench "NAME" fun _ => ...` (new, `import
+  Leanprof.Bench`: two clock reads and a line appended to
+  `$LEANPROF_BENCH_OUT`, no probes) or writes the same `NAME<TAB>NS` lines
+  itself without the dependency.
+- One warmup pair instead of three; `lake env` for both sides at once, and
+  the load average read in process instead of two `sysctl` per pair.
+
 ### Compile time: a project view and published profiles
 
 - `leanprof html` on a compile-time report opens on a project view: project,
