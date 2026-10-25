@@ -48,7 +48,25 @@ package's C through the wrapper, so copies inside a dependency are seen
 with no setup. Afterwards the instrumented objects are deleted and the
 normal ones moved back, with the normal executable, so the next `lake build`
 recompiles nothing. A run that was interrupted (or used `--keep`) is undone
-at the start of the next one. `--no-deps` sets aside only the root
+at the start of the next one, and by `leanprof doctor`.
+
+Interrupted runs are safe without either. While a program or build runs,
+`leanprof` catches SIGINT, SIGTERM and SIGHUP, passes TERM and HUP (and an
+INT another process sent; a terminal's Ctrl-C reaches the program already)
+on to it, puts the normal build back and exits with 128 + the signal.
+SIGKILL cannot be caught: for it, Lake's records (`.trace`, `.hash`) of the
+instrumented objects and executable are deleted as soon as they are built,
+so a plain `lake build` after a killed run compiles normal objects again
+instead of keeping instrumented ones (which carried the runtime and printed
+a report from every later build). The costs, measured on concrete (114
+objects, Apple M5 Max, load 5–8): deleting the records 0.04 s per run;
+after a SIGKILL, the next plain `lake build` 14.2 s instead of 0.2 s (the
+next `leanprof run` or `doctor` instead puts the stashed objects back
+without compiling); catching signals nothing. Keeping instrumented objects
+out of `.lake/build` altogether would need a second build directory, which
+Lake takes only from the lakefile (`buildDir`); a copy of the workspace's
+build would cost a copy of `.lake/build` (611 MB for concrete) per run.
+`scripts/interrupt-check.py` (CI) checks each signal. `--no-deps` sets aside only the root
 package's objects: faster when the dependencies are large, but copies inside
 them are not counted (unless they were never built, in which case Lake
 builds them through the wrapper and leanprof leaves them so).

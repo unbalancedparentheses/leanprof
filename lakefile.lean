@@ -129,11 +129,19 @@ lean_exe «leanprof-elab-driver» where
   root := `LeanprofElabDriver
   supportInterpreter := true
 
+/-- The command's own signal handling (`c/cli.c`): an interrupted run puts
+the project's normal build back before it exits. -/
+target cli_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "cli.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "cli.c"
+  buildO oFile srcJob #["-I", (← getLeanIncludeDir).toString] #["-fPIC", "-O2", "-Wall"] "cc" getLeanTrace
+
 /-- `lake exe leanprof run|compare`. Builds the elab driver next to it. -/
 lean_exe leanprof where
   root := `LeanprofCli
   supportInterpreter := false
   needs := #[«leanprof-elab-driver»]
+  moreLinkObjs := #[cli_o]
 
 lean_exe tasks where
   root := `Examples.Tasks

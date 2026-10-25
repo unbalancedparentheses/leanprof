@@ -47,6 +47,17 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   `sp ++ "_"` at `Elab.lean:3356`, which text matching cannot single out
   among the declaration's many `++ "_"`). Comments are stripped before any
   source matching, and quoted lines leave out trailing comments.
+- An interrupted `leanprof run` (also `stat`, `measure`) no longer leaves
+  instrumented objects that a plain `lake build` keeps (every later binary
+  carried the runtime and printed a report, leanprof itself included when
+  profiled from its own repository). SIGINT, SIGTERM and SIGHUP are caught
+  while a program or build runs (`c/cli.c`): TERM and HUP are passed on,
+  the normal build is put back, and leanprof exits with 128 + the signal.
+  Against SIGKILL, Lake's records of the instrumented objects are deleted
+  once built (0.04 s on concrete), so the next plain `lake build`
+  recompiles them normally (14.2 s for concrete's 114 objects, only after
+  a kill). `leanprof doctor` puts a stashed normal build back.
+  `scripts/interrupt-check.py` (CI) checks every signal.
 
 ### Smaller fixes and maintenance
 

@@ -251,10 +251,23 @@ def lakeRunEnv (dir : Option FilePath := none) : IO (Array (String × Option Str
       if k.isEmpty || v.isEmpty || k.startsWith "LEANPROF_" then none else some (k, some v)
     | _ => none
 
+/-- From now on, catch INT, TERM and HUP and pass them to process `pid`
+(0: none), so that an interrupted command still puts the normal build back
+(`c/cli.c`). -/
+@[extern "leanprof_cli_guard"] opaque guardSignals (pid : UInt32) : IO Unit
+/-- The signal caught by `guardSignals`'s handler, 0 if none. -/
+@[extern "leanprof_cli_caught"] opaque caughtSignal : IO UInt32
+
+/-- Stop if a signal was caught (the caller's `finally` puts the build back). -/
+def checkInterrupted : IO Unit := do
+  let s ← caughtSignal
+  if s != 0 then throw <| IO.userError s!"interrupted by signal {s}"
+
 def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String))
     (cwd : Option FilePath := none) : IO UInt32 := do
   let child ← IO.Process.spawn { cmd, args, env, cwd }
-  child.wait
+  guardSignals child.pid
+  try child.wait finally guardSignals 0
 
 structure RunOpts where
   auto : Option String := none
@@ -469,6 +482,32 @@ def selfCheckProbe (root : FilePath) : IO (Except String (String × String)) := 
   finally
     discard <| IO.Process.output { cmd := "rm", args := #["-rf", dir.toString] }
 
+/-- Forget Lake's records (`.trace`, `.hash`) of the instrumented objects of
+the packages being profiled and of `exe`, once they are built. If leanprof is
+killed before it puts the normal build back (SIGKILL, a crash), a plain
+`lake build` then finds no record and compiles them normally again, instead
+of keeping instrumented objects that would carry the runtime into every
+later build. The next `leanprof run` (or `leanprof doctor`) restores the
+normal objects without compiling. -/
+partial def dropBuildRecords (deps : Bool) (exe : String) : IO Nat := do
+  let rec go (dir : FilePath) : IO Nat := do
+    unless ← dir.isDir do return 0
+    let mut n := 0
+    for e in ← dir.readDir do
+      if ← e.path.isDir then n := n + (← go e.path)
+      else if (e.fileName.splitOn ".c.o").length > 1 &&
+          (e.fileName.endsWith ".trace" || e.fileName.endsWith ".hash") then
+        IO.FS.removeFile e.path
+        n := n + 1
+    return n
+  let mut n := 0
+  for pkg in ← workspacePackages deps do
+    n := n + (← go (pkg / ".lake" / "build" / "ir"))
+  for f in (exeFiles exe).drop 1 do
+    if (f.extension == some "trace" || f.extension == some "hash") && (← f.pathExists) then
+      IO.FS.removeFile f
+  return n
+
 /-- Build `exe` with the copy shims in every package (with `deps := false`,
 only the root package; and, with `auto`, every function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
@@ -529,9 +568,13 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     -- into `lean`): no reports from it, and none over the program's
     ("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none), ("LEANPROF_TRACE", none),
     ("LEANPROF_STAT", none)] ++ runtimeEnv ++ extraEnv
-  let rc ← spawnWait "lake" #["build", exe] buildEnv
-  if rc != 0 then
+  let rc ← try spawnWait "lake" #["build", exe] buildEnv
+    catch e => cleanupInstrumented exe; throw e
+  if rc != 0 || (← caughtSignal) != 0 then
     cleanupInstrumented exe
+    checkInterrupted
+  else
+    discard <| dropBuildRecords deps exe
   return rc
 
 /-- The executable Lake builds for `exe`. -/
@@ -1270,8 +1313,10 @@ def measureCmd (argv : List String) : IO UInt32 := do
       if let some f := o.checkOutput then
         if ← (f : FilePath).pathExists then IO.FS.removeFile f
       let t0 ← IO.monoNanosNow
+      guardSignals 0
       let out ← IO.Process.output { cmd := (exePath exe).toString, args := o.args, env }
       let t1 ← IO.monoNanosNow
+      checkInterrupted
       if i < o.warmup then continue
       let report ← if ← reportPath.pathExists then loadReport reportPath.toString else pure {}
       -- --scope: the scope's own total, without start-up and setup
@@ -1745,6 +1790,21 @@ def doctor : IO UInt32 := do
   let isProject := (← ("lakefile.toml" : FilePath).pathExists) || (← ("lakefile.lean" : FilePath).pathExists)
   unless ← report isProject "inside a Lake project" "run leanprof from a project's root directory" do
     problems := problems + 1
+  -- an instrumented build left by an interrupted (or `--keep`) run: put the normal one back
+  if isProject then
+    let stashed ← (← workspacePackages).filterM fun p => (stashDir p).isDir
+    let saved ← if ← savedDir.isDir then
+        pure ((← savedDir.readDir).filterMap fun e =>
+          if e.fileName.endsWith ".trace" || e.fileName.endsWith ".hash" || e.fileName.endsWith ".rsp" then none
+          else some e.fileName)
+      else pure #[]
+    if stashed.isEmpty && saved.isEmpty then
+      discard <| report true "no instrumented build left in .lake/build" ""
+    else
+      restoreObjects
+      for exe in saved do restoreExe exe (removeUnsaved := false)
+      discard <| report true (s!"an interrupted or --keep run had left instrumented objects in {stashed.size} " ++
+        s!"package(s){if saved.isEmpty then "" else s!" and {", ".intercalate saved.toList}"}: the normal build is back") ""
   let dep ← (pure (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) <||>
     (do return (← IO.FS.realPath (← packageRoot)) == (← IO.FS.realPath (← IO.currentDir))))
   discard <| report true (if dep then "project depends on leanprof (profile!, #leanprof, test assertions available)"
@@ -1894,7 +1954,7 @@ def statCmd (argv : List String) : IO UInt32 := do
   IO.println s!"  report: {json}"
   return code
 
-def main (argv : List String) : IO UInt32 := do
+def dispatch (argv : List String) : IO UInt32 := do
   try
     match argv with
     | [] | ["help"] | ["--help"] | ["-h"] =>
@@ -1924,5 +1984,16 @@ def main (argv : List String) : IO UInt32 := do
       IO.eprintln usage
       return 2
   catch e =>
+    let s ← caughtSignal
+    if s != 0 then return 128 + s  -- said by `main`
     IO.eprintln s!"leanprof: {e}"
     return 2
+
+def main (argv : List String) : IO UInt32 := do
+  let rc ← dispatch argv
+  -- a signal caught while a child ran (c/cli.c): the build is back; exit as killed
+  let s ← caughtSignal
+  if s != 0 then
+    IO.eprintln s!"leanprof: interrupted (signal {s}); the project's normal build is back"
+    return 128 + s
+  return rc

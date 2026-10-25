@@ -204,6 +204,8 @@ jobs:
           python3 -c "import json,sys; ev=json.load(open('ring.json'))['traceEvents']; b=sum(e['ph']=='B' for e in ev); e=sum(e['ph']=='E' for e in ev); print(b, e); sys.exit(0 if b==e and 1000 < b <= 5000 else 1)"
           # a scripted MCP session
           python3 scripts/mcp-check.py .lake/build/bin/leanprof
+          # an interrupted run (TERM, HUP, INT, KILL) leaves no instrumented build
+          python3 scripts/interrupt-check.py .lake/build/bin/leanprof
           # --cwd: the program runs elsewhere, positions still come from the project
           LEANPROF_QUIET=1 lake exe leanprof run --cwd Examples --json cwd.json copybug -- 1000
           grep -q '"function":"buildWithHistory (in Std.Legacy.Range.forIn[^"]*","symbol":"[^"]*","scope":"buildWithHistory","where":"Examples/CopyBug.lean:17"' cwd.json
