@@ -8,6 +8,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
+| (none) `[-- ARGS]`, or `EXE [-- ARGS]` | in a Lake project: pick the workload (the one `lean_exe`; else the test driver when it is an executable; else compile time of the libraries, as `elab --project --compact`; several executables are listed, never chosen between), profile it the cheapest way (`sample` when samply can sample, else `stat`), print the top findings and the `run`/`explain`/`fix` commands that go deeper. `EXE` names one of the project's executables. Exit 2 when it lists executables instead |
 | `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--json F] [--cwd DIR] EXE [-- ARGS]` | sample with samply (`--out`: samply's profile), report per Lean declaration (`--json`: a copy of the report); exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
@@ -70,6 +71,8 @@ For `leanprof run --core`:
 
 | variable | effect |
 |---|---|
+| `LEANPROF_HOME=dir` | where the installer put releases, the source checkout and samply (default `~/.local/share/leanprof`; the installed launcher sets it) |
+| `LEANPROF_SAMPLY=path` | samply to run (default: `samply` on `PATH`, then `$LEANPROF_HOME/samply/samply`); `none` acts as if there were none |
 | `LEANPROF_OBJCOPY=path` | objcopy used to rewrite Lean's libraries (default: `llvm-objcopy` on `PATH`, then Homebrew's and Debian's LLVM directories, then GNU `objcopy` on Linux, then rustup's `rust-objcopy`) |
 
 For builds through the compiler wrapper `scripts/leanprof-cc` (set as
@@ -145,7 +148,11 @@ than one clock tick (`< 1 ns` on an M5, `< 42 ns` on earlier Apple chips;
 `< 1 clock tick` outside the terminal). Read a field listed there as
 "below what leanprof can measure", never as 0.
 
-Sampled reports add `"sampled": true`. Compile reports from `elab` have
+Sampled reports add `"sampled": true`, `exe`, `exit_code`, `runtime`
+(the Lean runtime's self time by category: `category`, `self_ns`) and, for
+the project's own functions, `own_ns` (their self time plus that of code
+outside the project they called directly) and `own_top` (that code's three
+costliest functions: `name`, `ns`). Compile reports from `elab` have
 `"elab": true`, `"project"` (true with `--project`), `"unit": "ns"` or
 `"heartbeats"`, `threshold`, `timing` (`build_ns`, `profile_ns`,
 `report_ns`, `jobs`) and arrays:

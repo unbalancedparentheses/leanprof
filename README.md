@@ -57,8 +57,8 @@ All profiled from outside, without changing the projects:
 ```
 curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | sh
 cd your-lean-project
-leanprof doctor                      # checks Lean, clang, samply
-leanprof sample myapp -- args        # where the time goes
+leanprof                             # finds what to profile, samples it, top findings and next steps
+leanprof myapp -- args               # the same for one of several executables, with its arguments
 leanprof run myapp -- args           # exact counts, copies, tasks
 leanprof explain                     # why each copy happened, and the fix
 leanprof fix --exe myapp -- args     # apply it on a branch, test, measure, commit a KEEP
@@ -68,7 +68,9 @@ leanprof elab --heartbeats Foo.lean  # what each line costs to compile
 Your project needs no changes: leanprof compiles its runtime for your Lean
 version (4.34 and later) and puts your normal build back afterwards. The
 installer downloads a release for macOS (arm64, x86-64) or Linux (x86-64,
-arm64), checked against `SHA256SUMS`, or builds from source; Windows is not supported (WSL 2
+arm64), checked against `SHA256SUMS`, or builds from source, and offers to
+fetch [samply](https://github.com/mstange/samply) (pinned, checksum-verified)
+for sampling; `leanprof doctor` says what is missing. Windows is not supported (WSL 2
 works). To mark code with `profile!`, assert in tests that code does not copy
 or allocate, or use `#leanprof` in the editor, add the dependency:
 
@@ -239,6 +241,7 @@ reproduction.
 | Run time | exact and sampled | manual spans | – | sampled | wall time per named benchmark: mean, stddev, percentiles |
 | Overhead while recording | about 6–7 ns per scope on the Mac, 23 ns on Linux; constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low | none (times the plain build, two clock reads per sample) |
 | Works without changing the project | ✅ | – | ✅ | ✅ | – (a dependency and a bench module) |
+| First report | `leanprof` alone picks the workload and samples it: 8.6 s on a new `lake new` project, after a 4.8 s install with samply (Mac) | not measured | not measured | not measured | after adding the dependency and writing a bench module |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names | your benchmark names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – | – |
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – | – |

@@ -6,6 +6,37 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### First run: `leanprof` with no arguments, samply from the installer
+
+- `leanprof` with no arguments in a Lake project reads the lakefile and
+  profiles the workload: the one `lean_exe`; else the test driver when it is
+  an executable; else compile time of the libraries (`elab --project
+  --compact`). Several executables are listed with the command for each and
+  none is chosen; `leanprof EXE -- ARGS` profiles one. It samples when samply
+  can (no rebuild), else runs `stat`, then prints the top three findings
+  (the project's functions by CPU, with the library code under them; copies,
+  allocation and closure work worth an exact count; the costliest
+  declarations for compile time) and the exact `run`/`explain`/`fix`
+  commands that go deeper. On a Mac: 8.6 s to the first report on a new
+  `lake new` project, after a 4.8 s install.
+- The installer offers samply 0.13.1, pinned and checked against its
+  SHA256, into `~/.local/share/leanprof/samply` (`--samply` without asking,
+  `--no-samply`, `--samply-only` later); leanprof uses it when no samply is on
+  `PATH` (`LEANPROF_SAMPLY` overrides). The installed launcher sets
+  `LEANPROF_HOME`.
+- `doctor` says what `leanprof` with no arguments would profile, where
+  samply is (or the command that fetches it), whether Linux perf events allow
+  sampling, and, for a missing C compiler, clang or objcopy, the install
+  command for the system (macOS, Debian/Ubuntu, Arch, Fedora). `run`, `stat`
+  and `--core` print the same when that is what failed.
+- `sample`'s report adds `exe`, `exit_code`, `runtime` (the runtime's self
+  time by category) and, for the project's own functions, `own_ns` and
+  `own_top`.
+- CI: Fresh install runs `leanprof` with no arguments on import-graph (three
+  executables, then one named) and on lean4-cli (a library), with samply
+  from the installer; Release installs samply the same way on all four
+  platforms.
+
 ### Compile time: a project view and published profiles
 
 - `leanprof html` on a compile-time report opens on a project view: project,

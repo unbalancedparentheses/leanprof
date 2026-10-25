@@ -138,6 +138,11 @@ provenance and one complete experiment operation come first.
   the tests, or compile time for a library), profiles it and prints the top
   three findings with source and fixes. Never picks an ambiguous workload
   silently; handles dependency instrumentation and restores the normal build.
+  Done: the workload choice (executables listed, never chosen between), a
+  sampled first profile (`stat` without samply or perf events), three
+  findings with file:line and the `run`/`explain`/`fix` commands, samply from
+  the installer. Left: the fixes themselves in the findings, which today take
+  `leanprof run` and `explain` (an exact second pass on the top copy sites).
 - [ ] `leanprof autoresearch`: sets the project up (workload, tests, output
   check) and starts the loop in Claude Code, or prints the next steps. The
   loop ships as a Claude Code command.
