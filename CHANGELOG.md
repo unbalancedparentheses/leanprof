@@ -158,6 +158,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Smaller fixes and maintenance
 
+- When one function's self time is half the run or more, `run` says that
+  it includes code leanprof does not time (Lean's own libraries, system
+  calls) and points to `leanprof sample`. On import-graph, `importGraphCLI`
+  showed 84% self time that `sample` puts in opening and mapping `.olean`
+  files and `Lean.finalizeImport`.
 - `leanprof doctor`'s copy-detection self-check could not run on Linux
   ("fatal error: 'stdio.h'"): its probe was compiled with Lean's own `leanc`,
   whose sysroot has no libc headers. The probe declares `puts` instead.

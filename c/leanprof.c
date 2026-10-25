@@ -2839,6 +2839,16 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         }
         if (nnear > 0)
             fprintf(f, "* near the probe cost: use `leanprof sample` for this function's time\n");
+        /* self time also holds what runs inside a scope without probes: Lean's
+           precompiled libraries, the C runtime, system calls */
+        const lpf_scope_sum *big = NULL;
+        for (size_t k = 0; k < ns; k++)
+            if (!S[k].is_task && (big == NULL || S[k].self > big->self)) big = &S[k];
+        if (big != NULL && wall > 0 && (double)big->self * tick >= 0.5 * wall)
+            fprintf(f, "note: %.0f%% of the run is %s's self time, which includes the code it calls that "
+                       "leanprof does not time (Lean's own libraries, system calls): `leanprof sample` "
+                       "shows where it goes\n",
+                    100.0 * (double)big->self * tick / wall, big->name);
         if (any_small)
             fprintf(f, "%s: less than the probes' own cost (%.1f ns per scope), too small to measure\n",
                     LP_PROBE_LABEL, lpf_overhead_of(lpf_main_path()));
