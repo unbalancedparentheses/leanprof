@@ -49,7 +49,10 @@ including refreshed comparisons against current alternatives.
   release); Windows documented as unsupported.
 - [x] Security review of the MCP server, the GitHub Action and the install
   script ([review](docs/reviews/security-review.md)): 12 findings fixed or
-  documented. Follow-up: build provenance attestations for releases.
+  documented, and the MCP path and option bypasses a later code review
+  found (symbolic links, options among `elab`'s files) fixed and checked by
+  `scripts/mcp-check.py`. Follow-up: build provenance attestations for
+  releases.
 - [x] Issue and PR templates, `SECURITY.md`, a Lean version support policy,
   `CONTRIBUTING.md`.
 - [x] Easier first run: the installer checks `PATH`, and errors say how to

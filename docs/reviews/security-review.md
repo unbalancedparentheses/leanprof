@@ -29,7 +29,7 @@ profile. The boundaries they must keep are narrower:
 |---|---|---|---|---|
 | 1 | MCP | `measure_pair` ran any binary with any arguments (`/bin/sh -c …`): arbitrary command execution from a tool call, beyond building Lake projects. | high | fixed: both binaries must resolve into a `.lake/build/bin/` directory, and `base_cwd`/`candidate_cwd` must be Lake projects |
 | 2 | MCP | `measure_pair`'s `check_output` is deleted before each run; with an arbitrary working directory and path (`base_cwd: ~`, `check_output: .bashrc`) a call could delete any file. | high | fixed: `check_output` must be relative without `..`, in a Lake project (finding 1) |
-| 3 | MCP | `run`'s `json` and `measure`'s/`measure_pair`'s `out` accepted any path, so a call could overwrite any file the user can write with JSON. | medium | fixed: paths the server writes must be relative to the project, without `..` |
+| 3 | MCP | `run`'s `json` and `measure`'s/`measure_pair`'s `out` accepted any path, so a call could overwrite any file the user can write with JSON. | medium | fixed: paths the server writes must be relative to the project, without `..`; the lexical check missed links (finding 14) |
 | 4 | MCP, CLI | `live` and `dump` passed the client's `pid` to `kill`: `-1` signals every process of the user (SIGUSR1 kills those that do not handle it), `0` the process group; a pid with `/` named files outside the temporary directory. | medium | fixed: a pid must be digits and not 0 (also for `leanprof dump` and `top --pid`) |
 | 5 | MCP | An `executable` starting with `-` was read by `leanprof run` as an option. | low | fixed: refused |
 | 6 | MCP | `live`'s `seconds` slept as long as asked. | low | fixed: at most 60 |
@@ -48,6 +48,21 @@ pids `-1`, `0` and `../../etc/x` for `live` and `dump`). Before the fix, the
 same checks showed the server running `/bin/echo`, writing
 `/tmp/leanprof-mcp-outside.json` and `../outside.json`, and accepting
 pid `-1`.
+
+## Follow-up: bypasses found by a later code review (2026-10-25)
+
+A code review of the tree after these fixes found that the restrictions on
+paths and options could still be bypassed. Both reproduced, and are fixed:
+
+| # | Component | Finding | Severity | Status |
+|---|---|---|---|---|
+| 14 | MCP | The path checks of findings 2 and 3 were lexical. `out: "external/result.json"`, with `external` a symbolic link in the project pointing elsewhere, wrote outside the project; so did a path that is itself a link. | medium | fixed: the nearest existing directory above the path, links resolved, must be inside the working directory, and the path itself must not be a link (dangling links on the way are refused too) |
+| 15 | MCP | `elab`'s `files` were appended to `leanprof elab`'s options, which it reads anywhere: `["--out", "/outside/report.json", "Main.lean"]` wrote the report outside the project. | medium | fixed: a file starting with `-` is refused (`leanprof elab` has no `--`); also for `compare`'s and `judge`'s report paths |
+
+`scripts/mcp-check.py` checks both: a report path through a linked
+directory, a summary path that is a link, `--out` among `elab`'s files, and
+an option as `compare`'s report. Before the fix, the first and third wrote
+outside the project.
 
 ## Accepted risks (by design, or for later)
 

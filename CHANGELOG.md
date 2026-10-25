@@ -188,6 +188,15 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   file's committed content is the measured candidate. `fix-check.sh` installs
   `pre-commit`, `post-checkout` and `post-commit` hooks for the KEEP run and
   adds a test that rewrites the file.
+- MCP: the checks on paths the server writes were lexical, so a link in the
+  project (`out: "external/result.json"` with `external` pointing
+  elsewhere, or a path that is itself a link) wrote outside it. The nearest
+  existing directory above the path must now be inside the working
+  directory with links resolved, and the path must not be a link. `elab`'s
+  `files` went straight into `leanprof elab`'s options, so `--out FILE`
+  among them wrote anywhere: files starting with `-` are refused (also
+  `compare`'s and `judge`'s report paths). `scripts/mcp-check.py` checks
+  all four; see the [security review](docs/reviews/security-review.md).
 
 ### Smaller fixes and maintenance
 

@@ -739,13 +739,37 @@ def inDir (cwd : Option String) (p : String) : FilePath :=
   | some d => if p.startsWith "/" then p else (d : FilePath) / p
   | none => p
 
-/-- A file the server writes or deletes for its client: relative to the project
-and without `..`, so a tool call cannot overwrite or remove files elsewhere. -/
-def projectPath (what p : String) : IO String := do
+/-- A file the server writes or deletes for its client, in the directory
+`cwd` (none: the server's own): relative, without `..`, and inside `cwd`
+with symbolic links resolved, so a tool call cannot overwrite or remove
+files elsewhere, also through a link (`external/x.json` with `external`
+pointing out of the project, or `x.json` itself a link). -/
+def projectPath (cwd : Option String) (what p : String) : IO String := do
   let fp : FilePath := p
-  if fp.isAbsolute || fp.components.contains ".." || p.isEmpty then
-    throw <| IO.userError s!"{what} must be a path inside the project (relative, without ..): {p}"
+  let refuse {α} : IO α :=
+    throw <| IO.userError s!"{what} must be a path inside the project (relative, without .., not through a symbolic link): {p}"
+  if fp.isAbsolute || fp.components.contains ".." || p.isEmpty then refuse
+  let root ← IO.FS.realPath (cwd.getD ".")
+  let inside (r : FilePath) := r == root || r.toString.startsWith (root.toString ++ "/")
+  let isLink (q : FilePath) : IO Bool := do
+    try return (← q.symlinkMetadata).type == .symlink catch _ => return false
+  let full := inDir cwd p
+  -- the file itself: writing follows a link, removing it would not, but
+  -- neither should be possible
+  if ← isLink full then refuse
+  -- the nearest directory above it that exists, links resolved
+  let mut d := full.parent.getD "."
+  for _ in [0:fp.components.length + 1] do
+    if ← d.pathExists then break
+    if ← isLink d then refuse
+    d := d.parent.getD "."
+  unless inside (← IO.FS.realPath d) do refuse
   return p
+
+/-- A file name the server passes on as a command's argument: the command
+must not read it as an option (`leanprof elab`'s `--out F` among its files). -/
+def notOption (f : String) : IO Unit := do
+  if f.startsWith "-" then throw <| IO.userError s!"not a file name: {f} (an option cannot be passed as a file)"
 
 def isLakeProject (dir : FilePath) : IO Bool := do
   return (← (dir / "lakefile.lean").pathExists) || (← (dir / "lakefile.toml").pathExists)
@@ -758,7 +782,7 @@ def callTool (name : String) (a : Json) : IO Json := do
     return #[exe, "--"] ++ argStrs a "args"
   match name with
   | "run" =>
-    let json ← projectPath "json" (argStr a "json" |>.getD ".lake/leanprof/report.json")
+    let json ← projectPath cwd "json" (argStr a "json" |>.getD ".lake/leanprof/report.json")
     let flags := [("auto", "--auto"), ("allocs", "--allocs"), ("counters", "--counters"), ("frees", "--frees"),
       ("core", "--core")].filterMap fun (k, f) => if argBool a k then some f else none
     let (rc, out, err) ← runSelf (#["run", "--json", json] ++ flags.toArray ++ (← exeArgs)) cwd
@@ -777,11 +801,13 @@ def callTool (name : String) (a : Json) : IO Json := do
   | "elab" =>
     let files := argStrs a "files"
     if files.isEmpty then throw <| IO.userError "missing argument: files"
+    -- `leanprof elab` reads options anywhere among its files (`--out F`)
+    for f in files do notOption f
     let (rc, out, err) ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
     return textResult s!"{out}\n{tailText err 10}" (rc != 0)
   | "measure" =>
-    let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
+    let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++
       (if argBool a "core" then #["--core"] else #[]) ++ (← exeArgs)) cwd
     return textResult s!"summary {outFile}\n{out}\n{tailText err 10}" (rc != 0)
@@ -819,13 +845,14 @@ def callTool (name : String) (a : Json) : IO Json := do
   | "compare" =>
     let (some b, some n) := (argStr a "base", argStr a "new") | throw <| IO.userError "missing argument: base or new"
     let thr := (argNat a "threshold").map (#["--threshold", toString ·]) |>.getD #[]
+    for f in [b, n] do notOption f
     let (rc, out, err) ← runSelf (#["compare"] ++ thr ++ #[b, n]) cwd
     let verdict := if rc == 0 then "no regressions" else if rc == 1 then "REGRESSION" else "error"
     return textResult s!"{verdict}\n{out}{err}" (rc > 1)
   | "measure_pair" =>
     let (some b, some c) := (argStr a "base", argStr a "candidate")
       | throw <| IO.userError "missing argument: base or candidate"
-    let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/paired.json")
+    let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/paired.json")
     -- Only what a Lake project built, run in a Lake project: the tool must not
     -- become a way to run any program, or to delete files (measure-pair
     -- removes the checked output file before each run).
@@ -836,7 +863,7 @@ def callTool (name : String) (a : Json) : IO Json := do
     for k in ["base_cwd", "candidate_cwd"] do
       if let some d := argStr a k then
         unless ← isLakeProject (inDir cwd d) do throw <| IO.userError s!"{k} is not a Lake project: {d}"
-    if let some f := argStr a "check_output" then discard <| projectPath "check_output" f
+    if let some f := argStr a "check_output" then discard <| projectPath cwd "check_output" f
     let opt (k flag : String) := (argStr a k).map (#[flag, ·]) |>.getD #[]
     let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
     let (rc, out, err) ← runSelf (#["measure-pair", "--base", b, "--candidate", c, "--out", outFile] ++
@@ -848,6 +875,7 @@ def callTool (name : String) (a : Json) : IO Json := do
       | some p, none, none => pure #[p]
       | none, some b, some n => pure #[b, n]
       | _, _, _ => throw <| IO.userError "give pair, or base and new"
+    for f in files do notOption f
     let minChange := (argStr a "min_change").map (#["--min-change", ·]) |>.getD #[]
     let allow := if argBool a "allow_overloaded" then #["--allow-overloaded"] else #[]
     let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ allow ++ files) cwd
