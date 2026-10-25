@@ -1,5 +1,5 @@
 # Releases. On a version tag (v0.1.0, ...): build the leanprof command for
-# macOS arm64 and Linux x86-64, test the packaged command and the install
+# macOS arm64 and x86-64 and Linux x86-64 and arm64, test the packaged command and the install
 # script on a project outside this repository, package the VS Code extension,
 # and create a GitHub release with the archives, the .vsix, SHA256SUMS, and
 # the version's CHANGELOG.md section as notes. See RELEASING.md.
@@ -71,9 +71,13 @@ jobs:
         include:
           - os: macos-15
             platform: macos-arm64
-          # the oldest supported runner, so the binary runs on older glibc
+          - os: macos-15-intel
+            platform: macos-x86_64
+          # the oldest supported runners, so the binary runs on older glibc
           - os: ubuntu-22.04
             platform: linux-x86_64
+          - os: ubuntu-22.04-arm
+            platform: linux-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -184,7 +188,7 @@ jobs:
           cat notes.md
           (cd dist && sha256sum *.tar.gz *.vsix > SHA256SUMS && cat SHA256SUMS)
           ls -l dist
-          test "$(ls dist/*.tar.gz | wc -l)" -eq 2
+          test "$(ls dist/*.tar.gz | wc -l)" -eq 4
           test "$(ls dist/*.vsix | wc -l)" -eq 1
       - name: Create the release
         if: needs.version.outputs.publish == 'true'

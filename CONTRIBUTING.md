@@ -38,5 +38,8 @@ with. Runtime instrumentation depends on Lean's C runtime and generated code;
 changes to inlining can affect counting coverage. Versions before 4.34 are not
 currently supported. Windows is unsupported; WSL uses the Linux path.
 
-Release archives currently target macOS arm64 and Linux x86-64. Broader archive
-coverage remains on the [roadmap](ROADMAP.md).
+Release archives target macOS arm64 and x86-64 and Linux x86-64 and arm64.
+macOS x86-64 and Linux arm64 are smoke-tested when a release is built, not on
+every commit. `.github/workflows/fresh-install.yml` installs the packaged
+command with the install script and profiles projects outside this
+repository on every change.

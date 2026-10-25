@@ -193,7 +193,8 @@ Rates are differences between two snapshots over their `ts_ns`.
 
 The GitHub Action (`uses: unbalancedparentheses/leanprof@main`) is
 described in [CI and regressions](ci-and-regressions.md#github-action).
-Prebuilt commands for macOS arm64 and Linux x86-64 are attached to each
+Prebuilt commands for macOS arm64 and x86-64 and Linux x86-64 and arm64 are
+attached to each
 [release](https://github.com/unbalancedparentheses/leanprof/releases);
 [RELEASING.md](../../RELEASING.md) says how to make one and what the
 archives contain.

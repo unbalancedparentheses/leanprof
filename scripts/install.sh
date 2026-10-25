@@ -3,7 +3,8 @@
 #
 # One command, no clone needed:
 #   curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | sh
-# downloads the prebuilt command for this platform (macOS arm64, Linux x86-64)
+# downloads the prebuilt command for this platform (macOS arm64 and x86-64,
+# Linux x86-64 and arm64)
 # from the latest GitHub release, checked against its SHA256SUMS. When there
 # is no release, none for this platform, or the binary does not run here, it
 # clones the repository and builds from source (needs git and elan).
@@ -74,7 +75,9 @@ link() {
 platform() {
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) echo macos-arm64 ;;
+    Darwin-x86_64) echo macos-x86_64 ;;
     Linux-x86_64|Linux-amd64) echo linux-x86_64 ;;
+    Linux-aarch64|Linux-arm64) echo linux-arm64 ;;
     *) echo "" ;;
   esac
 }

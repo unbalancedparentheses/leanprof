@@ -6,6 +6,15 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Fresh installs, more platforms
+
+- Release archives for macOS x86-64 and Linux arm64, next to macOS arm64 and
+  Linux x86-64; the install script picks them.
+- `fresh-install.yml`: on every change and weekly, the packaged command is
+  installed with the install script (source build hidden) and run on
+  import-graph and lean4-cli at pinned tags, projects with nothing tailored
+  to leanprof.
+
 ### Programs that load Lean modules at run time
 
 - `run`, `stat`, `sample`, `measure` and `measure-pair` start the program

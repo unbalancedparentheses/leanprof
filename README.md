@@ -62,8 +62,8 @@ leanprof elab --heartbeats Foo.lean  # what each line costs to compile
 
 Your project needs no changes: leanprof compiles its runtime for your Lean
 version (4.34 and later) and puts your normal build back afterwards. The
-installer downloads a release for macOS arm64 or Linux x86-64 (checked
-against `SHA256SUMS`) or builds from source; Windows is not supported (WSL 2
+installer downloads a release for macOS (arm64, x86-64) or Linux (x86-64,
+arm64), checked against `SHA256SUMS`, or builds from source; Windows is not supported (WSL 2
 works). To mark code with `profile!`, assert in tests that code does not copy
 or allocate, or use `#leanprof` in the editor, add the dependency:
 

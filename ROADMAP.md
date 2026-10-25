@@ -44,8 +44,8 @@ including refreshed comparisons against current alternatives.
   package once lacked runtime files and the check, run on leanprof itself,
   passed).
 - [x] Times too small to measure are reported as such, never as 0.
-- [ ] Release binaries for Linux arm64 and macOS x86-64; Windows documented
-  as unsupported.
+- [x] Release binaries for Linux arm64 and macOS x86-64 (smoke-tested at
+  release); Windows documented as unsupported.
 - [x] Security review of the MCP server, the GitHub Action and the install
   script ([review](docs/reviews/security-review.md)): 12 findings fixed or
   documented. Follow-up: build provenance attestations for releases.
@@ -53,10 +53,12 @@ including refreshed comparisons against current alternatives.
   `CONTRIBUTING.md`.
 - [x] Easier first run: the installer checks `PATH`, and errors say how to
   fix them.
-- [ ] CI installs from scratch on a project leanprof has never seen. Today
-  the release workflow installs the packaged command and profiles
-  `Tests/Smoke`, which lives in this repository, and it runs only when the
-  packaging files change.
+- [x] CI installs from scratch on projects leanprof has never seen
+  (`fresh-install.yml`, on every change and weekly): the packaged command,
+  installed by the install script with its source build hidden, runs
+  import-graph (a program that loads modules at run time; this found that
+  leanprof did not give programs `lake exe`'s environment) and profiles
+  lean4-cli's compile time on an older Lean.
 - [ ] Evidence that stands on its own:
   - the benchmark suite rerun on CI's fixed runners (Linux and macOS, on a
     schedule) with the results published, next to a run on an idle machine

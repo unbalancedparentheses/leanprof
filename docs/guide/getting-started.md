@@ -42,7 +42,7 @@ there. For the editor, see also the [VS Code extension](vscode.md).
 |---|---|
 | macOS arm64 | supported; prebuilt command |
 | Linux x86-64 | supported; prebuilt command (glibc 2.35 or newer, e.g. Ubuntu 22.04; older systems build from source) |
-| macOS x86-64, Linux arm64 | not tested; the installer builds from source |
+| macOS x86-64, Linux arm64 | prebuilt command, smoke-tested on each release (run, allocations, `explain`, `elab`; `sample` on macOS) but not in the per-commit test matrix |
 | Windows | not supported; WSL 2 with Linux is the way to use it |
 
 Lean 4.34 and later. CI runs the test suite and `leanprof run`, `sample` and
