@@ -253,11 +253,6 @@ provenance and one complete experiment operation come first.
   cause, supporting locations, expected affected metric, semantic constraints
   and a concrete validation experiment. Observations kept apart from
   hypotheses; improvements verified by measurement, not predicted.
-- [ ] **Experiment memory.** An append-only log of hypothesis, patch
-  fingerprint, workload, checks, measurements, verdict and rejection reason,
-  searched before new attempts so failures are not repeated; old conclusions
-  invalidated when code or workloads change; held-out evaluation kept apart
-  from the inputs that guide optimization.
 
 ### Evidence
 
