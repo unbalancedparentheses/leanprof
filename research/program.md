@@ -58,7 +58,11 @@ Repeat until the time budget is spent:
      names (alternatives; apply one), plus `copies` and `estimated_cost_ns`
      (time spent copying at that site). A finding with `fix_code` is the
      cheapest experiment to try first; the fixes for the recognised causes
-     are tested to remove the copies.
+     are tested to remove the copies. For three causes (`nested-array-element`,
+     `map-value-reinserted`, `loop-over-updated-array`), `leanprof fix --exe
+     EXE -- ARGS` applies the code, then builds, tests, measures and judges it
+     on a branch of its own ([guide](../docs/guide/fix.md)); it refuses a
+     tree with uncommitted changes.
    - `leanprof sample EXE -- ARGS` shows CPU time per Lean declaration and
      what the runtime spent its time on (copying, freeing, allocation, ...).
    - `leanprof elab --heartbeats FILES` shows compile cost per line and

@@ -9,3 +9,4 @@
 /bench/leanbench/scoped/.lake
 __pycache__/
 /Tests/Regress/.lake
+/Tests/Fix/.lake

@@ -61,6 +61,7 @@ leanprof doctor                      # checks Lean, clang, samply
 leanprof sample myapp -- args        # where the time goes
 leanprof run myapp -- args           # exact counts, copies, tasks
 leanprof explain                     # why each copy happened, and the fix
+leanprof fix --exe myapp -- args     # apply it on a branch, test, measure, commit a KEEP
 leanprof elab --heartbeats Foo.lean  # what each line costs to compile
 ```
 
@@ -120,6 +121,7 @@ of the run, to agents.
 | CPU time per Lean declaration, no probes; flame graph with Lean names | `leanprof sample myapp` |
 | Exact time and calls per function or `profile!` scope, own cost subtracted (`--auto` leaves functions too small to time untimed; `--time-tiny` counts them) | `leanprof run [--auto] myapp` |
 | Copies of shared arrays and strings, with file:line, the reason and the fix | `leanprof run`, `leanprof explain` |
+| Apply that fix on a new branch, test it, compare output, measure and judge it; commit only a KEEP, with the evidence | [`leanprof fix`](docs/guide/fix.md) |
 | Allocations per function; failed in-place reuse; closure calls | `leanprof run --allocs --counters myapp` |
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
@@ -254,6 +256,7 @@ reproduction.
 - [Getting started](docs/guide/getting-started.md)
 - [Run time](docs/guide/run-time.md): sampling, every function, `profile!`, tasks, timeline
 - [Copies and allocations](docs/guide/copies-and-allocations.md), reuse and closures
+- [Applying a fix with `leanprof fix`](docs/guide/fix.md)
 - [Memory, frees and `leanprof stat`](docs/guide/memory.md)
 - [Compile time](docs/guide/compile-time.md)
 - [In the editor](docs/guide/editor.md), [VS Code](docs/guide/vscode.md) and [HTML report](docs/guide/html-report.md)

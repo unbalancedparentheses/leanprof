@@ -1,5 +1,6 @@
 import Leanprof
 import Leanprof.Explain
+import Leanprof.Fix
 import Examples.ExplainPatterns
 
 /-! Tests of the fixes `leanprof explain` prints (Leanprof/Explain.lean), on
@@ -54,6 +55,13 @@ def explainAll (cache : IO.Ref Explain.CCache) (clines src : Array String) (name
     if let .arr a := js then out := out ++ a
   return out
 
+/-- The body of declaration `name`: its indented lines after the first (not
+blank lines or a closing `end`), raw: indentation included. -/
+def declBody (src : Array String) (name : String) : List String :=
+  let l := defLine src name
+  if l == 0 then [] else
+    ((Explain.declLines src (l - 1)).toList.drop 1).map (·.2) |>.filter fun l => l.startsWith " "
+
 /-- One cause: the copying declaration, how it is run, the cause `explain`
 must name, and for each printed alternative the fixed declaration that
 contains it and how to run that one. -/
@@ -105,6 +113,22 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
       s!"code={code}"
     let before ← copiesIn c.runBad
     check s!"explain fix: {c.bad} copies" (before ≥ k) s!"copies={before}"
+    -- `leanprof fix`: each alternative is an edit, and the edited
+    -- declaration is the fixed one, line for line (indentation included)
+    let plans := match found[0]? with
+      | some e => Fix.plansFor e src
+      | none => .error "no finding"
+    let mechanical := ["nested-array-element", "map-value-reinserted", "loop-over-updated-array"].contains c.cause
+    match plans with
+    | .ok ps =>
+      check s!"fix: {c.bad} has one edit per printed alternative" (mechanical && ps.size == code.size)
+        s!"{ps.size} plans, {code.size} alternatives"
+      for ((fixed, _), p) in c.fixes.zip ps.toList do
+        let edited := Fix.applyEdits src p.edits
+        check s!"fix: the edit of {c.bad} ({p.what}) gives {fixed}" (declBody edited c.bad == declBody src fixed)
+          s!"edited {declBody edited c.bad}"
+    | .error e =>
+      check s!"fix: {c.bad} ({c.cause}) is refused as not mechanical, with a reason" (!mechanical && !e.isEmpty) e
     for ((fixed, runFixed), alt) in c.fixes.zip code.toList do
       -- every printed line is a line of the fixed declaration
       let fixedLines := declCode src fixed

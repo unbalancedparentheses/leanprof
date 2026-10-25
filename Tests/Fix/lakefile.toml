@@ -1,0 +1,16 @@
+# The project `scripts/fix-check.sh` runs `leanprof fix` on (see Fix.lean).
+# No dependency on leanprof.
+name = "fixdemo"
+defaultTargets = ["buckets"]
+testDriver = "check"
+
+[[lean_lib]]
+name = "Fix"
+
+[[lean_exe]]
+name = "buckets"
+root = "Main"
+
+[[lean_exe]]
+name = "check"
+root = "Check"

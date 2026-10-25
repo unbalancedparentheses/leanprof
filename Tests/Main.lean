@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Tests.Elab import Tests.ExplainFixes import Tests.Regress
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Tests.Elab import Tests.ExplainFixes import Tests.Regress
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -353,6 +353,38 @@ def tests : StateT Nat IO Unit := do
   -- END leanprof explain
   -- leanprof explain: the fixes it prints remove the copies (Tests/ExplainFixes.lean)
   Tests.ExplainFixes.run fun n ok d => check n ok d
+  -- leanprof fix: edits and their diff (Leanprof/Fix.lean)
+  let src := #["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", ""]
+  let edits : Array Fix.Edit := #[{ first := 2, count := 1, lines := #["B1", "B2"] }, { first := 9, count := 1, lines := #[] }]
+  check "fix: edits replace and delete lines" (Fix.applyEdits src edits == #["a", "B1", "B2", "c", "d", "e", "f", "g", "h", "j", ""])
+    s!"{Fix.applyEdits src edits}"
+  let diff := Fix.unifiedDiff "F.lean" src edits (ctx := 1)
+  check "fix: one hunk per group of nearby edits, with the new file's line numbers"
+    (diff == "--- a/F.lean\n+++ b/F.lean\n@@ -1,3 +1,4 @@\n a\n-b\n+B1\n+B2\n c\n@@ -8,3 +9,2 @@\n h\n-i\n j\n") diff
+  let dep := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", ".lake/packages/x/X.lean"),
+    ("lines", Lean.toJson #[3]), ("fix_code", Lean.toJson #["xs := xs.modify i (·.push v)"])]
+  check "fix: code in a dependency is not edited"
+    (match Fix.plansFor dep #[] with | .error e => e.contains "dependency" | .ok _ => false) ""
+  let stale := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", "X.lean"), ("where", "X.lean:1"),
+    ("lines", Lean.toJson #[2]), ("fix_code", Lean.toJson #["xs := xs.modify i (·.push v)"])]
+  check "fix: a source line that no longer matches the report is refused"
+    (match Fix.plansFor stale #["def f := 1", "  xs := xs.push 1"] with | .error e => e.contains "changed since" | .ok _ => false) ""
+  -- two rewrites of one site (lean-compiler-backend's CFG.build): both lines
+  -- first, then each alone
+  let twoSrc := #["def build := Id.run do", "    succ := succ.set! i (succ[i]!.push t)  -- out",
+    "    pred := pred.set! t (pred[t]!.push i)"]
+  let two := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", "CFG.lean"), ("where", "CFG.lean:1"),
+    ("lines", Lean.toJson #[2, 3]), ("fix_code", Lean.toJson #["succ := succ.modify i (·.push t)", "pred := pred.modify t (·.push i)"])]
+  match Fix.plansFor two twoSrc with
+  | .ok ps =>
+    check "fix: two rewrites of one site are applied together, then alone" (ps.size == 3 &&
+      Fix.applyEdits twoSrc ps[0]!.edits == #["def build := Id.run do", "    succ := succ.modify i (·.push t)  -- out",
+        "    pred := pred.modify t (·.push i)"] && ps[1]!.edits.size == 1 && ps[2]!.edits.size == 1)
+      s!"{ps.map (·.what)} {ps.map (Fix.applyEdits twoSrc ·.edits)}"
+  | .error e => check "fix: two rewrites of one site are applied together, then alone" false e
+  check "fix: branch names from the function and cause"
+    (Fix.branchName "Foo.groupBy (in Std.Legacy.Range.forIn'.loop)" "map-value-reinserted" ==
+      "leanprof-fix/groupBy-map-value-reinserted") (Fix.branchName "Foo.groupBy (in x)" "c")
   -- BEGIN leanprof judge (Leanprof/Judge.lean), on summaries written by hand
   let summary (copies allocs : Nat) (runs : List Nat) (ms : List Nat) : Judge.Summary :=
     let times := ms.map (· * 1000000)

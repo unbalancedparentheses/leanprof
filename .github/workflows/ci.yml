@@ -226,6 +226,8 @@ jobs:
         run: python3 scripts/regress-check.py
       - name: Autoresearch demo (measure and judge)
         run: sh research/demo/run.sh
+      - name: leanprof fix end to end (KEEP, DISCARD, dry run, dirty tree)
+        run: sh scripts/fix-check.sh
       - name: Interleaved measurement and paired verdicts
         run: python3 scripts/check-pair.py .lake/build/bin/leanprof
       - name: Inlay hints through the language server
