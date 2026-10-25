@@ -25,7 +25,8 @@ to each source position a tree of timed operations printed as indented lines,
   constants in full.
 
 The constants are then looked up in the environment of the profiled modules
-(their `.olean` files, through `LEAN_PATH`) for their own `file:line`.
+(their `.olean` files, through `LEAN_PATH`) for their own `file:line`; on another
+Lean than leanprof's, by the driver built for that Lean (`--locate`).
 
 `--project` profiles every built module of the current Lake package, several
 files at a time, and aggregates across files.
@@ -1127,6 +1128,37 @@ where
       | none => out := out.insert s { pos := s!"{mod}:{line}", module := modStr, unfoldable }
     return out
 
+/-- `locate`, done by the driver (`--locate`): for a project on another Lean, whose `.olean`
+files only that Lean can read. -/
+def locateWithDriver (le : LeanEnv) (modules : Array Name) (names : Array String) :
+    IO (Std.HashMap String Loc) := do
+  let dir : FilePath := ".lake" / "leanprof"
+  IO.FS.createDirAll dir
+  let req := dir / s!"locate-{← IO.Process.getPID}.json"
+  IO.FS.writeFile req (Json.mkObj [("modules", toJson (modules.map (·.toString))), ("names", toJson names)]).compress
+  let env : Array (String × Option String) := #[("LEAN_PATH", some le.path), ("LEAN_SYSROOT", some le.sysroot.toString)]
+  let out ← IO.Process.output { cmd := le.driver, args := #["--locate", req.toString], env }
+  try IO.FS.removeFile req catch _ => pure ()
+  let some (.obj kvs) := (Json.parse out.stdout).toOption
+    | IO.eprintln s!"leanprof: definitions not located ({le.driver} --locate: {String.ofList (out.stderr.toList.take 300)})"
+      return {}
+  let cwd ← IO.currentDir
+  let mut res : Std.HashMap String Loc := {}
+  let mut srcs : Std.HashMap String (Option FilePath) := {}
+  for (name, v) in kvs.toArray do
+    let some #[.str mod, line, .bool unfoldable] := v.getArr?.toOption | continue
+    let line := line.getNat?.toOption.getD 0
+    let src ← match srcs.get? mod with
+      | some x => pure x
+      | none => do
+        let x ← sourceOf le (parseName mod)
+        srcs := srcs.insert mod x
+        pure x
+    res := res.insert name <| match src with
+      | some p => { pos := s!"{showPath le cwd p}:{line}", path := p.toString, module := mod, unfoldable }
+      | none => { pos := s!"{mod}:{line}", module := mod, unfoldable }
+  return res
+
 /-! ## The project -/
 
 /-- Glob over module names: `*` matches any run of characters, `?` one. -/
@@ -1283,7 +1315,15 @@ def main (argv : List String) : IO UInt32 := do
     if let some h ← (try some <$> parseImports' (← IO.FS.readFile file) file catch _ => pure none) then
       imports := imports ++ h.imports.map (·.module)
   let names := acc.consts.toArray.map (·.1)
-  let locs ← if o.defs then locate le imports names else pure {}
+  -- leanprof reads only its own Lean's `.olean` files: on another Lean, the driver built
+  -- for that Lean looks the definitions up
+  let foreign := (← githashOf le.lean) != some Lean.githash
+  let locs ← if !o.defs || names.isEmpty then pure {}
+    else if !foreign then locate le imports names
+    else if le.driver.isEmpty then do
+      IO.eprintln "leanprof: definitions not located (another Lean than leanprof's, and no driver for it)"
+      pure {}
+    else locateWithDriver le imports names
   -- declarations of the profiled files, by line: for constants defined there (unbuilt
   -- files) and to name kernel and compiler lines
   let mut named : Std.HashMap String (Array (Nat × String)) := {}

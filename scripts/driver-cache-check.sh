@@ -1,7 +1,7 @@
 #!/bin/sh
 # `leanprof elab` on a project whose Lean is not leanprof's: the first run builds
 # leanprof-elab-driver for that Lean and keeps it in the cache, the next runs reuse
-# it, both with exact source ranges; a driver that cannot be built falls back to
+# it, both with exact source ranges and located definitions; a driver that cannot be built falls back to
 # `lean --json`, saying why. Used by CI; runs locally too:
 #   sh scripts/driver-cache-check.sh LEANPROF TOOLCHAIN
 # e.g. sh scripts/driver-cache-check.sh .lake/build/bin/leanprof leanprover/lean4:v4.34.1
@@ -41,6 +41,9 @@ grep -q "building leanprof-elab-driver for the project's Lean" first.err
 grep -q "leanprof: built in" first.err
 exact
 grep -q '"range":"Main.lean:27:65-27:71"' .lake/leanprof/elab.json
+# the definitions behind the work, located by the driver (leanprof cannot read this Lean's .olean files)
+grep -q '"where":"Init/Prelude.lean:[0-9]*"' .lake/leanprof/elab.json
+if grep -q "not located" first.err; then exit 1; fi
 driver="$(ls "$LEANPROF_CACHE"/drivers/*/leanprof-elab-driver)"
 test "$(echo "$driver" | wc -l)" -eq 1
 test "$("$driver" --githash)" = "$(lake env lean --githash)"

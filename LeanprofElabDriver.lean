@@ -304,12 +304,81 @@ def run (a : Args) : IO UInt32 := do
   let _ ← IO.wait (lastCmd first.get).elabSnap.resultSnap.get.cmdState.env.checked
   return if ← errors.get then 1 else 0
 
+/-! ## Where constants are declared
+
+`leanprof elab` looks the constants behind the work up in the environment of the
+profiled modules. It reads only `.olean` files of its own Lean; for a project on
+another Lean it asks this driver, built with the project's Lean:
+`--locate REQUEST.json`, where the request is `{"modules": [...], "names": [...]}`,
+prints `{"NAME": [module, line, unfoldable]}`. -/
+
+/-- `Foo.bar`, `«a b».c`, `_private.M.0.f` as a `Name`. -/
+def parseName (s : String) : Name := Id.run do
+  let mut parts : Array String := #[]
+  let mut cur := ""
+  let mut inQuote := false
+  for c in s.toList do
+    if c == '«' then inQuote := true
+    else if c == '»' then inQuote := false
+    else if c == '.' && !inQuote then
+      parts := parts.push cur
+      cur := ""
+    else cur := cur.push c
+  parts := parts.push cur
+  return parts.foldl (fun n p => match p.toNat? with
+    | some k => if p.all Char.isDigit then .num n k else .str n p
+    | none => .str n p) .anonymous
+
+def lookup (env : Environment) (names : Array String) (out : Std.HashMap String Json) : Std.HashMap String Json := Id.run do
+  let mut out := out
+  for s in names do
+    if out.contains s then continue
+    let n := parseName s
+    let ranges? := declRangeExt.find? (level := .server) env n <|> declRangeExt.find? env n <|>
+      -- auxiliary recursors and `match_` functions: the declaration they belong to
+      declRangeExt.find? (level := .server) env n.getPrefix
+    let some ranges := ranges? | continue
+    let some idx := env.getModuleIdxFor? n | continue
+    let some mod := env.header.moduleNames[idx.toNat]? | continue
+    let unfoldable := match env.find? n with
+      | some (.defnInfo _) | some (.thmInfo _) | some (.opaqueInfo _) => true
+      | _ => false
+    -- a copy: the module's name lives in its .olean data, unmapped after `withImportModules`
+    out := out.insert s (Json.arr #[Json.str (String.ofList mod.toString.toList), toJson ranges.range.pos.line, Json.bool unfoldable])
+  return out
+
+def locate (request : String) : IO UInt32 := do
+  initSearchPath (← findSysroot)
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile request))
+  let strs (k : String) : Array String :=
+    ((j.getObjVal? k >>= Json.getArr?).toOption.getD #[]).filterMap fun x => x.getStr?.toOption
+  let names := strs "names"
+  let mut built : Array Import := #[]
+  for m in (strs "modules").toList.eraseDups do
+    if let some f ← (try some <$> findOLean (parseName m) catch _ => pure none) then
+      if ← f.pathExists then built := built.push { module := parseName m }
+  let mut out : Std.HashMap String Json := {}
+  if !built.isEmpty then
+    let joint ← try some <$> importModules built {} (loadExts := false) catch _ => pure none
+    if let some env := joint then
+      out := lookup env names out
+    else
+      -- modules that cannot be imported together (two executables' `main`): one at a time
+      for m in built do
+        if names.all out.contains then break
+        try out ← unsafe withImportModules #[m] {} fun env => pure (lookup env names out)
+        catch _ => pure ()
+  IO.println (Json.mkObj out.toList).compress
+  return 0
+
 end Leanprof.ElabDriver
 
 def main (args : List String) : IO UInt32 := do
   if args == ["--githash"] then
     IO.println Lean.githash
     return 0
+  if let ["--locate", request] := args then
+    return ← Leanprof.ElabDriver.locate request
   match Leanprof.ElabDriver.parseArgs {} args with
   | .error e =>
     IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--threshold N] [--setup FILE] FILE.lean"

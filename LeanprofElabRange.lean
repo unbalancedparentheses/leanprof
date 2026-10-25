@@ -101,13 +101,19 @@ def cacheDir : IO FilePath := do
   let home := (← IO.getEnv "HOME").getD "."
   return (home : FilePath) / ".cache" / "leanprof"
 
-/-- The Lean commit a program prints with `--githash`, or none when it does not run. -/
+initialize githashMemo : IO.Ref (Array (String × Option String)) ← IO.mkRef #[]
+
+/-- The Lean commit a program prints with `--githash`, or none when it does not run
+(asked once per program and run). -/
 def githashOf (cmd : String) : IO (Option String) := do
-  try
-    let out ← IO.Process.output { cmd, args := #["--githash"] }
-    let h := out.stdout.trimAscii.toString
-    return if out.exitCode == 0 && !h.isEmpty then some h else none
-  catch _ => return none
+  if let some (_, h) := (← githashMemo.get).find? (·.1 == cmd) then return h
+  let h ← try
+      let out ← IO.Process.output { cmd, args := #["--githash"] }
+      let h := out.stdout.trimAscii.toString
+      pure (if out.exitCode == 0 && !h.isEmpty then some h else none)
+    catch _ => pure none
+  githashMemo.modify (·.push (cmd, h))
+  return h
 
 /-- Hex digits of a string's hash. -/
 def hexHash (s : String) : String := String.ofList (Nat.toDigits 16 (hash s).toNat)
