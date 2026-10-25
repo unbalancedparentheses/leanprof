@@ -34,6 +34,16 @@ million); no declaration differs by more than 290, and `leanprof compare`
 on the two reports finds no regressions among 3,415 declarations and 195
 modules.
 
+The figures below were measured with leanprof `a69f32a`; the heartbeats
+reproduce exactly with it (`scripts/reproduce.sh batteries`, see
+[reproduce.md](../reproduce.md)). Later versions elaborate through their
+own driver and report fewer heartbeats (1,424 million in all). Re-running,
+pairs of `--heartbeats` runs differed by 0.4 to 5 in a million, not always
+within 2. Unfold and instance counts come from the timed profile, which
+keeps only operations over its 1 ms threshold, so they vary with timing:
+`Std.Iterator.IsPlausibleStep` came out at 24,368 unfolds from 68
+declarations in every re-run, the instance below at 32 to 66 tries.
+
 ## Where compile time goes
 
 Heartbeats, by kind of operation (self): tactic steps 55%, the compiler

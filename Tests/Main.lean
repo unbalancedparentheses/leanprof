@@ -297,6 +297,15 @@ def tests : StateT Nat IO Unit := do
   check "explain: the IR shows acc stored before the push" (!found.isEmpty) s!"{funs.size} functions"
   let lines := found.flatMap (·.lines)
   check "explain: source lines of the store and the push" (lines.contains 17 && lines.contains 18) s!"{lines}"
+  -- `leanprof sample` writes report.json too, without copies: explain says so
+  -- instead of "the report has no copies"
+  let sampled : System.FilePath := ".lake/leanprof/test-sampled.json"
+  IO.FS.createDirAll ".lake/leanprof"
+  IO.FS.writeFile sampled "{\"version\":3,\"sampled\":true,\"scopes\":[],\"copies\":[]}"
+  let r ← (Explain.explainCmd ["--report", sampled.toString, "--out", ".lake/leanprof/test-explain.json"]
+    (fun _ _ => pure 0)).toBaseIO
+  check "explain: a sampled report is refused with a pointer to `leanprof run`"
+    (match r with | .error e => (toString e).contains "leanprof sample" | .ok _ => false) ""
   -- END leanprof explain
   -- leanprof explain: the fixes it prints remove the copies (Tests/ExplainFixes.lean)
   Tests.ExplainFixes.run fun n ok d => check n ok d
@@ -356,6 +365,9 @@ def tests : StateT Nat IO Unit := do
     ((judgePair (paired 110)).any fun v => !v.keep && !v.worse.isEmpty)
   check "paired: overload disables timing verdict"
     ((judgePair (paired 90 true)).any (!·.keep))
+  check "paired: --allow-overloaded judges an overloaded session, and says so"
+    (((Judge.judgePaired (paired 90 true) 1 true).toOption).any fun v =>
+      v.keep && v.better.any (fun b => (b.splitOn "--allow-overloaded").length > 1))
   check "paired: minimum change applies to the confidence interval"
     (((Judge.judgePaired (paired 99) 2).toOption).any (!·.keep))
   let corrupt (key : String) (value : Lean.Json) : Lean.Json := Id.run do

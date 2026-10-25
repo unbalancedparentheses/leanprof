@@ -209,6 +209,7 @@ jobs:
           cat worse.md
           grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ❌ fail |' worse.md
           grep -q '| calls | 10,948 | 10,948 | 0 | ✅ pass |' worse.md
+          grep -q 'copies: 1 changed, 1 regressed (a regression is any increase at a call site)' worse.md
           grep -q '`buildWithHistory (in Std.Legacy.Range.forIn.\{0,1\}.loop) \[Array\] in buildWithHistory`' worse.md
           lake exe leanprof report-md --fail-on none small.json large.json | grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ⚠️ worse (not enforced) |'
           if lake exe leanprof report-md --fail-on bogus small.json large.json; then echo "expected an error"; exit 1; fi
@@ -346,12 +347,19 @@ jobs:
           lake exe leanprof sample --top 5 copybug -- 15000 | tee sample.txt
           grep -q "copying non-exclusive values" sample.txt
           grep -q "buildWithHistory  (Examples/CopyBug.lean:17)" sample.txt
+          grep -q "of it under buildWithHistory" sample.txt
       - name: HTML report of the sampled run (macOS)
         if: runner.os == 'macOS'
         run: |
           lake exe leanprof html -o sample.html .lake/leanprof/report.json
           python3 scripts/check-html.py sample.html --expect '"flame"' --expect lean_copy_expand_array \
             --expect '"n":"buildWithHistory"' --expect 'def buildWithHistory'
+      - name: Sampling with --out, where leanprof has not run yet (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          rm -rf .lake/leanprof
+          lake exe leanprof sample --top 1 --out "$RUNNER_TEMP/s.json" copybug -- 100 > /dev/null
+          test -f .lake/leanprof/report.json
 
   # The runtime under sanitizers, and the stress test (Examples/Stress.lean,
   # scripts/stress.sh: many threads and tasks, deep recursion, millions of
@@ -665,6 +673,26 @@ jobs:
           # another Lean than leanprof's: the driver cannot load its modules, `lean` is used
           grep -q "is not the one leanprof was built with" elab.err
           grep -q '"exact_ranges":false' .lake/leanprof/elab.json
+
+  # The exact published numbers that are cheap to reproduce (docs/reproduce.md):
+  # copies, allocations, calls and counts of the README example, Tests/Smoke,
+  # LeanProfiler's copies per span, the LeanBench case study and lean-regex at
+  # its pinned commit, against the published values, from a clean checkout.
+  # Timings and the long claims (Batteries, lean-compiler-backend, the
+  # benchmark suite) are left to scripts/reproduce.sh on a real machine.
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Published exact claims
+        run: sh scripts/reproduce.sh exact
 
   # The VS Code extension (editors/vscode): its commands run in a real VS Code
   # against the leanprof command built here, then it is packaged as a .vsix

@@ -76,11 +76,12 @@ def commands : List (String × String × String) := [
     "Measure two prebuilt binaries in alternating AB/BA order (default 20 pairs, 3 warmups).\n" ++
     "No builds or probes are added. Save every timing, exit status and output hash in one session.\n" ++
     "Use `judge PAIR.json` for a paired 95% median interval; at least 6 pairs are required."),
-  ("judge", "[--min-change PCT] BASE.json NEW.json | PAIR.json",
+  ("judge", "[--min-change PCT] [--allow-overloaded] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, allocations, heartbeats or time got worse. Time counts only\n" ++
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
-    "machine was overloaded while measuring."),
+    "machine was overloaded while measuring (--allow-overloaded judges a paired session anyway, for a\n" ++
+    "machine that is always shared; the verdict says so)."),
   ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
@@ -910,6 +911,10 @@ def sample (argv : List String) : IO UInt32 := do
   -- callers of specializations: `g (in f)` is named after the first `g` that
   -- needed `f` specialized, but the compiler reuses it for other callers
   let mut specCallers : Std.HashMap String (Std.HashMap String Float) := {}
+  -- callers of hot code outside the project (Lean's library, the runtime, C
+  -- libraries): the nearest frame below it that is the project's own code
+  let mut leafCallers : Std.HashMap String (Std.HashMap String Float) := {}
+  let mut ownCode : Std.HashMap String Bool := {}  -- display name ↦ declared in the project
   for t in getArr profile "threads" do
     let samples ← IO.ofExcept (t.getObjVal? "samples")
     let stacks := getArr samples "stack"
@@ -994,6 +999,7 @@ def sample (argv : List String) : IO UInt32 := do
       let mut leaf := true
       let mut spec : Option String := none  -- the frame below, if a specialization
       let mut specSeen : Std.HashSet String := {}
+      let mut outsideLeaf : Option String := none  -- the leaf, while its project caller is sought
       while true do
         if s?.isNone then
           s? := stitch
@@ -1013,6 +1019,23 @@ def sample (argv : List String) : IO UInt32 := do
               specSeen := specSeen.insert sp
             spec := none
         if (n.splitOn " (in ").length > 1 then spec := some n
+        if leaf || outsideLeaf.isSome then
+          -- the project's own code: a Lean declaration placed at a relative path
+          let own ← match ownCode.get? n with
+            | some b => pure b
+            | none => do
+              let b ← if leanDecls.contains n then
+                  (do let wh ← Leanprof.whereIs n; pure (!wh.isEmpty && !wh.startsWith "/"))
+                else pure false
+              ownCode := ownCode.insert n b
+              pure b
+          if leaf then
+            unless own do outsideLeaf := some n
+          else if own then
+            if let some lf := outsideLeaf then
+              let m := leafCallers.getD lf {}
+              leafCallers := leafCallers.insert lf (m.insert n (m.getD n 0 + w))
+            outsideLeaf := none
         if leaf then
           selfT := selfT.insert n (selfT.getD n 0 + w)
           if let some c := categories.get? n then catT := catT.insert c (catT.getD c 0 + w)
@@ -1042,10 +1065,18 @@ def sample (argv : List String) : IO UInt32 := do
       let cwh ← Leanprof.whereIs c
       let all := inclT.getD n 0
       IO.println s!"{"".pushn ' ' 24}{fmt2 (if all > 0 then cw / all * 100 else 0)}% of it called from {c}{if cwh.isEmpty then "" else s!"  ({cwh})"}"
+  -- for code outside the project: which of the project's functions it runs under
+  let outsideNote (n : String) (self : Float) : IO Bool := do
+    let some m := leafCallers.get? n | return false
+    let rows := (m.toArray.filter fun (_, cw) => self > 0 && cw / self ≥ 0.05).qsort (fun a b => a.2 > b.2)
+    for (c, cw) in rows.toList.take 3 do
+      let cwh ← Leanprof.whereIs c
+      IO.println s!"{"".pushn ' ' 24}{fmt2 (cw / self * 100)}% of it under {c}{if cwh.isEmpty then "" else s!"  ({cwh})"}"
+    return !rows.isEmpty
   for (n, w) in bySelf.toList.take o.top do
     let wh ← Leanprof.whereIs n
     IO.println s!"  {(fmtCpu w).pushn ' ' (12 - (fmtCpu w).length)} {(pct w).pushn ' ' (8 - (pct w).length)} {n}{if wh.isEmpty then "" else s!"  ({wh})"}"
-    callerNote n
+    unless ← outsideNote n w do callerNote n
   IO.println s!"\n  top {o.top} Lean declarations by inclusive CPU time"
   let leanIncl := (inclT.toArray.filter fun (n, _) => leanDecls.contains n && !n.startsWith "initialize_").qsort (fun a b => a.2 > b.2)
   for (n, w) in leanIncl.toList.take o.top do
@@ -1065,6 +1096,8 @@ def sample (argv : List String) : IO UInt32 := do
       ("total_ns", toJson (w * 1000)), ("self_ns", toJson (selfT.getD n 0 * 1000)), ("calls", toJson (0 : Nat))]
   let report := Json.mkObj [("version", toJson (3 : Nat)), ("sampled", Json.bool true),
     ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[])]
+  -- (with --out elsewhere, nothing has created .lake/leanprof yet)
+  IO.FS.createDirAll ".lake/leanprof"
   IO.FS.writeFile ".lake/leanprof/report.json" report.compress
   IO.println s!"\nflamegraph with Lean names: samply load {out}"
   IO.println "in the editor: add `#leanprof` to a file to see these numbers next to its code"
@@ -1379,16 +1412,24 @@ def loadSummary (path : String) : IO Leanprof.Judge.Summary := do
 /-- KEEP or DISCARD a change, from the summaries before and after it (the
 rules are in `Leanprof.Judge`). Exits 0 for KEEP. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
-  let (minChange, argv) ← match argv with
-    | "--min-change" :: v :: rest => do
+  let mut minChange : Float := 1
+  let mut allowOverloaded := false
+  let mut argv := argv
+  repeat
+    match argv with
+    | "--min-change" :: v :: rest =>
       let some pct := parseDecimal? v | throw <| IO.userError "--min-change must be a percentage from 0 to 100"
       unless pct ≤ 100 do throw <| IO.userError "--min-change must be a percentage from 0 to 100"
-      pure (pct, rest)
-    | _ => pure ((1 : Float), argv)
+      minChange := pct
+      argv := rest
+    | "--allow-overloaded" :: rest =>
+      allowOverloaded := true
+      argv := rest
+    | _ => break
   let v ← match argv with
     | [pairPath] => do
       let j ← IO.ofExcept (Json.parse (← IO.FS.readFile pairPath))
-      IO.ofExcept (Leanprof.Judge.judgePaired j minChange)
+      IO.ofExcept (Leanprof.Judge.judgePaired j minChange allowOverloaded)
     | [basePath, newPath] => pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange)
     | _ => throw <| IO.userError (usageFor "judge")
   IO.print v.render
@@ -1543,7 +1584,7 @@ def reportMd (argv : List String) : IO UInt32 := do
         id := "allocs", label := "allocations", isExact := true,
         base := tb, new := tn, fmt := fmtCount, rows := d,
         bad := if tn > tb then d.filter (fun (_, x, y) => y > x) else #[],
-        rule := "the total grew" }
+        rule := "a larger total" }
     let d := mdDiffs b.calls n.calls
     metrics := metrics.push {
       id := "calls", label := "calls", isExact := true,
@@ -1592,7 +1633,11 @@ def reportMd (argv : List String) : IO UInt32 := do
     if m.rows.isEmpty then continue
     out := out.push ""
     let openAttr := if m.bad.isEmpty then "" else " open"
-    out := out.push s!"<details{openAttr}><summary>{m.label}: {m.rows.size} changed (regression: {m.rule})</summary>"
+    -- the rule is what would count, not a finding: say whether it happened
+    let verdict := if m.bad.isEmpty then "no regression" else s!"{m.bad.size} regressed"
+    out := out.push (if m.isExact then
+        s!"<details{openAttr}><summary>{m.label}: {m.rows.size} changed, {verdict} (a regression is {m.rule})</summary>"
+      else s!"<details{openAttr}><summary>{m.label}: {m.rows.size} changed ({m.rule})</summary>")
     out := out.push ""
     out := out.push s!"| {if m.id == "heartbeats" || m.id == "compile-time" then "declaration" else if m.id == "calls" then "scope" else "where"} | base | head | change |"
     out := out.push "|---|---:|---:|---:|"

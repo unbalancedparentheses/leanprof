@@ -243,7 +243,8 @@ def pairedInterval (changes : Array Float) : Option (Float × Float × Float) :=
 /-- Judge one plain-binary interleaved session. Validate its ordering and every
 sample's output/exit status before using paired times. Separate sessions cannot
 accidentally be presented as pairs of compatible standalone summaries. -/
-def judgePaired (j : Json) (minChange : Float := 1) : Except String Verdict := do
+def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := false) :
+    Except String Verdict := do
   unless str j "leanprof" == "measure-pair" do throw "not a `leanprof measure-pair` result"
   unless (j.getObjValAs? Nat "version").toOption == some 1 do throw "unsupported paired result version"
   let samples ← j.getObjValAs? (Array Json) "samples"
@@ -283,7 +284,12 @@ def judgePaired (j : Json) (minChange : Float := 1) : Except String Verdict := d
     changes := changes.push ((candidate.toFloat / base.toFloat - 1) * 100)
   let some (med, lo, hi) := pairedInterval changes | throw "not enough pairs for a 95% median interval"
   let description := s!"paired time: median change {fmt2 med}%, 95% median interval [{fmt2 lo}%, {fmt2 hi}%] ({runs} pairs)"
-  if overloaded then notes := notes.push (description ++ " (not judged: machine overloaded)")
+  -- Pairs cancel a drift common to both sides, but an overloaded machine adds
+  -- noise and stalls of its own: judged only when asked (a machine always shared)
+  let description := if overloaded && allowOverloaded then
+    description ++ " (machine overloaded while measuring; judged with --allow-overloaded)" else description
+  if overloaded && !allowOverloaded then
+    notes := notes.push (description ++ " (not judged: machine overloaded; --allow-overloaded judges it anyway)")
   else if hi < -minChange then better := better.push description
   else if lo > minChange then worse := worse.push description
   else notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
