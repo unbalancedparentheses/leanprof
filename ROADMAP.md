@@ -14,7 +14,8 @@ Neighbours, and how leanprof should compare with each:
 | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler), `trace.profiler` | elaboration time, source navigation | connect compile-time and runtime diagnosis; refresh comparisons against current native capture |
 
 Status (2026-10-25): M1–M9 are largely done. What remains is in the next
-sections: v0.1.0, two bigger bets, v0.2.0, and the work after it. Each item comes from
+sections: v0.1.0, two bigger bets, from measuring problems to solving them,
+v0.2.0, and the work after it. Each item comes from
 profiling real projects with leanprof (see [case studies](docs/case-studies/))
 or from using it in agent loops. Unchecked items are planned work, not claims
 about current capabilities.
@@ -99,6 +100,29 @@ users than the rest of v0.2.0, and take priority over its long tail.
   Speedups are easy to verify: the proofs still check and heartbeat counts
   are exact. Results stay local branches until the maintainer decides to
   propose them upstream.
+
+## From measuring problems to solving them
+
+Ranked; the first two are planned next to the gap-closing work, the rest
+after v0.2.0.
+
+- [ ] **`leanprof fix`.** Apply the fix `explain` prints, then prove it:
+  identical output, tests pass, `judge` says KEEP. Leave a commit with the
+  evidence. For people, not only agents.
+- [ ] **Regressions explained.** When the Action fails a pull request, say
+  which declaration got more expensive and which unfold, instance search or
+  `simp` lemma caused it, from `elab --heartbeats` on the changed modules
+  at base and head (not only "heartbeats +40%").
+- [ ] **Feedback on every save.** In the editor, re-profile what changed and
+  show the difference inline ("this edit added 2,000 copies", "+30%
+  heartbeats in this lemma"); with static copy detection (above), warn
+  before anything runs.
+- [ ] **Retained memory.** Which allocation site holds the memory at peak,
+  and what keeps it alive; for long-running programs and servers.
+- [ ] **Why a file is slow in the editor.** Profile the language server
+  re-elaborating a file and attribute the delay to declarations.
+- [ ] **A heartbeat budget.** `elab --max-heartbeats N` in CI flags any
+  declaration above N, so slow lemmas do not accumulate.
 
 ## v0.2.0: make any Lean project faster
 
