@@ -6,6 +6,20 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Time per verdict, measured
+
+- `measure --scope NAME` times one `profile!` scope (its total in each run's
+  report) instead of the whole process; the summary records `scope`, and
+  `judge` discards a comparison of summaries that timed different things.
+- `measure-pair` measured against LeanBench and `measure` on the LeanBench
+  case study's workload (`bench/leanbench/run.py pair`, shared Mac, load
+  2–18, under the shared benchmark lock): 0 false time verdicts in 20
+  unchanged sessions, a 2.4% slowdown caught 4/5 (5/5 in an earlier run
+  without the lock), 4.8% and 10.4% 5/5; 7.1 s per verdict at 20 pairs,
+  2.9 s at 6, against LeanBench's 0.74 s. `measure` + `judge` took 5.0 s and
+  the next plain build 0.18 s (the 10 s rebuild is gone), but gave 7 false
+  time verdicts in 20 on the same machine.
+
 ### Fresh installs, more platforms
 
 - Release archives for macOS x86-64 and Linux arm64, next to macOS arm64 and

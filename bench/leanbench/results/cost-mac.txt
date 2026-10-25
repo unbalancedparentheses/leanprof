@@ -1,0 +1,18 @@
+load: { 2.39 3.46 4.21 }
+setup LeanBench: lake build bench from scratch (fetch + LeanBench + Cli + workload): 19.23 s
+setup plain exe: lake build work after that: 0.39 s
+setup leanprof: first measure (builds runtime + shims): 3.57 s
+verdict 1: LeanBench 1.59 s, leanprof 4.97 s, lake rebuild after leanprof 0.18 s
+verdict 2: LeanBench 0.74 s, leanprof 5.00 s, lake rebuild after leanprof 0.18 s
+verdict 3: LeanBench 0.74 s, leanprof 4.96 s, lake rebuild after leanprof 0.18 s
+verdict 4: LeanBench 0.75 s, leanprof 4.97 s, lake rebuild after leanprof 0.18 s
+verdict 5: LeanBench 0.74 s, leanprof 5.00 s, lake rebuild after leanprof 0.18 s
+verdict 1: rebuild after an edit: work 0.50 s, bench 1.02 s; unchanged base 0.20 s; measure-pair 20 pairs 7.77 s, 10 pairs 4.01 s, 6 pairs 2.83 s,
+verdict 2: rebuild after an edit: work 0.28 s, bench 0.18 s; unchanged base 0.18 s; measure-pair 20 pairs 7.12 s, 10 pairs 4.08 s, 6 pairs 2.91 s,
+verdict 3: rebuild after an edit: work 0.29 s, bench 0.18 s; unchanged base 0.18 s; measure-pair 20 pairs 7.16 s, 10 pairs 4.02 s, 6 pairs 2.85 s,
+verdict 4: rebuild after an edit: work 0.28 s, bench 0.18 s; unchanged base 0.18 s; measure-pair 20 pairs 7.07 s, 10 pairs 4.05 s, 6 pairs 2.91 s,
+verdict 5: rebuild after an edit: work 0.29 s, bench 0.18 s; unchanged base 0.18 s; measure-pair 20 pairs 7.07 s, 10 pairs 4.07 s, 6 pairs 2.86 s,
+verdict 1: measure --scope + judge 9.27 s, lake build workscope after it 0.39 s
+verdict 2: measure --scope + judge 8.82 s, lake build workscope after it 0.38 s
+verdict 3: measure --scope + judge 9.03 s, lake build workscope after it 0.38 s
+load: { 2.79 3.36 4.05 }
