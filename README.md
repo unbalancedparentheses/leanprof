@@ -45,6 +45,10 @@ All profiled from outside, without changing the projects:
   **[Batteries](docs/case-studies/batteries.md)**: linear list searches are a
   quarter of concrete's self time; an iterator definition is unfolded 24,369
   times from ordinary RBTree proofs.
+- **[Dogfooding on both compilers](docs/case-studies/dogfood-lcb-concrete.md)**:
+  every command run again on lean-compiler-backend and concrete found two
+  more fixes in each (paired timing: −8.2% and −19.1% on their workloads,
+  same output on 540 and 6,817 cases) and seven leanprof bugs, now fixed.
 - **[LeanProfiler](bench/README.md)**: why its cost per span grows with the
   number of events (its event array is copied on every span).
 

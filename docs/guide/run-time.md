@@ -65,6 +65,18 @@ most of its time comes from another declaration, `sample` says so under it:
                         90.73% of it called from Concrete.ensurePtrOp  (Concrete/Backend/EmitSSA.lean:632)
 ```
 
+Hot code outside your project (Lean's library, the runtime, the C library)
+is listed with the functions of your project it ran under: for each sample,
+the nearest frame below it that is declared in your package. Up to three are
+shown, each with at least 5% of its time:
+
+```
+  9.96 ms      3.90%    List.reverseAux  (…/src/lean/Init/Data/List/Basic.lean:555)
+                        97.75% of it under LeanCompilerBackend.Assembly.emitData (in Array.forIn'Unsafe.loop)  (LeanCompilerBackend/Assembly.lean:57)
+```
+
+That line found a `lines := lines ++ [line]` loop in lean-compiler-backend.
+
 A program that reads its current directory can run elsewhere with
 `--cwd DIR` (also for `run` and `stat`); positions still come from the
 project.

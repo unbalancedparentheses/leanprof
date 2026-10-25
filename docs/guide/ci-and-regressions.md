@@ -220,7 +220,13 @@ distribution-free 95% confidence interval for its population median, using
 binomial order statistics. A timing improvement counts only when the entire
 interval is below `-min-change` (default 1%); a regression counts when the entire
 interval is above `+min-change`. Otherwise timing is inconclusive. Overload
-during any sampled boundary disables the timing verdict.
+during any sampled boundary disables the timing verdict, unless you pass
+`--allow-overloaded`: on a machine that is never below its CPU count (the
+shared 18-core Mac of the [dogfooding study](../case-studies/dogfood-lcb-concrete.md)
+sat at load 18–20 for hours), pairs still cancel the drift common to both
+sides, and the verdict then says it was judged on an overloaded machine.
+Run more pairs there; the interval is only as trustworthy as the pairs are
+independent.
 
 The interval assumes independent pairs. Alternation reduces gradual drift; it
 does not eliminate periodic interference, thermal effects or systematic bias.

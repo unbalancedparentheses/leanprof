@@ -475,9 +475,15 @@ def hotLines (j : Json) (kind : String) (limit : Nat) : Array String := Id.run d
     xs.map fun s => s!"{rowTime s "total_ns"} total, {rowTime s "self_ns"} self, {fmtCount (num s "calls")} calls, p99 {rowTime s "p99_ns"}: {str s "name"}{w s}"
   | "copies" =>
     let n (c : Json) := if live then num c "copies" else num c "shared" + num c "multi_threaded"
-    let xs := take (((arr j "copies").filter (n · > 0)).qsort fun a b =>
+    -- copies of empty or tiny values (`tiny`: a first push, `prefix ++ s`), as `run`
+    -- summarizes them: listed, they pushed the copies worth fixing out of the top rows
+    let copied := (arr j "copies").filter (n · > 0)
+    let tiny := copied.filter (bool · "tiny")
+    let xs := take (((copied.filter (!bool · "tiny"))).qsort fun a b =>
       if num a "copy_ns" != num b "copy_ns" then num a "copy_ns" > num b "copy_ns" else num a "bytes" > num b "bytes")
-    xs.map fun c => s!"{fmtCount (n c)} copies, {fmtBytes (num c "bytes")}, {rowTime c "copy_ns" (tick := true)}{runShare c} [{str c "kind"}] in scope {str c "scope"}: {str c "function"}{str c (if live then "name" else "")}{w c}"
+    xs.map (fun c => s!"{fmtCount (n c)} copies, {fmtBytes (num c "bytes")}, {rowTime c "copy_ns" (tick := true)}{runShare c} [{str c "kind"}] in scope {str c "scope"}: {str c "function"}{str c (if live then "name" else "")}{w c}") ++
+      (if tiny.isEmpty then #[] else
+        #[s!"(and {tiny.size} sites that copied only empty or tiny values, {fmtCount (tiny.foldl (· + n ·) 0)} copies, not listed)"])
   | "allocations" =>
     -- costliest first: estimated time is the count times one allocation's cost
     let xs := take ((arr j "allocations").qsort fun a b =>
@@ -653,7 +659,8 @@ def tools : Array Json := #[
     "time), or from one measure_pair session (output and a paired 95% median interval on time).")
     [("base", sProp "baseline measure summary"), ("new", sProp "new measure summary"),
      ("pair", sProp "measure_pair session, instead of base and new"),
-     ("min_change", sProp "smallest time change in percent that counts (default 1)")] [],
+     ("min_change", sProp "smallest time change in percent that counts (default 1)"),
+     ("allow_overloaded", bProp "judge a paired session's time even though the machine was overloaded")] [],
   tool "live" ("What a running program is doing now: its latest live snapshot (it must run with LEANPROF_LIVE), " ++
     "with rates over a short interval and the scopes each thread is inside.")
     [("pid", sProp "process id (snapshot in $TMPDIR/leanprof-PID.live.json, from LEANPROF_LIVE=1)"),
@@ -784,7 +791,8 @@ def callTool (name : String) (a : Json) : IO Json := do
       | none, some b, some n => pure #[b, n]
       | _, _, _ => throw <| IO.userError "give pair, or base and new"
     let minChange := (argStr a "min_change").map (#["--min-change", ·]) |>.getD #[]
-    let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ files) cwd
+    let allow := if argBool a "allow_overloaded" then #["--allow-overloaded"] else #[]
+    let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ allow ++ files) cwd
     return textResult s!"{out}{err}" (rc > 1)
   | "live" =>
     let path ← match argStr a "path", argStr a "pid" with
