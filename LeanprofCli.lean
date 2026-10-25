@@ -93,13 +93,16 @@ def commands : List (String × String × String) := [
     "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
     "#leanprof hovers."),
-  ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [REPORT.json...]",
+  ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [--ranges N] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
     "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++
     "summary, flame graph, sortable tables, source lines with hints, and a comparison when given\n" ++
     "two reports of a kind (base, then new; regressions as `compare` counts them). The flame graph\n" ++
     "of a sampled report reads samply's profile next to it (or --profile FILE); for a run report,\n" ++
-    "pass the timeline of `run --trace FILE` as --trace FILE."),
+    "pass the timeline of `run --trace FILE` as --trace FILE. A compile-time report (elab.json) opens\n" ++
+    "on a drill-down: project, folder, module, declaration, term or tactic, each with repeated work and\n" ++
+    "the definitions behind the work, compared level by level with a base; --ranges N keeps the N\n" ++
+    "costliest term and tactic ranges (default 2000)."),
   ("top", "[--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS...] | --attach FILE | --pid PID",
     "Run EXE with probes (as `run`) and show it live, refreshed like top: hottest scopes, copy sites,\n" ++
     "allocation sites, tasks and waits with rates per second, memory, CPU and what each thread is inside.\n" ++

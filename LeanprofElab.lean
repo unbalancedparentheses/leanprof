@@ -385,6 +385,8 @@ structure OpCost where
   total : Float := 0
   maxOne : Float := 0
   firstAt : String := ""
+  /-- Per file: how many times and what it cost there. -/
+  files : Std.HashMap String (Nat × Float) := {}
 
 structure ConstCost where
   kind : String := ""
@@ -655,8 +657,10 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
         let k := (n.cls, normalizeOp n.text)
         let o := a.ops.getD k {}
         let amt := n.amount * scale
+        let (fc, ft) := o.files.getD file (0, 0)
         let o' : OpCost := { count := o.count + 1, total := o.total + amt, maxOne := max o.maxOne amt,
-                             firstAt := if o.firstAt.isEmpty then key else o.firstAt }
+                             firstAt := if o.firstAt.isEmpty then key else o.firstAt,
+                             files := o.files.insert file (fc + 1, ft + amt) }
         a := { a with ops := a.ops.insert k o' }
         c := { c with top := c.top.push (amt, s!"[{n.cls}] {normalizeOp n.text}") }
   -- the constants behind the work
@@ -707,8 +711,9 @@ def Acc.merge (a b : Acc) : Acc := Id.run do
     r := { r with byClass := r.byClass.insert k (r.byClass.getD k 0 + x) }
   for (k, o) in b.ops do
     let p := r.ops.getD k {}
+    let files := o.files.fold (fun m f (c, t) => let (c', t') := m.getD f (0, 0); m.insert f (c + c', t + t')) p.files
     let o' : OpCost := { count := p.count + o.count, total := p.total + o.total, maxOne := max p.maxOne o.maxOne,
-                         firstAt := if p.firstAt.isEmpty then o.firstAt else p.firstAt }
+                         firstAt := if p.firstAt.isEmpty then o.firstAt else p.firstAt, files }
     r := { r with ops := r.ops.insert k o' }
   for (k, c) in b.consts do
     let p := r.consts.getD k {}
@@ -1328,7 +1333,26 @@ def main (argv : List String) : IO UInt32 := do
     ("unfolded", Json.arr (((lineConsts c).toList.take 5).toArray.map fun (s, kind, x, t) =>
       Json.mkObj (constJson s kind x t)))]
   let repeated := reps.map fun ((cls, op), oc) => Json.mkObj [("class", Json.str cls), ("op", Json.str op),
-    ("count", toJson oc.count), ("total", toJson oc.total), ("first_at", Json.str oc.firstAt)]
+    ("count", toJson oc.count), ("total", toJson oc.total), ("first_at", Json.str oc.firstAt),
+    ("files", toJson oc.files.size)]
+  -- per file, for `leanprof html`'s module view: the repeated operations done there (what
+  -- they cost in that file) and the definitions behind the file's work
+  let mut fileReps : Std.HashMap String (Array (Float × Json)) := {}
+  for ((cls, op), oc) in reps do
+    for (f, (n, t)) in oc.files do
+      fileReps := fileReps.insert f ((fileReps.getD f #[]).push (t, Json.mkObj [("class", Json.str cls), ("op", Json.str op),
+        ("count", toJson n), ("total", toJson t), ("all_count", toJson oc.count), ("all_total", toJson oc.total)]))
+  let mut fileConsts : Std.HashMap String (Std.HashMap String (String × Float × Nat × Nat)) := {}
+  for (k, c) in acc.lines do
+    let f := (splitPos k).1
+    let mut m := fileConsts.getD f {}
+    for (s, (kind, x, t)) in c.consts do
+      unless (acc.consts.get? s).all (keep s) do continue
+      let (_, x', t', n') := m.getD s (kind, 0, 0, 0)
+      m := m.insert s (kind, x + x', t + t', n' + 1)
+    fileConsts := fileConsts.insert f m
+  let topOf (xs : Array (Float × Json)) : Json :=
+    Json.arr (((xs.qsort (fun a b => a.1 > b.1)).toList.take 10).toArray.map (·.2))
   let constants := (consts.qsort fun a b => a.2.cost > b.2.cost || (a.2.cost == b.2.cost && a.1 < b.1)).map fun (s, c) =>
     let l := locOf s
     Json.mkObj (constJson s c.kind c.cost c.count ++
@@ -1339,7 +1363,10 @@ def main (argv : List String) : IO UInt32 := do
     ("module", Json.str c.module), ("key", Json.str s!"module {c.module}"),
     ("total_ns", toJson c.total), ("elab_ns", toJson c.elaboration), ("kernel_ns", toJson c.kernel),
     ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint), ("wall_ns", toJson c.wallNs),
-    ("errors", toJson c.errors), ("first_error", Json.str c.firstError)]
+    ("errors", toJson c.errors), ("first_error", Json.str c.firstError),
+    ("repeated", topOf (fileReps.getD f #[])),
+    ("unfolded", topOf (((fileConsts.getD f {}).toArray.filter (·.2.2.1 > 0)).map fun (s, (kind, x, t, n)) =>
+      (x, Json.mkObj (constJson s kind x t |>.map fun (k, v) => if k == "sites" then (k, toJson n) else (k, v)))))]
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
   let tEnd ← IO.monoNanosNow
   IO.FS.writeFile o.out

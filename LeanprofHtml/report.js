@@ -144,6 +144,7 @@ if (elab) {
 // ---------- source ----------
 function splitPos(p) { const i = p.lastIndexOf(":"); return [p.slice(0, i), +p.slice(i + 1)]; }
 function srcLines(file, lines, at) {
+  const isAt = typeof at === "function" ? at : (n) => n === at;
   const src = sources[file] || {};
   const box = h("div", { class: "src" });
   let prev = null;
@@ -151,7 +152,7 @@ function srcLines(file, lines, at) {
     if (prev != null && n > prev + 1) box.append(h("div", { class: "gap" }, "⋯"));
     prev = n;
     const hs = hints.get(file + ":" + n) || [];
-    box.append(h("div", { class: "l" + (n === at || (at == null && hs.length) ? " at" : "") },
+    box.append(h("div", { class: "l" + (isAt(n) || (at == null && hs.length) ? " at" : "") },
       h("span", { class: "ln" }, n), h("span", null, src[n] == null ? "" : src[n]),
       hs.map((x) => h("span", { class: "hint " + x.cls, title: x.tip }, x.label))));
   }
@@ -632,6 +633,352 @@ if (elab) {
     table(kinds, [col("operation kind", "class", (v) => h("span", { class: "mono" }, v)), ncol("cost", "total", f, { bar: true }), { t: "%", v: (r) => (kall ? num(r, "total") / kall * 100 : 0), f: fPct, num: true }], { what: "kinds" })));
 }
 
+// ---------- the project view: project → folder → module → declaration → term/tactic ----------
+// Built from one elab.json (and a base to compare with). State is in the address
+// (#project~f=FILE~d=POS~r=RANGE, or ~p=FOLDER), so the back button and links work.
+const PV = elab ? (function () {
+  const f = fAmt(elab), exact = hbUnit(elab) && (!elabB || hbUnit(elabB));
+  const PARTS = [["elaboration", "elab_ns"], ["kernel", "kernel_ns"], ["compiler", "compile_ns"], ["linters", "lint_ns"]];
+  const parseRange = (s) => {
+    const m = /^(.*):(\d+):(\d+)-(\d+):(\d+)$/.exec(s || "");
+    return m ? { file: m[1], l1: +m[2], c1: +m[3], l2: +m[4], c2: +m[5] } : null;
+  };
+  const fileOfPos = (p) => (isPos(p) ? splitPos(p)[0] : p || "?");
+  // a declaration's key across two reports (as `leanprof compare` matches them)
+  const declKey = (s) => s.key || s.name + " " + s.pos;
+  function index(rep) {
+    if (!rep) return null;
+    const d = rep.data, files = new Map(), decls = new Map(), ranges = new Map();
+    for (const x of arr(d, "files")) files.set(x.file, x);
+    for (const s of arr(d, "scopes")) {
+      const fl = fileOfPos(s.pos);
+      if (!decls.has(fl)) decls.set(fl, []);
+      decls.get(fl).push(s);
+      if (!files.has(fl)) files.set(fl, { file: fl, module: fl, total_ns: 0, elab_ns: 0, kernel_ns: 0, compile_ns: 0, lint_ns: 0, synthetic: true });
+    }
+    // A declaration's work can be traced on several lines (its kernel check, proofs
+    // elaborated apart): those lines share its key. One declaration per key and file.
+    const lines = new Map();
+    for (const [fl, ss] of decls) {
+      ss.sort((a, b) => splitPos(a.pos)[1] - splitPos(b.pos)[1]);
+      ss.forEach((s) => { s._line = splitPos(s.pos)[1]; });
+      lines.set(fl, ss);
+      if (files.get(fl).synthetic) {
+        const e = files.get(fl);
+        for (const s of ss) { e.total_ns += num(s, "total_ns"); for (const [, k] of PARTS) e[k] += num(s, k); }
+      }
+      const groups = new Map();
+      for (const s of ss) {
+        const k = declKey(s);
+        let g = groups.get(k);
+        if (!g) {
+          g = { key: k, name: s.name, pos: s.pos, _line: s._line, total_ns: 0, top: [], unfolded: [], _lines: [] };
+          for (const [, pk] of PARTS) g[pk] = 0;
+          groups.set(k, g);
+        }
+        g.total_ns += num(s, "total_ns");
+        for (const [, pk] of PARTS) g[pk] += num(s, pk);
+        g.top.push(...arr(s, "top"));
+        for (const u of arr(s, "unfolded")) {
+          const e = g.unfolded.find((x) => x.name === u.name && x.kind === u.kind);
+          if (e) { e.amount += num(u, "amount"); e.count += num(u, "count"); } else g.unfolded.push(Object.assign({}, u));
+        }
+        g._lines.push(s);
+        s._group = g;
+      }
+      const gs = [...groups.values()];
+      for (const g of gs) {
+        g.top.sort((a, b) => num(b, "amount") - num(a, "amount"));
+        g.top = g.top.slice(0, 5);
+        g.unfolded.sort((a, b) => num(b, "amount") - num(a, "amount"));
+        g._last = Math.max(...g._lines.map((x) => x._line));
+      }
+      gs.sort((a, b) => a._line - b._line);
+      gs.forEach((g, i) => { g._end = Math.max(g._last, i + 1 < gs.length ? gs[i + 1]._line - 1 : g._last + 40); });
+      decls.set(fl, gs);
+    }
+    // each range belongs to the declaration of the line it starts in (or the last line above it)
+    for (const r of arr(d, "ranges")) {
+      const p = parseRange(r.range);
+      if (!p) continue;
+      r._p = p;
+      const ss = lines.get(p.file) || [];
+      let lo = 0, hi = ss.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (ss[m]._line <= p.l1) lo = m + 1; else hi = m; }
+      r._decl = lo > 0 ? ss[lo - 1]._group.pos : null;
+      if (!ranges.has(p.file)) ranges.set(p.file, []);
+      ranges.get(p.file).push(r);
+    }
+    return { d, files, decls, ranges };
+  }
+  const cur = index(elab), base = index(elabB);
+  const fileList = [...cur.files.values()];
+  // the folders: every prefix of a file's path
+  const folderOf = (file) => { const i = file.lastIndexOf("/"); return i < 0 ? "" : file.slice(0, i); };
+  function under(idx, folder) { return [...idx.files.values()].filter((x) => folder === "" || x.file.startsWith(folder + "/")); }
+  function agg(xs) {
+    const o = { total_ns: 0, files: xs.length, decls: 0, errors: 0 };
+    for (const [, k] of PARTS) o[k] = 0;
+    for (const x of xs) { o.total_ns += num(x, "total_ns"); o.errors += num(x, "errors") > 0 ? 1 : 0; for (const [, k] of PARTS) o[k] += num(x, k); }
+    return o;
+  }
+  const rangeKey = (r) => (r._p ? r._p.file : "") + "|" + r.kind + "|" + r.syntax + "|" + r.text;
+  const opKey = (o) => o.class + "|" + o.op;
+  const constKey = (c) => c.kind + "|" + c.name;
+  // rows of the new report with the base's amount of the same key (`_b`), and the base's rows that are gone
+  function withBase(rows, baseRows, key, amt) {
+    if (!base || baseRows == null) return rows;
+    const bm = new Map();
+    for (const r of baseRows || []) bm.set(key(r), (bm.get(key(r)) || 0) + amt(r));
+    const seen = new Set(), out = rows.map((r) => { const k = key(r); seen.add(k); return Object.assign({}, r, { _b: bm.has(k) ? bm.get(k) : null }); });
+    for (const r of baseRows || []) { const k = key(r); if (!seen.has(k)) { seen.add(k); out.push(Object.assign({}, r, { _b: bm.get(k), _gone: true })); } }
+    return out;
+  }
+  const amtOf = (r, k) => (r._gone ? 0 : num(r, k));
+  function status(r, k) {
+    if (r._gone) return "gone";
+    if (r._b == null) return "new";
+    const x = r._b, y = num(r, k), dlt = y - x;
+    const worse = exact ? dlt > Math.max(x * 0.01, 1000) : x > 0 && dlt / x * 100 > D.threshold && dlt / 1e6 > D.min_ms;
+    const better = exact ? -dlt > Math.max(x * 0.01, 1000) : x > 0 && -dlt / x * 100 > D.threshold && -dlt / 1e6 > D.min_ms;
+    return worse ? "regression" : better ? "faster" : "same";
+  }
+  const stTag = (s) => h("span", { class: "tag " + (s === "regression" ? "bad" : s === "faster" ? "good" : "muted") }, s);
+  // the columns that compare with the base, after the amount column `k`
+  function baseCols(k, on) {
+    if (!base || on === false) return [];
+    const rank = { regression: 0, new: 1, gone: 2, faster: 3, same: 4 };
+    return [{ t: "base", v: (r) => (r._b == null ? -1 : r._b), f: (v, r) => (r._b == null ? "–" : f(r._b)), num: true },
+      { t: "change", v: (r) => amtOf(r, k) - (r._b || 0), f: (v, r) => (r._b == null ? "new" : change(r._b, amtOf(r, k), f)), num: true },
+      { t: "status", v: (r) => rank[status(r, k)], f: (v, r) => stTag(status(r, k)) }];
+  }
+  const rowCls = (k) => (base ? (r) => ({ regression: "bad", faster: "good" }[status(r, k)] || null) : null);
+  // ---------- navigation ----------
+  const root = h("div");
+  let state = {};
+  const enc = (s) => Object.entries(s).filter(([, v]) => v != null && v !== "").map(([k, v]) => "~" + k + "=" + encodeURIComponent(v)).join("");
+  function parseState(hash) {
+    const s = {};
+    for (const part of hash.split("~").slice(1)) { const i = part.indexOf("="); if (i > 0) s[part.slice(0, i)] = decodeURIComponent(part.slice(i + 1)); }
+    return s;
+  }
+  function go(s) {
+    state = s;
+    const hsh = "#project" + enc(s);
+    if (location.hash !== hsh) try { history.pushState(null, "", hsh); } catch (e) { /* history unavailable: the view still changes */ }
+    draw();
+    root.scrollIntoView({ block: "nearest" });
+  }
+  const link = (label, s, cls) => h("a", { href: "#project" + enc(s), class: cls || null, onclick: (e) => { e.preventDefault(); go(s); } }, label);
+  function crumbs() {
+    const out = [link(D.project, {})];
+    const file = state.f, folder = state.f ? folderOf(state.f) : state.p || "";
+    let acc = "";
+    for (const part of folder ? folder.split("/") : []) { acc = acc ? acc + "/" + part : part; out.push(" / ", link(part, { p: acc })); }
+    if (file) out.push(" / ", link(file.split("/").pop(), { f: file }));
+    if (state.d) { const s = findDecl(state.f, state.d); out.push(" / ", link(s ? shortName(s) : state.d, { f: file, d: state.d })); }
+    if (state.r) out.push(" / ", h("span", { class: "mono" }, rangeCols(state.r)));
+    return h("div", { class: "crumbs pv-crumbs" }, out);
+  }
+  const shortName = (s) => { const n = (s.name || s.pos || "").replace(/\s+/g, " "); return n.length > 60 ? n.slice(0, 60) + "…" : n; };
+  const findDecl = (file, pos) => (cur.decls.get(file) || []).find((s) => s.pos === pos);
+  // ---------- pieces shared by the levels ----------
+  function levelTiles(o, b) {
+    const t = [tile(exact ? "compile heartbeats" : "compile time", f(o.total_ns), exact ? "exact" : "noisy; --heartbeats is exact", b ? { base: b.total_ns, cur: o.total_ns } : null, f)];
+    for (const [n, k] of PARTS) t.push(tile(n, f(num(o, k)), o.total_ns > 0 ? fPct(num(o, k) / o.total_ns * 100) : "", b ? { base: num(b, k), cur: num(o, k) } : null, f));
+    return h("div", { class: "tiles pv-tiles" }, t);
+  }
+  function partsBar(o) {
+    const tot = num(o, "total_ns") || 1;
+    return h("div", { class: "pv-parts", title: PARTS.map(([n, k]) => n + " " + f(num(o, k))).join(", ") },
+      PARTS.map(([n, k], i) => h("i", { class: "p" + i, style: "width:" + (num(o, k) / tot * 100).toFixed(2) + "%" })));
+  }
+  const legend = h("div", { class: "legend" }, PARTS.map(([n], i) => h("span", null, h("i", { class: "pv-sw p" + i }), n)));
+  const pctOf = (all, k) => ({ t: "%", v: (r) => (all > 0 ? amtOf(r, k || "total_ns") / all * 100 : 0), f: fPct, num: true });
+  function declTable(rows, baseRows, all, what) {
+    rows = withBase(rows, baseRows, declKey, (s) => num(s, "total_ns"));
+    return table(rows, [
+      { t: "declaration", v: (r) => r.name || r.pos, f: (v, r) => (r._gone ? h("span", { class: "mono muted" }, shortName(r)) : link(h("span", { class: "mono" }, shortName(r)), { f: fileOfPos(r.pos), d: r.pos })), wrap: true },
+      pcol("where", "pos"), { t: "total", v: (r) => amtOf(r, "total_ns"), f: (v) => f(v), num: true, bar: true }, ...baseCols("total_ns", baseRows != null), pctOf(all),
+      { t: "parts", v: (r) => amtOf(r, "elab_ns"), f: (v, r) => partsBar(r) },
+      { t: "costliest operation", v: (r) => (arr(r, "top")[0] ? arr(r, "top")[0].op : ""), f: (v, r) => (v ? h("span", { class: "mono" }, f(num(arr(r, "top")[0], "amount")) + "  " + v) : ""), wrap: true }],
+    { what: what || "declarations", rowClass: rowCls("total_ns"), sort: 2 });
+  }
+  function repTable(rows, baseRows, inFile) {
+    rows = withBase(rows, baseRows, opKey, (o) => num(o, "total"));
+    return table(rows, [col("class", "class"), col("operation", "op", (v) => h("span", { class: "mono" }, v), { wrap: true }),
+      ncol(inFile ? "times here" : "times", "count"), { t: inFile ? "cost here" : "total", v: (r) => amtOf(r, "total"), f: (v) => f(v), num: true, bar: true }, ...baseCols("total", baseRows != null),
+      inFile ? { t: "in all files", v: (r) => num(r, "all_total"), f: (v, r) => (r.all_count ? fN(r.all_count) + "× · " + f(v) : ""), num: true }
+        : { t: "files", v: (r) => num(r, "files"), f: (v) => (v ? fN(v) : ""), num: true },
+      ...(inFile ? [] : [pcol("first at", "first_at")])], { what: "operations", rowClass: rowCls("total"), sort: 3 });
+  }
+  function constTable(rows, baseRows, sitesLabel) {
+    rows = withBase(rows, baseRows, constKey, (c) => num(c, "amount"));
+    return table(rows, [col("what", "kind", (v) => kindName(v)), col("definition", "name", (v) => h("span", { class: "mono" }, v), { wrap: true }), pcol("defined at", "where"),
+      { t: "cost of the work", v: (r) => amtOf(r, "amount"), f: (v) => f(v), num: true, bar: true }, ...baseCols("amount", baseRows != null), ncol("times", "count"), ncol(sitesLabel || "sites", "sites")],
+    { what: "definitions", rowClass: rowCls("amount"), sort: 3 });
+  }
+  const kindName = (k) => ({ unfold: "isDefEq unfolds", whnf: "whnf reduces", instance: "instance tried", simp: "simp lemma" }[k] || k);
+  const DEFS_NOTE = "The isDefEq, whnf, instance and simp work each definition caused, with where it is defined. Costs overlap: unfolding one definition can unfold another.";
+  // folder-level sums of the per-file lists (each file keeps its 10 costliest)
+  function sumLists(files, key, field, amt) {
+    const m = new Map();
+    for (const x of files) for (const r of arr(x, field)) {
+      const k = key(r), e = m.get(k);
+      if (e) { e[amt] += num(r, amt); e.count += num(r, "count"); e.sites = num(e, "sites") + num(r, "sites"); e._files += 1; }
+      else m.set(k, Object.assign({}, r, { _files: 1 }));
+    }
+    return [...m.values()].map((r) => (field === "repeated" ? Object.assign(r, { files: r._files, all_total: undefined }) : r));
+  }
+  // ---------- the levels ----------
+  function folderView(folder) {
+    const files = under(cur, folder), o = agg(files);
+    const bFiles = base ? under(base, folder) : null, b = bFiles ? agg(bFiles) : null;
+    // children: subfolders and files directly inside
+    const kids = new Map();
+    const childOf = (x) => { const rest = folder ? x.file.slice(folder.length + 1) : x.file; const i = rest.indexOf("/"); return i < 0 ? null : (folder ? folder + "/" : "") + rest.slice(0, i); };
+    for (const x of files) { const c = childOf(x); if (c) { if (!kids.has(c)) kids.set(c, []); kids.get(c).push(x); } }
+    const rows = [...kids].map(([p, xs]) => Object.assign(agg(xs), { name: p.split("/").pop() + "/", key: "dir " + p, _dir: p }))
+      .concat(files.filter((x) => !childOf(x)).map((x) => Object.assign({}, x, { name: x.file.split("/").pop(), key: "module " + (x.module || x.file), decls: (cur.decls.get(x.file) || []).length })));
+    let bRows = null;
+    if (base) {
+      const bk = new Map();
+      for (const x of bFiles) { const c = childOf(x); if (c) { if (!bk.has(c)) bk.set(c, []); bk.get(c).push(x); } }
+      bRows = [...bk].map(([p, xs]) => Object.assign(agg(xs), { name: p.split("/").pop() + "/", key: "dir " + p, _dir: p }))
+        .concat(bFiles.filter((x) => !childOf(x)).map((x) => Object.assign({}, x, { name: x.file.split("/").pop(), key: "module " + (x.module || x.file) })));
+    }
+    const all = o.total_ns;
+    const childTable = table(withBase(rows, bRows, (r) => r.key, (r) => num(r, "total_ns")), [
+      { t: rows.some((r) => r._dir) ? "folder or module" : "module", v: (r) => r.name, f: (v, r) => (r._gone ? h("span", { class: "mono muted" }, v) : link(h("span", { class: "mono" }, v), r._dir ? { p: r._dir } : { f: r.file })), wrap: true },
+      { t: "total", v: (r) => amtOf(r, "total_ns"), f: (v) => f(v), num: true, bar: true }, ...baseCols("total_ns"), pctOf(all),
+      { t: "parts", v: (r) => amtOf(r, "elab_ns"), f: (v, r) => partsBar(r) },
+      { t: "modules", v: (r) => (r._dir ? num(r, "files") : 1), f: fN, num: true },
+      { t: "wall", v: (r) => num(r, "wall_ns"), f: (v, r) => (r._dir || !v ? "" : fNs(v)), num: true, tip: "the module's own elaboration process, imports included (noisy)" },
+      { t: "errors", v: (r) => num(r, "errors"), f: (v, r) => (v ? h("span", { class: "tag bad", title: r.first_error || "" }, r._dir ? v + " files" : "error") : ""), num: true }],
+    { what: "folders and modules", rowClass: rowCls("total_ns"), sort: 1 });
+    const decls = files.flatMap((x) => cur.decls.get(x.file) || []);
+    const bDecls = base ? bFiles.flatMap((x) => base.decls.get(x.file) || []) : null;
+    // repeated work and definitions: the whole project's lists, or a folder's sum of its files'
+    const top = folder === "";
+    const reps = top ? arr(cur.d, "repeated") : sumLists(files, opKey, "repeated", "total");
+    // a base made before modules listed their own repeated work and definitions is not compared here
+    const bHas = (k) => base && bFiles.some((x) => Array.isArray(x[k]));
+    const bReps = base ? (top ? arr(base.d, "repeated") : bHas("repeated") ? sumLists(bFiles, opKey, "repeated", "total") : null) : null;
+    const consts = top ? arr(cur.d, "constants").filter((c) => num(c, "amount") > 0) : sumLists(files, constKey, "unfolded", "amount");
+    const bConsts = base ? (top ? arr(base.d, "constants").filter((c) => num(c, "amount") > 0) : bHas("unfolded") ? sumLists(bFiles, constKey, "unfolded", "amount") : null) : null;
+    const tree = { n: folder || D.project, v: all, k: "file", c: rows.filter((r) => num(r, "total_ns") > 0).map((r) => r._dir
+      ? { n: r.name, v: num(r, "total_ns"), k: "file", c: under(cur, r._dir).map((x) => ({ n: x.file.split("/").pop(), v: num(x, "total_ns"), k: "file" })).sort((a, b) => b.v - a.v) }
+      : { n: r.name, v: num(r, "total_ns"), k: "file", c: (cur.decls.get(r.file) || []).map((s) => ({ n: shortName(s), v: num(s, "total_ns"), p: s.pos, k: "elab" })).sort((a, b) => b.v - a.v) }).sort((a, b) => b.v - a.v) };
+    return [levelTiles(o, b),
+      panel(top ? "Folders and modules" : "In " + folder + "/", fN(files.length) + " modules, " + fN(decls.length) + " declarations with cost. Click a folder or module to go down a level." + (base ? " Compared with " + elabB.path + ": modules by name." : ""), legend, childTable),
+      tree.c.length ? panel("Where it went", "Each box's width is its share; click to zoom.", flame(tree, { fmt: f })) : null,
+      panel("Costliest declarations", null, declTable(decls, bDecls, all)),
+      reps.length || (bReps && bReps.length) ? panel("Repeated work", top ? "The same operation (up to metavariable numbers) done more than once, across the project: candidates for a cached instance, a lemma or `termination_by`/`decreasing_by`."
+        : "The repeated operations of the project done in these modules (each module lists its 10 costliest), with what they cost here.", repTable(reps, bReps, false)) : null,
+      consts.length || (bConsts && bConsts.length) ? panel("Definitions behind the work", DEFS_NOTE + (top ? "" : " Summed from each module's 10 costliest; sites are declarations."), constTable(consts, bConsts, top ? "sites" : "declarations")) : null];
+  }
+  function fileView(file) {
+    const x = cur.files.get(file);
+    if (!x) return [h("div", { class: "empty" }, file + " is not in this report.")];
+    const bx = base && [...base.files.values()].find((y) => (y.module || y.file) === (x.module || x.file));
+    const decls = cur.decls.get(file) || [], bDecls = bx ? base.decls.get(bx.file) || [] : base ? [] : null;
+    const ranges = cur.ranges.get(file) || [], bRanges = bx ? base.ranges.get(bx.file) || [] : base ? [] : null;
+    return [levelTiles(x, bx),
+      x.first_error ? panel("Error", "Lean stopped on this module; costs stop at the error.", h("pre", { class: "mono pv-err" }, x.first_error)) : null,
+      panel("Declarations in " + file, (x.module ? "Module " + x.module + ". " : "") + fN(decls.length) + " declarations and commands with cost" + (num(x, "wall_ns") ? "; the module's process took " + fNs(num(x, "wall_ns")) + " of wall time, imports included" : "") + ". Click one for its terms and tactics.",
+        legend, declTable(decls, bDecls, num(x, "total_ns"))),
+      arr(x, "repeated").length ? panel("Repeated work in this module", "Its 10 costliest repeated operations: how often and what they cost here, and in all files.", repTable(arr(x, "repeated"), bx ? bx.repeated || null : base ? [] : null, true)) : null,
+      arr(x, "unfolded").length ? panel("Definitions behind the work in this module", DEFS_NOTE + " Its 10 costliest; sites are declarations of this module.", constTable(arr(x, "unfolded"), bx ? bx.unfolded || null : base ? [] : null, "declarations")) : null,
+      ranges.length ? panel("Costliest terms and tactics", "By exact source range; inclusive (a tactic contains those under it).", rangeTable(ranges, bRanges, num(x, "total_ns"))) : null];
+  }
+  function rangeTable(rows, baseRows, all, tree) {
+    rows = withBase(rows, baseRows, rangeKey, (r) => num(r, "amount"));
+    return table(rows, [
+      { t: "source", v: (r) => r.text, f: (v, r) => h("span", { class: "mono", style: tree ? "padding-left:" + (num(r, "_depth") * 1.2) + "em" : null }, r._gone || !r._p ? h("span", { class: "muted" }, v) : link(v, { f: r._p.file, d: r._decl, r: r.range })), wrap: true },
+      col("kind", "kind"), col("syntax", "syntax", (v) => (v || "").split(".").pop()), col("range", "range", (v) => rangeCols(v || "")),
+      { t: "total", v: (r) => amtOf(r, "amount"), f: (v) => f(v), num: true, bar: true }, ...baseCols("amount"), pctOf(all, "amount"), ncol("times", "count")],
+    { what: "terms and tactics", rowClass: rowCls("amount"), sort: tree ? -1 : 4 });
+  }
+  // ranges in source order, each under the one that contains it
+  function nest(rs) {
+    const sorted = rs.slice().sort((a, b) => a._p.l1 - b._p.l1 || a._p.c1 - b._p.c1 || b._p.l2 - a._p.l2 || b._p.c2 - a._p.c2);
+    const stack = [], out = [];
+    const inside = (a, b) => (a._p.l1 > b._p.l1 || (a._p.l1 === b._p.l1 && a._p.c1 >= b._p.c1)) && (a._p.l2 < b._p.l2 || (a._p.l2 === b._p.l2 && a._p.c2 <= b._p.c2));
+    for (const r of sorted) {
+      while (stack.length && !inside(r, stack[stack.length - 1])) stack.pop();
+      out.push(Object.assign({}, r, { _depth: stack.length, _order: out.length }));
+      stack.push(r);
+    }
+    return out;
+  }
+  function sourceSpan(file, from, to, mark) {
+    const src = sources[file] || {};
+    const lines = Object.keys(src).map(Number).filter((n) => n >= from && n <= to).sort((a, b) => a - b).slice(0, 400);
+    if (!lines.length) return h("div", { class: "empty" }, "The source of these lines was not kept in this page (it keeps the lines around the positions the report names).");
+    return srcLines(file, lines, mark);
+  }
+  function declView(file, pos) {
+    const s = findDecl(file, pos);
+    if (!s) return [h("div", { class: "empty" }, pos + " is not in this report.")];
+    const bs = base && [...base.decls.values()].flat().find((y) => y.key === s.key);
+    const rs = (cur.ranges.get(file) || []).filter((r) => r._decl === pos);
+    const bRs = base ? (base.ranges.get(file) || []).filter((r) => bs && r._decl === bs.pos) : null;
+    const nested = nest(rs).map((r, i) => Object.assign(r, { _order: i }));
+    const end = Math.min(s._end, s._line + 400);
+    const ownLines = new Set(s._lines.map((x) => x._line));
+    const rows = withBase(nested, bRs, rangeKey, (r) => num(r, "amount"));
+    const ord = { t: "#", v: (r) => (r._gone ? 1e9 : r._order), f: () => "", num: true, tip: "source order" };
+    return [levelTiles(s, bs),
+      panel(s.name || s.pos, s.pos + (base ? (bs ? "; base at " + bs.pos : "; not in the base") : ""),
+        arr(s, "top").length ? h("div", null, h("h3", { class: "pv-h3" }, "Costliest operations inside it"), h("div", { class: "tw" }, h("table", null, h("tbody", null,
+          arr(s, "top").map((o) => h("tr", null, h("td", { class: "num" }, f(num(o, "amount"))), h("td", { class: "wrap mono" }, o.op))))))) : null,
+        arr(s, "unfolded").length ? h("div", null, h("h3", { class: "pv-h3" }, "Definitions behind its work"), constTable(arr(s, "unfolded"), bs ? bs.unfolded || null : base ? [] : null, "sites in all")) : null,
+        s._lines.length > 1 ? h("div", null, h("h3", { class: "pv-h3" }, "Lines its work was traced on"), h("p", { class: "note" }, "Lean traces some of a declaration's work at its own line (proofs elaborated apart, the kernel check); the declaration is their sum."),
+          table(s._lines, [pcol("line", "pos"), ncol("total", "total_ns", f, { bar: true }), ...PARTS.map(([n, k]) => ncol(n, k, f))], { what: "lines", sort: 1 })) : null),
+      rows.length ? panel("Terms and tactics", "Every term and tactic over the threshold that starts in this declaration, in source order, each under the one that contains it (inclusive). Click one for its source." +
+        (arr(elab.data, "ranges").length < num(elab, "ranges_total") ? " This page keeps the " + fN(arr(elab.data, "ranges").length) + " costliest of " + fN(num(elab, "ranges_total")) + " ranges." : ""),
+        table(rows, [ord, ...rangeTableCols(num(s, "total_ns"))], { what: "terms and tactics", rowClass: rowCls("amount"), sort: 0, asc: true }))
+        : panel("Terms and tactics", elab.data.exact_ranges ? "No term or tactic of this declaration is over the threshold (or kept in this page)." : "This report has no exact ranges: it was made with `lean` (another Lean, or --no-driver)."),
+      panel("Source", "The lines this page kept, with the editor's hints.", sourceSpan(file, s._line, end, (n) => ownLines.has(n)))];
+  }
+  function rangeTableCols(all) {
+    return [{ t: "source", v: (r) => r.text, f: (v, r) => h("span", { class: "mono", style: "padding-left:" + (num(r, "_depth") * 1.2) + "em" }, r._gone || !r._p ? h("span", { class: "muted" }, v) : link(v, { f: r._p.file, d: r._decl, r: r.range })), wrap: true },
+      col("kind", "kind"), col("syntax", "syntax", (v) => (v || "").split(".").pop()), col("range", "range", (v) => rangeCols(v || "")),
+      { t: "total", v: (r) => amtOf(r, "amount"), f: (v) => f(v), num: true, bar: true }, ...baseCols("amount"), pctOf(all, "amount"), ncol("times", "count")];
+  }
+  function rangeView(file, pos, range) {
+    const r = (cur.ranges.get(file) || []).find((x) => x.range === range);
+    if (!r) return [h("div", { class: "empty" }, range + " is not in this page.")];
+    const p = r._p, s = findDecl(file, pos);
+    const kids = nest((cur.ranges.get(file) || []).filter((x) => x !== r && x._decl === r._decl &&
+      (x._p.l1 > p.l1 || (x._p.l1 === p.l1 && x._p.c1 >= p.c1)) && (x._p.l2 < p.l2 || (x._p.l2 === p.l2 && x._p.c2 <= p.c2))));
+    const br = base && (base.ranges.get(file) || []).filter((x) => rangeKey(x) === rangeKey(r));
+    const bAmt = br && br.length ? sum(br, (x) => num(x, "amount")) : null;
+    const kv = (rows) => h("div", { class: "kv" }, rows.flatMap(([k, v]) => [h("div", null, k), h("div", null, v)]));
+    return [panel(r.kind + " " + (r.syntax || "").split(".").pop(), null, kv([["source", h("span", { class: "mono" }, r.text)], ["range", h("span", { class: "mono" }, r.range)],
+        ["cost", f(num(r, "amount")) + (num(r, "count") > 1 ? " over " + fN(num(r, "count")) + " elaborations" : "") + (s && num(s, "total_ns") ? " · " + fPct(num(r, "amount") / num(s, "total_ns") * 100) + " of its declaration" : "")],
+        ...(base ? [["base", bAmt == null ? "not in the base" : f(bAmt) + " → " + change(bAmt, num(r, "amount"), f)]] : []),
+        ["declaration", s ? link(shortName(s), { f: file, d: pos }) : "?"]])),
+      kids.length ? panel("Inside it", "The terms and tactics elaborated within this range.", table(kids.map((k, i) => Object.assign(k, { _order: i })),
+        [{ t: "#", v: (x) => x._order, f: () => "", num: true }, ...rangeTableCols(num(r, "amount"))], { what: "terms and tactics", sort: 0, asc: true })) : null,
+      panel("Source", null, sourceSpan(file, p.l1 - 3, p.l2 + 3, (n) => n >= p.l1 && n <= p.l2))];
+  }
+  function draw() {
+    const v = state.r ? rangeView(state.f, state.d, state.r) : state.d ? declView(state.f, state.d) : state.f ? fileView(state.f) : folderView(state.p || "");
+    root.replaceChildren(crumbs(), ...v.filter(Boolean));
+    flames.forEach((x) => x.isConnected && x._draw());
+  }
+  return {
+    root, files: fileList,
+    show(hash) { state = parseState(hash); draw(); },
+  };
+})() : null;
+if (PV) {
+  addTab("project", PV.files.length > 1 ? "Project" : "Drill down", PV.files.length > 1 ? PV.files.length : null, () => PV.root);
+  // a project report opens on the project view
+  if (PV.files.length > 1) tabs.unshift(tabs.pop());
+}
+
 if (meas) addTab("measure", "Measure", null, () => {
   const d = meas.data, t = d.time_ns || {};
   const kv = (rows) => h("div", { class: "kv" }, rows.flatMap(([k, v]) => [h("div", null, k), h("div", null, v)]));
@@ -733,14 +1080,17 @@ const verdict = pairs.length ? h("div", { class: "verdict " + (totalRegressions 
 const nav = h("nav", { class: "tabs" });
 const mainEl = h("main");
 const rendered = {};
-function selectTab(id) {
+// `#tab`, or `#project~...` for a place in the project view
+function selectTab(hash) {
+  const id = (hash || "").split("~")[0];
   const t = tabs.find((x) => x.id === id) || tabs[0];
   if (!t) return;
+  if (t.id === "project" && PV) PV.show(t.id === id ? hash : "");
   for (const b of nav.children) b.classList.toggle("on", b.dataset.id === t.id);
   if (!rendered[t.id]) rendered[t.id] = h("div", null, t.render());
   mainEl.replaceChildren(rendered[t.id]);
   flames.forEach((f) => f.isConnected && f._draw());
-  if (location.hash.slice(1) !== t.id) history.replaceState(null, "", "#" + t.id);
+  if (location.hash.slice(1).split("~")[0] !== t.id) history.replaceState(null, "", "#" + t.id);
 }
 for (const t of tabs) nav.append(h("button", { "data-id": t.id, onclick: () => selectTab(t.id) }, t.label, t.count != null ? h("span", { class: "n" }, fN(t.count)) : null));
 const foot = h("footer", null, "Made by leanprof html (github.com/unbalancedparentheses/leanprof) from " + D.reports.length + " report" + (D.reports.length === 1 ? "" : "s") +
@@ -749,5 +1099,6 @@ app.replaceChildren(head, verdict || "", tiles, nav, mainEl, foot, drawer, tip);
 if (!tabs.length) mainEl.append(h("div", { class: "empty" }, "These reports contain nothing to show."));
 setTheme(getTheme());
 selectTab(location.hash.slice(1) || (pairs.length && totalRegressions ? "diff" : tabs[0] && tabs[0].id));
+addEventListener("popstate", () => selectTab(location.hash.slice(1)));
 addEventListener("keydown", (e) => { if (e.key === "Escape") drawer.style.display = "none"; });
 })();

@@ -259,6 +259,12 @@ def sources (positions : Array String) (context : Nat) (limit : Nat := 1500) : I
     files := files.push (f, Json.mkObj out.toList)
   return Json.mkObj files.toList
 
+/-- `j` without the field `k` in any object inside it. -/
+partial def dropField (k : String) : Json → Json
+  | .obj kvs => Json.mkObj ((kvs.erase k).toList.map fun (k', v) => (k', dropField k v))
+  | .arr a => .arr (a.map (dropField k))
+  | x => x
+
 /-! ## The command -/
 
 structure Opts where
@@ -269,6 +275,8 @@ structure Opts where
   minMs : Float := 1
   context : Nat := 3
   title : Option String := none
+  /-- How many of an elab report's term and tactic ranges the page keeps (the costliest). -/
+  ranges : Nat := 2000
   files : Array String := #[]
 
 partial def parse (o : Opts) : List String → Except String Opts
@@ -280,6 +288,7 @@ partial def parse (o : Opts) : List String → Except String Opts
   | "--min-ms" :: v :: rest => parse { o with minMs := v.toNat!.toFloat } rest
   | "--context" :: v :: rest => parse { o with context := v.toNat! } rest
   | "--title" :: v :: rest => parse { o with title := some v } rest
+  | "--ranges" :: v :: rest => parse { o with ranges := v.toNat! } rest
   | a :: rest =>
     if a.startsWith "-" then .error s!"unknown option {a}" else parse { o with files := o.files.push a } rest
 
@@ -317,17 +326,24 @@ def htmlCmd (usage : String) (argv : List String) : IO UInt32 := do
       throw <| IO.userError s!"{same.size} {kindClass kind} reports given: at most two of a kind (base and new)"
     let role := if same.size == 1 then "only" else if same[0]!.1 == f then "base" else "new"
     positions := collectPos j positions
-    -- a base is only compared: without the operations behind each line, it is half the size
+    -- a base is only compared: without the operations behind each line, it is smaller
     let j := if role == "base" && kind == "elab" then
-        (j.setObjVal! "repeated" (Json.arr #[])).setObjVal! "scopes" (Json.arr <| (arr j "scopes").map fun
+        j.setObjVal! "scopes" (Json.arr <| (arr j "scopes").map fun
           | .obj kvs => .obj (kvs.erase "top")
           | x => x)
       else j
+    -- what the page does not show: where each definition's file is on this machine (for the
+    -- editor), and tactics by line when the report has them by exact range
+    let j := if kind == "elab" then
+        let j := dropField "path" j
+        if flag j "exact_ranges" then j.setObjVal! "tactics" (Json.arr #[]) else j
+      else j
     -- the costliest source ranges (an elab report lists up to 20,000)
-    let j := if kind == "elab" && (arr j "ranges").size > 2000 then
-        j.setObjVal! "ranges" (Json.arr ((arr j "ranges").extract 0 2000)) else j
+    let rangesTotal := (arr j "ranges").size
+    let j := if kind == "elab" && rangesTotal > o.ranges then
+        j.setObjVal! "ranges" (Json.arr ((arr j "ranges").extract 0 o.ranges)) else j
     let mut entry : List (String × Json) := [("path", Json.str f), ("kind", Json.str kind),
-      ("role", Json.str role), ("data", j)]
+      ("role", Json.str role), ("data", j)] ++ (if kind == "elab" then [("ranges_total", toJson rangesTotal)] else [])
     -- a call tree for the flame graph, for the report shown (not a base)
     if role != "base" then
       let pos : Std.HashMap String String := (arr j "scopes").foldl (init := {}) fun m s =>

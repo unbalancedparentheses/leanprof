@@ -323,7 +323,10 @@ jobs:
           print(sorted(mods), sorted(gm))
           ok = (p['project'] and {'Leanprof.Core', 'Leanprof.Editor'} <= mods
                 and gm and all(m.startswith('Leanprof.') for m in gm)
-                and any(c['where'].startswith('Init/') for c in p['constants']))
+                and any(c['where'].startswith('Init/') for c in p['constants'])
+                # per module: its repeated work and the definitions behind its work
+                and all(isinstance(f.get('repeated'), list) and isinstance(f.get('unfolded'), list) for f in p['files'])
+                and any(f['unfolded'] for f in p['files']) and all('files' in r for r in p['repeated']))
           sys.exit(0 if ok else 1)
           PY
           # heartbeats repeat: a second run is no regression, per declaration and per module
@@ -340,6 +343,14 @@ jobs:
           json.dump(d, open('proj3.json', 'w'))
           PY
           if lake exe leanprof compare proj1.json proj3.json; then echo "expected a regression"; exit 1; fi
+          # the project view: project, module, declaration, term or tactic; and compared with a base
+          lake exe leanprof html -o proj.html proj1.json
+          lake exe leanprof html -o proj-cmp.html proj1.json proj3.json
+          python3 scripts/check-html.py proj.html --max-kib 4000 --expect '"ranges_total"'
+          python3 scripts/check-html.py proj-cmp.html --max-kib 6000 --expect '"role":"base"'
+          npm install --silent --prefix "$RUNNER_TEMP/jsdom" jsdom@24.1.3
+          NODE_PATH="$RUNNER_TEMP/jsdom/node_modules" node scripts/check-html-view.js proj.html
+          NODE_PATH="$RUNNER_TEMP/jsdom/node_modules" node scripts/check-html-view.js proj-cmp.html --compare --module Leanprof/Editor.lean
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |

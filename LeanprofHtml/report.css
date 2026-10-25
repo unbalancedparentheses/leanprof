@@ -94,6 +94,17 @@ a.pos:hover { text-decoration: underline; }
 .split { display: grid; grid-template-columns: 1fr; gap: 14px; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; font-variant-numeric: tabular-nums; }
 .kv div:nth-child(odd) { color: var(--muted); }
+.pv-crumbs { font-size: 14px; margin: 0 0 4px; }
+.pv-crumbs a { text-decoration: none; } .pv-crumbs a:hover { text-decoration: underline; }
+.pv-tiles { padding: 8px 0 12px; }
+.pv-parts { display: flex; width: 120px; height: 8px; border-radius: 2px; overflow: hidden; background: var(--row); margin-top: 5px; }
+.pv-parts i, .pv-sw { display: block; height: 100%; }
+.pv-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.p0 { background: hsl(215, 55%, 58%); } .p1 { background: hsl(160, 45%, 48%); } .p2 { background: hsl(35, 75%, 55%); } .p3 { background: hsl(290, 35%, 60%); }
+.pv-h3 { font-size: 13px; margin: 12px 0 6px; font-weight: 600; }
+.pv-err { white-space: pre-wrap; background: var(--bad-bg); color: var(--bad); padding: 8px; border-radius: 6px; margin: 0; }
+.muted { color: var(--muted); }
+main a[href^="#project"] { text-decoration: none; } main a[href^="#project"]:hover { text-decoration: underline; }
 footer { color: var(--faint); font-size: 12px; padding: 0 24px 30px; }
 @media (max-width: 640px) {
   header.top, .tiles, main, footer { padding-left: 16px; padding-right: 16px; }
