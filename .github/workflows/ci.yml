@@ -537,10 +537,15 @@ jobs:
         run: |
           lake build odd
           $LP/demangle-check .lake/build/bin/odd
-          $LP/leanprof run --auto --json odd.json odd -- 10
+          # --time-tiny: «top level» and «ελ» are `n + 22`, too small to time, so
+          # plain --auto leaves them out of the rows (checked after)
+          $LP/leanprof run --auto --time-tiny --json odd.json odd -- 10
           python3 $CHECK odd.json --min-pos 5 --expect "«top level»=OddNames/Basic.lean" \
             --expect "«ελ»=OddNames/Basic.lean" --expect Odd.callAll=OddNames/Basic.lean \
             --expect Odd.secretSum=OddNames/Basic.lean
+          $LP/leanprof run --auto --json odd-untimed.json odd -- 10
+          python3 $CHECK odd-untimed.json --min-pos 5 --expect-untimed "«top level»" \
+            --expect-untimed "«ελ»" --expect Odd.callAll=OddNames/Basic.lean
       - name: Clone and build leanprover-community/repl
         run: |
           git clone --depth 1 --branch v4.35.0 https://github.com/leanprover-community/repl.git "$RUNNER_TEMP/repl"

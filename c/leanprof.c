@@ -16,8 +16,6 @@
 #include <time.h>
 #include <unistd.h>
 #ifdef __APPLE__
-#include <mach-o/dyld.h>
-#include <mach-o/getsect.h>
 #include <mach/mach_time.h>
 #endif
 
@@ -885,11 +883,11 @@ LP_HOT void lpf_enter(const void *key, uint8_t kind, uint8_t path) {
      * declaration goes the way its first function's call went. */
     if (LEAN_UNLIKELY(s != NULL && s->light) &&
         (f->fwd ? t->stack[d - 1].light : t->lcount-- > 1 || lpf_light_reload(t))) {
-        f->light = 1;
+        LP_ST(f->light, 1); /* read by the live thread */
         f->traced = 0;
         return;
     }
-    f->light = 0;
+    LP_ST(f->light, 0);
     f->child = 0;
     uint64_t now = lpf_now();
     LP_ST(f->start, now);
@@ -1156,7 +1154,7 @@ static void lpf_calibrate(void) {
         }
         if (best_inner[p] > best_pair[p]) best_inner[p] = best_pair[p];
         best_light[p] = UINT64_MAX;
-        for (int b = 0; b < BATCHES; b++) {
+        for (int b = 0; b < BATCHES / 4; b++) { /* cheap pairs: fewer batches keep startup short */
             uint64_t t0 = lpf_now();
             lpf_cal_batch(p, BATCH, &lpf_calibration_light_key[p]);
             uint64_t pair = ((lpf_now() - t0) << 10) / BATCH;
@@ -2741,39 +2739,37 @@ static int lpf_by_allocs(const void *a, const void *b) {
     return x->bytes < y->bytes ? 1 : x->bytes > y->bytes ? -1 : 0;
 }
 
-/* Functions `--auto` left untimed as too small to time (scripts/leanprof-tiny.awk
- * puts their addresses in section lpf_untimed): names, sorted, once. */
-#ifdef __APPLE__
-static void *const *lpf_untimed_fns(size_t *n) {
-    unsigned long size = 0;
-    const struct mach_header *h = _dyld_get_image_header(0);
-    uint8_t *p = h != NULL ? getsectiondata((const struct mach_header_64 *)h, "__DATA", "__lpf_untimed", &size) : NULL;
-    *n = p != NULL ? size / sizeof(void *) : 0;
-    return (void *const *)p;
+/* Functions `--auto` left untimed as too small to time: each C file that
+ * has some registers their addresses from a constructor
+ * (scripts/leanprof-tiny.awk), before main and before any other thread. */
+#define LP_UNTIMED_FILES 4096
+static struct {
+    void *const *fns;
+    size_t n;
+} lpf_untimed_files[LP_UNTIMED_FILES];
+static size_t lpf_nuntimed_files, lpf_nuntimed_fns;
+
+LEAN_EXPORT void leanprof_untimed_register(void *const *fns, size_t n) {
+    if (lpf_nuntimed_files == LP_UNTIMED_FILES) return;
+    lpf_untimed_files[lpf_nuntimed_files].fns = fns;
+    lpf_untimed_files[lpf_nuntimed_files++].n = n;
+    lpf_nuntimed_fns += n;
 }
-#else
-extern void *const __start_lpf_untimed[] __attribute__((weak));
-extern void *const __stop_lpf_untimed[] __attribute__((weak));
-static void *const *lpf_untimed_fns(size_t *n) {
-    *n = __start_lpf_untimed != NULL && __stop_lpf_untimed > __start_lpf_untimed
-             ? (size_t)(__stop_lpf_untimed - __start_lpf_untimed) : 0;
-    return __start_lpf_untimed;
-}
-#endif
+
+/* Their names, sorted, once. */
 static char **lpf_untimed;
 static size_t lpf_nuntimed;
 static void lpf_untimed_load(void) {
     static int done;
     if (done) return;
     done = 1;
-    size_t n;
-    void *const *fns = lpf_untimed_fns(&n);
-    if (n == 0 || (lpf_untimed = calloc(n, sizeof(char *))) == NULL) return;
-    for (size_t i = 0; i < n; i++) {
-        char name[256];
-        lpf_symbol_name(fns[i], name, sizeof name);
-        if (name[0] && (lpf_untimed[lpf_nuntimed] = strdup(name)) != NULL) lpf_nuntimed++;
-    }
+    if (lpf_nuntimed_fns == 0 || (lpf_untimed = calloc(lpf_nuntimed_fns, sizeof(char *))) == NULL) return;
+    for (size_t k = 0; k < lpf_nuntimed_files; k++)
+        for (size_t i = 0; i < lpf_untimed_files[k].n; i++) {
+            char name[256];
+            lpf_symbol_name(lpf_untimed_files[k].fns[i], name, sizeof name);
+            if (name[0] && (lpf_untimed[lpf_nuntimed] = strdup(name)) != NULL) lpf_nuntimed++;
+        }
     qsort(lpf_untimed, lpf_nuntimed, sizeof(char *), lpf_cmp_str);
     size_t m = 0; /* `f` and `f___boxed` are one name */
     for (size_t i = 0; i < lpf_nuntimed; i++) {

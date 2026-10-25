@@ -7,7 +7,10 @@
 # lean.h below and functions of the same file that are themselves tiny, and
 # that frees nothing but boxed scalars (a `lean_dec` of anything else can
 # free a whole structure). It gets `no_instrument_function`, and its address
-# goes in a table (section lpf_untimed) that the report lists by name.
+# goes in a table that a constructor hands to leanprof's runtime
+# (leanprof_untimed_register), which the report lists by name. (A linker
+# section read back with __start_/__stop_ symbols was dropped by Linux
+# linkers that garbage-collect sections: the list came out empty there.)
 #
 # usage: awk -f leanprof-tiny.awk file.c > out.c
 BEGIN {
@@ -96,13 +99,12 @@ END {
     m = 0
     for (k in tiny) m++
     if (m > 0) {
-        print "#ifdef __APPLE__"
-        print "#define LPF_UNTIMED_SECTION \"__DATA,__lpf_untimed\""
-        print "#else"
-        print "#define LPF_UNTIMED_SECTION \"lpf_untimed\""
-        print "#endif"
-        s = "static void *const lpf_untimed_fns[] __attribute__((used, section(LPF_UNTIMED_SECTION), aligned(sizeof(void *)))) = {"
+        s = "static void *const lpf_untimed_fns[] = {"
         for (k in tiny) s = s "(void *)" k ", "
         print s "};"
+        print "void leanprof_untimed_register(void *const *fns, size_t n);"
+        print "__attribute__((constructor, no_instrument_function)) static void lpf_untimed_init(void) {"
+        print "    leanprof_untimed_register(lpf_untimed_fns, " m ");"
+        print "}"
     }
 }
