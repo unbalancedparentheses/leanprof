@@ -81,14 +81,16 @@ def commands : List (String × String × String) := [
     "judge compares only summaries measured the same way.\n" ++
     "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
     "For `judge` and autoresearch loops."),
-  ("measure-pair", "--base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
+  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
     "Measure two prebuilt binaries in alternating AB/BA order (1 warmup pair), stopping as soon as the\n" ++
     "time verdict is settled: slower or faster by more than PCT% (default 1), or within ±PCT%; at most N\n" ++
     "pairs (default 30), looking after 6, 8, 10, ... pairs (a group-sequential sign test: each of these\n" ++
     "claims is wrong at most 2.5% of the time). --fixed measures exactly N pairs instead.\n" ++
     "--scope NAME times only the region the program wraps in `Leanprof.bench \"NAME\"` (or reports as\n" ++
     "`NAME<TAB>NANOSECONDS` lines appended to $LEANPROF_BENCH_OUT), not the whole process.\n" ++
-    "No builds or probes are added. Saves every timing, exit status and output hash in one session,\n" ++
+    "--base-rev REV --exe NAME builds NAME at git revision REV once, kept in .lake/leanprof/base by commit\n" ++
+    "and build settings, and builds the candidate with `lake build NAME` in --candidate-cwd (default .).\n" ++
+    "No probes are added. Saves every timing, exit status and output hash in one session,\n" ++
     "and prints `judge PAIR.json`'s verdict."),
   ("judge", "[--min-change PCT] [--allow-overloaded] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
@@ -1567,6 +1569,9 @@ structure PairOpts where
   warmup : Nat := 1
   /-- time only what `Leanprof.bench NAME` reports, not the whole process -/
   scope : Option String := none
+  /-- build the base at this git revision (cached) and the candidate in its directory -/
+  baseRev : Option String := none
+  exe : Option String := none
   checkOutput : Option String := none
   out : String := ".lake/leanprof/paired.json"
   args : Array String := #[]
@@ -1583,6 +1588,10 @@ partial def parsePair (o : PairOpts) : List String → Except String PairOpts
     if x.isEmpty || x.any (fun c => c == '\t' || c == '\n') then .error "--scope needs a name without tabs or newlines"
     else parsePair {o with scope := some x} rest
   | "--fixed" :: rest => parsePair {o with fixed := true} rest
+  | "--base-rev" :: x :: rest => parsePair {o with baseRev := some x} rest
+  | "--exe" :: x :: rest =>
+    if x.isEmpty || x.any (· == '/') then .error "--exe needs the name of a Lake executable"
+    else parsePair {o with exe := some x} rest
   | "--min-change" :: x :: rest => do
     let some pct := parseDecimal? x | throw "--min-change must be a percentage from 0 to 100"
     unless pct ≤ 100 do throw "--min-change must be a percentage from 0 to 100"
@@ -1610,8 +1619,91 @@ def benchTotal (file : FilePath) (scope : String) : IO (Option Nat) := do
     | _ => pure ()
   return total
 
+/-- Settings besides the commit that change what `lake build` makes. -/
+def buildSettingVars : Array String :=
+  #["ELAN_TOOLCHAIN", "LEAN_CC", "LEANC_OPTS", "LEAN_SYSROOT", "LEAN_AR", "LEANPROF_SANITIZE",
+    "LEANPROF_ALLOCS", "LEANPROF_COUNTERS", "LEANPROF_FREES", "LEANPROF_AUTO", "LEANPROF_RUNTIME"]
+
+/-- `cmd args` in `cwd`; its stdout, trimmed, or an error with its stderr. -/
+def runOut (cmd : String) (args : Array String) (cwd : FilePath) : IO String := do
+  let out ← IO.Process.output { cmd, args, cwd := some cwd, stdin := .null }
+  unless out.exitCode == 0 do
+    throw <| IO.userError s!"{cmd} {" ".intercalate args.toList} failed in {cwd}:\n{out.stderr}{out.stdout}"
+  return out.stdout.trimAscii.toString
+
+/-- `lake build EXE` in `dir` and the seconds it took. -/
+def lakeBuildExe (dir : FilePath) (exe : String) : IO (FilePath × Float) := do
+  let t0 ← IO.monoNanosNow
+  discard <| runOut "lake" #["build", exe] dir
+  let secs := ((← IO.monoNanosNow) - t0).toFloat / 1e9
+  let bin := dir / ".lake" / "build" / "bin" / exe
+  unless ← bin.pathExists do throw <| IO.userError s!"lake build {exe} in {dir} made no {bin}"
+  return (bin, secs)
+
+/-- The base for `measure-pair --base-rev REV --exe NAME`: NAME built at commit
+REV, in `.lake/leanprof/base/` of the project in `projDir`, and kept there by
+commit and build settings (`buildSettingVars`, and the executable), so later
+verdicts against the same base do not build it again. The tree is `git
+archive` of the commit (no worktree is registered); the project's
+`.lake/packages` are copied in when its manifest is the same at REV. Returns the
+binary, its working directory, and what was done. -/
+def cachedBase (projDir : FilePath) (rev exe : String) : IO (FilePath × FilePath × Json) := do
+  let top ← IO.FS.realPath (← runOut "git" #["rev-parse", "--show-toplevel"] projDir)
+  let proj ← IO.FS.realPath projDir
+  let rel := (proj.toString.drop top.toString.length).toString.dropWhile (· == '/') |>.toString
+  let commit ← runOut "git" #["rev-parse", "--verify", "--quiet", rev ++ "^{commit}"] projDir
+  let mut settings := s!"exe={exe}"
+  for v in buildSettingVars do
+    if let some x ← IO.getEnv v then settings := settings ++ s!"\n{v}={x}"
+  let key := (fnv1a (commit ++ "\n" ++ settings).toUTF8).drop 8 |>.take 12 |>.toString
+  let root := proj / ".lake" / "leanprof" / "base" / s!"{commit.take 12}-{key}"
+  let tree := root / "src"
+  let dir := if rel.isEmpty then tree else tree / rel
+  let bin := dir / ".lake" / "build" / "bin" / exe
+  let marker := root / "built.json"
+  let info (cache : String) (secs : Float) := Json.mkObj [("rev", Json.str rev), ("commit", Json.str commit),
+    ("cache", Json.str cache), ("dir", Json.str root.toString), ("build_s", toJson secs)]
+  if (← marker.pathExists) && (← bin.pathExists) then
+    return (bin, dir, info "hit" 0)
+  if ← root.pathExists then IO.FS.removeDirAll root
+  IO.FS.createDirAll tree
+  let t0 ← IO.monoNanosNow
+  let tar := root / "src.tar"
+  discard <| runOut "git" #["archive", "--format=tar", "-o", tar.toString, commit] top
+  discard <| runOut "tar" #["-xf", tar.toString, "-C", tree.toString] top
+  IO.FS.removeFile tar
+  let manifest := "lake-manifest.json"
+  let packages := proj / ".lake" / "packages"
+  if (← packages.pathExists) && (← (dir / manifest).pathExists) && (← (proj / manifest).pathExists) then
+    if (← IO.FS.readFile (dir / manifest)) == (← IO.FS.readFile (proj / manifest)) then
+      IO.FS.createDirAll (dir / ".lake")
+      discard <| runOut "cp" #["-R", packages.toString, (dir / ".lake").toString] proj
+  discard <| lakeBuildExe dir exe
+  let secs := ((← IO.monoNanosNow) - t0).toFloat / 1e9
+  IO.FS.writeFile marker ((Json.mkObj [("commit", Json.str commit), ("settings", Json.str settings),
+    ("build_s", toJson secs)]).pretty ++ "\n")
+  return (bin, dir, info "built" secs)
+
 def measurePairCmd (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parsePair {} argv)
+  -- --base-rev REV --exe NAME: base from the cache, candidate built here
+  let (o, builds) ← match o.baseRev, o.exe with
+    | some rev, some exe => do
+      unless o.base.isEmpty do throw <| IO.userError "give --base or --base-rev, not both"
+      let (bin, dir, info) ← cachedBase o.candidateCwd rev exe
+      let (cand, candSecs) ← if o.candidate.isEmpty then
+          (fun (b, t) => (b.toString, some t)) <$> lakeBuildExe o.candidateCwd exe
+        else pure (o.candidate, none)
+      let what := match info.getObjValAs? String "cache" with
+        | .ok "hit" => "from the cache"
+        | _ => s!"built in {fmt2 ((info.getObjValAs? Float "build_s").toOption.getD 0)} s and cached"
+      let short := ((info.getObjValAs? String "commit").toOption.getD "").take 12
+      IO.println (s!"leanprof measure-pair: base {rev} ({short}) {what}" ++
+        (match candSecs with | some t => s!", candidate built in {fmt2 t} s" | none => ""))
+      pure ({ o with base := bin.toString, baseCwd := dir.toString, candidate := cand },
+        some (info.setObjVal! "candidate_build_s" (match candSecs with | some t => toJson t | none => Json.null)))
+    | some _, none | none, some _ => throw <| IO.userError "--base-rev and --exe go together"
+    | none, none => pure (o, none)
   unless !o.base.isEmpty && !o.candidate.isEmpty do
     throw <| IO.userError (usageFor "measure-pair")
   -- Resolve binaries before changing cwd: relative paths belong to the caller.
@@ -1698,6 +1790,7 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
     ("mode", "plain"), ("runs", toJson changes.size), ("warmup", toJson o.warmup),
     ("design", design.json), ("min_change", toJson o.minChange),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
+    ("builds", builds.getD Json.null),
     ("base", Json.str binaries[0]!.toString), ("candidate", Json.str binaries[1]!.toString),
     ("base_hash", Json.str binaryHashes[0]!), ("candidate_hash", Json.str binaryHashes[1]!),
     ("base_cwd", Json.str dirs[0]!.toString), ("candidate_cwd", Json.str dirs[1]!.toString),

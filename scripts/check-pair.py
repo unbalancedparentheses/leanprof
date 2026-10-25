@@ -118,4 +118,37 @@ raise SystemExit(config.get('exit_code', 0))
     invoke(['measure-pair', '--base', binary, '--candidate', binary, '--min-change', 'x'], 2)
     invoke(['measure-pair', '--base', binary, '--candidate', binary, '--warmup', 'bad'], 2)
     invoke(['measure-pair', '--base', binary], 2)
-print('paired CLI: order, warmups, paths, literal arguments, output checks, --scope, sequential stop and verdicts passed')
+    invoke(['measure-pair', '--base-rev', 'HEAD'], 2)
+
+    # --base-rev REV --exe NAME: the base is built once per commit and reused;
+    # the candidate is the working tree, built with lake
+    project = root / 'project'
+    (project / 'Hello').mkdir(parents=True)
+    (project / 'lakefile.toml').write_text('name = "hello"\n\n[[lean_exe]]\nname = "hello"\nroot = "Main"\n')
+    (project / 'lean-toolchain').write_text((Path(__file__).resolve().parent.parent / 'lean-toolchain').read_text())
+    (project / '.gitignore').write_text('.lake\n')
+    main = ('def main : IO Unit := do\n'
+            '  let t0 ← IO.monoNanosNow\n'
+            '  IO.println "same"\n'
+            '  let t1 ← IO.monoNanosNow\n'
+            '  if let some p ← IO.getEnv "LEANPROF_BENCH_OUT" then\n'
+            '    IO.FS.withFile p .append fun h => h.putStrLn s!"main\\t{t1 - t0 + 1}"\n')
+    (project / 'Main.lean').write_text(main)
+    git = lambda *a: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a], cwd=project,
+                                    check=True, capture_output=True)
+    git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'base')
+    (project / 'Main.lean').write_text(main + '-- an edit\n')
+    cached = ['measure-pair', '--base-rev', 'HEAD', '--exe', 'hello', '--candidate-cwd', project,
+              '--scope', 'main', '--runs', '6', '--out', result]
+    first = invoke(cached).stdout
+    assert 'built in' in first and 'and cached' in first and 'candidate built in' in first, first
+    data = json.loads(result.read_text())
+    assert data['builds']['cache'] == 'built' and data['scope'] == 'main'
+    assert data['base_cwd'].endswith('/src'), data['base_cwd']
+    second = invoke(cached).stdout
+    assert 'from the cache' in second, second
+    assert json.loads(result.read_text())['builds']['cache'] == 'hit'
+    # another commit is another base
+    git('commit', '-qam', 'edit')
+    assert 'and cached' in invoke(cached).stdout
+print('paired CLI: order, warmups, paths, literal arguments, output checks, --scope, sequential stop, cached base builds and verdicts passed')

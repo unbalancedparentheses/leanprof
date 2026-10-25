@@ -693,16 +693,19 @@ def tools : Array Json := #[
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
     [("base", sProp "baseline report"), ("new", sProp "new report"), ("threshold", nProp "time threshold in percent (default 10)")]
     ["base", "new"],
-  tool "measure_pair" ("Run two prebuilt binaries in alternating AB/BA order (no builds, no probes) into one " ++
-    "paired session for judge, stopping once the time verdict is settled: every timing, exit code and output hash.")
+  tool "measure_pair" ("Run two binaries in alternating AB/BA order (no probes) into one paired session for " ++
+    "judge, stopping once the time verdict is settled: every timing, exit code and output hash. Give base and " ++
+    "candidate (prebuilt), or base_rev and exe (the base built at that git revision, cached; the candidate built here).")
     [("base", sProp "baseline binary"), ("candidate", sProp "candidate binary"),
+     ("base_rev", sProp "git revision to build the baseline at (cached by commit), with exe"),
+     ("exe", sProp "Lake executable to build at base_rev and in candidate_cwd"),
      ("args", aProp "arguments for both binaries"), ("base_cwd", sProp "working directory of the baseline"),
      ("candidate_cwd", sProp "working directory of the candidate"), ("runs", nProp "most pairs, 6 to 1000 (default 30); stops early once the time verdict is settled"),
      ("fixed", bProp "measure exactly runs pairs, no early stop"),
      ("min_change", sProp "smallest time change in percent that counts (default 1)"),
      ("scope", sProp "time only the region the program wraps in Leanprof.bench with this name"),
      ("warmup", nProp "warmup pairs (default 1)"), ("check_output", sProp "output file compared instead of stdout"),
-     ("out", sProp "session file (default .lake/leanprof/paired.json)")] ["base", "candidate"],
+     ("out", sProp "session file (default .lake/leanprof/paired.json)")] [],
   tool "judge" ("KEEP or DISCARD a change: from two measure summaries (output, copies, allocations, heartbeats, " ++
     "time), or from one measure_pair session (output and a paired 95% median interval on time).")
     [("base", sProp "baseline measure summary"), ("new", sProp "new measure summary"),
@@ -826,13 +829,15 @@ def callTool (name : String) (a : Json) : IO Json := do
     let verdict := if rc == 0 then "no regressions" else if rc == 1 then "REGRESSION" else "error"
     return textResult s!"{verdict}\n{out}{err}" (rc > 1)
   | "measure_pair" =>
-    let (some b, some c) := (argStr a "base", argStr a "candidate")
-      | throw <| IO.userError "missing argument: base or candidate"
+    let (bins, sides) ← match argStr a "base", argStr a "candidate", argStr a "base_rev", argStr a "exe" with
+      | some b, some c, none, none => pure ([b, c], #["--base", b, "--candidate", c])
+      | none, none, some r, some e => pure ([], #["--base-rev", r, "--exe", e])
+      | _, _, _, _ => throw <| IO.userError "give base and candidate, or base_rev and exe"
     let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/paired.json")
     -- Only what a Lake project built, run in a Lake project: the tool must not
     -- become a way to run any program, or to delete files (measure-pair
     -- removes the checked output file before each run).
-    for bin in [b, c] do
+    for bin in bins do
       let real ← try IO.FS.realPath (inDir cwd bin) catch _ => throw <| IO.userError s!"no such binary: {bin}"
       unless (real.toString.splitOn "/.lake/build/bin/").length > 1 do
         throw <| IO.userError s!"{bin} is not a binary built by Lake (.lake/build/bin/)"
@@ -842,7 +847,10 @@ def callTool (name : String) (a : Json) : IO Json := do
     if let some f := argStr a "check_output" then discard <| projectPath "check_output" f
     let opt (k flag : String) := (argStr a k).map (#[flag, ·]) |>.getD #[]
     let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
-    let (rc, out, err) ← runSelf (#["measure-pair", "--base", b, "--candidate", c, "--out", outFile] ++
+    if argStr a "base_rev" |>.isSome then
+      unless ← isLakeProject (inDir cwd ((argStr a "candidate_cwd").getD ".")) do
+        throw <| IO.userError "base_rev needs candidate_cwd (default the project) to be a Lake project"
+    let (rc, out, err) ← runSelf (#["measure-pair"] ++ sides ++ #["--out", outFile] ++
       opt "base_cwd" "--base-cwd" ++ opt "candidate_cwd" "--candidate-cwd" ++ opt "check_output" "--check-output" ++
       opt "min_change" "--min-change" ++ opt "scope" "--scope" ++ (if argBool a "fixed" then #["--fixed"] else #[]) ++
       num "runs" "--runs" ++ num "warmup" "--warmup" ++ #["--"] ++ argStrs a "args") cwd

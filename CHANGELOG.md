@@ -22,6 +22,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   Leanprof.Bench`: two clock reads and a line appended to
   `$LEANPROF_BENCH_OUT`, no probes) or writes the same `NAME<TAB>NS` lines
   itself without the dependency.
+- `measure-pair --base-rev REV --exe NAME` builds the base at a git revision
+  once, keeps it in `.lake/leanprof/base/` by commit and build settings, and
+  builds the candidate with `lake build NAME`, so a loop of verdicts against
+  one base pays only the candidate's incremental build. The MCP tool takes
+  `base_rev`, `exe`, `scope`, `min_change` and `fixed`.
 - One warmup pair instead of three; `lake env` for both sides at once, and
   the load average read in process instead of two `sysctl` per pair.
 

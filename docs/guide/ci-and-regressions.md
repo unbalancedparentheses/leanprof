@@ -322,6 +322,24 @@ leanprof judge paired.json
 leanprof judge --min-change 2 paired.json
 ```
 
+In a loop of many verdicts against one base (an autoresearch loop, or every
+commit of a branch against `main`), let leanprof keep the base build:
+
+```sh
+leanprof measure-pair --base-rev main --exe myapp --scope work -- INPUT
+```
+
+builds `myapp` at `main` once into `.lake/leanprof/base/<commit>-<settings>/`
+(a `git archive` of the commit, with the project's `.lake/packages` copied in
+when its manifest is the same there; no worktree is registered), reuses it
+for every later verdict while the commit and the build settings (`ELAN_TOOLCHAIN`,
+`LEAN_CC`, `LEANC_OPTS` and the `LEANPROF_*` build variables) stay the same,
+and builds the candidate with `lake build myapp` in `--candidate-cwd`
+(default `.`). The base runs in its own tree, so files the program reads come
+from that commit. The session's `builds` says whether the base was built or
+reused and how long each build took. Delete `.lake/leanprof/base` to drop the
+cache.
+
 Binary paths resolve relative to the directory where you invoke leanprof.
 Both programs receive the same argument vector, without shell interpretation;
 their working directories may differ. Build both normally first and let build
