@@ -1568,7 +1568,7 @@ def reportMd (argv : List String) : IO UInt32 := do
         id := "allocs", label := "allocations", isExact := true,
         base := tb, new := tn, fmt := fmtCount, rows := d,
         bad := if tn > tb then d.filter (fun (_, x, y) => y > x) else #[],
-        rule := "the total grew" }
+        rule := "a larger total" }
     let d := mdDiffs b.calls n.calls
     metrics := metrics.push {
       id := "calls", label := "calls", isExact := true,
@@ -1617,7 +1617,11 @@ def reportMd (argv : List String) : IO UInt32 := do
     if m.rows.isEmpty then continue
     out := out.push ""
     let openAttr := if m.bad.isEmpty then "" else " open"
-    out := out.push s!"<details{openAttr}><summary>{m.label}: {m.rows.size} changed (regression: {m.rule})</summary>"
+    -- the rule is what would count, not a finding: say whether it happened
+    let verdict := if m.bad.isEmpty then "no regression" else s!"{m.bad.size} regressed"
+    out := out.push (if m.isExact then
+        s!"<details{openAttr}><summary>{m.label}: {m.rows.size} changed, {verdict} (a regression is {m.rule})</summary>"
+      else s!"<details{openAttr}><summary>{m.label}: {m.rows.size} changed ({m.rule})</summary>")
     out := out.push ""
     out := out.push s!"| {if m.id == "heartbeats" || m.id == "compile-time" then "declaration" else if m.id == "calls" then "scope" else "where"} | base | head | change |"
     out := out.push "|---|---:|---:|---:|"

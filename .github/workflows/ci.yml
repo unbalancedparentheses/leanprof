@@ -209,6 +209,7 @@ jobs:
           cat worse.md
           grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ❌ fail |' worse.md
           grep -q '| calls | 10,948 | 10,948 | 0 | ✅ pass |' worse.md
+          grep -q 'copies: 1 changed, 1 regressed (a regression is any increase at a call site)' worse.md
           grep -q '`buildWithHistory (in Std.Legacy.Range.forIn.\{0,1\}.loop) \[Array\] in buildWithHistory`' worse.md
           lake exe leanprof report-md --fail-on none small.json large.json | grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ⚠️ worse (not enforced) |'
           if lake exe leanprof report-md --fail-on bogus small.json large.json; then echo "expected an error"; exit 1; fi

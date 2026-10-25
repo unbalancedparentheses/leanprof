@@ -35,6 +35,9 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   on lean-compiler-backend, 17,775 9-byte copies in `SSA.fresh`
   (`prefix ++ toString n`) came second, above the copies worth looking at.
   They are now left out and counted in one line.
+- `report-md`: each details section read "allocations: 3 changed
+  (regression: the total grew)" even when the total fell and the table said
+  pass. It now says whether anything regressed, then what a regression is.
 - `explain` after `sample`: `sample` writes `.lake/leanprof/report.json` (for
   `#leanprof`) without copy counts, and `explain` then said "the report has no
   copies of shared values". It now says the report is a sampled one and to
