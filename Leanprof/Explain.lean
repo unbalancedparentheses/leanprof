@@ -1456,6 +1456,34 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
       "(reverse it when draining), or keep a buffer per thread.") "    " ++ "\n"
   return (out, Json.arr entries)
 
+/-- The copy sites of a report that `explain` explains, costliest first (time
+copying, then bytes), and how many it leaves out because they copied only
+empty or tiny values (`tiny`; `all` keeps them, and copies of constants). -/
+def rankedSites (j : Json) (all : Bool := false) : Array Json × Nat :=
+  let isTiny (c : Json) := (c.getObjValAs? Bool "tiny").toOption.getD false
+  let candidates := (jarr j "copies").filter fun c => all || jnum c "shared" + jnum c "multi_threaded" > 0
+  let sites := (candidates.filter fun c => all || !isTiny c).qsort fun a b =>
+    if copyCost a != copyCost b then copyCost a > copyCost b else jnum a "bytes" > jnum b "bytes"
+  (sites, candidates.size - sites.size)
+
+/-- The findings of the `top` costliest copy sites of the report at `report`,
+as `explain --json` prints them (each with its site's `rank`). -/
+def findingsOf (report : String) (top : Nat := 10) : IO (Array Json) := do
+  unless ← (report : FilePath).pathExists do
+    throw <| IO.userError s!"no report at {report}: run `leanprof run EXE` first"
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile report))
+  if (j.getObjValAs? Bool "sampled").toOption.getD false then
+    throw <| IO.userError s!"the report at {report} is from `leanprof sample`, which counts no copies"
+  let runNs := if jnum j "run_ns" > 0 then jnum j "run_ns" else jnum j "wall_ns"
+  let cache ← IO.mkRef ({} : CCache)
+  let mut entries : Array Json := #[]
+  let mut rank : Nat := 0
+  for c in (rankedSites j).1.toList.take top do
+    rank := rank + 1
+    let (_, js) ← explainSite cache c #[] runNs
+    if let .arr a := js then entries := entries ++ a.map (·.setObjVal! "rank" (rank : Json))
+  return entries
+
 def explainCmd (argv : List String) (runLeanprof : Array String → Array (String × Option String) → IO UInt32) :
     IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
@@ -1472,13 +1500,7 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
     throw <| IO.userError (s!"the report at {o.report} is from `leanprof sample`, which counts no copies: " ++
       "run `leanprof run EXE` again, or pass --report FILE with a report of `leanprof run`")
   let shares ← if o.run.isSome || (← (o.why : FilePath).pathExists) then loadWhy o.why else pure #[]
-  -- costliest first (time copying, then bytes); copies of empty or tiny
-  -- values (`tiny`) only with --all
-  let isTiny (c : Json) := (c.getObjValAs? Bool "tiny").toOption.getD false
-  let candidates := (jarr j "copies").filter fun c => o.all || jnum c "shared" + jnum c "multi_threaded" > 0
-  let sites := (candidates.filter fun c => o.all || !isTiny c).qsort fun a b =>
-    if copyCost a != copyCost b then copyCost a > copyCost b else jnum a "bytes" > jnum b "bytes"
-  let tiny := candidates.size - sites.size
+  let (sites, tiny) := rankedSites j o.all
   if sites.isEmpty then
     if o.json then IO.println (Json.mkObj [("report", o.report), ("sites", 0), ("findings", Json.arr #[])]).pretty
     else IO.println ("leanprof explain: the report has no copies of shared values" ++

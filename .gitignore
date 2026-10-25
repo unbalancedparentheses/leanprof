@@ -8,3 +8,4 @@
 /bench/leanbench/project/.lake
 /bench/leanbench/scoped/.lake
 __pycache__/
+/Tests/Fix/.lake

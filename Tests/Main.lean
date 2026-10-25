@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Tests.Elab import Tests.ExplainFixes
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Tests.Elab import Tests.ExplainFixes
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -334,6 +334,25 @@ def tests : StateT Nat IO Unit := do
   -- END leanprof explain
   -- leanprof explain: the fixes it prints remove the copies (Tests/ExplainFixes.lean)
   Tests.ExplainFixes.run fun n ok d => check n ok d
+  -- leanprof fix: edits and their diff (Leanprof/Fix.lean)
+  let src := #["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", ""]
+  let edits : Array Fix.Edit := #[{ first := 2, count := 1, lines := #["B1", "B2"] }, { first := 9, count := 1, lines := #[] }]
+  check "fix: edits replace and delete lines" (Fix.applyEdits src edits == #["a", "B1", "B2", "c", "d", "e", "f", "g", "h", "j", ""])
+    s!"{Fix.applyEdits src edits}"
+  let diff := Fix.unifiedDiff "F.lean" src edits (ctx := 1)
+  check "fix: one hunk per group of nearby edits, with the new file's line numbers"
+    (diff == "--- a/F.lean\n+++ b/F.lean\n@@ -1,3 +1,4 @@\n a\n-b\n+B1\n+B2\n c\n@@ -8,3 +9,2 @@\n h\n-i\n j\n") diff
+  let dep := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", ".lake/packages/x/X.lean"),
+    ("lines", Lean.toJson #[3]), ("fix_code", Lean.toJson #["xs := xs.modify i (·.push v)"])]
+  check "fix: code in a dependency is not edited"
+    (match Fix.plansFor dep #[] with | .error e => e.contains "dependency" | .ok _ => false) ""
+  let stale := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", "X.lean"), ("where", "X.lean:1"),
+    ("lines", Lean.toJson #[2]), ("fix_code", Lean.toJson #["xs := xs.modify i (·.push v)"])]
+  check "fix: a source line that no longer matches the report is refused"
+    (match Fix.plansFor stale #["def f := 1", "  xs := xs.push 1"] with | .error e => e.contains "changed since" | .ok _ => false) ""
+  check "fix: branch names from the function and cause"
+    (Fix.branchName "Foo.groupBy (in Std.Legacy.Range.forIn'.loop)" "map-value-reinserted" ==
+      "leanprof-fix/groupBy-map-value-reinserted") (Fix.branchName "Foo.groupBy (in x)" "c")
   -- BEGIN leanprof judge (Leanprof/Judge.lean), on summaries written by hand
   let summary (copies allocs : Nat) (runs : List Nat) (ms : List Nat) : Judge.Summary :=
     let times := ms.map (· * 1000000)

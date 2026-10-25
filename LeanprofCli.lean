@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import Leanprof.Core
 import Leanprof.Explain
+import Leanprof.Fix
 import Leanprof.Judge
 import LeanprofHtml
 import LeanprofLive
@@ -93,6 +94,17 @@ def commands : List (String × String × String) := [
     "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
     "#leanprof hovers."),
+  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]",
+    "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
+    "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
+    "inserted back, an index loop for a loop over the array it updates), then check it: on a new git\n" ++
+    "branch, build, run the tests (--test CMD, or `lake test` when the project has a test driver),\n" ++
+    "compare the output with the original's (stdout, or --check-output FILE), measure both versions\n" ++
+    "(exact copies and allocations), time both plain binaries in pairs (measure-pair), and judge.\n" ++
+    "KEEP commits on the branch with the evidence in the message; DISCARD deletes the branch and says\n" ++
+    "why. The checkout is left as it was; a tree with uncommitted changes is refused. --exe profiles\n" ++
+    "EXE first (otherwise the last report is read); --finding N picks finding N of the list printed;\n" ++
+    "--dry-run prints the findings and the diff only."),
   ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
     "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++
@@ -129,6 +141,7 @@ def summary : String → String
   | "judge" => "KEEP or DISCARD from measure summaries or one paired session"
   | "report-md" => "Markdown summary of base and head reports, for pull-request comments"
   | "explain" => "why each copy happened: where the second reference comes from, and a fix"
+  | "fix" => "apply explain's fix on a new branch, test, measure and judge it; commit KEEPs with the evidence"
   | "html" => "one self-contained HTML report: flame graph, tables, source, comparison"
   | "top" => "live view of a running program: hot scopes, copies, allocations, tasks, per second"
   | "dump" => "write a running program's last seconds to a Perfetto trace (flight recorder)"
@@ -1853,6 +1866,9 @@ def main (argv : List String) : IO UInt32 := do
     | "elab" :: rest => elabCmd rest
     | "explain" :: rest =>
       Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
+    | "fix" :: rest =>
+      Leanprof.Fix.fixCmd rest fun args => do
+        IO.Process.output { cmd := (← IO.appPath).toString, args, env := #[("LEANPROF_QUIET", some "1")], stdin := .null }
     | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
     | "top" :: rest => LeanprofLive.topCmd rest
     | "dump" :: rest => LeanprofLive.dumpCmd rest
