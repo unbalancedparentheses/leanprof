@@ -65,8 +65,8 @@ many, how many bytes, how much time, why the value was shared, and the fix.
 
 **Where it is behind:** LeanBench reaches a time verdict faster (0.74 s
 against 2.9–7.1 s); lean-source-profiler publishes all of Mathlib, leanprof
-Batteries and 40 Mathlib modules; exact compile-time ranges need the Lean
-leanprof was built with; tiny `profile!` scopes are timed less accurately
+Batteries and 40 Mathlib modules; on a Lean other than leanprof's, the
+first compile-time profile first builds a driver for it (seconds); tiny `profile!` scopes are timed less accurately
 than by sampling. Details and every number in
 [where leanprof wins, and where it does not](#where-leanprof-wins-and-where-it-does-not).
 
@@ -282,7 +282,8 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   lean-source-profiler's has timelines. The comparison above is against its latest release (0.3.0),
   whose default is the compact mode measured there; its main branch has
   since changed its dataset tooling and explorer, not re-tested here.
-  leanprof's exact ranges need the Lean it was built with.
+  On another Lean than its own, leanprof builds its driver for that Lean
+  once (seconds), as lean-source-profiler compiles its driver per toolchain.
 
 **Reviewed result, still awaiting independent replication:** the autoresearch
 loop found 12 compiler optimizations in about three hours. Review caught a
