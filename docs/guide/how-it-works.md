@@ -143,8 +143,14 @@ a constant small number) and lists their addresses
 in a section the report reads (`--time-tiny` turns this off). A scope that
 turns out to cost about as much as its probes (checked every 1,024
 outermost calls; not recursive ones) goes light: about one call in 64 is
-timed, the rest only counted, without reading the clock, and its times are
-the timed calls' scaled up.
+timed, the rest only counted, without reading the clock. Its time is that of
+the calls timed before it went light, which were all timed, plus the
+sample's scaled up to the calls it was drawn from (scaling every timed call
+alike weighed a cheap first phase like the sample of a costlier later one).
+Each light call adds the sample's mean, kept in 1/1024 ticks, to its
+caller's children, so the caller's self time leaves it out; that self time
+is a signed sum, since a light call can take less than the mean. These
+times are estimates; the report gives such rows' `timed_calls`.
 
 ## Names and positions
 

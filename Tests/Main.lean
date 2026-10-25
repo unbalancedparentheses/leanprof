@@ -61,7 +61,19 @@ def tinyLoop (n : Nat) : UInt64 := Id.run do
   let mut a := x
   for _ in [0:k] do a := a * 6364136223846793005 + 1442695040888963407
   return a
-/-- A light scope whose calls change cost: `k` rounds each, `n` calls. -/
+/-- Light scopes whose calls change cost: `k` rounds each, `n` calls. -/
+@[noinline] def epochStep (k : Nat) (i : UInt64) : UInt64 := profile! "test.epochs" (spin k i)
+def epochLoop (k n : Nat) : UInt64 := Id.run do
+  let mut acc : UInt64 := 0
+  for i in [0:n] do
+    acc := acc + epochStep k (acc + i.toUInt64)
+  return acc
+/-- The same loop without the scope. -/
+def spinLoop (k n : Nat) : UInt64 := Id.run do
+  let mut acc : UInt64 := 0
+  for i in [0:n] do
+    acc := acc + spin k (acc + i.toUInt64)
+  return acc
 @[noinline] def wrapStep (k : Nat) (i : UInt64) : UInt64 := profile! "test.wrapchild" (spin k i)
 def wrapLoop (k n : Nat) : UInt64 := Id.run do
   let mut acc : UInt64 := 0
@@ -216,6 +228,26 @@ def tests : StateT Nat IO Unit := do
   check "a tiny scope is timed on a sample of its calls" (timed ≥ 1024 && timed < n / 4) s!"timed={timed} of {n}"
   check "a tiny scope's time stands for all its calls" ((← totalNs "test.tiny") ≥ 0)
   check "a scope with real work is timed on every call" ((← timedCalls "test.history") == 1)
+  -- a light scope's first 1,024 calls are all timed, later ones one in 64: a
+  -- costlier second phase must not be weighed like the first (with every
+  -- timed call scaled up alike, the total came out at about half)
+  let k32 ← opaqueNat 32
+  let n64k ← opaqueNat 65536
+  let _ ← IO.lazyPure fun _ => epochLoop 0 1024
+  let before ← totalNs "test.epochs"
+  let _ ← IO.lazyPure fun _ => epochLoop k32 n64k
+  let est := (← totalNs "test.epochs") - before
+  let timed ← timedCalls "test.epochs"
+  -- the same work without the scope (the loop around it included), fastest of 5
+  let mut plainNs : Nat := 0
+  for _ in [0:5] do
+    let t0 ← IO.monoNanosNow
+    let _ ← IO.lazyPure fun _ => spinLoop k32 n64k
+    let w := (← IO.monoNanosNow) - t0
+    if plainNs == 0 || w < plainNs then plainNs := w
+  check "a light scope's sampled calls stand for the calls they were sampled from"
+    (sanitized || est > 0.7 * plainNs.toFloat && est < 1.25 * plainNs.toFloat)
+    s!"estimate={est} without the scope={plainNs} timed={timed}"
   -- a light child adds its estimate to its caller's children; when it has
   -- become cheaper than that, the caller's self time must not wrap around
   -- (the report then showed it as all of the caller's time, as it did when

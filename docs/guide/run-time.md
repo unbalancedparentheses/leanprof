@@ -184,8 +184,9 @@ clock, boost off; see [bench/README.md](../../bench/README.md)):
 - **Tiny scopes are timed on a sample.** A scope near the probe cost that
   is not recursive is, after its first 1,024 calls, timed on about one call
   in 64 (at random) and only counted on the others, which costs less (4.6
-  against 6.6 ns on the M5 Max). Its counts stay exact and its times are
-  the timed calls' scaled up; `LEANPROF_TIME_ALL=1` times every call. This
+  against 6.6 ns on the M5 Max). Its counts stay exact; its times are
+  those of its first, fully timed calls plus the sample's scaled up to the
+  calls it stands for (an estimate); `LEANPROF_TIME_ALL=1` times every call. This
   makes such loops about 1.25× faster; it does not make their share more
   accurate (see below).
 - **Such rows are marked.** A row whose probes (its own and those of the

@@ -22,6 +22,13 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   42 ns came out at 0, and nothing was subtracted), and self time is a
   signed sum: a caller of a light scope that has become cheaper than its
   estimate wrapped around, and the report showed all of its time as self.
+- A light scope's time keeps its fully timed calls (before it went light)
+  apart from the sample timed afterwards, and scales up only the sample.
+  Scaling every timed call alike weighed a cheap first phase like a
+  costlier later one: a scope whose second phase cost 30 times its first
+  was reported at 0.53–0.61 of its time, now 0.80–0.91 (the rest is the
+  loop around it). The exit report, live snapshots and `Leanprof.totalNs`
+  share the estimate.
 
 ### Compile time: a project view and published profiles
 

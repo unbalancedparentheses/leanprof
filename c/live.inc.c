@@ -648,12 +648,9 @@ static void lpf_lv_collect(int final) {
                 continue;
             }
             /* a light scope's timed calls stand for all of them, as at exit */
-            uint64_t outer = LP_LD(s->outer), lcalls = LP_LD(s->lcalls);
-            rw->calls += calls + lcalls;
-            rw->total += lpf_clamp(lpf_scale(outer, LP_LD(s->louter)) *
-                                   ((double)LP_LD(s->total) - (double)outer * inner - (double)LP_LD(s->desc_total) * pair));
-            rw->self += lpf_clamp(lpf_scale(calls, lcalls) * (lpf_signed(LP_LD(s->self)) -
-                                  (double)(calls + LP_LD(s->fwd)) * inner - (double)LP_LD(s->kids) * pair));
+            rw->calls += calls + LP_LD(s->lcalls);
+            rw->total += lpf_clamp(lpf_total_est(s));
+            rw->self += lpf_clamp(lpf_self_est(s));
             uint64_t mx = LP_LD(s->max);
             if (mx > rw->max) rw->max = mx;
             rw->allocs += LP_LD(s->allocs_total);

@@ -85,6 +85,10 @@ typedef struct {
      * `chk_*`: the totals at the last lpf_light_check. */
     uint64_t lcalls, louter, est;
     uint64_t chk_total, chk_desc, chk_outer;
+    /* The part of the sums above from calls timed while the scope was light:
+     * a sample of about one call in LP_LIGHT_EVERY, kept apart from the calls
+     * timed before it went light, which were all timed (lpf_light_est). */
+    uint64_t st_total, st_desc_total, st_outer, st_self, st_kids, st_calls, st_fwd, st_sum, st_desc_sum;
     /* allocations (LEANPROF_ALLOCS builds): made while this scope was the
      * innermost (self), and including children over outermost calls (total) */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
@@ -122,6 +126,7 @@ typedef struct {
     uint8_t fwd;               /* not a call: forwarded within one declaration */
     uint8_t counted;           /* allocations are counted (lpf_aframe) */
     uint8_t light;             /* only counted: no clock reads, `start` and `child` unused */
+    uint8_t sampled;           /* timed while its scope was light: one of a sample */
 } lpf_frame;
 _Static_assert(sizeof(lpf_frame) == 64, "a frame is one cache line");
 
@@ -459,6 +464,48 @@ static double lpf_scale(uint64_t timed, uint64_t light) {
 }
 /* A sum of differences kept modulo 2^64 (a scope's `self`), as a signed number. */
 static double lpf_signed(uint64_t v) { return (double)(int64_t)v; }
+/* A light scope's time from its timed calls: `all` over every timed call
+ * (`n` of them), `sampled` over those timed while it was light (`ns`), and
+ * `light` calls only counted. The sample stands for itself and the light
+ * calls; the calls timed before it went light stand for themselves (scaling
+ * every timed call alike weighed those, all of a phase, like the sample of a
+ * later and maybe costlier one). */
+static double lpf_light_est(double all, double sampled, uint64_t n, uint64_t ns, uint64_t light) {
+    if (light == 0) return all;
+    if (ns > 0) return all + sampled * (double)light / (double)ns;
+    return lpf_scale(n, light) * all;
+}
+/* A scope's times with leanprof's own cost removed, its light calls
+ * included (in ticks; may be below 0): over outermost calls, as self time,
+ * and over every call; and what its probes cost (lpf_report). */
+static double lpf_total_est(const lpf_scope *s) {
+    double inner = lpf_inner_ticks(s), unit = lpf_unit_ticks();
+    return lpf_light_est(
+        (double)LP_LD(s->total) - (double)LP_LD(s->outer) * inner - (double)LP_LD(s->desc_total) * unit,
+        (double)LP_LD(s->st_total) - (double)LP_LD(s->st_outer) * inner - (double)LP_LD(s->st_desc_total) * unit,
+        LP_LD(s->outer), LP_LD(s->st_outer), LP_LD(s->louter));
+}
+static double lpf_self_est(const lpf_scope *s) {
+    double inner = lpf_inner_ticks(s), unit = lpf_unit_ticks();
+    return lpf_light_est(
+        lpf_signed(LP_LD(s->self)) - (double)(LP_LD(s->calls) + LP_LD(s->fwd)) * inner - (double)LP_LD(s->kids) * unit,
+        lpf_signed(LP_LD(s->st_self)) - (double)(LP_LD(s->st_calls) + LP_LD(s->st_fwd)) * inner -
+            (double)LP_LD(s->st_kids) * unit,
+        LP_LD(s->calls), LP_LD(s->st_calls), LP_LD(s->lcalls));
+}
+static double lpf_sum_est(const lpf_scope *s) {
+    double inner = lpf_inner_ticks(s), unit = lpf_unit_ticks();
+    return lpf_light_est(
+        (double)LP_LD(s->sum) - (double)LP_LD(s->calls) * inner - (double)LP_LD(s->desc_sum) * unit,
+        (double)LP_LD(s->st_sum) - (double)LP_LD(s->st_calls) * inner - (double)LP_LD(s->st_desc_sum) * unit,
+        LP_LD(s->calls), LP_LD(s->st_calls), LP_LD(s->lcalls));
+}
+static double lpf_probes_est(const lpf_scope *s) {
+    double pair = (double)LP_LD(lpf_pair_fp[s->path]) / 1024.0, unit = lpf_unit_ticks();
+    return lpf_light_est((double)LP_LD(s->outer) * pair + (double)LP_LD(s->desc_total) * unit,
+                         (double)LP_LD(s->st_outer) * pair + (double)LP_LD(s->st_desc_total) * unit,
+                         LP_LD(s->outer), LP_LD(s->st_outer), LP_LD(s->louter));
+}
 /* Copy rows of empty or tiny values (lpf_tiny below; live snapshots mark
  * them the same way, against the time so far) */
 #define LP_TINY_BYTES 16
@@ -897,6 +944,7 @@ LP_HOT void lpf_enter(const void *key, uint8_t kind, uint8_t path) {
         return;
     }
     LP_ST(f->light, 0);
+    f->sampled = s != NULL && (f->fwd ? t->stack[d - 1].sampled : s->light);
     f->child = 0;
     uint64_t now = lpf_now();
     LP_ST(f->start, now);
@@ -948,6 +996,25 @@ LP_HOT void lpf_exit_light(lpf_thread *t, lpf_frame *f, uint32_t d) {
     }
 }
 
+/* A call timed while its scope was light: its part of the sums, kept apart
+ * (lpf_light_est). */
+static __attribute__((noinline)) void lpf_exit_sampled(lpf_scope *s, const lpf_frame *f, uint64_t raw) {
+    LP_ADD(s->st_self, raw - ((f->child + 512) >> 10));
+    LP_ADD(s->st_kids, f->kids);
+    if (s->active == 0) {
+        LP_ADD(s->st_total, raw);
+        LP_ADD(s->st_desc_total, f->desc);
+        LP_ADD(s->st_outer, 1);
+    }
+    if (f->fwd) {
+        LP_ADD(s->st_fwd, 1);
+        return;
+    }
+    LP_ADD(s->st_calls, 1);
+    LP_ADD(s->st_sum, raw);
+    LP_ADD(s->st_desc_sum, f->desc);
+}
+
 LP_HOT void lpf_exit(void) {
     lpf_thread *t = lpf_self;
     if (t == NULL || t->depth == 0) return;
@@ -975,6 +1042,7 @@ LP_HOT void lpf_exit(void) {
     if (LEAN_UNLIKELY(f->counted)) lpf_exit_allocs(t, f, s, d);
     if (s == NULL) return;
     lpf_mem_on_exit(s, f->start, now);
+    if (LEAN_UNLIKELY(f->sampled)) lpf_exit_sampled(s, f, raw);
     /* below 0 when light children were estimated at more than they took:
      * wraps, and is read back signed */
     LP_ADD(s->self, raw - ((f->child + 512) >> 10));
@@ -2518,10 +2586,7 @@ LEAN_EXPORT double leanprof_total_ns(b_lean_obj_arg site) {
             lpf_scope *sc = LP_GET(t->scopes[i]);
             if (sc == NULL || sc->kind != LP_LABEL) continue;
             lpf_label_name(lean_string_cstr((lean_object *)sc->key), name, sizeof name);
-            if (strcmp(name, want) == 0)
-                ticks += lpf_scale(LP_LD(sc->outer), LP_LD(sc->louter)) *
-                         ((double)LP_LD(sc->total) - (double)LP_LD(sc->outer) * lpf_inner_ticks(sc) -
-                          (double)LP_LD(sc->desc_total) * lpf_unit_ticks());
+            if (strcmp(name, want) == 0) ticks += lpf_total_est(sc);
         }
     pthread_mutex_unlock(&lpf_lock);
     return ticks > 0 ? ticks * lpf_ns_per_tick() : 0;
@@ -3329,19 +3394,17 @@ static void lpf_report(void) {
                 S[k].min = UINT64_MAX;
                 ns++;
             }
-            /* remove leanprof's own cost (see calibration) */
-            double inner = lpf_inner_ticks(s), unit = lpf_unit_ticks();
-            /* a light scope's timed calls stand for all of them */
-            double so = lpf_scale(s->outer, s->louter), sc = lpf_scale(s->calls, s->lcalls);
+            /* leanprof's own cost removed (see calibration); a light scope's
+             * timed calls stand for all of them */
             S[k].calls += s->calls + s->lcalls;
             S[k].timed += s->calls;
             S[k].light |= s->lcalls > 0;
             /* the probes of its descendants, and its own whole pair (part of
              * which lands in its caller) */
-            S[k].probes += so * ((double)s->outer * (double)LP_LD(lpf_pair_fp[s->path]) / 1024.0 + (double)s->desc_total * unit);
-            S[k].total += lpf_clamp(so * ((double)s->total - (double)s->outer * inner - (double)s->desc_total * unit));
-            S[k].self += lpf_clamp(sc * (lpf_signed(s->self) - (double)(s->calls + s->fwd) * inner - (double)s->kids * unit));
-            S[k].sum += lpf_clamp(sc * ((double)s->sum - (double)s->calls * inner - (double)s->desc_sum * unit));
+            S[k].probes += lpf_probes_est(s);
+            S[k].total += lpf_clamp(lpf_total_est(s));
+            S[k].self += lpf_clamp(lpf_self_est(s));
+            S[k].sum += lpf_clamp(lpf_sum_est(s));
             S[k].wait += s->wait;
             S[k].allocs_self += s->allocs_self;
             S[k].bytes_self += s->bytes_self;
