@@ -47,6 +47,18 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   `sp ++ "_"` at `Elab.lean:3356`, which text matching cannot single out
   among the declaration's many `++ "_"`). Comments are stripped before any
   source matching, and quoted lines leave out trailing comments.
+- `elab` through `lean --json` (a project on another Lean, or
+  `--no-driver`) prints trace descriptions on one line (`pp.oneline`). On
+  concrete's `Check.lean` (Lean 4.34.1) `elab --heartbeats` took 61 s and
+  10.2 GB against 5.4 s and 0.78 GB for plain `lean`: `Elab.step` prints a
+  term's whole syntax at every nesting level, one message was 1.74 GB, and
+  `lean` alone needed 28.6 s and 10.3 GB to print it. Now 16.9 s and
+  1.36 GB, heartbeats per declaration within 0.03%. Steps whose description
+  was cut (`term do [...]`) are not counted as repeated work, a cut command
+  is named from the source, and tactics are no longer placed on comment
+  lines (`simp` was placed on a comment saying "simply"). The driver (the
+  project on leanprof's Lean) was not affected: 25.2 s and 1.26 GB on the
+  same file.
 - An interrupted `leanprof run` (also `stat`, `measure`) no longer leaves
   instrumented objects that a plain `lake build` keeps (every later binary
   carried the runtime and printed a report, leanprof itself included when

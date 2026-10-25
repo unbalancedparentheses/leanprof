@@ -101,6 +101,12 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   let src := #["theorem t : True := by", "  simp [foo,  bar]", "  omega"].map squash
   check "elab: tactics are found in the source by their text"
     (findTactic src "simp [foo, bar]" 1 == some 2 && findTactic src "omega" 2 == some 3 && findTactic src "decide" 1 == none) ""
+  -- never in comments (concrete: `simp` placed at a comment saying "simply"); a
+  -- description `pp.oneline` cut is matched by its first line
+  let src2 := (codeOnly #["theorem t : True := by", "  -- this simply works", "  /- first a doc",
+    "     with simp -/", "  first", "  | simp", "  | omega"]).map squash
+  check "elab: tactics are not found in comments"
+    (findTactic src2 "simp" 1 == some 6 && findTactic src2 "first [...]" 1 == some 5) s!"{src2}"
   -- `theorem Foo.bar` is elaborated as `namespace Foo theorem bar end`: Lean traces the
   -- inner command, then the outer one (including the inner's time) at the same position
   let msg (data : String) (col : Nat) : Lean.Json := Lean.Json.mkObj [("data", .str data),
@@ -128,6 +134,21 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   check "elab: a declaration under `variable … in` and a long doc comment is named after the declaration"
     ((((w.lines.get? "F.lean:3").map (·.name)).getD "").startsWith "noncomputable def negDblY")
     (((w.lines.get? "F.lean:3").map (·.name)).getD "")
+  -- `pp.oneline` (concrete's Check.lean: a 1.74 GB message without it): a command cut
+  -- to `mutual [...]` is named from the source, and different terms cut to the same
+  -- first line (`term do [...]`) are not counted as repeated work
+  let src := #["", "", "mutual", "def f : Nat := 1"]
+  let cut := "[Elab.command] [100] ✅️ mutual [...]
+  [Elab.step] [40] ✅️ expected type: Nat, term do [...]
+  [Elab.step] [40] ✅️ expected type: Nat, term do [...]
+  [Meta.synthInstance] [5] ✅️ OfNat Nat 1
+  [Meta.synthInstance] [5] ✅️ OfNat Nat 1"
+  let o := ({ src } : Acc).addMessage "F.lean" 1 (msg cut 0)
+  check "elab: a command pp.oneline cut is named from the source"
+    ((((o.lines.get? "F.lean:3").map (·.name)).getD "") == "mutual def f : Nat := 1")
+    (((o.lines.get? "F.lean:3").map (·.name)).getD "")
+  check "elab: cut descriptions are not repeated work, whole ones are"
+    ((o.ops.toList.map (·.1.1)) == ["Meta.synthInstance"]) s!"{o.ops.toList.map (·.1)}"
   let drv := "[Elab.command] [100] ✅️ theorem t : True := by skip; trivial
   [Leanprof.tactic] [60] ✅️ @2:3-3:10 Lean.Parser.Tactic.tacticSeq | skip; trivial
     [Leanprof.tactic] [10] ✅️ @2:3-2:7 Lean.Parser.Tactic.skip | skip
