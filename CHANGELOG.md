@@ -16,6 +16,8 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   failed runs prevent KEEP; overload disables the timing verdict.
 - Pure tests cover drift, confidence endpoints and failure cases; a CLI test
   verifies process ordering, arguments, working directories and stale output.
+- The MCP server has a `measure_pair` tool, and its `judge` tool takes a
+  paired session (`pair`) and `min_change`.
 - Refresh the competitive priorities and qualify historical compile-time
   comparisons against lean-source-profiler's newer native compact capture.
 

@@ -105,8 +105,9 @@ def commands : List (String × String × String) := [
     "Ask a program running with the flight recorder (LEANPROF_FLIGHT, LEANPROF_SLOW_MS) for a Perfetto\n" ++
     "trace of its last seconds (SIGUSR1) and print its path."),
   ("mcp", "",
-    "Model Context Protocol server on stdio for AI agents: tools to run, sample, stat, elab and measure\n" ++
-    "targets, read reports, list hot scopes/copies/allocations with file:line, compare, judge, and\n" ++
+    "Model Context Protocol server on stdio for AI agents: tools to run, sample, stat, elab, measure and\n" ++
+    "measure_pair targets, read reports, list hot scopes/copies/allocations with file:line, compare,\n" ++
+    "judge (measure summaries or a paired session), and\n" ++
     "query (live) or dump (dump) a running program."),
   ("doctor", "",
     "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
@@ -135,7 +136,7 @@ def summary : String → String
 def usage : String :=
   "leanprof: profiler for Lean 4 programs (https://github.com/unbalancedparentheses/leanprof)\n\n" ++
   "usage: leanprof COMMAND [OPTIONS]   (or `lake exe leanprof` in a project that depends on it)\n\n" ++
-  String.join (commands.map fun (c, _, _) => s!"  {c.pushn ' ' (11 - c.length)}{summary c}\n") ++
+  String.join (commands.map fun (c, _, _) => s!"  {c.pushn ' ' (14 - c.length)}{summary c}\n") ++
   "\nleanprof help COMMAND shows a command's options. Docs: docs/guide/getting-started.md"
 
 def commandHelp (c : String) : Option String :=

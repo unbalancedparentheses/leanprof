@@ -177,17 +177,18 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `stat` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks |
 | `elab` | compile cost per line and declaration, or exact heartbeats |
 | `measure` | repeated runs into one summary, for `judge` |
+| `measure_pair` | two prebuilt binaries run in alternating AB/BA order (no builds, no probes) into one paired session, for `judge` |
 | `report` | summary of a saved report or live snapshot |
 | `hot` | hottest scopes, copies, allocations, tasks or waits, with file:line |
 | `explain` | why each costly copy, scope, task group, failed reuse or closure call happens, and what usually fixes it |
 | `compare` | regressions between two reports (exact for copies and calls) |
-| `judge` | KEEP or DISCARD from two `measure` summaries |
+| `judge` | KEEP or DISCARD from two `measure` summaries (`base`, `new`) or one paired session (`pair`); `min_change` in percent |
 | `live` | a running program's current state, with rates over `seconds` (it must run with `LEANPROF_LIVE`) |
 | `dump` | a running program's flight recorder as a Perfetto trace |
 
 CI runs a scripted session against it ([`scripts/mcp-check.py`](../../scripts/mcp-check.py)):
 two `run`s of `copybug`, `report`, `hot`, `explain`, `compare` both ways,
-`measure` and `judge`, `live` and `dump` on a running `server`, and the
+`measure` and `judge`, `measure_pair` and a paired `judge`, `live` and `dump` on a running `server`, and the
 error cases.
 
 ## Overhead

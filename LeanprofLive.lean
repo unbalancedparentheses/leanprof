@@ -633,8 +633,18 @@ def tools : Array Json := #[
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
     [("base", sProp "baseline report"), ("new", sProp "new report"), ("threshold", nProp "time threshold in percent (default 10)")]
     ["base", "new"],
-  tool "judge" "KEEP or DISCARD a change from two measure summaries (output, copies, heartbeats, time)."
-    [("base", sProp "baseline measure summary"), ("new", sProp "new measure summary")] ["base", "new"],
+  tool "measure_pair" ("Run two prebuilt binaries in alternating AB/BA order (no builds, no probes) into one " ++
+    "paired session for judge: every timing, exit code and output hash.")
+    [("base", sProp "baseline binary"), ("candidate", sProp "candidate binary"),
+     ("args", aProp "arguments for both binaries"), ("base_cwd", sProp "working directory of the baseline"),
+     ("candidate_cwd", sProp "working directory of the candidate"), ("runs", nProp "pairs, 6 to 1000 (default 20)"),
+     ("warmup", nProp "warmup pairs (default 3)"), ("check_output", sProp "output file compared instead of stdout"),
+     ("out", sProp "session file (default .lake/leanprof/paired.json)")] ["base", "candidate"],
+  tool "judge" ("KEEP or DISCARD a change: from two measure summaries (output, copies, allocations, heartbeats, " ++
+    "time), or from one measure_pair session (output and a paired 95% median interval on time).")
+    [("base", sProp "baseline measure summary"), ("new", sProp "new measure summary"),
+     ("pair", sProp "measure_pair session, instead of base and new"),
+     ("min_change", sProp "smallest time change in percent that counts (default 1)")] [],
   tool "live" ("What a running program is doing now: its latest live snapshot (it must run with LEANPROF_LIVE), " ++
     "with rates over a short interval and the scopes each thread is inside.")
     [("pid", sProp "process id (snapshot in $TMPDIR/leanprof-PID.live.json, from LEANPROF_LIVE=1)"),
@@ -726,9 +736,23 @@ def callTool (name : String) (a : Json) : IO Json := do
     let (rc, out, err) ← runSelf (#["compare"] ++ thr ++ #[b, n]) cwd
     let verdict := if rc == 0 then "no regressions" else if rc == 1 then "REGRESSION" else "error"
     return textResult s!"{verdict}\n{out}{err}" (rc > 1)
+  | "measure_pair" =>
+    let (some b, some c) := (argStr a "base", argStr a "candidate")
+      | throw <| IO.userError "missing argument: base or candidate"
+    let outFile := argStr a "out" |>.getD ".lake/leanprof/paired.json"
+    let opt (k flag : String) := (argStr a k).map (#[flag, ·]) |>.getD #[]
+    let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
+    let (rc, out, err) ← runSelf (#["measure-pair", "--base", b, "--candidate", c, "--out", outFile] ++
+      opt "base_cwd" "--base-cwd" ++ opt "candidate_cwd" "--candidate-cwd" ++ opt "check_output" "--check-output" ++
+      num "runs" "--runs" ++ num "warmup" "--warmup" ++ #["--"] ++ argStrs a "args") cwd
+    return textResult s!"session {outFile}\n{out}\n{tailText err 10}" (rc != 0)
   | "judge" =>
-    let (some b, some n) := (argStr a "base", argStr a "new") | throw <| IO.userError "missing argument: base or new"
-    let (rc, out, err) ← runSelf #["judge", b, n] cwd
+    let files ← match argStr a "pair", argStr a "base", argStr a "new" with
+      | some p, none, none => pure #[p]
+      | none, some b, some n => pure #[b, n]
+      | _, _, _ => throw <| IO.userError "give pair, or base and new"
+    let minChange := (argStr a "min_change").map (#["--min-change", ·]) |>.getD #[]
+    let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ files) cwd
     return textResult s!"{out}{err}" (rc > 1)
   | "live" =>
     let path ← match argStr a "path", argStr a "pid" with

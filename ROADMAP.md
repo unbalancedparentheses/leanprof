@@ -48,8 +48,12 @@ including refreshed comparisons against current alternatives.
   script.
 - [x] Issue and PR templates, `SECURITY.md`, a Lean version support policy,
   `CONTRIBUTING.md`.
-- [x] Easier first run: the installer checks `PATH`, errors say how to fix
-  them, CI installs from scratch on a project leanprof has never seen.
+- [x] Easier first run: the installer checks `PATH`, and errors say how to
+  fix them.
+- [ ] CI installs from scratch on a project leanprof has never seen. Today
+  the release workflow installs the packaged command and profiles
+  `Tests/Smoke`, which lives in this repository, and it runs only when the
+  packaging files change.
 - [ ] Evidence that stands on its own:
   - the benchmark suite rerun on CI's fixed runners (Linux and macOS, on a
     schedule) with the results published, next to a run on an idle machine
@@ -88,7 +92,8 @@ including refreshed comparisons against current alternatives.
   multi-threaded copies; machine-readable ranked suggestions for agents.
 - [ ] Profiling dependencies rebuilds them with copy counting automatically
   (no deleting compiled files by hand).
-- [x] `measure` and `judge` through the MCP server.
+- [x] `measure`, `measure-pair` and `judge` (summaries or a paired session)
+  through the MCP server.
 - [ ] The loop shipped as a Claude Code command; the results log used as
   memory of tried ideas.
 - [ ] Outside confirmation (the maintainer's decision: posting and

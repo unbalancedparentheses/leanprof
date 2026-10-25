@@ -56,7 +56,7 @@ check("initialize", r["result"]["protocolVersion"] == "2025-06-18" and "tools" i
 send({"jsonrpc": "2.0", "method": "notifications/initialized"})  # no reply expected
 
 names = {t["name"] for t in call("tools/list")["result"]["tools"]}
-want = {"run", "sample", "stat", "elab", "measure", "report", "hot", "explain", "compare", "judge", "live", "dump"}
+want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump"}
 check("tools/list", want <= names, names)
 
 text, err = tool("run", executable="copybug", args=["1000"], json=".lake/leanprof/mcp-small.json")
@@ -84,6 +84,13 @@ check("measure", not err, text)
 text, err = tool("measure", executable="copybug", args=["500"], runs=2, out=".lake/leanprof/mcp-m2.json")
 text, err = tool("judge", base=".lake/leanprof/mcp-m1.json", new=".lake/leanprof/mcp-m2.json")
 check("judge", not err and ("KEEP" in text or "DISCARD" in text), text)
+
+# a paired session of two prebuilt binaries, judged from one file
+text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
+                 args=["500"], runs=6, warmup=1, out=".lake/leanprof/mcp-pair.json")
+check("measure_pair", not err and "6 pairs" in text, text)
+text, err = tool("judge", pair=".lake/leanprof/mcp-pair.json", min_change="1")
+check("judge (paired)", not err and "paired time" in text, text)
 
 # a running program: live snapshot and flight-recorder dump
 env = dict(os.environ, LEANPROF_LIVE="1", LEANPROF_FLIGHT=".lake/leanprof", LEANPROF_QUIET="1")
