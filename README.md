@@ -130,7 +130,7 @@ of the run, to agents.
 
 ## Where leanprof wins, and where it does not
 
-Measured, with the method and raw numbers linked. "Mac" is an Apple M5 Max
+Measured, with the method and raw numbers linked; `scripts/reproduce.sh` re-runs each claim and checks it ([how](docs/reproduce.md)). "Mac" is an Apple M5 Max
 shared with other work ([results](bench/RESULTS.md)); "Linux" is a dedicated,
 idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/after/RESULTS.md),
 [before the Linux fixes](bench/linux/before/RESULTS.md)).
@@ -239,6 +239,7 @@ reproduction.
 - [Lean API](docs/guide/lean-api.md) and [reference](docs/guide/reference.md) (commands, environment, JSON)
 - [How it works, and limits](docs/guide/how-it-works.md)
 - Case studies: [Mathlib](docs/case-studies/mathlib.md), [Lake and the server](docs/case-studies/lake-and-server.md), [lean-compiler-backend](docs/case-studies/lean-compiler-backend.md), [doc-gen4](docs/case-studies/doc-gen4.md), [verso](docs/case-studies/verso.md), [lean-regex](docs/case-studies/lean-regex.md), [concrete](docs/case-studies/concrete.md), [Batteries](docs/case-studies/batteries.md), [vs lean-source-profiler](docs/case-studies/compile-time-vs-lean-source-profiler.md), [vs LeanBench](docs/case-studies/leanbench.md); [benchmarks](bench/README.md)
+- [Reproducing the published numbers](docs/reproduce.md)
 - [Roadmap](ROADMAP.md), [changelog](CHANGELOG.md), [ideas from other ecosystems](docs/research/other-ecosystems.md)
 
 Status: early. Tested in CI with Lean 4.34.1, 4.35.0, the newest release

@@ -6,6 +6,16 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Reproducing the published numbers
+
+- `scripts/reproduce.sh CLAIM` re-runs each measured claim of the README
+  from a clean clone (pinned commits, tags and toolchains), prints measured
+  against published values and fails on any exact difference or a timing
+  outside its stated range: the README example, Tests/Smoke, lean-regex,
+  LeanProfiler, LeanBench, Batteries and lean-source-profiler,
+  lean-compiler-backend's fixes and autoresearch, the benchmark suite
+  ([docs/reproduce.md](docs/reproduce.md)). CI runs the cheap exact ones.
+
 ### Fresh installs, more platforms
 
 - Release archives for macOS x86-64 and Linux arm64, next to macOS arm64 and
