@@ -59,6 +59,7 @@ NAV = [
         "docs/case-studies/mathlib.md",
         "docs/case-studies/compile-time-vs-lean-source-profiler.md",
         "docs/case-studies/leanbench.md",
+        "docs/profiles/README.md",
     ]),
     ("Benchmarks", [
         "bench/README.md",
@@ -68,6 +69,7 @@ NAV = [
 NAV_TITLES = {  # shorter names for the sidebar where the H1 is long
     "docs/case-studies/compile-time-vs-lean-source-profiler.md": "vs lean-source-profiler",
     "bench/README.md": "Benchmarks and LeanProfiler",
+    "docs/profiles/README.md": "Published profiles",
     "bench/RESULTS.md": "Accuracy results",
 }
 RENDERED = {p for _, pages in NAV for p in pages}
@@ -177,7 +179,7 @@ def rewrite_link(href, src, out):
     frag = "#" + frag if frag else ""
     if target in RENDERED or target == "README.md":
         return site_rel(out, out_path(target)) + frag
-    if target.startswith("docs/images/"):
+    if target.startswith("docs/images/") or target.startswith("docs/profiles/"):
         return site_rel(out, target)
     if target.startswith(".."):
         return href
@@ -279,7 +281,7 @@ def first_paragraph(md_text):
 
 
 def section_of(p):
-    return {"docs/guide": "Docs", "docs/case-studies": "Case studies", "bench": "Benchmarks"}[
+    return {"docs/guide": "Docs", "docs/case-studies": "Case studies", "docs/profiles": "Case studies", "bench": "Benchmarks"}[
         os.path.dirname(p)]
 
 
@@ -443,6 +445,9 @@ def build(outdir):
             build_doc(p, outdir)
     build_landing(outdir)
     shutil.copytree(ROOT / "docs" / "images", outdir / "docs" / "images")
+    # the published profiles: pages made by `leanprof html` and their reports, served as they are
+    shutil.copytree(ROOT / "docs" / "profiles", outdir / "docs" / "profiles",
+                    ignore=lambda d, names: [n for n in names if n.endswith(".md")], dirs_exist_ok=True)
     shutil.copy(WEB / "style.css", outdir / "style.css")
     shutil.copy(WEB / "favicon.svg", outdir / "favicon.svg")
     (outdir / ".nojekyll").write_text("")

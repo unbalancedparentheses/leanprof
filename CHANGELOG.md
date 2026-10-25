@@ -6,6 +6,30 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Compile time: a project view and published profiles
+
+- `leanprof html` on a compile-time report opens on a project view: project,
+  folder, module, declaration, term or tactic, each with its cost split into
+  elaboration, kernel, compiler and linters, the repeated work and the
+  definitions behind the work done there, terms and tactics nested by the
+  range that contains them, and the source. Given a base report, every level
+  shows the base, the change and what regressed (modules by name,
+  declarations by name, terms and tactics by text). The place is in the
+  address, so links and the back button work. `--ranges N` and `--keep N`
+  bound the page for large projects; the page says what it left out.
+- `elab.json`: each module lists its 10 costliest repeated operations (with
+  what they cost there and in all files) and the definitions behind its
+  work (`files[].repeated`, `files[].unfolded`); `repeated[].files` counts
+  the modules an operation was done in.
+- Published profiles in `docs/profiles` (on the website too): all of
+  Batteries `v4.35.0` (1,424 M heartbeats, 195 modules, 15 s) and
+  Mathlib `v4.35.0`'s 40 slowest modules by Radar's instructions (16.1 G
+  heartbeats, 8.5 minutes 4 at a time, at most 2.9 GB per process), each a
+  page and its report, with the commands, versions and machine
+  (`scripts/publish-profile.py`).
+- CI drives the project view in jsdom (`scripts/check-html-view.js`): every
+  level renders, without script errors, and compares with a base.
+
 ### Smaller fixes and maintenance
 
 - `leanprof doctor`'s copy-detection self-check could not run on Linux

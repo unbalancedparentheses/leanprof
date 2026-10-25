@@ -124,7 +124,7 @@ of the run, to agents.
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
 | A running program, live; the last seconds as a timeline | `leanprof top myapp`, `leanprof dump PID` |
-| Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats]` |
+| Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects; a project view from project to tactic, compared with a base ([published profiles](docs/profiles/README.md): Batteries, Mathlib's 40 slowest modules) | `leanprof elab [--project] [--heartbeats]`, `leanprof html` |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats; PR comments | `leanprof compare`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
@@ -212,8 +212,11 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   plain binary the whole-process dilution was small (10.4% read as 10.0%),
   and `measure --scope NAME` times one `profile!` scope.
 - **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)**
-  has a repository viewer and published Mathlib-scale datasets, which
-  leanprof lacks. The comparison above is against its latest release (0.3.0),
+  publishes profiles of all of Mathlib (8,556 files); leanprof's
+  [published profiles](docs/profiles/README.md) cover all of Batteries and
+  only Mathlib's 40 slowest modules (16.1 G heartbeats, 8.5 minutes 4 at a
+  time on the shared Mac). Both have a drill-down viewer; only
+  lean-source-profiler's has timelines. The comparison above is against its latest release (0.3.0),
   whose default is the compact mode measured there; its main branch has
   since changed its dataset tooling and explorer, not re-tested here.
   leanprof's exact ranges need the Lean it was built with.
@@ -239,7 +242,7 @@ reproduction.
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – | – |
 | Peak memory per scope, freeing pauses | ✅ | – | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads | – |
-| Compile time | per file, declaration, term and tactic (exact ranges with the Lean leanprof was built with); the definitions unfolded behind it; repeated work; whole projects | – | exact term ranges, Mathlib-scale data ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
+| Compile time | per file, declaration, term and tactic (exact ranges with the Lean leanprof was built with); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
 | Exact regression checks, PR comments | ✅ | thresholded time | – | – | mean against a saved baseline, fixed threshold |
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |

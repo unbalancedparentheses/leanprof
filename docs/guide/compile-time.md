@@ -265,11 +265,39 @@ A line inside a proof with no declaration on it gets a `⚙` hint of its own.
 `leanprof html` shows the same in its source view and lists every range in
 a "Source ranges" tab. See [editor](editor.md).
 
+## A whole project in the browser
+
+```
+leanprof elab --project --heartbeats
+leanprof html                          # .lake/leanprof/report.html
+leanprof html base.json elab.json      # compared with a base, at every level
+```
+
+The page opens on a project view that goes down from the project to a
+folder, a module, a declaration and a term or tactic: at each level the
+cost split into elaboration, kernel, compiler and linters, what is under it
+(folders and modules, declarations, terms and tactics nested by
+containment), the repeated work and the definitions behind the work done
+there, and the source. Given a base report, every level shows the base, the
+change and what regressed. It is one file with no network access
+([HTML report](html-report.md#what-the-page-shows)).
+
+For this, `elab.json` lists per module (`files[].repeated`,
+`files[].unfolded`) its 10 costliest repeated operations, with what they
+cost there and in all files, and the 10 definitions behind the most work in
+it; `repeated[].files` says in how many modules an operation was done.
+
+Published profiles made this way, with their reports: [all of Batteries
+`v4.35.0` and Mathlib `v4.35.0`'s 40 slowest modules](../profiles/README.md)
+(16.1 G heartbeats; 8.5 minutes on the Mac, 4 at a time, at most 2.9 GB per
+process).
+
 ## Compared with lean-source-profiler
 
 [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
 records every term and tactic with its exact source range through its own
 Lean driver (the approach `elab`'s driver takes too), has a VS Code overlay
-and a browser explorer, and publishes profiles of all of Mathlib. [A head-to-head comparison on the same
+and a browser explorer, and publishes profiles of all of Mathlib (leanprof
+publishes Batteries and 40 Mathlib modules). [A head-to-head comparison on the same
 files](../case-studies/compile-time-vs-lean-source-profiler.md) shows what
 each finds, how accurate the totals are and what each costs to run.

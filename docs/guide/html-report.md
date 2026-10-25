@@ -21,8 +21,33 @@ leanprof html [-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min
 Without arguments it reads `report.json`, `elab.json` and `measure.json` from
 `.lake/leanprof/`, whichever exist. A page for copybug is 60 to 160 KiB.
 
+A compile-time report of a whole project can be large: the page keeps the
+2,000 costliest term and tactic ranges (`--ranges N`), and the 3,000
+costliest repeated operations and definitions and the operations inside the
+3,000 costliest declarations (`--keep N`; the other declarations keep their
+totals), and says so where it cut. All of Batteries makes a 4.5 MiB page
+with `--ranges 6000`; the [published profiles](../profiles/README.md) are
+made this way.
+
 ## What the page shows
 
+- **Project view** (for `leanprof elab` reports; the page opens on it when
+  the report covers several modules): a drill-down from the project to its
+  folders, a module, a declaration and a term or tactic. Each level has its
+  totals split into elaboration, kernel, compiler and linters; the project
+  and folder levels list their folders and modules (with each module's wall
+  time and errors), a flame graph of the level and its costliest
+  declarations; a module lists its declarations, its 10 costliest repeated
+  operations (with what each costs in all files) and definitions behind the
+  work, and its costliest terms and tactics; a declaration lists the
+  operations and definitions inside it, every term and tactic that starts in
+  it in source order, nested by containment, the lines Lean traced its work
+  on, and its source; a term or tactic shows the ranges inside it and its
+  source. The place is in the address (`#project~f=Foo/Bar.lean~d=...`), so
+  the back button works and a link opens the same view. Given a base report,
+  every table gains the base, the change and a status (regression, new,
+  gone) by `leanprof compare`'s rules: modules by name, declarations by
+  name, terms and tactics by their text, operations and definitions by name.
 - **Summary**: wall and CPU time, peak memory, allocations, copies, frees,
   tasks, failed reuse and closure calls, top scope; for compile reports the
   total cost, repeated work and the costliest line. Tiles only appear for

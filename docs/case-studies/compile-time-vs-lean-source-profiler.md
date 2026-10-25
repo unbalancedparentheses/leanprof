@@ -28,7 +28,7 @@ leanprof elab [--compact | --heartbeats | --counts] FILE               # leanpro
 | repeated work, across files | no | yes |
 | whole project | sequential | parallel (`--jobs`) |
 | exact, comparable numbers | no | `--heartbeats`; `compare`, `report-md`, the GitHub Action |
-| viewing | VS Code overlay, browser explorer, published Mathlib profiles | text, JSON, `#leanprof` hints and hovers in the editor (ranges in the hover), `leanprof html` (a "Source ranges" tab, hints in the source view) |
+| viewing | VS Code overlay, browser explorer (folders, files, declarations, source lines), published profiles of all of Mathlib | text, JSON, `#leanprof` hints and hovers in the editor (ranges in the hover), `leanprof html` (a project view from project to term and tactic, with repeated work, definitions behind the work and a base to compare at each level), published profiles of Batteries and Mathlib's 40 slowest modules |
 
 ## Overhead
 
@@ -200,7 +200,9 @@ comments. LSP has neither.
   built are not included unless named on the command line, where LSP takes
   every `.lean` file under the directory.
 - **Viewers and datasets.** LSP has a VS Code overlay, a browser explorer
-  with timelines, and profiles of all of Mathlib published. leanprof shows
-  ranges in Lean's own language server (`#leanprof` hovers) and in a static
-  HTML report's table and source view; it has no timeline view and no
-  published datasets.
+  with timelines, and profiles of all of Mathlib (8,556 files) published.
+  leanprof shows ranges in Lean's own language server (`#leanprof` hovers)
+  and in a static HTML page with a project view (project, folder, module,
+  declaration, term or tactic, each compared with a base when given one);
+  its [published profiles](../profiles/README.md) cover all of Batteries and
+  only Mathlib's 40 slowest modules, and it has no timeline view.

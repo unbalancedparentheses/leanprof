@@ -818,6 +818,8 @@ const PV = elab ? (function () {
       { t: "cost of the work", v: (r) => amtOf(r, "amount"), f: (v) => f(v), num: true, bar: true }, ...baseCols("amount", baseRows != null), ncol("times", "count"), ncol(sitesLabel || "sites", "sites")],
     { what: "definitions", rowClass: rowCls("amount"), sort: 3 });
   }
+  // what the page left out of a large report
+  const cut = (k, what) => (num(elab, k + "_total") > arr(elab.data, k).length ? " This page keeps the " + fN(arr(elab.data, k).length) + " costliest of " + fN(num(elab, k + "_total")) + " " + what + "." : "");
   const kindName = (k) => ({ unfold: "isDefEq unfolds", whnf: "whnf reduces", instance: "instance tried", simp: "simp lemma" }[k] || k);
   const DEFS_NOTE = "The isDefEq, whnf, instance and simp work each definition caused, with where it is defined. Costs overlap: unfolding one definition can unfold another.";
   // folder-level sums of the per-file lists (each file keeps its 10 costliest)
@@ -873,9 +875,9 @@ const PV = elab ? (function () {
       panel(top ? "Folders and modules" : "In " + folder + "/", fN(files.length) + " modules, " + fN(decls.length) + " declarations with cost. Click a folder or module to go down a level." + (base ? " Compared with " + elabB.path + ": modules by name." : ""), legend, childTable),
       tree.c.length ? panel("Where it went", "Each box's width is its share; click to zoom.", flame(tree, { fmt: f })) : null,
       panel("Costliest declarations", null, declTable(decls, bDecls, all)),
-      reps.length || (bReps && bReps.length) ? panel("Repeated work", top ? "The same operation (up to metavariable numbers) done more than once, across the project: candidates for a cached instance, a lemma or `termination_by`/`decreasing_by`."
+      reps.length || (bReps && bReps.length) ? panel("Repeated work", top ? "The same operation (up to metavariable numbers) done more than once, across the project: candidates for a cached instance, a lemma or `termination_by`/`decreasing_by`." + cut("repeated", "repeated operations")
         : "The repeated operations of the project done in these modules (each module lists its 10 costliest), with what they cost here.", repTable(reps, bReps, false)) : null,
-      consts.length || (bConsts && bConsts.length) ? panel("Definitions behind the work", DEFS_NOTE + (top ? "" : " Summed from each module's 10 costliest; sites are declarations."), constTable(consts, bConsts, top ? "sites" : "declarations")) : null];
+      consts.length || (bConsts && bConsts.length) ? panel("Definitions behind the work", DEFS_NOTE + (top ? cut("constants", "definitions") : " Summed from each module's 10 costliest; sites are declarations."), constTable(consts, bConsts, top ? "sites" : "declarations")) : null];
   }
   function fileView(file) {
     const x = cur.files.get(file);
