@@ -308,6 +308,25 @@ def tests : StateT Nat IO Unit := do
   check "explain: modify rewrite"
     (Explain.modifyRewrite "  xs := xs.set! i (xs[i]!.push t)" == some "xs := xs.modify i (·.push t)")
   -- this file's own C: `withHistory` stores `acc` in `history`, then pushes to it
+  -- a copied field of a kept structure: cite structure updates near the
+  -- update, never `match … with`, comments or docstrings (concrete's
+  -- `elabModule`: 38 lines, one of them a comment)
+  let decl : Array (Nat × String) := #[(1, "def f (s : S) : S := Id.run do"),
+    (2, "  -- a type with aliases expanded"), (3, "  /-- doc with words"), (4, "     still doc with -/"),
+    (5, "  match s.k with"), (6, "  | 0 => s"), (7, "  | _ =>"), (8, "  let t := { s with k := 1 }"),
+    (9, "  let u := s.name ++ \"_\""), (10, "  let v := {s with k := 2}"), (11, "  let w := { s with k := 3 } -- far"),
+    (20, "  return { s with name := u }")]
+  check "explain: comments are not code" ((Explain.codeLines decl).all fun (_, c) => !Explain.has c "with words" &&
+    !Explain.has c "aliases" && !Explain.has c "still doc")
+  check "explain: structure updates, not match … with"
+    (Explain.isStructUpdate "{ s with k := 1 }" && Explain.isStructUpdate "{s with k := 2}" &&
+     !Explain.isStructUpdate "match s.k with" && !Explain.isStructUpdate "-- with aliases")
+  check "explain: a kept structure's lines are the updates nearest the copy"
+    (Explain.keptStructLines decl #[9] == #[8, 10]) s!"{Explain.keptStructLines decl #[9]}"
+  check "explain: without an anchor, a declaration's many structure updates are not cited"
+    (Explain.keptStructLines decl #[] == #[]) s!"{Explain.keptStructLines decl #[]}"
+  check "explain: quoted source lines leave out comments"
+    (Explain.code decl 11 == "`let w := { s with k := 3 }`") (Explain.code decl 11)
   let cache ← IO.mkRef ({} : Explain.CCache)
   let cfile : System.FilePath := ".lake/build/ir/Tests/Main.c"
   let clines ← Explain.readLines cache cfile
@@ -366,6 +385,14 @@ def tests : StateT Nat IO Unit := do
   check "judge: the same scope, every run faster, is KEEP" v.keep v.render
   let v := Judge.judge base { summary 2999 0 [] [50, 51, 52] with allocs := none }
   check "judge: allocations counted in one summary only are not compared" (v.worse.isEmpty) v.render
+  let v := Judge.judge base { summary 2999 1200000 [1200000] [40, 41, 42] with core := true }
+  check "judge: a --core summary against one without is DISCARD"
+    (!v.keep && v.worse.any (fun w => (w.splitOn "--core").length > 1)) v.render
+  let v := Judge.judge { base with core := true } { summary 2999 980000 [980000] [50, 51, 52] with core := true }
+  check "judge: two --core summaries are compared" v.keep v.render
+  check "judge: a summary's core flag is read"
+    (((Judge.Summary.ofJson (Lean.Json.mkObj [("leanprof", "measure"), ("core", Lean.Json.bool true)])).toOption.map
+      (·.core)) == some true)
   -- Interleaved pairs cancel a common drift that makes the two ranges overlap.
   let paired (factor : Nat) (overload : Bool := false) : Lean.Json := Id.run do
     let mut samples := #[]

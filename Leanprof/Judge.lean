@@ -56,6 +56,8 @@ structure Summary where
   /-- the machine ran more jobs than it has CPUs while measuring -/
   overloaded : Bool := false
   loadAvg : Option Float := none
+  /-- measured with `--core`: copies and allocations inside Lean's libraries counted too -/
+  core : Bool := false
 
 def num (j : Json) (k : String) : Float :=
   match j.getObjVal? k with
@@ -94,7 +96,8 @@ def Summary.ofJson (j : Json) : Except String Summary := do
     allocs, allocSites := toNatMap (keyedMap (field "allocs") "allocs")
     heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats")
     overloaded := ((field "machine").getObjValAs? Bool "overloaded").toOption.getD false
-    loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption }
+    loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption
+    core := (j.getObjValAs? Bool "core").toOption.getD false }
 
 /-- The verdict and its reasons. -/
 structure Verdict where
@@ -158,6 +161,9 @@ def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
   if b.scope != n.scope then
     let what (s : String) := if s.isEmpty then "the whole process" else s!"scope {s}"
     worse := worse.push s!"different times measured: {what b.scope} vs {what n.scope}"
+  if b.core != n.core then
+    worse := worse.push ("copies and allocations counted differently: only one summary was measured with --core " ++
+      "(Lean's libraries included); measure both the same way")
   if b.exitCode != n.exitCode then
     worse := worse.push s!"exit code changed: {b.exitCode} -> {n.exitCode}"
   if b.outputSource != n.outputSource || b.outputHash != n.outputHash then

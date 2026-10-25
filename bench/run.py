@@ -15,6 +15,7 @@ and its reported call counts with the exact counts the program prints.
 
 import argparse
 import glob
+import gzip
 import json
 import os
 import platform
@@ -771,14 +772,59 @@ def before_after(before_json, res, lcb_after=None):
 # ---------------------------------------------------------------- lcb
 
 
+# `--lcb pinned`: lean-compiler-backend cloned at this commit (its main of
+# 2026-10-25, Lean 4.34.1)
+LCB_REPO = "https://github.com/unbalancedparentheses/lean-compiler-backend"
+LCB_COMMIT = "d828ff30e2d29552cdc1ea053ac22b827c564bfd"
+# zlib's files the benchmark compiles; older checkouts had them in `zlib/`,
+# newer ones keep all 17 compressed in this directory
+LCB_INPUTS = ["crc32", "deflate", "inflate", "trees"]
+LCB_GZ = os.path.join("docs", "benchmarks", "arm-scaled-load", "private", "zlib", "ir")
+
+
+def lcb_checkout(src):
+    """A copy of lean-compiler-backend to benchmark: `src` copied, or with
+    `pinned` a fresh clone at LCB_COMMIT."""
+    work = os.path.join(WORK, "lcb")
+    if src == "pinned":
+        if os.path.isdir(work) and sh(["git", "rev-parse", "HEAD"], cwd=work, check=False).stdout.strip() != LCB_COMMIT:
+            shutil.rmtree(work)
+        if not os.path.isdir(work):
+            log(f"cloning lean-compiler-backend at {LCB_COMMIT[:7]}")
+            sh(["git", "clone", "-q", LCB_REPO, work], cwd=WORK)
+            sh(["git", "checkout", "-q", LCB_COMMIT], cwd=work)
+    elif not os.path.isdir(work):
+        log(f"copying {src} to {work}")
+        shutil.copytree(src, work, symlinks=True)
+    return work
+
+
+def lcb_inputs(work):
+    """The zlib inputs, as `.ssa` files: `zlib/` of an older checkout, else
+    extracted from the compressed copies (a run with no input fails with
+    "input contains no functions or data")."""
+    old = [os.path.join(work, "zlib", f"{n}.ssa") for n in LCB_INPUTS]
+    if all(os.path.exists(p) for p in old):
+        return old
+    out = os.path.join(WORK, "lcb-inputs")
+    os.makedirs(out, exist_ok=True)
+    paths = []
+    for n in LCB_INPUTS:
+        gz = os.path.join(work, LCB_GZ, f"{n}.ssa.gz")
+        if not os.path.exists(gz):
+            sys.exit(f"lean-compiler-backend: no zlib input {n}.ssa in {work}/zlib or {gz}")
+        p = os.path.join(out, f"{n}.ssa")
+        with gzip.open(gz, "rb") as f, open(p, "wb") as g:
+            g.write(f.read())
+        paths.append(p)
+    return paths
+
+
 def lcb_suite(src, reps, configs, skipped):
     """The real program: lean-compiler-backend compiling zlib, on a copy of
     the project (leanprof run rebuilds it)."""
-    work = os.path.join(WORK, "lcb")
-    if not os.path.isdir(work):
-        log(f"copying {src} to {work}")
-        shutil.copytree(src, work, symlinks=True)
-    inputs = sorted(glob.glob(os.path.join(work, "zlib", "*.ssa")))
+    work = lcb_checkout(src)
+    inputs = lcb_inputs(work)
     target = "aarch64-macos" if platform.machine() in ("arm64", "aarch64") else "x86_64-linux"
     args = ["--target", target, "--optimize", "--allocate", *inputs, "-o", os.path.join(OUT, "lcb.s")]
     cfgs = [c for c in ["plain", "run", "auto", "allocs", "counters", "frees", "sample", "samply"]
@@ -789,6 +835,10 @@ def lcb_suite(src, reps, configs, skipped):
     remove_objects(work)
     remove_exes(work, ["lcb"])
     sh(["lake", "build", "lcb"], cwd=work)
+    # the command must work before it is timed: a failing run is fast
+    probe = sh([os.path.join(work, ".lake", "build", "bin", "lcb"), *args], cwd=work, check=False)
+    if probe.returncode != 0 or not os.path.getsize(os.path.join(OUT, "lcb.s")):
+        sys.exit(f"lean-compiler-backend: `lcb {' '.join(args)}` failed ({probe.returncode}): {probe.stderr[-500:]}")
     for cfg in cfgs:
         os.makedirs(os.path.join(bins, cfg), exist_ok=True)
         how = CONFIGS[cfg][2]
@@ -964,7 +1014,8 @@ def main():
     ap.add_argument("--workloads", help="comma-separated subset of " + ",".join(WORKLOADS))
     ap.add_argument("--configs", help="comma-separated subset of " + ",".join(CONFIGS))
     ap.add_argument("--lcb", help="lean-compiler-backend checkout to benchmark as the real program "
-                                  "(copied first; default $LCB_DIR; skipped when unset or with --quick)")
+                                  "(copied first; default $LCB_DIR; skipped when unset or with --quick), "
+                                  f"or `pinned` for a fresh clone at {LCB_COMMIT[:7]}")
     ap.add_argument("--lcb-reps", type=int, default=5)
     ap.add_argument("--no-build", action="store_true", help="reuse the executables of the last build")
     ap.add_argument("--tolerance", default=None,

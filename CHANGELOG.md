@@ -30,6 +30,79 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - CI drives the project view in jsdom (`scripts/check-html-view.js`): every
   level renders, without script errors, and compares with a base.
 
+### Known issues from dogfooding lean-compiler-backend and concrete
+
+- `measure --core` (and MCP `measure` with `core`): copies and allocations
+  inside Lean's precompiled libraries count too, as with `run --core`. A
+  real lean-compiler-backend speedup (`emitData`) was entirely in such code,
+  invisible to `judge`'s allocation rule. Summaries record `core`, and
+  `judge` discards a comparison of a `--core` summary with a plain one.
+- Live snapshots mark copies of empty or tiny values (`tiny`, the report's
+  rule against the time so far), and `top` and MCP `live` summarize them in
+  one line as `run` and MCP `hot` do (`SSA.fresh`'s 17,775 9-byte copies
+  were second in `top`). `LEANPROF_ALL_COPIES=1` lists them.
+  `top --attach` on a program that had already exited now shows its last
+  snapshot (it printed nothing).
+- The last report is well-defined: `.lake/leanprof/report.json` is what
+  `run`, `stat`, `sample` and `measure` leave, also when `--json FILE` saves
+  a copy elsewhere (`run --json F` did not update it, so `explain` read an
+  older report). `run` and `stat` remove it (and FILE) before they start,
+  so a failed build or a killed program leaves no older report passing for
+  this one (the MCP `run` tool summarized a stale one after a failed build).
+  `run` and `stat` take `--out FILE` as another spelling of `--json FILE`,
+  and `sample` takes `--json FILE` (a copy of its report; `--out` is still
+  samply's profile).
+- `stat` launches the freshly linked binary once without running it
+  (`LEANPROF_LAUNCH_ONLY=1`: leanprof's runtime exits as it loads) before
+  the measured run, and prints that first launch's time on its own line.
+  On macOS a new binary's first launch is slow (1.1 s for `copybug`, 24 ms
+  after; 2.3 s for concrete), and "including process start" counted it
+  without saying so. That time also no longer includes `lake env`.
+- The MCP `explain` tool gives `leanprof explain`'s diagnosis of each copy
+  (cause from the IR, fix in the program's names, lines, confidence) instead
+  of a generic list of usual causes, which it keeps only for live snapshots
+  (no symbols). It refuses sampled reports as the command does; on one it
+  had listed scopes "in 0 calls".
+- `explain`, for a copied field of a kept structure, cites only structure
+  updates (`{ s with … }`) next to the update, not every line with the word
+  `with` (`match … with`, comments, docstrings), and no comment text: on
+  concrete's `elabModule` it listed 38 lines and quoted a comment as the
+  source; it now cites none and says no source line matched (the copy is
+  `sp ++ "_"` at `Elab.lean:3356`, which text matching cannot single out
+  among the declaration's many `++ "_"`). Comments are stripped before any
+  source matching, and quoted lines leave out trailing comments.
+- `elab` through `lean --json` (a project on another Lean, or
+  `--no-driver`) prints trace descriptions on one line (`pp.oneline`). On
+  concrete's `Check.lean` (Lean 4.34.1) `elab --heartbeats` took 61 s and
+  10.2 GB against 5.4 s and 0.78 GB for plain `lean`: `Elab.step` prints a
+  term's whole syntax at every nesting level, one message was 1.74 GB, and
+  `lean` alone needed 28.6 s and 10.3 GB to print it. Now 16.9 s and
+  1.36 GB, heartbeats per declaration within 0.03%. Steps whose description
+  was cut (`term do [...]`) are not counted as repeated work, a cut command
+  is named from the source, and tactics are no longer placed on comment
+  lines (`simp` was placed on a comment saying "simply"). The driver (the
+  project on leanprof's Lean) was not affected: 25.2 s and 1.26 GB on the
+  same file.
+- An interrupted `leanprof run` (also `stat`, `measure`) no longer leaves
+  instrumented objects that a plain `lake build` keeps (every later binary
+  carried the runtime and printed a report, leanprof itself included when
+  profiled from its own repository). SIGINT, SIGTERM and SIGHUP are caught
+  while a program or build runs (`c/cli.c`): TERM and HUP are passed on,
+  the normal build is put back, and leanprof exits with 128 + the signal.
+  Against SIGKILL, Lake's records of the instrumented objects are deleted
+  once built (0.04 s on concrete), so the next plain `lake build`
+  recompiles them normally (14.2 s for concrete's 114 objects, only after
+  a kill). `leanprof doctor` puts a stashed normal build back.
+  `scripts/interrupt-check.py` (CI) checks every signal.
+- `bench/run.py`'s lean-compiler-backend step failed ("input contains no
+  functions or data"): current checkouts keep zlib's inputs compressed in
+  `docs/benchmarks/arm-scaled-load/private/zlib/ir`, not in `zlib/`, so lcb
+  ran with none. The inputs are extracted from there (or taken from `zlib/`
+  in older checkouts), the command must succeed once before it is timed,
+  and `--lcb pinned` clones lean-compiler-backend at `d828ff3`
+  (checked: plain 0.216 s, `run` 1.13×, `--auto` 1.59×, `--allocs` 1.22×,
+  2 runs, shared Mac).
+
 ### Smaller fixes and maintenance
 
 - `leanprof doctor`'s copy-detection self-check could not run on Linux

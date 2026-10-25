@@ -35,7 +35,8 @@ def commands : List (String × String × String) := [
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time, except functions too small to time, which --time-tiny includes; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
-    ".lake/leanprof/report.json. Memory (peak, per scope) is always sampled.\n" ++
+    ".lake/leanprof/report.json, the last report (what explain, html and #leanprof read; --json FILE,\n" ++
+    "or --out FILE, also saves it to FILE). Memory (peak, per scope) is always sampled.\n" ++
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
     "Dependencies are rebuilt with the probes too (their normal build is put back afterwards, so\n" ++
     "nothing is recompiled after); --no-deps rebuilds only this package (faster with large ones).\n" ++
@@ -48,10 +49,11 @@ def commands : List (String × String × String) := [
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
     "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
     "unless turned off (they slow the program down); --auto times every function."),
-  ("sample", "[--rate HZ] [--top N] [--out FILE] [--cwd DIR] EXE [-- ARGS...]",
+  ("sample", "[--rate HZ] [--top N] [--out FILE] [--json FILE] [--cwd DIR] EXE [-- ARGS...]",
     "Run EXE under samply (no probes) and report CPU time per Lean declaration with file:line,\n" ++
-    "plus where the Lean runtime's time went. `samply load` on the saved profile opens a flame\n" ++
-    "graph with Lean names. EXE is a target of this project or a path to any program, such as\n" ++
+    "plus where the Lean runtime's time went. `samply load` on the saved profile (--out FILE) opens a flame\n" ++
+    "graph with Lean names. The sampled report becomes the last report, .lake/leanprof/report.json\n" ++
+    "(--json FILE also saves it to FILE). EXE is a target of this project or a path to any program, such as\n" ++
     "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
     "Needs samply (brew install samply / cargo install samply)."),
   ("elab", "[--heartbeats] [--compact] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
@@ -67,9 +69,11 @@ def commands : List (String × String × String) := [
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
     "by more than PCT% (default 10) and MS ms (default 1)."),
-  ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--no-deps] [--out FILE] EXE [-- ARGS...]",
+  ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
+    "--core also counts copies and allocations inside Lean's precompiled libraries (as `run --core`);\n" ++
+    "judge compares only summaries measured the same way.\n" ++
     "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
     "For `judge` and autoresearch loops."),
   ("measure-pair", "--base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
@@ -251,10 +255,23 @@ def lakeRunEnv (dir : Option FilePath := none) : IO (Array (String × Option Str
       if k.isEmpty || v.isEmpty || k.startsWith "LEANPROF_" then none else some (k, some v)
     | _ => none
 
+/-- From now on, catch INT, TERM and HUP and pass them to process `pid`
+(0: none), so that an interrupted command still puts the normal build back
+(`c/cli.c`). -/
+@[extern "leanprof_cli_guard"] opaque guardSignals (pid : UInt32) : IO Unit
+/-- The signal caught by `guardSignals`'s handler, 0 if none. -/
+@[extern "leanprof_cli_caught"] opaque caughtSignal : IO UInt32
+
+/-- Stop if a signal was caught (the caller's `finally` puts the build back). -/
+def checkInterrupted : IO Unit := do
+  let s ← caughtSignal
+  if s != 0 then throw <| IO.userError s!"interrupted by signal {s}"
+
 def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String))
     (cwd : Option FilePath := none) : IO UInt32 := do
   let child ← IO.Process.spawn { cmd, args, env, cwd }
-  child.wait
+  guardSignals child.pid
+  try child.wait finally guardSignals 0
 
 structure RunOpts where
   auto : Option String := none
@@ -284,6 +301,8 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--time-tiny" :: rest => parseRun { opts with timeTiny := true } rest
   | "--trace" :: f :: rest => parseRun { opts with trace := some f } rest
   | "--json" :: f :: rest => parseRun { opts with json := some f } rest
+  -- `--out` as in the other commands: where this command's report goes
+  | "--out" :: f :: rest => parseRun { opts with json := some f } rest
   | "--keep" :: rest => parseRun { opts with keep := true } rest
   | "--allocs" :: rest => parseRun { opts with allocs := true } rest
   | "--counters" :: rest => parseRun { opts with counters := true } rest
@@ -467,6 +486,32 @@ def selfCheckProbe (root : FilePath) : IO (Except String (String × String)) := 
   finally
     discard <| IO.Process.output { cmd := "rm", args := #["-rf", dir.toString] }
 
+/-- Forget Lake's records (`.trace`, `.hash`) of the instrumented objects of
+the packages being profiled and of `exe`, once they are built. If leanprof is
+killed before it puts the normal build back (SIGKILL, a crash), a plain
+`lake build` then finds no record and compiles them normally again, instead
+of keeping instrumented objects that would carry the runtime into every
+later build. The next `leanprof run` (or `leanprof doctor`) restores the
+normal objects without compiling. -/
+partial def dropBuildRecords (deps : Bool) (exe : String) : IO Nat := do
+  let rec go (dir : FilePath) : IO Nat := do
+    unless ← dir.isDir do return 0
+    let mut n := 0
+    for e in ← dir.readDir do
+      if ← e.path.isDir then n := n + (← go e.path)
+      else if (e.fileName.splitOn ".c.o").length > 1 &&
+          (e.fileName.endsWith ".trace" || e.fileName.endsWith ".hash") then
+        IO.FS.removeFile e.path
+        n := n + 1
+    return n
+  let mut n := 0
+  for pkg in ← workspacePackages deps do
+    n := n + (← go (pkg / ".lake" / "build" / "ir"))
+  for f in (exeFiles exe).drop 1 do
+    if (f.extension == some "trace" || f.extension == some "hash") && (← f.pathExists) then
+      IO.FS.removeFile f
+  return n
+
 /-- Build `exe` with the copy shims in every package (with `deps := false`,
 only the root package; and, with `auto`, every function timed). A project that does not depend on leanprof gets leanprof's
 runtime compiled for its own Lean version, linked in by the wrapper. A failed
@@ -527,9 +572,13 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     -- into `lean`): no reports from it, and none over the program's
     ("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none), ("LEANPROF_TRACE", none),
     ("LEANPROF_STAT", none)] ++ runtimeEnv ++ extraEnv
-  let rc ← spawnWait "lake" #["build", exe] buildEnv
-  if rc != 0 then
+  let rc ← try spawnWait "lake" #["build", exe] buildEnv
+    catch e => cleanupInstrumented exe; throw e
+  if rc != 0 || (← caughtSignal) != 0 then
     cleanupInstrumented exe
+    checkInterrupted
+  else
+    discard <| dropBuildRecords deps exe
   return rc
 
 /-- The executable Lake builds for `exe`. -/
@@ -552,7 +601,8 @@ def absPath (p : FilePath) : IO FilePath := do
 /-- Run the instrumented `exe` in the project, or in `--cwd DIR` (for
 programs that read their input from the current directory): paths become
 absolute, and LEANPROF_PROJECT tells the runtime where the `.ilean` files are. -/
-def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Option String)) : IO UInt32 := do
+def instrumentedEnv (exe : String) (opts : RunOpts) (env : Array (String × Option String)) :
+    IO (Array (String × Option String)) := do
   let fix (v : Option String) : IO (Option String) := v.mapM fun p => return (← absPath p).toString
   -- as `lake exe` would run it, then leanprof's own variables
   let mut env' ← lakeRunEnv
@@ -561,7 +611,29 @@ def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Opti
   if opts.cwd.isSome then env' := env'.push ("LEANPROF_PROJECT", some (← IO.currentDir).toString)
   -- positions of Lean's own functions (copies inside its libraries with `--core`)
   if let some pre ← toolchainPrefix (exePath exe) then env' := env'.push ("LEANPROF_CORE_DIR", some pre)
-  spawnWait (← absPath (exePath exe)).toString opts.args env' (opts.cwd.map (·))
+  return env'
+
+def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Option String)) : IO UInt32 := do
+  spawnWait (← absPath (exePath exe)).toString opts.args (← instrumentedEnv exe opts env) (opts.cwd.map (·))
+
+/-- The last report: what `run`, `stat`, `sample` and `measure` leave, and
+what `explain`, `html`, MCP `report`/`hot`/`explain` and `#leanprof` read by
+default. -/
+def lastReport : FilePath := (".lake" : FilePath) / "leanprof" / "report.json"
+
+/-- Before a command makes a report: remove the last one (and the file named
+by `--json`/`--out`), so that after a failed build or a killed program no
+older report passes for this one. -/
+def clearReports (json : Option String) : IO Unit := do
+  IO.FS.createDirAll (lastReport.parent.getD ".")
+  for f in lastReport :: json.toList.map (⟨·⟩) do
+    if ← f.pathExists then IO.FS.removeFile f
+
+/-- After a report was written to `json`: it is also the last report. -/
+def publishReport (json : FilePath) : IO Unit := do
+  unless ← json.pathExists do return
+  if (← absPath json) == (← absPath lastReport) then return
+  IO.FS.writeBinFile lastReport (← IO.FS.readBinFile json)
 
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
@@ -569,16 +641,18 @@ def run (argv : List String) : IO UInt32 := do
   let coreEnv ← if opts.core then
       pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees).toString)]
     else pure #[]
+  clearReports opts.json
   let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees (coreEnv ++ tinyEnv opts) opts.deps
   if rc != 0 then return rc
-  -- the report `#leanprof` reads, unless another path was asked for
-  IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
-  let json := opts.json.getD ".lake/leanprof/report.json"
+  -- written where asked (--json/--out), and always as the last report
+  let json := opts.json.getD lastReport.toString
   let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)] ++
     (if opts.allCopies then #[("LEANPROF_ALL_COPIES", some "1")] else #[])
-  let rc ← runInstrumented exe opts runEnv
-  unless opts.keep do
-    cleanupInstrumented exe
+  let rc ← try runInstrumented exe opts runEnv
+    finally
+      unless opts.keep do
+        cleanupInstrumented exe
+  publishReport json
   return rc
 
 /-! ## compare -/
@@ -738,6 +812,8 @@ def compare (argv : List String) : IO UInt32 := do
 structure SampleOpts where
   rate : Nat := 4000
   out : Option String := none
+  /-- `--json FILE`: the sampled report also saved there -/
+  json : Option String := none
   top : Nat := 25
   cwd : Option String := none
   exe : Option String := none
@@ -747,6 +823,7 @@ partial def parseSample (o : SampleOpts) : List String → Except String SampleO
   | [] => .ok o
   | "--rate" :: v :: rest => parseSample { o with rate := v.toNat! } rest
   | "--out" :: f :: rest => parseSample { o with out := some f } rest
+  | "--json" :: f :: rest => parseSample { o with json := some f } rest
   | "--top" :: v :: rest => parseSample { o with top := v.toNat! } rest
   | "--cwd" :: d :: rest => parseSample { o with cwd := some d } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
@@ -877,6 +954,7 @@ def sample (argv : List String) : IO UInt32 := do
   else
     let rc ← spawnWait "lake" #["build", target] #[]
     if rc != 0 then return rc
+  clearReports o.json
   let out : FilePath := o.out.getD s!".lake/leanprof/{exe}.json"
   if let some dir := out.parent then IO.FS.createDirAll dir
   if ← out.pathExists then IO.FS.removeFile out
@@ -1110,9 +1188,14 @@ def sample (argv : List String) : IO UInt32 := do
       ("total_ns", toJson (w * 1000)), ("self_ns", toJson (selfT.getD n 0 * 1000)), ("calls", toJson (0 : Nat))]
   let report := Json.mkObj [("version", toJson (3 : Nat)), ("sampled", Json.bool true),
     ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[])]
-  -- (with --out elsewhere, nothing has created .lake/leanprof yet)
+  -- the last report, and --json FILE (with --out elsewhere, nothing has
+  -- created .lake/leanprof yet)
   IO.FS.createDirAll ".lake/leanprof"
-  IO.FS.writeFile ".lake/leanprof/report.json" report.compress
+  IO.FS.writeFile lastReport report.compress
+  if let some f := o.json then
+    if let some d := (f : FilePath).parent then
+      if !d.toString.isEmpty then IO.FS.createDirAll d
+    IO.FS.writeFile f report.compress
   IO.println s!"\nflamegraph with Lean names: samply load {out}"
   IO.println "in the editor: add `#leanprof` to a file to see these numbers next to its code"
   return rc
@@ -1135,6 +1218,7 @@ structure MeasureOpts where
   hbFiles : Array String := #[]
   checkOutput : Option String := none
   allocs : Bool := true
+  core : Bool := false
   scope : Option String := none
   out : String := ".lake/leanprof/measure.json"
   deps : Bool := true
@@ -1150,6 +1234,7 @@ partial def parseMeasure (o : MeasureOpts) : List String → Except String Measu
   | "--check-output" :: f :: rest => parseMeasure { o with checkOutput := some f } rest
   | "--no-deps" :: rest => parseMeasure { o with deps := false } rest
   | "--no-allocs" :: rest => parseMeasure { o with allocs := false } rest
+  | "--core" :: rest => parseMeasure { o with core := true } rest
   | "--heartbeats-files" :: rest =>
     -- every `.lean` argument that follows
     let fs := rest.takeWhile (·.endsWith ".lean")
@@ -1205,12 +1290,21 @@ def keyedArr (field : String) (xs : List (String × Json)) : Json :=
 def measureCmd (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseMeasure {} argv)
   let some exe := o.exe | throw <| IO.userError (usageFor "measure")
-  let rc ← buildWithShims exe none (allocs := o.allocs) (deps := o.deps)
+  -- --core: Lean's libraries linked with their runtime calls redirected, so
+  -- copies and allocations inside them (`List`, `Array`, `HashMap` code
+  -- compiled into libInit, libStd, libLean) are counted too
+  let coreEnv ← if o.core then
+      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir o.allocs).toString)]
+    else pure #[]
+  let rc ← buildWithShims exe none (allocs := o.allocs) (extraEnv := coreEnv) (deps := o.deps)
   if rc != 0 then return rc
   let dir : FilePath := ".lake" / "leanprof"
   IO.FS.createDirAll dir
   let reportPath := dir / "report.json"  -- the last run's stays, for `#leanprof`
-  let env := (← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", some reportPath.toString)]
+  let coreDir ← if o.core then
+      pure ((← toolchainPrefix (exePath exe)).toArray.map (("LEANPROF_CORE_DIR", some ·)))
+    else pure #[]
+  let env := (← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", some reportPath.toString)] ++ coreDir
   let mut times : Array Nat := #[]
   let mut hashes : Array String := #[]
   let mut codes : Array UInt32 := #[]
@@ -1223,8 +1317,10 @@ def measureCmd (argv : List String) : IO UInt32 := do
       if let some f := o.checkOutput then
         if ← (f : FilePath).pathExists then IO.FS.removeFile f
       let t0 ← IO.monoNanosNow
+      guardSignals 0
       let out ← IO.Process.output { cmd := (exePath exe).toString, args := o.args, env }
       let t1 ← IO.monoNanosNow
+      checkInterrupted
       if i < o.warmup then continue
       let report ← if ← reportPath.pathExists then loadReport reportPath.toString else pure {}
       -- --scope: the scope's own total, without start-up and setup
@@ -1275,7 +1371,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     hb := some ((← loadReport hbPath.toString).scopes.toList.map fun (k, (t, _)) => (k, t))
   let summary := Json.mkObj [
     ("version", toJson (1 : Nat)), ("leanprof", Json.str "measure"),
-    ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs),
+    ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs), ("core", Json.bool o.core),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("exit_code", toJson codes.back!.toNat),
     ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD "stdout")),
@@ -1309,7 +1405,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     IO.println s!"  machine  load average {fmt2 l} on {c} CPUs{if overloaded then " (overloaded: judge will not use time)" else ""}"
   IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"
   if o.allocs then
-    IO.println s!"  allocs   {allocTotal last} by compiled Lean code{if allocsStable then "" else s!" (runs: {allocRuns.toList})"}"
+    IO.println s!"  allocs   {allocTotal last} by compiled Lean code{if o.core then ", Lean's libraries included" else " of the project (--core adds Lean's libraries)"}{if allocsStable then "" else s!" (runs: {allocRuns.toList})"}"
   unless last.selfCheck.isEmpty do IO.println s!"  warning  {last.selfCheck}"
   IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD "stdout"}), exit code {codes.back!}"
   if let some xs := hb then
@@ -1698,6 +1794,21 @@ def doctor : IO UInt32 := do
   let isProject := (← ("lakefile.toml" : FilePath).pathExists) || (← ("lakefile.lean" : FilePath).pathExists)
   unless ← report isProject "inside a Lake project" "run leanprof from a project's root directory" do
     problems := problems + 1
+  -- an instrumented build left by an interrupted (or `--keep`) run: put the normal one back
+  if isProject then
+    let stashed ← (← workspacePackages).filterM fun p => (stashDir p).isDir
+    let saved ← if ← savedDir.isDir then
+        pure ((← savedDir.readDir).filterMap fun e =>
+          if e.fileName.endsWith ".trace" || e.fileName.endsWith ".hash" || e.fileName.endsWith ".rsp" then none
+          else some e.fileName)
+      else pure #[]
+    if stashed.isEmpty && saved.isEmpty then
+      discard <| report true "no instrumented build left in .lake/build" ""
+    else
+      restoreObjects
+      for exe in saved do restoreExe exe (removeUnsaved := false)
+      discard <| report true (s!"an interrupted or --keep run had left instrumented objects in {stashed.size} " ++
+        s!"package(s){if saved.isEmpty then "" else s!" and {", ".intercalate saved.toList}"}: the normal build is back") ""
   let dep ← (pure (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) <||>
     (do return (← IO.FS.realPath (← packageRoot)) == (← IO.FS.realPath (← IO.currentDir))))
   discard <| report true (if dep then "project depends on leanprof (profile!, #leanprof, test assertions available)"
@@ -1766,18 +1877,28 @@ def statCmd (argv : List String) : IO UInt32 := do
   let some exe := opts.exe | throw <| IO.userError (usageFor "stat")
   let allocs := !offAllocs
   let frees := !offFrees
+  clearReports opts.json
   let rc ← buildWithShims exe opts.auto allocs (frees := frees) (extraEnv := tinyEnv opts) (deps := opts.deps)
   if rc != 0 then return rc
-  IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
-  let json := opts.json.getD ".lake/leanprof/report.json"
-  if ← (json : FilePath).pathExists then IO.FS.removeFile json
+  let json := opts.json.getD lastReport.toString
   let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_STAT", some "1"), ("LEANPROF_JSON", some json),
     ("LEANPROF_TRACE", opts.trace)]
+  -- the first launch of a freshly linked binary is slower (on macOS, the
+  -- system checks a new binary's signature: 2.3 s for a 106 MB compiler);
+  -- launched once first, without running it (leanprof's runtime exits at
+  -- load), so the time below is that of a warm start
+  let env ← instrumentedEnv exe opts env
+  let bin := (← absPath (exePath exe)).toString
+  let l0 ← IO.monoNanosNow
+  let launchRc ← try spawnWait bin #[] (env.push ("LEANPROF_LAUNCH_ONLY", some "1")) (opts.cwd.map (·))
+    catch _ => pure 1
+  let firstLaunch := (← IO.monoNanosNow) - l0
   let t0 ← IO.monoNanosNow
-  let code ← try runInstrumented exe opts env
+  let code ← try spawnWait bin opts.args env (opts.cwd.map (·))
     finally
       unless opts.keep do cleanupInstrumented exe
   let outside := (← IO.monoNanosNow) - t0
+  publishReport json
   unless ← (json : FilePath).pathExists do
     IO.eprintln s!"leanprof: {exe} wrote no report (exit code {code}); was it killed?"
     return if code == 0 then 1 else code
@@ -1790,6 +1911,8 @@ def statCmd (argv : List String) : IO UInt32 := do
   -- the program's own wall time (start to exit), not leanprof's report or process launch
   let wall := num mem "wall_ns"
   row "wall" s!"{fmtTime wall}  ({fmtTime outside.toFloat} including process start and the report)"
+  if launchRc == 0 then
+    row "" s!"(the first launch of the new binary, {fmtTime firstLaunch.toFloat} to load it, is not included)"
   row "CPU" s!"{fmtTime user} user + {fmtTime sys} system ({fmt2 ((user + sys) / (if wall > 0 then wall else 1))} cores)"
   row "peak memory" s!"{fmtBytes (num mem "peak_rss")} resident, {fmtBytes (num mem "peak_commit")} committed by Lean's allocator"
   let allocSites := getArr j "allocations"
@@ -1835,7 +1958,7 @@ def statCmd (argv : List String) : IO UInt32 := do
   IO.println s!"  report: {json}"
   return code
 
-def main (argv : List String) : IO UInt32 := do
+def dispatch (argv : List String) : IO UInt32 := do
   try
     match argv with
     | [] | ["help"] | ["--help"] | ["-h"] =>
@@ -1865,5 +1988,16 @@ def main (argv : List String) : IO UInt32 := do
       IO.eprintln usage
       return 2
   catch e =>
+    let s ← caughtSignal
+    if s != 0 then return 128 + s  -- said by `main`
     IO.eprintln s!"leanprof: {e}"
     return 2
+
+def main (argv : List String) : IO UInt32 := do
+  let rc ← dispatch argv
+  -- a signal caught while a child ran (c/cli.c): the build is back; exit as killed
+  let s ← caughtSignal
+  if s != 0 then
+    IO.eprintln s!"leanprof: interrupted (signal {s}); the project's normal build is back"
+    return 128 + s
+  return rc

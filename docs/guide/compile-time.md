@@ -145,6 +145,18 @@ from how it is written is left on its declaration's line) and terms are not
 timed. `--no-driver` does that on purpose; `LEANPROF_ELAB_DRIVER=PATH`
 names another driver.
 
+Through `lean --json`, descriptions are printed on one line
+(`pp.oneline`): `Elab.step` describes a term with its whole syntax, so
+nested terms print their source again at every level, and on concrete's
+`Check.lean` (a 1,000-line `mutual` block, Lean 4.34.1) one message was
+1.74 GB: `elab --heartbeats` took 61 s and 10.2 GB, against 5.4 s and
+0.78 GB for plain `lean`. With one-line descriptions it takes 16.9 s and
+1.36 GB (Apple M5 Max, load 2–5), with the same heartbeats per
+declaration to within 0.03% (Lean's own count changes with the printing).
+A description cut short (`term do [...]`) names many different terms, so
+such steps are not listed as repeated work; a command cut short is named
+from the source.
+
 ## Compact profiles
 
 ```

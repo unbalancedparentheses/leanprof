@@ -233,6 +233,19 @@ provenance and one complete experiment operation come first.
 - [ ] **Navigate large projects.** Drill from project to module to declaration
   to operation, compare runs at each level, and detect stale source mappings.
   Evaluate the workflow against the current lean-source-profiler viewer.
+- [ ] **Repeated elaboration of multi-line terms, by position.** Since
+  `elab` through `lean --json` prints descriptions on one line (a 1.74 GB
+  message on concrete's `Check.lean` without it), steps cut to
+  `term do [...]` are left out of "repeated work". The driver prints whole
+  descriptions (measured on the same file: 25.2 s, 1.26 GB; 16.0 s with
+  `pp.oneline` too, with identical heartbeats); key repeats by source range
+  there, then it can print one line as well.
+- [ ] **Copied fields of kept structures: the line.** `explain` names no
+  line for concrete's `elabModule` copy (`sp ++ "_"` at `Elab.lean:3356`,
+  `sp` a field of the tuple `(ln, dn, di)` in a `filterMap` lambda): text
+  matching cannot single out one of the declaration's many `++ "_"`.
+  Matching the constant the IR appends (`"_"`) together with the lambda's
+  binders would; so would positions from the IR, if Lean emitted them.
 
 ### Agents
 

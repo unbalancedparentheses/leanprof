@@ -684,7 +684,7 @@ def showLines (ls : Array Nat) : String :=
 
 def code (decl : Array (Nat × String)) (l : Nat) : String :=
   match decl.find? (·.1 == l) with
-  | some (_, s) => s!"`{trim s}`"
+  | some (_, s) => s!"`{trim ((s.splitOn "--").head!)}`"
   | none => ""
 
 def dedup (xs : Array Nat) : Array Nat := xs.foldl (fun acc x => if acc.contains x then acc else acc.push x) #[]
@@ -772,6 +772,56 @@ def countWord (s w : String) : Nat :=
 def codeOf (l : String) : String := trim ((l.splitOn "--").head!)
 
 def indentOf (l : String) : String := String.ofList (l.toList.takeWhile (· == ' '))
+
+/-- The code of each line of a declaration: line comments and `/- … -/`
+comments (docstrings, across lines) removed, so text matching never takes a
+comment for code. -/
+def codeLines (decl : Array (Nat × String)) : Array (Nat × String) := Id.run do
+  let mut out := #[]
+  let mut depth := 0
+  for (n, l) in decl do
+    let cs := l.toList.toArray
+    let mut kept : List Char := []
+    let mut i := 0
+    while i < cs.size do
+      let c := cs[i]!
+      let d := cs[i+1]?.getD ' '
+      if c == '/' && d == '-' then
+        depth := depth + 1; i := i + 2
+      else if depth > 0 && c == '-' && d == '/' then
+        depth := depth - 1; i := i + 2
+      else if depth > 0 then
+        i := i + 1
+      else if c == '-' && d == '-' then
+        break
+      else
+        kept := c :: kept; i := i + 1
+    out := out.push (n, String.ofList kept.reverse)
+  return out
+
+/-- A structure update `{ s with … }` on this line of code: a `with` after
+an open `{` (not `match … with`, `fun … with` or prose). -/
+def isStructUpdate (code : String) : Bool := Id.run do
+  let ts := tokens code
+  let mut open_ := 0
+  for t in ts do
+    if t == "{" then open_ := open_ + 1
+    else if t == "}" then open_ := open_ - 1
+    else if t == "with" && open_ > 0 then return true
+  -- `{ s with` written without spaces around the brace
+  return (code.splitOn "{").drop 1 |>.any fun r => has ((r.splitOn "}").head!) " with "
+
+/-- The lines that rebuild a structure (`{ s with … }`) worth citing for a
+copy of one of its fields: the ones nearest to `near` (the lines updating
+the field), at most two; with nothing to anchor them, only when the
+declaration has at most two (a long declaration's structure updates are
+mostly unrelated to the copy). -/
+def keptStructLines (decl : Array (Nat × String)) (near : Array Nat) : Array Nat :=
+  let cands := (codeLines decl).filterMap fun (n, c) => if isStructUpdate c then some n else none
+  if near.isEmpty then (if cands.size ≤ 2 then cands else #[])
+  else
+    let dist (n : Nat) := near.foldl (fun m l => min m (if n > l then n - l else l - n)) (n + near.foldl max 0)
+    ((cands.qsort fun a b => dist a < dist b).toList.take 2).toArray.qsort (· < ·)
 
 /-- `e` in parentheses unless it already is bracketed. -/
 def paren (e : String) : String :=
@@ -959,7 +1009,7 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
   let v := display f fd.var
   let op := fd.opName
   let opLines (pred : Recv → Bool) : Array Nat :=
-    decl.filterMap fun (n, l) => if (receivers op l).any pred then some n else none
+    (codeLines decl).filterMap fun (n, l) => if (receivers op l).any pred then some n else none
   let named (n : String) := !genericNames.contains n
   let base : Explained := { why := "", fix := "", lines := #[], matched := true, strength := fd.strength, cline := fd.op.cline }
   match fd.holder with
@@ -1083,7 +1133,7 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
     let ls := opLines fun r => match r with
       | .name n => n == fname || n.endsWith ("." ++ fname)
       | _ => false
-    let withLines := decl.filterMap fun (n, l) => if has l " with " then some n else none
+    let withLines := keptStructLines decl ls
     let keptBy := match kept with
       | some _ => "rebuilt with the same field"
       | none => "kept"

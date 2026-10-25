@@ -82,7 +82,14 @@ check("hot copies leaves out tiny values", not err and "Big.site" in text and "T
 text, err = tool("hot", kind="scopes", path=".lake/leanprof/mcp-large.json")
 check("hot scopes", not err and "buildWithHistory" in text and "fib" in text, text)
 text, err = tool("explain", path=".lake/leanprof/mcp-large.json", name="buildWithHistory")
-check("explain", not err and "COPY" in text and "another reference" in text and "SCOPE buildWithHistory" in text, text)
+# the command's IR-based diagnosis, as `leanprof explain` gives it
+check("explain", not err and "COPY" in text and "stored in `history` at line 21" in text and "fix:" in text
+      and "confidence: high" in text and "SCOPE buildWithHistory" in text, text)
+with open(".lake/leanprof/mcp-sampled.json", "w") as f:
+    json.dump({"version": 3, "sampled": True, "wall_ns": 1e6, "copies": [],
+               "scopes": [{"name": "f", "pos": "F.lean:1", "total_ns": 1e6, "self_ns": 1e6, "calls": 0}]}, f)
+text, err = tool("explain", path=".lake/leanprof/mcp-sampled.json")
+check("explain refuses a sampled report", err and "leanprof sample" in text and "0 calls" not in text, text)
 
 text, err = tool("compare", base=".lake/leanprof/mcp-small.json", new=".lake/leanprof/mcp-small.json")
 check("compare (same)", not err and text.startswith("no regressions"), text)
@@ -139,6 +146,26 @@ if ok:
 check("dump", ok, text)
 server.terminate()
 server.wait()
+
+# live snapshots mark copies of tiny values (`tiny`), and the live view and
+# `hot` summarize them as `run` does; LEANPROF_ALL_COPIES=1 lists them
+snap = ".lake/leanprof/mcp-live-tiny.json"
+for all_copies in ("0", "1"):
+    env = dict(os.environ, LEANPROF_LIVE=snap, LEANPROF_QUIET="1", LEANPROF_ALL_COPIES=all_copies)
+    subprocess.run([".lake/build/bin/server", "5", "5"], env=env, stdout=subprocess.DEVNULL, check=True)
+    rows = json.load(open(snap))["copies"]
+    text, err = tool("live", path=snap)
+    copies = text.split("copies of shared values")[-1].split("\n\n")[0]
+    if all_copies == "0":
+        check("live snapshot marks tiny copies", rows and all(r["tiny"] for r in rows), rows)
+        check("live view summarizes tiny copies", not err and "copying only empty or tiny values" in copies
+              and "Examples/Server.lean" not in copies, text)
+        text, err = tool("hot", kind="copies", path=snap)
+        check("hot copies of a live snapshot leaves out tiny values",
+              not err and "copied only empty or tiny values" in text and "Server.lean" not in text, text)
+    else:
+        check("LEANPROF_ALL_COPIES=1 lists tiny copies live", not err and rows and not any(r["tiny"] for r in rows)
+              and "Examples/Server.lean:26" in copies, text)
 
 check("ping", call("ping")["result"] == {})
 r = call("tools/call", {"name": "nope", "arguments": {}})

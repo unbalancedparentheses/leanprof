@@ -115,6 +115,9 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
       | _ => none
     return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat), String.ofList text)
 
+/-- How `pp.oneline` (see `traceArgs`) ends a description it cut. -/
+def elided : String := " [...]"
+
 /-- Classes whose repeated identical operations are worth reporting. -/
 def repeatable (cls : String) : Bool :=
   cls == "Meta.synthInstance" || cls == "Meta.isDefEq" || cls == "Meta.whnf" ||
@@ -444,9 +447,37 @@ def squash (s : String) : String := String.ofList (s.toList.filter fun c => !c.i
 def isTacticStep (n : TNode) : Bool :=
   n.cls == "Elab.step" && n.timed && !n.text.startsWith "expected type:" && !n.text.isEmpty
 
+/-- Each line's code: `--` comments and `/- … -/` comments (docstrings, across
+lines) blanked, so a tactic is never placed by its name in prose (`simp` in
+"simply", `first` in a comment). -/
+def codeOnly (src : Array String) : Array String := Id.run do
+  let mut out := #[]
+  let mut depth := 0
+  for l in src do
+    let cs := l.toList.toArray
+    let mut kept : List Char := []
+    let mut i := 0
+    while i < cs.size do
+      let c := cs[i]!
+      let d := cs[i+1]?.getD ' '
+      if c == '/' && d == '-' then
+        depth := depth + 1; i := i + 2
+      else if depth > 0 && c == '-' && d == '/' then
+        depth := depth - 1; i := i + 2
+      else if depth > 0 then
+        i := i + 1
+      else if c == '-' && d == '-' then
+        break
+      else
+        kept := c :: kept; i := i + 1
+    out := out.push (String.ofList kept.reverse)
+  return out
+
 /-- The source line (1-based) at or after `from` whose text contains the
 start of tactic `t`, looking at most 400 lines ahead. -/
 def findTactic (src : Array String) (t : String) (from_ : Nat) : Option Nat := Id.run do
+  -- a multi-line tactic's first line, without the mark `pp.oneline` adds
+  let t := if t.endsWith elided then String.ofList (t.toList.take (t.length - elided.length)) else t
   let key := String.ofList ((squash t).toList.take 24)
   if key.length < 2 then return none
   for i in [from_ - 1:min src.size (from_ - 1 + 400)] do
@@ -600,9 +631,10 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
       -- comment
       let clean (t : String) : String := (dropDocComment (dropInPrefix (dropDocComment t.trimAscii.toString))).trimAscii.toString
       let fromTrace := clean root.text
+      -- (or when `pp.oneline` cut it: `mutual [...]`)
       let text := if root.text.startsWith "failed to pretty print" || fromTrace.startsWith "/--" ||
-          fromTrace.isEmpty then clean (sourceLine a.src ln) else fromTrace
-      let name := String.ofList ((text.replace "\n" " ").toList.take 60)
+          fromTrace.isEmpty || fromTrace.endsWith "[...]" then clean (sourceLine a.src ln) else fromTrace
+      let name := String.ofList ((" ".intercalate ((text.replace "\n" " ").splitOn " " |>.filter (· != ""))).toList.take 60)
       -- commands sharing a line (`variable (x) in` puts its inner `variable` at the position of
       -- the declaration it wraps): the line is named after the one that declares something
       if c.name.isEmpty || ((declName c.name).isNone && (declName name).isSome) then
@@ -653,7 +685,9 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
           if nodes[q]!.cls == n.cls then found := true; break
           p := nodes[q]!.parent
         return found
-      unless nested do
+      -- a description `pp.oneline` cut (`term do [...]`) names many different
+      -- terms: not evidence of the same work done again
+      unless nested || n.text.endsWith elided do
         let k := (n.cls, normalizeOp n.text)
         let o := a.ops.getD k {}
         let amt := n.amount * scale
@@ -772,7 +806,13 @@ def Opts.thresholdValue (o : Opts) : Nat :=
   o.threshold.getD (if o.heartbeats then 10000 else 1)
 
 def traceArgs (o : Opts) : Array String := Id.run do
-  let mut args := #["--json", "-Dtrace.profiler=true", s!"-Dtrace.profiler.threshold={o.thresholdValue}"]
+  -- `pp.oneline`: each node's description is its first line only (leanprof reads
+  -- 160 characters of it). `Elab.step` describes a term with its whole syntax, so
+  -- nested terms print their source again at every level: on concrete's
+  -- `Check.lean` (a 1,000-line `mutual` block) one message was 1.74 GB, and `lean`
+  -- took 28.6 s and 10.3 GB to print it (4.6 MB, 15.8 s and 1.3 GB with it)
+  let mut args := #["--json", "-Dtrace.profiler=true", s!"-Dtrace.profiler.threshold={o.thresholdValue}",
+    "-Dpp.oneline=true"]
   if o.heartbeats then args := args.push "-Dtrace.profiler.useHeartbeats=true"
   if o.defs then
     args := args ++ #["-Dweak.trace.Meta.isDefEq.delta.unfoldLeft=true",
@@ -907,7 +947,7 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
     args := ((if exact then driverArgs o else traceArgs o) ++ setupArgs).push file,
     env := #[("LEAN_PATH", some le.path), ("LEAN_SYSROOT", some le.sysroot.toString)],
     stdout := .piped, stderr := .null, stdin := .null }
-  let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := src.map squash, exact } : Acc)
+  let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := (codeOnly src).map squash, exact } : Acc)
   readMessages (IO.FS.Stream.ofHandle child.stdout) fun m p => do
     if str m "severity" == "error" then
       let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0

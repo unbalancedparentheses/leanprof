@@ -287,8 +287,11 @@
   ]
  ],
  "smoke.doctor": 0,
+ "smoke.failed_run_clears": true,
+ "smoke.last_report": true,
  "smoke.measure.copies": 2998,
  "smoke.restored": true,
+ "smoke.run_out": true,
  "smoke.runtime_outlined": 0,
  "smoke.self_check": [
   true,
@@ -297,6 +300,7 @@
  "smoke.stat": [
   "2,998"
  ],
+ "smoke.stat_first_launch": true,
  "taskchains": [
   [
    "bound",

@@ -51,6 +51,15 @@ def other_project():
         sh("lake", "build", "smoke", cwd=work)  # the normal build, which profiling must leave in place
         sh(lp, "run", "--json", "run.json", "smoke", "--", "2000", cwd=work)
         r = report("run.json")
+        # the report saved elsewhere is also the last report (what explain reads)
+        last = os.path.join(".lake", "leanprof", "report.json")
+        out["smoke.last_report"] = report(last) == r
+        # --out is the same option as --json; a failed build leaves no older report behind
+        sh(lp, "run", "--out", "out.json", "smoke", "--", "10", cwd=work)
+        out["smoke.run_out"] = report("out.json") == report(last) and report("out.json") != r
+        bad = sh(lp, "run", "--json", "out.json", "no-such-exe", check=False, cwd=work)
+        out["smoke.failed_run_clears"] = (bad.returncode != 0 and not os.path.exists(os.path.join(work, "out.json"))
+                                          and not os.path.exists(os.path.join(work, last)))
         out["smoke.copies"] = sorted((c["function"], c["where"], c["kind"], c["shared"], c["multi_threaded"])
                                      for c in r["copies"] if c["shared"] + c["multi_threaded"] > 0)
         out["smoke.self_check"] = [r["self_check"]["ok"], r["self_check"]["warning"]]
@@ -63,6 +72,8 @@ def other_project():
                                    if s["name"] in ("main", "buildWithHistory", "strings", "fib"))
         st = sh(lp, "stat", "--json", "stat.json", "smoke", "--", "2000", cwd=work)
         out["smoke.stat"] = [l.split()[1] for l in st.stdout.splitlines() if l.strip().startswith("copies")]
+        # the fresh binary's first launch is made (without running it) and said, not counted
+        out["smoke.stat_first_launch"] = "the first launch of the new binary" in st.stdout
         sh(lp, "measure", "--runs", "1", "--warmup", "0", "--out", "measure.json", "smoke", "--", "2000", cwd=work)
         out["smoke.measure.copies"] = report("measure.json")["copies_total"]
         # the normal build is back: the program runs without writing a report

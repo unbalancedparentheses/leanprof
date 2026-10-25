@@ -35,7 +35,13 @@ leanprof stat: lcb --target aarch64-macos --optimize --allocate zlib/deflate.ssa
 ```
 
 - **wall** and **CPU** cover the program, from leanprof's start (before
-  `main`) to its exit, not process launch or leanprof's own report.
+  `main`) to its exit, not process launch or leanprof's own report. The
+  time in parentheses includes both, for a warm start: the freshly linked
+  binary is first launched once without running it (leanprof's runtime
+  exits as it loads), and that launch is printed on the next line. On
+  macOS the first launch of a new binary is far slower (the system checks
+  it): 1.1 s for `copybug` (61 MB) against 24 ms for the next, 2.3 s for
+  concrete's 106 MB compiler.
   CPU is user and system time of all threads, so `cores` above 1 means
   the program ran in parallel.
 - **peak memory**: see below.
