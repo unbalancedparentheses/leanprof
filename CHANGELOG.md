@@ -39,6 +39,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   of a generic list of usual causes, which it keeps only for live snapshots
   (no symbols). It refuses sampled reports as the command does; on one it
   had listed scopes "in 0 calls".
+- `explain`, for a copied field of a kept structure, cites only structure
+  updates (`{ s with … }`) next to the update, not every line with the word
+  `with` (`match … with`, comments, docstrings), and no comment text: on
+  concrete's `elabModule` it listed 38 lines and quoted a comment as the
+  source; it now cites none and says no source line matched (the copy is
+  `sp ++ "_"` at `Elab.lean:3356`, which text matching cannot single out
+  among the declaration's many `++ "_"`). Comments are stripped before any
+  source matching, and quoted lines leave out trailing comments.
 
 ### Smaller fixes and maintenance
 
