@@ -904,6 +904,10 @@ def sample (argv : List String) : IO UInt32 := do
   -- callers of specializations: `g (in f)` is named after the first `g` that
   -- needed `f` specialized, but the compiler reuses it for other callers
   let mut specCallers : Std.HashMap String (Std.HashMap String Float) := {}
+  -- callers of hot code outside the project (Lean's library, the runtime, C
+  -- libraries): the nearest frame below it that is the project's own code
+  let mut leafCallers : Std.HashMap String (Std.HashMap String Float) := {}
+  let mut ownCode : Std.HashMap String Bool := {}  -- display name ↦ declared in the project
   for t in getArr profile "threads" do
     let samples ← IO.ofExcept (t.getObjVal? "samples")
     let stacks := getArr samples "stack"
@@ -988,6 +992,7 @@ def sample (argv : List String) : IO UInt32 := do
       let mut leaf := true
       let mut spec : Option String := none  -- the frame below, if a specialization
       let mut specSeen : Std.HashSet String := {}
+      let mut outsideLeaf : Option String := none  -- the leaf, while its project caller is sought
       while true do
         if s?.isNone then
           s? := stitch
@@ -1007,6 +1012,23 @@ def sample (argv : List String) : IO UInt32 := do
               specSeen := specSeen.insert sp
             spec := none
         if (n.splitOn " (in ").length > 1 then spec := some n
+        if leaf || outsideLeaf.isSome then
+          -- the project's own code: a Lean declaration placed at a relative path
+          let own ← match ownCode.get? n with
+            | some b => pure b
+            | none => do
+              let b ← if leanDecls.contains n then
+                  (do let wh ← Leanprof.whereIs n; pure (!wh.isEmpty && !wh.startsWith "/"))
+                else pure false
+              ownCode := ownCode.insert n b
+              pure b
+          if leaf then
+            unless own do outsideLeaf := some n
+          else if own then
+            if let some lf := outsideLeaf then
+              let m := leafCallers.getD lf {}
+              leafCallers := leafCallers.insert lf (m.insert n (m.getD n 0 + w))
+            outsideLeaf := none
         if leaf then
           selfT := selfT.insert n (selfT.getD n 0 + w)
           if let some c := categories.get? n then catT := catT.insert c (catT.getD c 0 + w)
@@ -1036,10 +1058,18 @@ def sample (argv : List String) : IO UInt32 := do
       let cwh ← Leanprof.whereIs c
       let all := inclT.getD n 0
       IO.println s!"{"".pushn ' ' 24}{fmt2 (if all > 0 then cw / all * 100 else 0)}% of it called from {c}{if cwh.isEmpty then "" else s!"  ({cwh})"}"
+  -- for code outside the project: which of the project's functions it runs under
+  let outsideNote (n : String) (self : Float) : IO Bool := do
+    let some m := leafCallers.get? n | return false
+    let rows := (m.toArray.filter fun (_, cw) => self > 0 && cw / self ≥ 0.05).qsort (fun a b => a.2 > b.2)
+    for (c, cw) in rows.toList.take 3 do
+      let cwh ← Leanprof.whereIs c
+      IO.println s!"{"".pushn ' ' 24}{fmt2 (cw / self * 100)}% of it under {c}{if cwh.isEmpty then "" else s!"  ({cwh})"}"
+    return !rows.isEmpty
   for (n, w) in bySelf.toList.take o.top do
     let wh ← Leanprof.whereIs n
     IO.println s!"  {(fmtCpu w).pushn ' ' (12 - (fmtCpu w).length)} {(pct w).pushn ' ' (8 - (pct w).length)} {n}{if wh.isEmpty then "" else s!"  ({wh})"}"
-    callerNote n
+    unless ← outsideNote n w do callerNote n
   IO.println s!"\n  top {o.top} Lean declarations by inclusive CPU time"
   let leanIncl := (inclT.toArray.filter fun (n, _) => leanDecls.contains n && !n.startsWith "initialize_").qsort (fun a b => a.2 > b.2)
   for (n, w) in leanIncl.toList.take o.top do

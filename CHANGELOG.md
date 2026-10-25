@@ -15,6 +15,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   at a `private def operation` in `SSA.lean`, `Id.run` at a test's `def run`.
   Declarations in the source are now qualified with the namespace in effect
   on their line, and a name never matches by its last component alone.
+- `sample`: hot code outside the project (`List.reverseAux`, `hash_str`,
+  `free`, `lean_dec_ref_cold`) is listed with the project's functions it ran
+  under (the nearest project frame of each sample, up to three with at least
+  5%). On lean-compiler-backend, `List.reverseAux` at 3.9% of CPU was 98%
+  under `Assembly.emitData`, a `lines := lines ++ [line]` loop; fixing it made
+  compiling crc32 15% faster.
 - `explain` after `sample`: `sample` writes `.lake/leanprof/report.json` (for
   `#leanprof`) without copy counts, and `explain` then said "the report has no
   copies of shared values". It now says the report is a sampled one and to

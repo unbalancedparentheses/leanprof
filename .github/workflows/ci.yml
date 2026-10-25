@@ -346,6 +346,7 @@ jobs:
           lake exe leanprof sample --top 5 copybug -- 15000 | tee sample.txt
           grep -q "copying non-exclusive values" sample.txt
           grep -q "buildWithHistory  (Examples/CopyBug.lean:17)" sample.txt
+          grep -q "of it under buildWithHistory" sample.txt
       - name: HTML report of the sampled run (macOS)
         if: runner.os == 'macOS'
         run: |
