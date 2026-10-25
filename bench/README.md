@@ -187,7 +187,7 @@ tests and the smoke check fail if the runtime has outlined code. The flag
 is passed on macOS only, so Linux builds are unchanged.
 
 Same machine, 7 runs each, `main` (`79ee65d`) then the fix, alternated
-under the benchmark lock (load 2.3–3.8 on 18 cores; RESULTS.md has the
+under the benchmark lock (load 2.3–3.9 on 18 cores; RESULTS.md has the
 full before/after table):
 
 | | before | after |

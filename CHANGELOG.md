@@ -27,6 +27,30 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   The tests and the smoke check fail if the runtime contains outlined code.
   Linux builds do not get the flag and are unchanged (not re-measured).
 
+### Time per verdict, measured
+
+- `measure --scope NAME` times one `profile!` scope (its total in each run's
+  report) instead of the whole process; the summary records `scope`, and
+  `judge` discards a comparison of summaries that timed different things.
+- `measure-pair` measured against LeanBench and `measure` on the LeanBench
+  case study's workload (`bench/leanbench/run.py pair`, shared Mac, load
+  2–18, under the shared benchmark lock): 0 false time verdicts in 20
+  unchanged sessions, a 2.4% slowdown caught 4/5 (5/5 in an earlier run
+  without the lock), 4.8% and 10.4% 5/5; 7.1 s per verdict at 20 pairs,
+  2.9 s at 6, against LeanBench's 0.74 s. `measure` + `judge` took 5.0 s and
+  the next plain build 0.18 s (the 10 s rebuild is gone), but gave 7 false
+  time verdicts in 20 on the same machine.
+
+### Reproducing the published numbers
+
+- `scripts/reproduce.sh CLAIM` re-runs each measured claim of the README
+  from a clean clone (pinned commits, tags and toolchains), prints measured
+  against published values and fails on any exact difference or a timing
+  outside its stated range: the README example, Tests/Smoke, lean-regex,
+  LeanProfiler, LeanBench, Batteries and lean-source-profiler,
+  lean-compiler-backend's fixes and autoresearch, the benchmark suite
+  ([docs/reproduce.md](docs/reproduce.md)). CI runs the cheap exact ones.
+
 ### Dogfooding on lean-compiler-backend and concrete
 
 - `elab`: "definitions behind the work" placed a definition at any

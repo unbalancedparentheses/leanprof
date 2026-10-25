@@ -138,7 +138,7 @@ This repository's own pull requests run the action on `copybug`
 For deciding whether one change is an improvement:
 
 ```
-leanprof measure [--runs N] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--out FILE] EXE [-- ARGS]
+leanprof measure [--runs N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--out FILE] EXE [-- ARGS]
 leanprof judge BASE.json NEW.json
 ```
 
@@ -180,6 +180,13 @@ machine whole runs drift together, and on a shared 18-core Mac at load 30–68,
 "every new run faster than every base run" held for 2 of 20 comparisons of
 unchanged code ([LeanBench case study](../case-studies/leanbench.md)).
 Copies, heartbeats and the output are still judged.
+
+`--scope NAME` times one `profile! "NAME"` scope instead of the whole
+process: each run's time is that scope's total from the run's report (over
+every position with that name), so start-up and setup do not dilute a
+change. The project must depend on leanprof for `profile!`; a name that is
+not in the report is an error, and `judge` discards a comparison of
+summaries that timed different things (the process, or another scope).
 
 ### Interleaved timing of ordinary binaries
 

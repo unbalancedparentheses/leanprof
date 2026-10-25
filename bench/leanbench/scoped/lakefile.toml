@@ -1,0 +1,17 @@
+# `leanprof measure --scope work` on the same workload as ../project: the
+# repetitions of the action are one `profile!` scope, so start-up and setup
+# are not timed. Needs leanprof as a dependency (for `profile!`); the
+# workload's sources are ../project's.
+name = "lbscoped"
+
+[[require]]
+name = "leanprof"
+path = "../../.."
+
+[[lean_lib]]
+name = "Work"
+srcDir = "../project"
+
+[[lean_exe]]
+name = "workscope"
+root = "WorkScope"

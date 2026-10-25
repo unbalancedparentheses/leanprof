@@ -134,7 +134,7 @@ of the run, to agents.
 
 ## Where leanprof wins, and where it does not
 
-Measured, with the method and raw numbers linked. "Mac" is an Apple M5 Max
+Measured, with the method and raw numbers linked; `scripts/reproduce.sh` re-runs each claim and checks it ([how](docs/reproduce.md)). "Mac" is an Apple M5 Max
 shared with other work ([results](bench/RESULTS.md)); "Linux" is a dedicated,
 idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/after/RESULTS.md),
 [before the Linux fixes](bench/linux/before/RESULTS.md)).
@@ -191,11 +191,14 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
 - **`--auto` on Linux** is 2.6–3.2 points off on allocation- and copy-heavy
   workloads (6.5–8.2 before the Linux fixes; samply 0.5) and 10.4 points
   off on deep recursion (7.1 before): use `sample` or `profile!` there.
-- **Cost per verdict in the instrumented comparison.** LeanBench needed 0.6 s
-  per verdict to leanprof's 6.5 s, and times the benchmarked action itself.
-  `measure-pair` now avoids instrumentation and rebuilds for timing-only
-  comparisons, but still measures the whole process; its comparative cost
-  has not yet been benchmarked.
+- **Cost per verdict.** On a shared Mac ([case study](docs/case-studies/leanbench.md#paired-timing-measure-pair-and-measure---scope),
+  load 2–18) `measure-pair` gave the most reliable time verdict (0 false in
+  40 unchanged sessions, a 2.4% slowdown caught 9 in 10) but took 7.1 s per
+  verdict at its default 20 pairs (2.9 s at 6, which caught 2.4% less often)
+  against LeanBench's 0.74 s; `measure` + `judge` takes 5.0 s and no longer
+  forces a rebuild afterwards. LeanBench times the action in process; for a
+  plain binary the whole-process dilution was small (10.4% read as 10.0%),
+  and `measure --scope NAME` times one `profile!` scope.
 - **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)**
   has a repository viewer and published Mathlib-scale datasets, which
   leanprof lacks. The comparison above is against its latest release (0.3.0),
@@ -229,7 +232,7 @@ reproduction.
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |
 | Seeded slowdowns caught, quiet machine ([case study](docs/case-studies/leanbench.md)) | 2%: 5/5, 5% and up: 5/5; never a false alarm in 20 | – | – | – | at a 5% threshold: 2%: 0/5, 4.8%: 2/5, 10% and up: 5/5; 0 false alarms in 20 |
-| Wall time per verdict | 6.5 s, and the next plain build recompiles | – | – | – | 0.6 s |
+| Wall time per verdict | `measure-pair` 7.1 s (20 pairs; 2.9 s at 6), `measure` + `judge` 5.0 s; Mac, shared | – | – | – | 0.74 s on the same Mac (0.6 s on Linux) |
 
 ## Documentation
 
@@ -244,6 +247,7 @@ reproduction.
 - [Lean API](docs/guide/lean-api.md) and [reference](docs/guide/reference.md) (commands, environment, JSON)
 - [How it works, and limits](docs/guide/how-it-works.md)
 - Case studies: [Mathlib](docs/case-studies/mathlib.md), [Lake and the server](docs/case-studies/lake-and-server.md), [lean-compiler-backend](docs/case-studies/lean-compiler-backend.md), [doc-gen4](docs/case-studies/doc-gen4.md), [verso](docs/case-studies/verso.md), [lean-regex](docs/case-studies/lean-regex.md), [concrete](docs/case-studies/concrete.md), [Batteries](docs/case-studies/batteries.md), [vs lean-source-profiler](docs/case-studies/compile-time-vs-lean-source-profiler.md), [vs LeanBench](docs/case-studies/leanbench.md); [benchmarks](bench/README.md)
+- [Reproducing the published numbers](docs/reproduce.md)
 - [Roadmap](ROADMAP.md), [changelog](CHANGELOG.md), [ideas from other ecosystems](docs/research/other-ecosystems.md)
 
 Status: early. Tested in CI with Lean 4.34.1, 4.35.0, the newest release
