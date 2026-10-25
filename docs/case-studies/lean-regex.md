@@ -97,6 +97,10 @@ checks fail on shared cells, the stack entries above.
 ## Compile time (`leanprof elab --heartbeats`)
 
 Four files, 108.5M heartbeats (108,457 kHB; `maxHeartbeats` counts in kHB).
+These heartbeats were measured with leanprof `8caf3fd` and reproduce
+exactly with it (`scripts/reproduce.sh lean-regex`, see
+[reproduce.md](../reproduce.md)); later versions of `elab` trace less and
+report fewer for the same files (`eachStepChar` 12.0M instead of 13.5M).
 
 - Kind of work: `isDefEq` 21%, `whnf` 20%, elaboration steps 18%, instance
   search 10%, code generation 8%, kernel 5%.

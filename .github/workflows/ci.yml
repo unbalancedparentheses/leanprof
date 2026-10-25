@@ -679,6 +679,26 @@ jobs:
           grep -q "is not the one leanprof was built with" elab.err
           grep -q '"exact_ranges":false' .lake/leanprof/elab.json
 
+  # The exact published numbers that are cheap to reproduce (docs/reproduce.md):
+  # copies, allocations, calls and counts of the README example, Tests/Smoke,
+  # LeanProfiler's copies per span, the LeanBench case study and lean-regex at
+  # its pinned commit, against the published values, from a clean checkout.
+  # Timings and the long claims (Batteries, lean-compiler-backend, the
+  # benchmark suite) are left to scripts/reproduce.sh on a real machine.
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Published exact claims
+        run: sh scripts/reproduce.sh exact
+
   # The VS Code extension (editors/vscode): its commands run in a real VS Code
   # against the leanprof command built here, then it is packaged as a .vsix
   # (an artifact of the run; it is not published to the Marketplace).

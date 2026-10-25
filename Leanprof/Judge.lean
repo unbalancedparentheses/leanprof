@@ -10,7 +10,8 @@ summaries written by hand.
 DISCARD when any of these hold:
 
 * the command, the exit code or the output hash changed, or the output was
-  not the same on every run;
+  not the same on every run, or the two summaries timed different things
+  (the whole process, or different `measure --scope` scopes);
 * copies of shared or multi-threaded values went up (exact counts);
 * allocations went up (exact counts; when they differ between runs, only
   when every new run allocated more than every base run);
@@ -35,6 +36,8 @@ open Lean
 /-- What `judge` reads back from a `measure` summary. -/
 structure Summary where
   command : Json := Json.null
+  /-- the `profile!` scope timed (`measure --scope`); empty: the whole process -/
+  scope : String := ""
   exitCode : Nat := 0
   outputSource : String := ""
   outputHash : String := ""
@@ -81,7 +84,7 @@ def Summary.ofJson (j : Json) : Except String Summary := do
       let last := toNat (num j "allocs_total")
       some (last, runs.foldl Nat.min last, runs.foldl Nat.max last)
   return {
-    command := field "command", exitCode := toNat (num j "exit_code")
+    command := field "command", scope := str j "scope", exitCode := toNat (num j "exit_code")
     outputSource := str out "source", outputHash := str out "hash"
     outputStable := (out.getObjValAs? Bool "stable").toOption.getD true
     median := num time "median", min := num time "min", max := num time "max"
@@ -152,6 +155,9 @@ def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
   let mut notes : Array String := #[]
   if b.command != n.command then
     worse := worse.push s!"different commands measured: {b.command.compress} vs {n.command.compress}"
+  if b.scope != n.scope then
+    let what (s : String) := if s.isEmpty then "the whole process" else s!"scope {s}"
+    worse := worse.push s!"different times measured: {what b.scope} vs {what n.scope}"
   if b.exitCode != n.exitCode then
     worse := worse.push s!"exit code changed: {b.exitCode} -> {n.exitCode}"
   if b.outputSource != n.outputSource || b.outputHash != n.outputHash then

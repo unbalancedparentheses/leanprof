@@ -35,6 +35,13 @@ Short version:
   verdict against leanprof's 6.5 s, plus 10 s for the rebuild leanprof
   causes, and it times the action itself, so a 10.4% slowdown reads as 10.4%
   where leanprof, timing the whole process, reads 8.2%.
+- **Later, on the shared Mac** ([below](#paired-timing-measure-pair-and-measure---scope)):
+  `measure-pair` gave 0 false time verdicts in 40 unchanged sessions and
+  caught the 2.4% slowdown 9 times in 10 (20 pairs), where sequential
+  `measure` gave up to 7 false verdicts in 20. It still costs 7.1 s per
+  verdict to LeanBench's 0.74 s (2.9 s at 6 pairs, which caught 2.4% less
+  often). The 10 s rebuild after `measure` is gone (0.18 s), and
+  `measure --scope` times one `profile!` scope (10.4% read as 10.4%).
 
 ## What LeanBench does (from its source)
 
@@ -194,12 +201,110 @@ Measured on the Linux host inside one lock ([`cost.sh`](../../bench/leanbench/co
 | the next plain `lake build` after a `leanprof measure` | 10.3 s |
 
 leanprof's `measure` rebuilds the C of every module in the project with copy
-shims and removes those objects afterwards, so each `measure` rebuilds and
-the project's next normal build recompiles all of its C, dependencies
+shims and, when this was measured, removed those objects afterwards, so each `measure` rebuilt and
+the project's next normal build recompiled all of its C, dependencies
 included (here LeanBench's `Runner` alone is most of the 10 s). In `run.py`
 this showed up as a 15–30 s LeanBench run after every leanprof measurement
 on the Mac. The tables' per-verdict figures in `summary.md` use medians to
 leave those rebuilds and the lock waits out; `cost.sh` is the clean number.
+
+Measured again on 2026-10-25 on the Mac (M5 Max, 18 CPUs, shared with other
+agents; `cost.sh` run whole under the shared benchmark lock, so no other
+timing run overlapped it, but other agents' builds did; load average 2.4–4.2
+before and after; [`results/cost-mac.txt`](../../bench/leanbench/results/cost-mac.txt)),
+after `measure` began setting the normal objects aside and putting them back:
+
+| | wall time (5 repetitions; `--scope` 3) |
+|---|---:|
+| LeanBench: baseline run + compare run (20 samples) | **0.74 s** (1.59 s the first time) |
+| leanprof: two `measure` (5 runs each) + `judge` | 5.0 s |
+| the next plain `lake build` after a `leanprof measure` | **0.18 s** (a no-op: the 10 s rebuild is gone) |
+| `measure-pair`, 20 pairs (the default) | 7.1 s (7.8 s the first time) |
+| `measure-pair`, 10 pairs | 4.0 s |
+| `measure-pair`, 6 pairs (the minimum) | 2.9 s |
+| two `measure --scope work` + `judge` (`scoped/`, which depends on leanprof) | 9.0 s |
+| rebuild after editing `Work.lean`: `work` / `bench` | 0.50 s / 1.02 s the first time, 0.28 s / 0.18 s after a comment-only edit |
+
+So per verdict, with the rebuild a real change costs either tool, LeanBench
+needs about 0.7 s + 1 s and `measure-pair` 7.1 s + 0.5 s at its default 20
+pairs: **leanprof's most reliable time verdict is still about 4–10× slower
+than LeanBench's**, because each of its 46 runs is a whole process doing 20
+actions, against LeanBench's 22 in-process calls. Fewer pairs cost less
+(2.9 s at 6) but detect less (below). Rebuilds of this tiny project are
+cheap for both; a real project pays its own build time, and `measure-pair`
+also needs the base built (usually already there in a loop).
+
+## Paired timing: `measure-pair` and `measure --scope`
+
+Two later additions address the two weaknesses above. `measure-pair` runs two
+prebuilt plain binaries (no probes, no rebuild) in alternating AB/BA order
+and judges a distribution-free 95% interval of the median paired change;
+`measure --scope NAME` (added on this branch) times one `profile!` scope's
+total from each run's report instead of the whole process. Neither had been
+measured against LeanBench before.
+
+Protocol, fixed in `run.py pair` before it was first run: unchanged code 20
+trials, then the 2.4%, 4.8% and 10.4% slowdowns 5 trials each; every trial
+runs LeanBench (20 samples), `measure` + `judge` (5 runs), `measure-pair`
+(20 pairs) and `measure --scope work` + `judge` (5 runs, on
+[`scoped/`](../../bench/leanbench/scoped/): the same 20 actions in one
+`profile!` scope), tools in rotating order. `measure-pair` compares two real
+builds: two copies of the project, the candidate's `Work.lean` edited to
+hard-code the variant and rebuilt every trial. Its verdicts at 10 and 6
+pairs are `judge` on the first 10 and 6 pairs of the same session. No trial
+was rerun. A trial waited until the 1-minute load average was below 9.
+
+Only the Mac was available (the Linux host was unreachable): an M5 Max with
+18 CPUs shared with other agents. The protocol ran twice, both on
+2026-10-25:
+
+- **locked** (`results/pair-locked.jsonl`, 05:01–05:53): every measured
+  command under the machine's shared benchmark lock, so no other agent's
+  timing run overlapped a measurement; their builds still ran. Load average
+  2.1–17.8 (one trial at 17–18).
+- **unlocked** (`results/pair-unlocked.jsonl`, 01:36–02:05): the first run,
+  before the lock existed; another agent's benchmarks may have overlapped
+  it. Load average 3.3–16.6.
+
+Time verdicts, locked run first, unlocked in parentheses:
+
+| | LeanBench at ≥5% | `measure` + `judge` | `measure --scope` + `judge` | `measure-pair` 20 pairs | 10 pairs | 6 pairs |
+|---|---:|---:|---:|---:|---:|---:|
+| unchanged, false verdicts | 0/20 (1/20) | **7/20** (1/20): 3 KEEP, 4 slower | 4/20 (3/20) | **0/20 (0/20)** | 0/20 (0/20) | 0/20 (0/20) |
+| 2.4% slower, caught | 0/5 (0/5) | 2/5 (4/5) | 3/5, and 1 KEEP (5/5) | **4/5 (5/5)** | 2/5 (5/5) | 2/5 (5/5) |
+| 4.8% slower, caught | 0/5 (3/5) | 4/5 (5/5) | 4/5 (5/5) | **5/5 (5/5)** | 5/5 (5/5) | 5/5 (4/5) |
+| 10.4% slower, caught | 5/5 (5/5) | 5/5 (5/5) | 5/5 (5/5) | 5/5 (5/5) | 5/5 (5/5) | 5/5 (4/5) |
+| inconclusive on a slowdown | – | – | – | 1/15 (0/15) | 3/15 (0/15) | 3/15 (2/15) |
+| median reading of the 10.4% slowdown | +11.4% (+10.5%) | +9.1% (+9.2%) | +10.4% (+10.4%) | +10.0% (+10.0%) | | |
+| range of the change on unchanged code | −7.4..+1.1% | −6.4..+9.8% | −4.9..+6.1% | **−0.4..+0.4%** (−0.5..+0.6%) | | |
+| seconds per verdict (median in the run) | 0.8 | 5.1–5.6 | 9.1–9.7 | 7.5 (0.5 build + 7.0) | | |
+
+On unchanged code every `measure-pair` session ended "inconclusive"
+(DISCARD with no reason against it, as it should). Full rows:
+[`summary.md`](../../bench/leanbench/results/summary.md).
+
+What this shows, on this shared Mac only:
+
+- **`measure-pair` is the only time verdict here that held up under load.**
+  Interleaving cancels the drift that made sequential runs disagree: its
+  median paired change on unchanged code stayed within −0.5..+0.6% in all
+  40 sessions, it never gave a false verdict, and at 20 pairs it caught the
+  2.4% slowdown 9 times in 10 and everything larger every time. The same
+  load gave `measure` + `judge` 7 false time verdicts in 20 in the locked
+  run (KEEP of unchanged code 3 times), and `--scope` 4.
+- **Whole-process dilution is small for a plain binary.** `measure-pair`
+  read the 10.4% slowdown as +10.0% (process start-up and setup are about
+  4 ms of 214 ms); instrumented `measure` read +9.1–9.2%; `--scope` removes
+  that dilution (+10.4%) but not the drift of sequential runs, so it did not
+  improve the verdicts here. `--scope` is for programs with expensive
+  start-up or setup, not a fix for noise.
+- **Fewer pairs are cheaper and weaker on small changes**: 6 or 10 pairs
+  caught 4.8% and 10.4% slowdowns as often as 20 in the locked run, but the
+  2.4% one only 2 times in 5.
+- **It is still slower than LeanBench**: 7.1 s at 20 pairs against 0.74 s
+  (`cost.sh`, above), 2.9 s at 6 pairs. LeanBench at its 5% threshold gave
+  no false alarm in the locked run but caught 0 of 10 of the 2.4% and 4.8%
+  slowdowns.
 
 ## What each reports that the other does not
 
@@ -237,6 +342,11 @@ leave those rebuilds and the lock waits out; `cost.sh` is the clean number.
   times what you point it at (no dilution by start-up), handles many
   benchmarks at once and reports richer statistics. Those are leanprof's
   homework below.
+- **Later (2026-10-25, shared Mac):** leanprof no longer disturbs the build
+  (0.18 s next build), and `measure-pair` gave the most reliable time
+  verdict of the four measured (0 false in 40, 2.4% caught 9 in 10), but at
+  7.1 s per verdict it is still about 10× slower than LeanBench's 0.74 s;
+  at 6 pairs (2.9 s) it is about 4× slower and weaker on a 2% change.
 
 ## What leanprof should learn
 
@@ -261,17 +371,23 @@ Proposed (in [ROADMAP.md](../../ROADMAP.md)):
 
 5. **Interleave** base and new runs (two builds side by side, ABAB…), the
    real fix for drift; then a test with a confidence interval on the
-   difference.
+   difference. Done since: `measure-pair`, measured [above](#paired-timing-measure-pair-and-measure---scope).
 6. **Keep instrumented objects apart** from the normal build so `measure`
    neither rebuilds every time nor forces a full C rebuild afterwards (6.5 s
    + 10.3 s against LeanBench's 0.6 s); a timing-only mode on the plain
-   build for time verdicts.
+   build for time verdicts. Done since: the next build after `measure` took
+   0.18 s on the Mac, and `measure-pair` is the timing-only mode; what is
+   left is its cost per verdict (7.1 s at 20 pairs against 0.74 s), for
+   example by letting a program repeat its work fewer times per process.
 7. **Allocations in `judge` and `compare`**, exactly, like copies (already
    planned; this study is another case: +2,000 allocations, invisible to
    `judge`).
 8. **Time a scope, not only the process**: `measure --scope NAME` using
    `profile!` timings, so start-up and setup do not dilute the change (8.2%
-   measured for a 10.4% slowdown).
+   measured for a 10.4% slowdown). Done on the `verdict-speed` branch: it
+   read the 10.4% slowdown as +10.4%, but its runs are still sequential and
+   it gave 4 false verdicts in 20 on the shared Mac; a plain binary under
+   `measure-pair` was diluted only to +10.0%.
 9. **Many benchmarks per run** with names and per-benchmark verdicts, and
    LeanBench interop: read a LeanBench JSON file as one more input to
    `judge`/`report-md`, so projects that already use LeanBench get copies and
@@ -291,5 +407,7 @@ python3 bench/leanbench/run.py detect --trials 5
 python3 bench/leanbench/run.py sweep --trials 5
 python3 bench/leanbench/run.py summary
 sh bench/leanbench/cost.sh
+python3 bench/leanbench/run.py pair    # + measure-pair and measure --scope
+# on a shared Mac: LB_WRAP=bench-lock LB_MAX_LOAD=9 python3 ... pair --tag=-locked
 # on a shared host: LB_WRAP="flock ~/bench.lock taskset -c 0-7" python3 ... --tag=-linux
 ```

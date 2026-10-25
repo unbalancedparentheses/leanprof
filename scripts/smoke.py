@@ -173,6 +173,13 @@ def facts():
     sh(LP, "run", "--json", ".lake/leanprof/report.json", "copybug", "--", "2000")
     e = sh(LP, "explain")
     out["explain"] = [l.strip() for l in e.stdout.splitlines() if l.strip().startswith(("why:", "where:"))]
+    # measure --scope: one profile! scope's total instead of the process; an unknown scope fails
+    sh(LP, "measure", "--runs", "1", "--warmup", "0", "--scope", "build", "--out", "/tmp/smoke-scope.json",
+       "copybug", "--", "2000")
+    sc = load("/tmp/smoke-scope.json")
+    out["measure.scope"] = [sc["scope"], 0 < sc["time_ns"]["median"] < 1e9]
+    out["measure.scope.missing"] = sh(LP, "measure", "--runs", "1", "--warmup", "0", "--scope", "nosuch",
+                                      "--out", "/tmp/smoke-scope.json", "copybug", "--", "2000", check=False).returncode
     # compare: a report against itself
     out["compare.self"] = sh(LP, "compare", "/tmp/smoke-run.json", "/tmp/smoke-run.json", check=False).returncode
     # elab: what it blames (not amounts)

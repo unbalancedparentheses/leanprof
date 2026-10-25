@@ -212,6 +212,11 @@
   "top"
  ],
  "html": true,
+ "measure.scope": [
+  "build",
+  true
+ ],
+ "measure.scope.missing": 2,
  "run.copies": [
   [
    "buildWithHistory (in Std.Legacy.Range.forIn'.loop)",

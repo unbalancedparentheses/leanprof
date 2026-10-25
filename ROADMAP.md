@@ -185,14 +185,15 @@ provenance and one complete experiment operation come first.
     on a quiet machine, which gave 2 false KEEPs in 20; the "1 in 252" claim
     is corrected.
   - [x] `measure` shows mean ± standard deviation.
-  - [ ] Keep instrumented objects apart from the normal build: today each
-    `measure` rebuilds the project's C with shims and the next plain build
-    recompiles all of it (6.5 s per verdict plus a 10 s rebuild, against
-    LeanBench's 0.6 s). `measure-pair` is the timing-only mode on plain
-    builds; its cost per verdict is not yet measured.
-  - [ ] `measure --scope NAME`: time a `profile!` scope instead of the whole
-    process, so start-up does not dilute a change (a 10.4% slowdown read as
-    8.2%).
+  - [x] Keep instrumented objects apart from the normal build: the next
+    plain build after `measure` took 0.18 s on the Mac (it was a 10 s
+    rebuild). `measure-pair` is the timing-only mode on plain builds.
+  - [ ] Cheaper paired verdicts: `measure-pair` took 7.1 s per verdict at 20
+    pairs (2.9 s at 6) against LeanBench's 0.74 s on the same Mac, with 0
+    false verdicts in 40 and a 2.4% slowdown caught 9 in 10
+    (docs/case-studies/leanbench.md).
+  - [x] `measure --scope NAME`: time a `profile!` scope instead of the whole
+    process (a 10.4% slowdown read as +10.4%, was 8.2%).
   - [ ] Several named benchmarks per summary, each judged; read LeanBench's
     JSON in `judge`/`report-md` so its users get copies and allocations next
     to its timings. Link each finding to its before/after experiment, and
