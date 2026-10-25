@@ -174,7 +174,21 @@ workloads see.
 These numbers were measured before the outliner fix in the next section,
 which removed most of the probe cost the paragraph "Negative results" below
 could not account for; the combined code is measured in
-[RESULTS.md](RESULTS.md).
+[RESULTS.md](RESULTS.md). Against `main` with the outliner fix and without
+these changes (`67c07ec`), two interleaved pairs on the same machine (load
+about 5, share error in points, `main` / combined):
+
+| | pair 1 | pair 2 |
+|---|---|---|
+| `tiny` `--auto` | 5.2 / 0.6 (5.75× / 1.00× slower) | 4.3 / 0.8 |
+| `tiny` `profile!` | 9.0 / 11.2 (5.41× / 4.30× slower) | 8.3 / 10.3 |
+| `rec` `--auto` | 2.2 / 3.1 | 1.7 / 1.7 |
+| `alloc` `--auto` | 2.9 / 5.7 | 4.5 / 3.7 |
+
+So: `--auto` times the tiny workload as well as sampling and without
+slowing it down; light scopes make tiny `profile!` scopes cheaper but about
+two points less accurate; `rec` and `alloc` under `--auto` show no
+consistent difference (the two pairs disagree).
 
 The dedicated Linux host was unreachable, so these are Mac numbers: the
 machine was shared (load average 3–10), every suite run held a lock that

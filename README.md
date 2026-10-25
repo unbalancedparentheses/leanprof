@@ -118,7 +118,7 @@ of the run, to agents.
 | | command |
 |---|---|
 | CPU time per Lean declaration, no probes; flame graph with Lean names | `leanprof sample myapp` |
-| Exact time and calls per function or `profile!` scope, own cost subtracted | `leanprof run [--auto] myapp` |
+| Exact time and calls per function or `profile!` scope, own cost subtracted (`--auto` leaves functions too small to time untimed; `--time-tiny` counts them) | `leanprof run [--auto] myapp` |
 | Copies of shared arrays and strings, with file:line, the reason and the fix | `leanprof run`, `leanprof explain` |
 | Allocations per function; failed in-place reuse; closure calls | `leanprof run --allocs --counters myapp` |
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
@@ -144,8 +144,10 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
 - **Copies and their causes.** No other Lean tool reports them. leanprof
   counts them exactly, names the line and the reason, and prints a fix that
   is tested to remove them.
-- **Exact regression checks.** Copies, allocations, calls and compile
-  heartbeats are the same on every run, so CI can fail on "+1 copy". Against
+- **Exact regression checks.** Copies, allocations and calls are the same on
+  every run, and compile heartbeats nearly so (a whole project elaborated in
+  parallel varied by up to 5 per million of its total between runs), so CI
+  can fail on "+1 copy". Against
   [LeanBench](docs/case-studies/leanbench.md), only leanprof saw a hidden
   copy per iteration or 2,000 extra allocations (each under 1% of time).
 - **Small slowdowns.** On the quiet Linux machine leanprof caught a 2%
@@ -181,15 +183,16 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   functions still run about 18× slower under `profile!` there.
 - **Time of tiny functions in the exact modes.** When a call costs about as
   much as its probes, its time can be off by half either way; such rows are
-  marked `*`. `run --auto` now leaves straight-line functions of a few
-  operations untimed (listed in the report), so the functions around them
-  are timed without their probes: on the Mac's `tiny` workload 0.6–1.2
-  points off and 0.98× slower, against 9.5–10.2 points and 7.8–8.2× before.
-  Under `profile!` such scopes are timed on a sample of their calls
-  (6.2× slower instead of 7.8×), but their share is still 9–10 points off
-  there, and `rec` under `--auto` 6.2–6.4 (5.2–5.4 before): what is left is
-  what a probe costs inside the program beyond its calibrated cost, which
-  no subtraction sees. `leanprof sample` is the tool for those functions.
+  marked `*`. `run --auto` leaves straight-line functions of a few
+  operations untimed (listed in the report, with no call count;
+  `--time-tiny` times and counts them), so the functions around them are
+  timed without their probes: on the Mac's `tiny` workload 0.6–0.8 points
+  off and 1.00× the plain time, against 4.3–5.2 points and 5.8× before
+  (two interleaved pairs of suite runs, load about 5). Under `profile!` tiny
+  scopes are timed on a sample of their calls, which makes the program
+  faster (4.3× slower instead of 5.4×) but not more accurate: 10.3–11.2
+  points off, against 8.3–9.0 before. `leanprof sample` is the tool for
+  those functions.
 - **Sampling** is as accurate as samply (it runs samply underneath; on the
   Mac within 0.2–3.3 points of each function's true share over four suite
   runs on 2026-10-25, samply 0.3–4.4)
