@@ -327,8 +327,10 @@ def summarize():
             cells.append("-")
         cells.append(" / ".join(map(str, retro_time(lp, g[0].get("cpus") or (32 if host == "linux" else 18)))) if lp else "-")
         print("| " + " | ".join(cells) + " |")
-    if pair:
-        pair_summary(pair)
+    for tag in sorted({r["_tag"] for r in pair}):
+        print(f"\n`pair{'-' + tag if tag else ''}.jsonl` ({pair[0]['host']}, LB_WRAP: "
+              f"{next(r['wrap'] for r in pair if r['_tag'] == tag) or 'none'})")
+        pair_summary([r for r in pair if r["_tag"] == tag])
 
 
 def pair_summary(rows):
