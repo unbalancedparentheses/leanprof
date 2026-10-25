@@ -300,6 +300,7 @@
  "smoke.stat": [
   "2,998"
  ],
+ "smoke.stat_first_launch": true,
  "taskchains": [
   [
    "bound",

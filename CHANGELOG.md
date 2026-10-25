@@ -28,6 +28,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   `run` and `stat` take `--out FILE` as another spelling of `--json FILE`,
   and `sample` takes `--json FILE` (a copy of its report; `--out` is still
   samply's profile).
+- `stat` launches the freshly linked binary once without running it
+  (`LEANPROF_LAUNCH_ONLY=1`: leanprof's runtime exits as it loads) before
+  the measured run, and prints that first launch's time on its own line.
+  On macOS a new binary's first launch is slow (1.1 s for `copybug`, 24 ms
+  after; 2.3 s for concrete), and "including process start" counted it
+  without saying so. That time also no longer includes `lake env`.
 
 ### Smaller fixes and maintenance
 

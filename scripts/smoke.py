@@ -72,6 +72,8 @@ def other_project():
                                    if s["name"] in ("main", "buildWithHistory", "strings", "fib"))
         st = sh(lp, "stat", "--json", "stat.json", "smoke", "--", "2000", cwd=work)
         out["smoke.stat"] = [l.split()[1] for l in st.stdout.splitlines() if l.strip().startswith("copies")]
+        # the fresh binary's first launch is made (without running it) and said, not counted
+        out["smoke.stat_first_launch"] = "the first launch of the new binary" in st.stdout
         sh(lp, "measure", "--runs", "1", "--warmup", "0", "--out", "measure.json", "smoke", "--", "2000", cwd=work)
         out["smoke.measure.copies"] = report("measure.json")["copies_total"]
         # the normal build is back: the program runs without writing a report

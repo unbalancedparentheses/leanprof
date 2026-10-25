@@ -3441,6 +3441,11 @@ static void lpf_thread_retire(void *p) {
 }
 
 __attribute__((constructor)) static void lpf_init(void) {
+    /* `leanprof stat` launches a freshly linked program once with this set:
+     * loading (and, on macOS, the first launch's signature check of a new
+     * binary, seconds for a large one) without running any of it */
+    const char *launch = getenv("LEANPROF_LAUNCH_ONLY");
+    if (launch != NULL && strcmp(launch, "1") == 0) _exit(0);
     const char *trace = getenv("LEANPROF_TRACE");
     lpf_tracing = trace != NULL && trace[0] != 0;
     const char *max = getenv("LEANPROF_TRACE_MAX");

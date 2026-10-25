@@ -554,7 +554,8 @@ def absPath (p : FilePath) : IO FilePath := do
 /-- Run the instrumented `exe` in the project, or in `--cwd DIR` (for
 programs that read their input from the current directory): paths become
 absolute, and LEANPROF_PROJECT tells the runtime where the `.ilean` files are. -/
-def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Option String)) : IO UInt32 := do
+def instrumentedEnv (exe : String) (opts : RunOpts) (env : Array (String × Option String)) :
+    IO (Array (String × Option String)) := do
   let fix (v : Option String) : IO (Option String) := v.mapM fun p => return (← absPath p).toString
   -- as `lake exe` would run it, then leanprof's own variables
   let mut env' ← lakeRunEnv
@@ -563,7 +564,10 @@ def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Opti
   if opts.cwd.isSome then env' := env'.push ("LEANPROF_PROJECT", some (← IO.currentDir).toString)
   -- positions of Lean's own functions (copies inside its libraries with `--core`)
   if let some pre ← toolchainPrefix (exePath exe) then env' := env'.push ("LEANPROF_CORE_DIR", some pre)
-  spawnWait (← absPath (exePath exe)).toString opts.args env' (opts.cwd.map (·))
+  return env'
+
+def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Option String)) : IO UInt32 := do
+  spawnWait (← absPath (exePath exe)).toString opts.args (← instrumentedEnv exe opts env) (opts.cwd.map (·))
 
 /-- The last report: what `run`, `stat`, `sample` and `measure` leave, and
 what `explain`, `html`, MCP `report`/`hot`/`explain` and `#leanprof` read by
@@ -1815,8 +1819,18 @@ def statCmd (argv : List String) : IO UInt32 := do
   let json := opts.json.getD lastReport.toString
   let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_STAT", some "1"), ("LEANPROF_JSON", some json),
     ("LEANPROF_TRACE", opts.trace)]
+  -- the first launch of a freshly linked binary is slower (on macOS, the
+  -- system checks a new binary's signature: 2.3 s for a 106 MB compiler);
+  -- launched once first, without running it (leanprof's runtime exits at
+  -- load), so the time below is that of a warm start
+  let env ← instrumentedEnv exe opts env
+  let bin := (← absPath (exePath exe)).toString
+  let l0 ← IO.monoNanosNow
+  let launchRc ← try spawnWait bin #[] (env.push ("LEANPROF_LAUNCH_ONLY", some "1")) (opts.cwd.map (·))
+    catch _ => pure 1
+  let firstLaunch := (← IO.monoNanosNow) - l0
   let t0 ← IO.monoNanosNow
-  let code ← try runInstrumented exe opts env
+  let code ← try spawnWait bin opts.args env (opts.cwd.map (·))
     finally
       unless opts.keep do cleanupInstrumented exe
   let outside := (← IO.monoNanosNow) - t0
@@ -1833,6 +1847,8 @@ def statCmd (argv : List String) : IO UInt32 := do
   -- the program's own wall time (start to exit), not leanprof's report or process launch
   let wall := num mem "wall_ns"
   row "wall" s!"{fmtTime wall}  ({fmtTime outside.toFloat} including process start and the report)"
+  if launchRc == 0 then
+    row "" s!"(the first launch of the new binary, {fmtTime firstLaunch.toFloat} to load it, is not included)"
   row "CPU" s!"{fmtTime user} user + {fmtTime sys} system ({fmt2 ((user + sys) / (if wall > 0 then wall else 1))} cores)"
   row "peak memory" s!"{fmtBytes (num mem "peak_rss")} resident, {fmtBytes (num mem "peak_commit")} committed by Lean's allocator"
   let allocSites := getArr j "allocations"
