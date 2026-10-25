@@ -12,7 +12,7 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 export PATH="$HOME/.elan/bin:$PATH"
 claims="copybug smoke lean-regex leanprofiler leanbench batteries lcb-fixes lcb-autoresearch bench-suite"
-cheap="copybug smoke leanprofiler leanbench"
+cheap="copybug smoke leanprofiler leanbench lean-regex"
 
 usage() {
   cat <<'EOF'
@@ -32,7 +32,7 @@ usage: scripts/reproduce.sh CLAIM [OPTIONS]
   bench-suite       ~10 min        bench/run.py: exact counts, accuracy table within stated ranges
 
   list              this table
-  exact             copybug, smoke, leanprofiler --exact-only, leanbench (exact parts only)
+  exact             copybug, smoke, leanprofiler, leanbench, lean-regex: exact parts only (CI)
 EOF
 }
 
@@ -43,7 +43,7 @@ case "$claim" in
   exact)
     status=0
     for c in $cheap; do
-      if [ "$c" = leanprofiler ]; then set -- --exact-only; else set --; fi
+      case "$c" in leanprofiler|lean-regex) set -- --exact-only ;; *) set -- ;; esac
       python3 "$root/reproduce/$c.py" "$@" || status=1
     done
     exit $status ;;

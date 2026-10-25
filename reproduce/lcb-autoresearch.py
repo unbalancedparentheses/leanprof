@@ -71,5 +71,6 @@ if not a.no_timing:
     c.note("median of the paired reductions", round(r["paired_median_reduction_percent"], 2), 25.74)
     c.note("paired bootstrap 95% interval", [round(x, 2) for x in r["paired_bootstrap_95_percent_interval"]],
            "22.72-26.98")
-    c.note("load at the start and end of the timing", [r.get("load_start"), r.get("benchmark_load_end")])
+    c.note("1-minute load at the start and end of the timing",
+           [round((r.get(k) or [0])[0], 1) for k in ("load_start", "benchmark_load_end")], "6.23, 6.01")
 c.finish()

@@ -19,6 +19,7 @@ PUBLISHED_LEANPROF = "8caf3fd"  # the leanprof that measured the case study's he
 PATTERN = r"[a-zA-Z_]+_(lt|le)\b"
 ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument("--no-elab", action="store_true", help="skip the compile-time (heartbeats) part")
+ap.add_argument("--exact-only", action="store_true", help="no timing and no heartbeats part (CI)")
 a = ap.parse_args()
 
 c = Claim("lean-regex", "Apple M5 Max (docs/case-studies/lean-regex.md)",
@@ -37,12 +38,13 @@ c.exact("corpus size (MB, Lean 4.35.0 Init/Data/*/*.lean)", round(os.path.getsiz
 args = ["Bench", "--", "-e", PATTERN, "-n", "3", corpus]
 plain = os.path.join(rx, ".lake", "build", "bin", "Bench")
 times = []
-for _ in range(3):
+for _ in range(1 if a.exact_only else 3):
     secs, p = timed([plain, "-e", PATTERN, "-n", "3", corpus], cwd=rx)
     times.append(secs)
 c.note("Bench output", p.stdout.strip().splitlines()[-1] if p.stdout.strip() else "")
 c.exact("matches (per search)", "4878" in p.stdout.replace(",", ""), True)
-c.within("uninstrumented, three searches, best of 3 (timing)", min(times), 1.4, 3.0, 2.0, " s")
+if not a.exact_only:
+    c.within("uninstrumented, three searches, best of 3 (timing)", min(times), 1.4, 3.0, 2.0, " s")
 
 env = {"LEANPROF_QUIET": "1"}
 sh([LP, "run", "--json", "run.json", *args], cwd=rx, env=env)
@@ -81,7 +83,7 @@ c.exact("--auto calls of Regex.BufferStrategy (millions)",
 c.exact("--auto calls of Regex.VM.eachStepChar.go",
         au["Regex.VM.eachStepChar.go"]["calls"] if "Regex.VM.eachStepChar.go" in au else None, 13376301)
 
-if not a.no_elab:
+if not (a.no_elab or a.exact_only):
     # The case study's heartbeats were measured with leanprof 8caf3fd, the
     # commit that published them. Heartbeats are exact for one leanprof and
     # one Lean, but what leanprof traces counts in them, and later leanprof
