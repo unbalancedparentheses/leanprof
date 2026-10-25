@@ -426,11 +426,13 @@ def selfCheckProbe (root : FilePath) : IO (Except String (String × String)) := 
   let leanPrefix := (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
   let dir := (← IO.FS.createTempDir)
   let main := dir / "probe.c"
-  IO.FS.writeFile main <| "#include <lean/lean.h>\n#include <stdio.h>\n" ++
+  -- no libc headers: on Linux the wrapper compiles with Lean's own leanc,
+  -- whose sysroot has only what Lean's generated C includes
+  IO.FS.writeFile main <| "#include <lean/lean.h>\nint puts(const char *);\n" ++
     "const char *leanprof_self_check_message(void);\nconst char *leanprof_self_check_ops(void);\n" ++
     "void lean_initialize_runtime_module(void);\n" ++
     "int main(void) {\n  lean_initialize_runtime_module();\n" ++
-    "  printf(\"%s\\n%s\\n\", leanprof_self_check_ops(), leanprof_self_check_message());\n  return 0;\n}\n"
+    "  puts(leanprof_self_check_ops());\n  puts(leanprof_self_check_message());\n  return 0;\n}\n"
   let env := selfCheckEnv wrapper ++ #[("LEANPROF_QUIET", some "1")]
   let steps : List (String × Array String × Array (String × Option String)) := [
     ("cc", #["-O0", "-fPIC", "-I", leanPrefix ++ "/include", "-c", (root / "c" / "leanprof.c").toString,
