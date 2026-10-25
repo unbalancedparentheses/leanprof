@@ -75,6 +75,12 @@ jobs:
           esac
           echo "TOOLCHAIN=$tc" >> "$GITHUB_ENV"
           echo "toolchain: $tc"
+      - name: Install this Lean (retried, downloads sometimes time out)
+        run: |
+          for i in 1 2 3; do
+            elan toolchain install "$TOOLCHAIN" && break
+            echo "download failed (attempt $i), retrying"; sleep 30
+          done
       - name: Test suite built with this Lean
         run: |
           echo "$TOOLCHAIN" > lean-toolchain

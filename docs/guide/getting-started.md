@@ -42,7 +42,7 @@ there. For the editor, see also the [VS Code extension](vscode.md).
 |---|---|
 | macOS arm64 | supported; prebuilt command |
 | Linux x86-64 | supported; prebuilt command (glibc 2.35 or newer, e.g. Ubuntu 22.04; older systems build from source) |
-| macOS x86-64, Linux arm64 | not tested; the installer builds from source |
+| macOS x86-64, Linux arm64 | prebuilt command, smoke-tested on each release (run, allocations, `explain`, `elab`; `sample` on macOS) but not in the per-commit test matrix |
 | Windows | not supported; WSL 2 with Linux is the way to use it |
 
 Lean 4.34 and later. CI runs the test suite and `leanprof run`, `sample` and
@@ -84,12 +84,16 @@ Each command prints its report and saves it under `.lake/leanprof/`.
 ## Reading the report
 
 ```
-scope                         calls      total       self  %wall       mean        p50        p99  where
-buildWithHistory                  1     2.5 ms     2.5 ms  16.8%     2.5 ms     2.5 ms     2.5 ms  Examples/CopyBug.lean:17
+     calls      total       self  %wall       mean        p50        p99  scope  (where)
+         1     4.3 ms     4.3 ms  13.8%     4.3 ms     4.2 ms     4.2 ms  buildWithHistory  (Examples/CopyBug.lean:17)
+     10945  73.1 µs*   73.1 µs   0.2%      80 ns       7 ns     480 ns  fib  (Examples/CopyBug.lean:15)
+* near the probe cost: use `leanprof sample` for this function's time
 
-copies of non-exclusive values (each one copied the whole value)
-function                                 kind           copies       bytes       time  %scope  why             in scope             where (declaration)
-buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3 MiB     2.5 ms   98.5%  shared+persistent buildWithHistory     Examples/CopyBug.lean:17
+copies of non-exclusive values (each one copied the whole value; costliest first)
+  copies       bytes       time   %run  %scope  kind        why            in scope           function  (where)
+    2001    15.3 MiB     4.3 ms  13.7%   99.0%  Array       shared         buildWithHistory   buildWithHistory (in Std.Legacy.Range.forIn'.loop)  (Examples/CopyBug.lean:17)
+
+allocations: not counted (`leanprof run --allocs` counts them, at a cost of about 6 ns per allocation that is not subtracted from the times)
 ```
 
 - **total** includes everything called inside; **self** excludes what was
@@ -101,6 +105,11 @@ buildWithHistory (in Std.Legacy.Range.forIn'.loop) Array            2001    15.3
   The `why` column says whether another reference was alive (`shared`), the
   value had been shared with another thread (`multi-threaded`), or it was a
   compile-time constant (`persistent`, harmless and hidden by default).
+  `%run` is the copy time's share of the whole run, the first thing to look
+  at: rows are sorted by it. Copies of empty or tiny values are grouped in
+  one row (`--all-copies` lists them).
+- A time too small to measure is never shown as 0: `< probe` means less
+  than leanprof's own cost per scope, `< 1 ns` less than one clock tick.
 - **`(in Std.Legacy.Range.forIn'.loop)`**: the copy happened in a library
   function specialized into `buildWithHistory`, so it is reported under your
   function.

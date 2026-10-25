@@ -346,12 +346,15 @@ structure MsgData where
   diagHead : Bool := false
   diagArrow : Bool := false
   diag : Array (String × String × Nat) × String := (#[], "")
+  /-- The first line, up to 300 characters (an error's message). -/
+  head : String := ""
 
 def MsgData.addLine (d : MsgData) (line : String) : MsgData :=
-  let ⟨trace, lines, diagHead, diagArrow, diag⟩ := d
+  let ⟨trace, lines, diagHead, diagArrow, diag, head⟩ := d
   let diagHead := if lines == 0 then diagHeader line else diagHead
   let (diagArrow, diag) := if diagHead then (diagArrow || hasArrow line, diagLine diag line) else (diagArrow, diag)
-  ⟨trace.addLine line, lines + 1, diagHead, diagArrow, diag⟩
+  let head := if lines == 0 then String.ofList (line.toList.take 300) else head
+  ⟨trace.addLine line, lines + 1, diagHead, diagArrow, diag, head⟩
 
 /-- A message's `data` as read: `diagnostics` counters, or a trace's nodes. -/
 inductive Parsed where
@@ -399,6 +402,8 @@ structure FileCost where
   lint : Float := 0
   wallNs : Nat := 0
   errors : Nat := 0
+  /-- The first error: `line: message`. -/
+  firstError : String := ""
 
 /-- One source range's elaborations: inclusive cost, how many times, what it is. -/
 structure RangeCost where
@@ -420,8 +425,9 @@ structure Acc where
   /-- The file being read, by line, and without whitespace to find tactics in (not merged). -/
   src : Array String := #[]
   srcSq : Array String := #[]
-  /-- The largest command traced so far at each `line:column` of the file (not merged). -/
-  commandsAt : Std.HashMap String Float := {}
+  /-- Commands traced recently, not yet inside a later one: their source range
+  (start and end, as `(line, column)`) and traced amount (not merged). -/
+  commands : Array ((Nat × Nat) × (Nat × Nat) × Float) := #[]
   /-- Traces from the driver: tactics are placed by their source nodes, not their text. -/
   exact : Bool := false
   /-- Terms and tactics by exact source range, `file:line:col-line:col`. -/
@@ -495,6 +501,18 @@ def Acc.addRanges (a : Acc) (file : String) (scale : Float) (nodes : Array TNode
       a := { a with tactics := a.tactics.insert lk (x + n.amount * scale, t, cnt + 1),
                     tacticRanges := if a.tacticRanges.contains lk then a.tacticRanges else a.tacticRanges.insert lk k }
   return a
+/-- The name declared by a command's text (`theorem foo ...` gives `foo`). -/
+def declName (text : String) : Option String := Id.run do
+  let words := (text.splitOn " ").filter (· != "")
+  let kws := ["def", "theorem", "lemma", "abbrev", "instance", "structure", "inductive", "class", "opaque",
+    "axiom"]
+  for i in [0:words.length] do
+    if kws.contains words[i]! then
+      if let some w := words[i + 1]? then
+        if !(w.startsWith "(" || w.startsWith "[" || w.startsWith "{" || w.startsWith ":" || w.startsWith "⦃") then
+          return some w
+      return none
+  return none
 
 /-- Fold one `lean --json` message of `file` into the accumulator: `m`
 without its `data`, which was read into `p`. -/
@@ -510,17 +528,27 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
     | .trace nodes => pure nodes
   let some root := nodes[0]? | return a
   -- A command Lean expands into others (`theorem Foo.bar` into `namespace Foo theorem bar
-  -- end`, `open X in ...`) traces the inner command first and then itself, at the same
-  -- position, including the inner one's time: count only what the outer adds.
-  let col := ((m.getObjVal? "pos" >>= (·.getObjVal? "column")) >>= Json.getNat?).toOption.getD 0
-  let at_ := s!"{ln}:{col}"
+  -- end`, `variable (x) in theorem t ...` into `section variable (x) theorem t ... end`,
+  -- `set_option o v in ...`) traces the inner commands first and then itself, over a range
+  -- that contains theirs and including their time: count only what the outer one adds. The
+  -- inner ones keep their cost on their own lines.
+  let posOf (k : String) : Nat × Nat :=
+    let p := m.getObjVal? k
+    (((p >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0,
+     ((p >>= (·.getObjVal? "column")) >>= Json.getNat?).toOption.getD 0)
   let mut nodes := nodes
   let mut root := root
   if root.cls == "Elab.command" then
-    let inner := a.commandsAt.getD at_ 0
-    a := { a with commandsAt := a.commandsAt.insert at_ (max inner root.amount) }
+    let s := posOf "pos"
+    let e := if (m.getObjVal? "endPos").toOption.isSome then posOf "endPos" else s
+    let le (x y : Nat × Nat) : Bool := x.1 < y.1 || (x.1 == y.1 && x.2 ≤ y.2)
+    let within := fun ((s', e', _) : (Nat × Nat) × (Nat × Nat) × Float) => le s s' && le e' e
+    let inner : Float := (a.commands.filter within).foldl (fun x c => x + c.2.2) 0
+    -- a bounded list: an outer command follows its inner ones closely
+    let kept := (a.commands.filter (!within ·)).push (s, e, root.amount)
+    a := { a with commands := kept.extract (kept.size - min kept.size 64) kept.size }
     if inner > 0 then
-      root := { root with amount := max 0 (root.amount - inner) }
+      root := { root with amount := max (0 : Float) (root.amount - inner) }
       nodes := nodes.set! 0 root
   let rootAmt := root.amount * scale
   a := { a with grand := a.grand + rootAmt }
@@ -538,10 +566,19 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
   else
     c := { c with elaboration := c.elaboration + rootAmt }
     f := { f with elaboration := f.elaboration + rootAmt }
-    if root.cls == "Elab.command" && c.name.isEmpty then
-      -- Lean sometimes cannot print the command: name it after its source line
-      let text := if root.text.startsWith "failed to pretty print" then sourceLine a.src ln else root.text
-      c := { c with name := String.ofList ((dropInPrefix (dropDocComment text)).toList.take 60) }
+    if root.cls == "Elab.command" then
+      -- named without its doc comment and the `variable … in`, `set_option … in` before it;
+      -- from the source when Lean cannot print it, or when the text kept ends inside the doc
+      -- comment
+      let clean (t : String) : String := (dropDocComment (dropInPrefix (dropDocComment t.trimAscii.toString))).trimAscii.toString
+      let fromTrace := clean root.text
+      let text := if root.text.startsWith "failed to pretty print" || fromTrace.startsWith "/--" ||
+          fromTrace.isEmpty then clean (sourceLine a.src ln) else fromTrace
+      let name := String.ofList ((text.replace "\n" " ").toList.take 60)
+      -- commands sharing a line (`variable (x) in` puts its inner `variable` at the position of
+      -- the declaration it wraps): the line is named after the one that declares something
+      if c.name.isEmpty || ((declName c.name).isNone && (declName name).isSome) then
+        c := { c with name }
   if !a.files.isEmpty then a := { a with files := a.files.modify (a.files.size - 1) fun (k, _) => (k, f) }
   -- tactic steps, by the line each is on: found in the source after the command's start,
   -- in the order Lean ran them; a step nested in one on the same line is not counted again
@@ -606,9 +643,14 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
   c := { c with top := (((c.top.filter (·.1 ≥ c.total * 0.01)).qsort (fun a b => a.1 > b.1)).toList.take 5).toArray }
   { a with lines := a.lines.insert key c }
 where
-  /-- The source text of 1-based line `ln` and the two after it. -/
+  /-- The source text from 1-based line `ln`: enough lines to get past a doc comment and the
+  `variable … in` before a declaration, and three after them. -/
   sourceLine (src : Array String) (ln : Nat) : String :=
-    " ".intercalate (((src.toList.drop (ln - 1)).take 3).map (·.trimAscii.toString))
+    let rest := src.toList.drop (ln - 1)
+    let docEnd := if rest.take 40 |>.any (·.trimAscii.startsWith "/--") then
+        ((rest.take 40).findIdx? (fun l => (l.splitOn "-/").length > 1)).getD 0
+      else 0
+    " ".intercalate ((rest.take (docEnd + 4)).map (·.trimAscii.toString))
   /-- A command's text without its leading doc comment. -/
   dropDocComment (text : String) : String :=
     if text.startsWith "/--" then
@@ -718,11 +760,11 @@ def driverArgs (o : Opts) : Array String := Id.run do
     if o.diagnostics then args := args.push "--counts"
   return args
 
-/-- A message read by `readMessages`: the JSON without its `data` text, and
-`data` as read. None when it is not JSON. -/
+/-- A message read by `readMessages`: the JSON with only the first line of its
+`data` text, and `data` as read. None when it is not JSON. -/
 def finishMessage (rest : ByteArray) (d : MsgData) : Option (Json × Parsed) := do
   let m ← (String.fromUTF8? rest).bind (Json.parse · |>.toOption)
-  return (m, d.finish)
+  return (m.setObjVal! "data" d.head, d.finish)
 
 /-- Read Lean's `--json` messages (one per line) from `h` to its end, calling
 `f` with each one. A message's `data` text is decoded and parsed a line at a
@@ -796,6 +838,26 @@ def readMessages (h : IO.FS.Stream) (f : Json → Parsed → IO Unit) (chunk : N
   if mode == 0 && !rest.isEmpty then
     if let some (m, p) := finishMessage rest d then f m p
 
+/-- The setup file to elaborate `file` (module `module`) with, as Lake does: the
+one Lake wrote when it built the module, or, when there is none (modules
+fetched from a build cache, such as Mathlib's, are never compiled locally),
+the one `lake setup-file` prints, saved under `.lake/leanprof/setup`. Without
+it Lean would run without the package's `leanOptions` (Mathlib's
+`maxSynthPendingDepth 3` and its linters), so proofs fail and the costs are
+not the build's. None for a file that is not a module of the package. -/
+def setupFile (file module : String) : IO (Option FilePath) := do
+  let built : FilePath := ".lake" / "build" / "ir" / (module.replace "." "/" ++ ".setup.json")
+  if ← built.pathExists then return some built
+  let out ← try IO.Process.output { cmd := "lake", args := #["setup-file", file] }
+    catch _ => return none
+  let some j := (Json.parse out.stdout).toOption | return none
+  -- a file outside the package's libraries gets a default setup named `_unknown`
+  if out.exitCode != 0 || str j "name" == "_unknown" then return none
+  let saved : FilePath := ".lake" / "leanprof" / "setup" / (module ++ ".setup.json")
+  IO.FS.createDirAll (".lake" / "leanprof" / "setup")
+  IO.FS.writeFile saved out.stdout
+  return some saved
+
 /-- Elaborate one file and fold its trace into a fresh accumulator; its
 messages are read as Lean prints them, so a large trace is never held whole. -/
 partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Acc := do
@@ -804,8 +866,8 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   let scale : Float := if o.heartbeats then 1 else 1e9
   -- a built module is elaborated as Lake does: with its setup (module name, the package's
   -- `leanOptions`, the exact imported files)
-  let setup : FilePath := ".lake" / "build" / "ir" / (module.replace "." "/" ++ ".setup.json")
-  let setupArgs := if o.setup && (← setup.pathExists) then #["--setup", setup.toString] else #[]
+  let setup ← if o.setup then setupFile file module else pure none
+  let setupArgs := match setup with | some s => #["--setup", s.toString] | none => #[]
   -- the driver when it can (exact ranges), else `lean`, with the same options
   let exact := o.driver && !le.driver.isEmpty
   let t0 ← IO.monoNanosNow
@@ -817,7 +879,10 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := src.map squash, exact } : Acc)
   readMessages (IO.FS.Stream.ofHandle child.stdout) fun m p => do
     if str m "severity" == "error" then
-      acc.modify fun a => { a with files := a.files.modify 0 fun (k, f) => (k, { f with errors := f.errors + 1 }) }
+      let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
+      acc.modify fun a => { a with files := a.files.modify 0 fun (k, f) =>
+        (k, { f with errors := f.errors + 1,
+                     firstError := if f.firstError.isEmpty then s!"{ln}: {str m "data"}" else f.firstError }) }
     acc.modify (·.addParsed file scale m p)
   let code ← child.wait
   let t1 ← IO.monoNanosNow
@@ -831,8 +896,15 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   -- `diagnostics` can make Lean fail where it otherwise does not (4.35: nested inductive
   -- types, "Unknown constant `_nested.…rec`"): then profile the file again without it
   let errors : Nat := (a.files[0]?.map (·.2.errors)).getD 0
-  -- a setup Lake wrote before the file was edited (imports changed): without it
-  if errors > 0 && !setupArgs.isEmpty then
+  -- a setup Lake wrote before the file was edited (imports changed): without it. Only for
+  -- errors in the header: an error in a proof (a heartbeat limit reached) has nothing to do
+  -- with the setup, and elaborating a large file again doubles its time
+  let firstLine := ((a.files[0]?.map (·.2.firstError)).getD "").splitOn ":" |>.head!.toNat? |>.getD 0
+  let headerEnd := (src.toList.zipIdx.filter fun (l, _) =>
+    let l := l.trimAscii.toString
+    l.startsWith "import " || l.startsWith "public import " || l.startsWith "meta import " || l == "module").foldl
+      (fun m (_, i) => max m (i + 1)) 0
+  if errors > 0 && !setupArgs.isEmpty && firstLine ≤ headerEnd + 1 then
     let b ← profileFile le { o with setup := false } file module
     if (b.files[0]?.map (·.2.errors)).getD (0 : Nat) < errors then return b
   if errors > 0 && o.defs && o.diagnostics then
@@ -1024,19 +1096,6 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | f :: rest =>
     if f.startsWith "--" then .error s!"unknown option {f}" else parseOpts { o with files := o.files.push f } rest
 
-/-- The name declared by a command's text (`theorem foo ...` gives `foo`). -/
-def declName (text : String) : Option String := Id.run do
-  let words := (text.splitOn " ").filter (· != "")
-  let kws := ["def", "theorem", "lemma", "abbrev", "instance", "structure", "inductive", "class", "opaque",
-    "axiom"]
-  for i in [0:words.length] do
-    if kws.contains words[i]! then
-      if let some w := words[i + 1]? then
-        if !(w.startsWith "(" || w.startsWith "[" || w.startsWith "{" || w.startsWith ":" || w.startsWith "⦃") then
-          return some w
-      return none
-  return none
-
 /-- `File.lean:12` as (file, line). -/
 def splitPos (k : String) : String × Nat :=
   match k.splitOn ":" with
@@ -1218,9 +1277,24 @@ def main (argv : List String) : IO UInt32 := do
     [("name", Json.str (userName s)), ("kind", Json.str kind), ("amount", toJson amount), ("count", toJson count),
      ("sites", toJson (sites s)), ("where", Json.str ((l.map (·.pos)).getD "")),
      ("path", Json.str ((l.map (·.path)).getD ""))]
+  -- commands that declare nothing (`variable (x) in`, `open ... in`, `attribute ...`): the
+  -- file, the command's text and which of the commands with that text it is, in line order,
+  -- so that `compare` matches them when lines move
+  let anonKey : Std.HashMap String String := Id.run do
+    let anon := (rows.filter fun (_, c) => (declName c.name).isNone).map fun (k, c) =>
+      let (f, l) := splitPos k
+      (f, String.ofList ((c.name.replace "\n" " ").toList.take 40), l, k)
+    let sorted := anon.qsort fun a b => a.1 < b.1 || (a.1 == b.1 && (a.2.1 < b.2.1 || (a.2.1 == b.2.1 && a.2.2.1 < b.2.2.1)))
+    let mut out : Std.HashMap String String := {}
+    let mut seen : Std.HashMap (String × String) Nat := {}
+    for (f, t, _, k) in sorted do
+      let i := seen.getD (f, t) 0
+      seen := seen.insert (f, t) (i + 1)
+      out := out.insert k s!"{f} {t} #{i + 1}"
+    return out
   let scopes := rows.map fun (k, c) => Json.mkObj [("name", Json.str (c.name.replace "\n" " ")), ("pos", Json.str k),
     -- what `compare` matches on: the declaration, so edits that move lines still compare
-    ("key", Json.str ((declName c.name).map (fun d => s!"{(splitPos k).1} {d}") |>.getD k)),
+    ("key", Json.str ((declName c.name).map (fun d => s!"{(splitPos k).1} {d}") |>.getD (anonKey.getD k k))),
     ("total_ns", toJson c.total), ("elab_ns", toJson c.elaboration), ("kernel_ns", toJson c.kernel),
     ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint),
     ("top", Json.arr (c.top.map fun (a, op) => Json.mkObj [("amount", toJson a), ("op", Json.str op)])),
@@ -1238,7 +1312,7 @@ def main (argv : List String) : IO UInt32 := do
     ("module", Json.str c.module), ("key", Json.str s!"module {c.module}"),
     ("total_ns", toJson c.total), ("elab_ns", toJson c.elaboration), ("kernel_ns", toJson c.kernel),
     ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint), ("wall_ns", toJson c.wallNs),
-    ("errors", toJson c.errors)]
+    ("errors", toJson c.errors), ("first_error", Json.str c.firstError)]
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
   let tEnd ← IO.monoNanosNow
   IO.FS.writeFile o.out
@@ -1261,7 +1335,11 @@ def main (argv : List String) : IO UInt32 := do
       ("timing", Json.mkObj [("build_ns", toJson (tBuilt - tStart)), ("profile_ns", toJson (tProfiled - tBuilt)),
         ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])]).compress
   if !failed.isEmpty then
-    IO.eprintln s!"\nleanprof: {failed.size} files had errors (their costs stop at the error): {", ".intercalate (failed.toList.take 5 |>.map (·.1))}"
+    IO.eprintln s!"\nleanprof: {failed.size} {if failed.size == 1 then "file" else "files"} had errors (costs stop at the error); the first of each:"
+    for (f, c) in failed.toList.take 10 do
+      IO.eprintln s!"  {f}:{(c.firstError.replace "\n" " ").trimAscii}"
+    if failed.any (fun (_, c) => (c.firstError.splitOn "maximum number of heartbeats").length > 1) then
+      IO.eprintln "  (with `trace.profiler` on, Lean records every operation, which costs heartbeats too: a declaration\n   that builds within `maxHeartbeats` can exceed it when profiled)"
   if files.size > 1 then
     IO.println s!"\n{files.size} files in {fmt2 ((tProfiled - tBuilt).toFloat / 1e9)} s ({min jobs files.size} at a time){if o.project && o.build then s!", lake build {fmt2 ((tBuilt - tStart).toFloat / 1e9)} s" else ""}, report {fmt2 ((tEnd - tProfiled).toFloat / 1e9)} s"
   IO.println s!"written to {o.out}; `#leanprof` shows it next to the code"

@@ -3,7 +3,8 @@
 #
 # One command, no clone needed:
 #   curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | sh
-# downloads the prebuilt command for this platform (macOS arm64, Linux x86-64)
+# downloads the prebuilt command for this platform (macOS arm64 and x86-64,
+# Linux x86-64 and arm64)
 # from the latest GitHub release, checked against its SHA256SUMS. When there
 # is no release, none for this platform, or the binary does not run here, it
 # clones the repository and builds from source (needs git and elan).
@@ -58,7 +59,9 @@ say() { echo "leanprof install: $*" >&2; }
 link() {
   mkdir -p "$bin"
   rm -f "$bin/leanprof"
-  printf '#!/bin/sh\nexec "%s" "$@"\n' "$1" > "$bin/leanprof"
+  # single-quoted, so a path with quotes, $ or spaces cannot change the launcher
+  q=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
+  printf "#!/bin/sh\nexec '%s' \"\$@\"\n" "$q" > "$bin/leanprof"
   chmod +x "$bin/leanprof"
   say "installed $bin/leanprof (runs $1)"
   case ":$PATH:" in *":$bin:"*) ;; *) say "add $bin to your PATH" ;; esac
@@ -72,7 +75,9 @@ link() {
 platform() {
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) echo macos-arm64 ;;
+    Darwin-x86_64) echo macos-x86_64 ;;
     Linux-x86_64|Linux-amd64) echo linux-x86_64 ;;
+    Linux-aarch64|Linux-arm64) echo linux-arm64 ;;
     *) echo "" ;;
   esac
 }
@@ -108,13 +113,15 @@ install_release() {
   base="${LEANPROF_DOWNLOAD:-https://github.com/$repo/releases/download/$version}"
   archive="leanprof-$version-$plat.tar.gz"
   tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
   say "downloading $archive"
   if ! fetch "$base/$archive" "$tmp/$archive" || ! fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS"; then
     say "could not download $base/$archive"
     rm -rf "$tmp"
     return 1
   fi
-  want="$(grep " $archive\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)"
+  # exact name match (sha256sum writes "HASH  NAME", or "HASH *NAME" in binary mode)
+  want="$(awk -v a="$archive" '$2 == a || $2 == "*" a { print $1; exit }' "$tmp/SHA256SUMS")"
   got="$(sha256 "$tmp/$archive")"
   if [ -z "$want" ] || [ "$want" != "$got" ]; then
     say "checksum mismatch for $archive (expected ${want:-nothing}, got $got)"

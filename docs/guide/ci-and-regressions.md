@@ -9,6 +9,9 @@ leanprof compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json
 exits 1 on a regression:
 
 - **copies**: any increase (exact, so no noise);
+- **allocations** (when both reports counted them, `run --allocs`): an
+  increase of the total (exact; per-site changes are listed, but inlining
+  and refactoring move allocations between sites);
 - **calls**: any change;
 - **compile heartbeats** (reports from `leanprof elab --heartbeats`): an
   increase above 1% and 1,000 heartbeats;
@@ -41,7 +44,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: unbalancedparentheses/leanprof@main
+        with:
+          fetch-depth: 0               # base and head without fetching again
+          persist-credentials: false   # the pull request's code runs in this job
+      - uses: unbalancedparentheses/leanprof@main   # or a release tag
         with:
           executable: myapp              # a lean_exe target
           args: bench-input --size 1000
@@ -106,6 +112,12 @@ the job summary.
 the action then leaves the report in the job summary (open the workflow
 run) and says so in a notice. Use `pull_request`, not `pull_request_target`,
 for such workflows: the action builds and runs the pull request's code.
+For the same reason, check out with `persist-credentials: false` (otherwise
+`actions/checkout` leaves the job's token in `.git/config`, where that code
+can read it) and give the workflow only `contents: read` and
+`pull-requests: write`. The comment step is the only one that receives the
+token. Pin the action to a release tag rather than `@main` so a later change
+to this repository cannot change what your workflow runs.
 
 ### Rendering the comment locally
 
@@ -126,20 +138,101 @@ This repository's own pull requests run the action on `copybug`
 For deciding whether one change is an improvement:
 
 ```
-leanprof measure [--runs N] [--heartbeats-files F.lean...] [--check-output FILE] [--out FILE] EXE [-- ARGS]
+leanprof measure [--runs N] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--out FILE] EXE [-- ARGS]
 leanprof judge BASE.json NEW.json
 ```
 
-`measure` builds with copy detection, runs the program `N` times (default 5,
-after a warm-up run) and writes one summary: median, min and max time,
-copies and calls per scope, compile heartbeats of the given files, the exit
-code, and a hash of stdout (or of `FILE`). `judge` prints KEEP or DISCARD
-with reasons and exits 0 or 1:
+`measure` builds with copy detection and allocation counting, runs the
+program `N` times (default 5, after a warm-up run) and writes one summary:
+median, min and max time, copies and calls per scope, allocations per site
+and per run, compile heartbeats of the given files, the exit code, and a
+hash of stdout (or of `FILE`). Counting allocations costs about 6 ns each
+(lean-compiler-backend, 20 million allocations: 10% slower); both summaries
+pay it alike, so time comparisons stay fair. `--no-allocs` turns it off.
+`judge` prints KEEP or DISCARD with reasons and exits 0 or 1:
 
-- **DISCARD** if the exit code or output changed, copies or compile
-  heartbeats grew, or every new run was slower than every base run;
-- **KEEP** if nothing got worse and copies or heartbeats went down, or every
-  new run was faster than every base run.
+- **DISCARD** if the exit code or output changed, copies or allocations
+  grew (exact: any increase; when a threaded program's count varies between
+  runs, only when every new run allocated more than every base run),
+  compile heartbeats grew by more than 1% and 1,000, or every new run was
+  slower than every base run;
+- **KEEP** if nothing got worse and copies went down, allocations went down
+  by at least 1% and 100, heartbeats went down by more than 1% and 1,000,
+  or every new run was faster than every base run.
+
+Allocations matter because a change can trade one cost for another: the
+first fix of `CFG.build` in lean-compiler-backend removed its copies but
+added 59,514 allocations, and a judge that only counted copies kept it. A
+smaller cut than 1% is exact but saves less than timing can see (each
+allocation costs a few ns), so it is listed but is not an improvement on
+its own.
+
+Time counts only when the runs do not overlap **and** the median moved by
+at least `--min-change PCT` percent (default 1): base and new are measured
+one after the other, and on a quiet, pinned machine drift of about 1%
+between the two separated the runs of unchanged code in 2 of 20 pairs.
+
+`measure` also records the 1-minute load average and the number of CPUs
+(and the mean and standard deviation of the run times). When either summary
+was measured on an overloaded machine (load average above the number of
+CPUs), `judge` reports the time change but does not use it: on such a
+machine whole runs drift together, and on a shared 18-core Mac at load 30–68,
+"every new run faster than every base run" held for 2 of 20 comparisons of
+unchanged code ([LeanBench case study](../case-studies/leanbench.md)).
+Copies, heartbeats and the output are still judged.
+
+### Interleaved timing of ordinary binaries
+
+Build baseline and candidate in separate checkouts, then measure the existing
+binaries together. This avoids rebuilding or adding probes between timing runs:
+
+```sh
+leanprof measure-pair \
+  --base ../base/.lake/build/bin/myapp \
+  --candidate ../candidate/.lake/build/bin/myapp \
+  --base-cwd ../base --candidate-cwd ../candidate \
+  --runs 20 --out paired.json -- INPUT
+leanprof judge paired.json
+leanprof judge --min-change 2 paired.json
+```
+
+Binary paths resolve relative to the directory where you invoke leanprof.
+Both programs receive the same argument vector, without shell interpretation;
+their working directories may differ. Build both normally first and let build
+and test jobs finish. `measure-pair` does not modify either build.
+
+The default is three warmup pairs followed by 20 measured pairs, alternating
+baseline/candidate and candidate/baseline order. `--runs` accepts 6–1000 pairs;
+`--warmup` accepts 0–1000. The session records every duration, exit status,
+stdout/stderr fingerprint, working directory and per-pair machine load. Binary
+fingerprints are checked before and after collection to detect rebuilds during
+the session; these FNV fingerprints are not cryptographic attestations.
+
+For file output, use `--check-output result.dat` (relative to each program's
+working directory). The old file is removed before each run, and a missing new
+file prevents KEEP. Stdout and stderr must also remain stable across both
+programs and all measured runs. Nonzero exits prevent KEEP. Warmup failures
+abort collection. `measure-pair` exits 0 after collecting a complete session,
+even for DISCARD; use `judge`'s exit status (0 KEEP, 1 DISCARD, 2 invalid input).
+
+`judge paired.json` computes each pair's percentage change and reports a
+distribution-free 95% confidence interval for its population median, using
+binomial order statistics. A timing improvement counts only when the entire
+interval is below `-min-change` (default 1%); a regression counts when the entire
+interval is above `+min-change`. Otherwise timing is inconclusive. Overload
+during any sampled boundary disables the timing verdict.
+
+The interval assumes independent pairs. Alternation reduces gradual drift; it
+does not eliminate periodic interference, thermal effects or systematic bias.
+Choose the run count before measurement; repeatedly rerunning until KEEP is
+not a valid 95% procedure. Timing includes process startup and output capture.
+There is no automatic early stopping or per-scope timing in this command.
+
+This is a timing-only session: it does not count copies, allocations or compile
+heartbeats. Keep the existing `measure`/`judge BASE NEW` checks for exact metrics,
+and require both correctness/metric checks and the paired timing result before
+accepting an optimization. Two standalone summaries are never silently treated
+as an interleaved session.
 
 ## Autoresearch
 
@@ -156,7 +249,7 @@ scripted experiments:
 
 ```
 KEEP
-  + copies: 2999 -> 0
+  + copies: 2,999 -> 0
   + compile heartbeats: 667.00 kHB -> 422.93 kHB
   + time: median 29.02 ms -> 12.33 ms (every new run faster than every base run)
 

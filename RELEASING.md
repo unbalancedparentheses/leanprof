@@ -2,7 +2,8 @@
 
 A release is a version tag. Pushing it runs
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which
-builds the `leanprof` command on macOS arm64 and Linux x86-64, installs each
+builds the `leanprof` command on macOS arm64 and x86-64 and Linux x86-64 and
+arm64, installs each
 archive with [`scripts/install.sh`](scripts/install.sh) and profiles a
 project outside this repository with it (`run`, `--allocs --counters
 --frees`, `explain --why`, `elab`, and `sample` on macOS), packages the VS

@@ -6,6 +6,86 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Fresh installs, more platforms
+
+- Release archives for macOS x86-64 and Linux arm64, next to macOS arm64 and
+  Linux x86-64; the install script picks them.
+- `fresh-install.yml`: on every change and weekly, the packaged command is
+  installed with the install script (source build hidden) and run on
+  import-graph and lean4-cli at pinned tags, projects with nothing tailored
+  to leanprof.
+
+### Programs that load Lean modules at run time
+
+- `run`, `stat`, `sample`, `measure` and `measure-pair` start the program
+  with the environment `lake exe` gives it (`LEAN_PATH`, `LEAN_SYSROOT`,
+  library paths, from `lake env`). Programs that import modules at run time
+  (`importModules`, `supportInterpreter`: import-graph, doc-gen4, linters)
+  failed with "unknown module prefix" under leanprof. Found by profiling
+  import-graph, a project leanprof had never been run on.
+
+### Security review
+
+- [Review](docs/reviews/security-review.md) of the MCP server, the GitHub
+  Action and the install script.
+- MCP: `measure_pair` runs only binaries in a `.lake/build/bin/` directory,
+  in Lake projects; files the server writes or deletes must be inside the
+  project; `live` and `dump` (and `leanprof dump`, `top --pid`) accept only a
+  single process id; an option is not taken as the executable; `live` waits
+  at most 60 s. `scripts/mcp-check.py` checks each refusal.
+- Action: line breaks in names can no longer end the inline code in the
+  comment; the verdict step gets its values as environment variables; the
+  guide recommends `persist-credentials: false`, minimal permissions and a
+  pinned tag.
+- Install: the launcher quotes the path it runs; the checksum lookup is an
+  exact name match; the download directory is removed on failure.
+
+### Interleaved timing and paired verdicts
+
+- `measure-pair` runs two prebuilt binaries in alternating AB/BA order, with
+  separate working directories, warmups, binary fingerprints, output checks
+  and machine-load recording. It adds no probes and performs no rebuilds.
+- `judge PAIR.json` uses a distribution-free 95% interval for the median paired
+  percentage change. Output/diagnostic mismatches, missing output files and
+  failed runs prevent KEEP; overload disables the timing verdict.
+- Pure tests cover drift, confidence endpoints and failure cases; a CLI test
+  verifies process ordering, arguments, working directories and stale output.
+- The MCP server has a `measure_pair` tool, and its `judge` tool takes a
+  paired session (`pair`) and `min_change`.
+- Refresh the competitive priorities and qualify historical compile-time
+  comparisons against lean-source-profiler's newer native compact capture.
+
+### Compiler qualification and release preparation
+
+- Reproducible clean-build compiler comparison, 540 output/diagnostic checks,
+  full per-stage logs, and plain-binary timing evidence in `research/lcb/`.
+  The reviewed compiler optimizations are merged, with a corrected validation
+  fast path and 22% less median wall time on the measured workload.
+- Contribution and supported-toolchain guidance, security reporting guidance,
+  issue/PR templates, and a roadmap reconciled with implemented features.
+- Extend the existing TSan allocator-reuse suppression to Lean's inlined fresh
+  object header initialization; profiler task functions remain unsuppressed.
+
+### `leanprof explain` prints the fix
+
+- Recognises the causes of copies found in real projects from the compiler's
+  IR and prints the fix as Lean code with the program's own names:
+  an element of an outer array updated while the array holds it
+  (`xs.set! i (xs[i]!.push v)` → `xs.modify i (·.push v)`); a value read
+  from a hash map and inserted back (`m.getD k d` / `m[k]!` / `m[k]?` →
+  `m.alter`, `m.modify`, or erasing the key first); a value stored in another
+  array and then updated (when it only grows, store its length); a value in
+  a global `IO.Ref` or `Std.Mutex`, which Lean never updates in place
+  (a local buffer published once); a `for x in xs` loop that updates `xs`
+  (loop over indices). Other causes keep the general advice.
+- Each recognised cause has an example in `Examples/ExplainPatterns.lean`
+  (`lake exe explainpatterns`), and `Tests/ExplainFixes.lean` checks that
+  `explain` diagnoses it, that the printed code is the fixed version line
+  for line, and that the fixed version makes no copies.
+- `leanprof explain --json`: ranked findings with cause, location, why, fix,
+  fix code, copies and estimated cost, for agents. `explain.json` entries
+  carry the same fields; `#leanprof` hovers show the fix code.
+
 ### Added
 
 - Self-check on every profiled run: a known copy of each kind
@@ -22,6 +102,32 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `scripts/smoke.py` also profiles `Tests/Smoke`, a project that does not
   depend on leanprof, from a copy outside the repository with the command as
   packaged for a release; `--add` adds new facts to the baseline.
+- `leanprof sample` takes a path to any program (`leanprof sample
+  ~/.elan/toolchains/…/bin/lean -- FILE`). It names Lean code in Lean's
+  shared libraries (`libleanshared`, `libInit_shared`, `libLake_shared`),
+  and gives positions of Lean's own declarations in the toolchain's sources
+  (from its `.ilean` files). `run` passes the toolchain
+  (`LEANPROF_CORE_DIR`), so copies and allocations inside Lean's libraries
+  (`--core`) get positions too.
+- `leanprof doctor` checks for the objcopy that `run --core` needs.
+  `run --core` also finds rustup's llvm-objcopy (`rust-objcopy`).
+- `leanprof explain` recognizes arrays pushed inside an `IO.Ref` that
+  threads share (each push copies the whole array) and says how to fix it.
+- [Lake, the language server and `lean`](docs/case-studies/lake-and-server.md)
+  case study, and seven candidate patches for Lean with measurements in
+  [docs/upstream/lean4](docs/upstream/lean4/README.md) (not sent upstream).
+- `measure` records the 1-minute load average and the CPU count, and the
+  mean and standard deviation of the run times; `judge` does not judge time
+  when either summary was measured on an overloaded machine (load above the
+  CPU count), and prints the time change in percent.
+- `judge --min-change PCT` (default 1): non-overlapping runs count as faster
+  or slower only when the median also moved by PCT percent. On a quiet,
+  pinned machine, unchanged code had been judged faster in 2 of 20 pairs;
+  with the floor, 0 of 20, and a 2% slowdown is still caught 5 of 5
+  ([LeanBench case study](docs/case-studies/leanbench.md)).
+- `bench/leanbench/`: leanprof against LeanBench on noise, seeded copies,
+  allocations, 2–30% slowdowns and a speedup, with the scripts and raw
+  results.
 - A `sanitizers` job: tests, examples, the server with live snapshots and
   the flight recorder, `run --allocs --counters --frees`, `explain --why`
   and the stress test, built with ASan and UBSan and with TSan on Linux
@@ -46,6 +152,35 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `leanprof elab --compact`: only commands, terms and tactics are timed,
   not the operations inside them, within a few percent of plain `lean`
   (needs the driver).
+- **Allocations judged exactly.** `measure` counts allocations by default
+  (`--no-allocs` turns it off; about 6 ns per allocation, 10% on
+  lean-compiler-backend) and records them per site and per run; `judge`
+  says DISCARD when they go up (any increase; for counts that vary between
+  runs, only beyond their range) and counts a cut of at least 1% and 100
+  as an improvement. `compare` reports more allocations in total as a
+  regression when both reports counted them. The first `CFG.build` fix in
+  lean-compiler-backend cut copies but added 59,514 allocations; `judge`
+  kept it before and discards it now (a test checks that case).
+- **Each finding states its share of the run.** Copy rows show `%run` and
+  are sorted by time; allocation rows show an estimated time (count times
+  the calibrated cost of a small allocation and its free, a lower bound)
+  and `%run`, sorted by it; `explain`, `stat`, the HTML report, the editor
+  hints and the MCP tools show and rank by the same shares. A run without
+  `--allocs` says how to count allocations. JSON: `run_ns`,
+  `resolution_ns`, `alloc_ns`; `pct_run` on copies and allocations,
+  `est_ns` on allocations.
+- **Copies of empty or tiny values** (at most 16 bytes per copy, under 1%
+  of the run), such as the first push into an empty array slot, are
+  grouped into one row; `run --all-copies` (`LEANPROF_ALL_COPIES=1`) lists
+  them. The JSON keeps every row, with `"tiny": true`; `explain` and the
+  editor skip them.
+- **Times too small to measure are never shown as 0**: `< probe` (a
+  scope's time after subtracting the probes' cost) and `< 1 ns` / `< 42 ns`
+  (a copy, wait or task shorter than a clock tick) in the terminal, and
+  `too_small` (the fields concerned) on JSON rows, read as `< probe cost` /
+  `< 1 clock tick` by the HTML report, `#leanprof`, `compare` and the MCP
+  tools. `compare` shows times in adaptive units instead of `0.00 ms`.
+
 - Rows whose time is near the probes' own cost are marked: `*` after the
   total in the terminal report, `near_probe_cost` (and `probes_ns`) in the
   JSON, in the HTML report and in `#leanprof` hovers ("near the probe cost:
@@ -89,6 +224,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Fixed
 
+- `explain` no longer gives the multi-threaded explanation for a copy site
+  where only a few copies were multi-threaded (Lake: 12 of 7,420).
+- With `LEANPROF_PROJECT` set (`--cwd`), absolute source directories were
+  joined onto the project path.
 - `leanprof elab --project`, locating definitions in modules that cannot be
   imported together, kept every module's environment loaded: 16.8 GB on
   leanprof's own package once a module imports all of Lean. Each is now
@@ -158,6 +297,40 @@ see [the review](docs/reviews/runtime-review.md)):
   report write past its array.
 - The project's package names were read on the live thread while a
   program thread could read them too; they are read at startup.
+
+Found on Mathlib ([case study](docs/case-studies/mathlib.md)):
+
+- `elab` ran modules without their setup when Lake had not written one,
+  which is every module fetched with `lake exe cache get`: Lean ran without
+  the package's `leanOptions` (Mathlib's `maxSynthPendingDepth 3`, its
+  linters), and 8 of Mathlib's 20 slowest files failed with errors. It now
+  asks `lake setup-file` for the setup (saved under `.lake/leanprof/setup`).
+- A command wrapped in `variable … in` or `set_option … in` was counted
+  twice: Lean traces the inner command at its own position and then the
+  wrapper, which includes it, over a range that contains it. Only commands
+  at the same position were matched; now any command whose source range
+  contains earlier ones counts only what it adds. On the 20 files, 23% of
+  all heartbeats were counted twice (11.85 G reported, 9.15 G real), and a
+  declaration under three `set_option … in` four times.
+- A file with errors was elaborated a second time without its setup, even
+  when the error was in a proof, which for a large file (Mathlib's
+  `Modules/Sheaf.lean` runs for minutes when profiled) doubles its time.
+  Now only for errors in the header, where a stale setup shows.
+- "files had errors" now prints each file's first error with its line (and
+  `first_error` in `elab.json`), and says when the error is a heartbeat
+  limit, which profiling can reach where the build does not.
+- Lines were named after the wrong command when several share one
+  (`variable (x) in` puts its inner `section` and `variable` where the
+  declaration starts) or when a declaration's doc comment was longer than
+  the text kept: the declaration became `section` or nameless, so `compare`
+  matched it by line. Commands that declare nothing (`variable … in`,
+  `attribute …`) are now matched by `compare` by their text and order in the
+  file instead of their line, so edits that move lines no longer show them
+  as gone and new.
+- `compare` printed heartbeats of new and removed scopes as milliseconds,
+  listed thousands of scopes in no order, and showed `calls 0 -> 0` for
+  compile-time reports. It now lists the largest changes first, uses the
+  report's unit, and ends compile-time comparisons with the total.
 
 ## [0.1.0] - 2026-10-23
 

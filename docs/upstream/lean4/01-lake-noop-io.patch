@@ -1,0 +1,101 @@
+diff --git a/src/lake/Lake/Build/Module.lean b/src/lake/Lake/Build/Module.lean
+index 2c82aef..673e543 100644
+--- a/src/lake/Lake/Build/Module.lean
++++ b/src/lake/Lake/Build/Module.lean
+@@ -887,6 +887,21 @@ def ModuleOutputArtifacts.setMTime (self : ModuleOutputArtifacts) (mtime : MTime
+     bc? := self.bc?.map ({· with mtime})
+   }
+ 
++/-- Reads each artifact's modification time from the file system. -/
++def ModuleOutputArtifacts.readMTimes (self : ModuleOutputArtifacts) : BaseIO ModuleOutputArtifacts := do
++  let read (art : Artifact) : BaseIO Artifact := do
++    return {art with mtime := (← getMTime art.path |>.toBaseIO).toOption.getD 0}
++  return {self with
++    olean := ← read self.olean
++    oleanServer? := ← self.oleanServer?.mapM read
++    oleanPrivate? := ← self.oleanPrivate?.mapM read
++    ilean := ← read self.ilean
++    irSig? := ← self.irSig?.mapM read
++    ir? := ← self.ir?.mapM read
++    c := ← read self.c
++    bc? := ← self.bc?.mapM read
++  }
++
+ def Module.mkArtifacts (mod : Module) (srcFile : FilePath) (isModule : Bool) : ModuleArtifacts where
+   lean? := srcFile
+   olean? := mod.oleanFile
+@@ -913,7 +928,10 @@ def Module.computeArtifacts (mod : Module) (isModule : Bool) : FetchM ModuleOutp
+ where
+   @[inline] compute file ext := do
+     -- Note: Lean produces LF-only line endings for `.c` and `.ilean`, so no normalization.
+-    computeArtifact file ext (text := false)
++    let hash ← fetchFileHash file (text := false)
++    -- The modification time is left unset: `recBuildLean` sets every artifact's to the
++    -- trace file's (`adjustMTime`), or reads them all when there is no trace file.
++    return ({descr := artifactWithExt hash ext, name := file.toString, path := file, mtime := 0} : Artifact)
+   computeIf c file ext := do
+      if c then return some (← compute file ext) else return none
+ 
+@@ -1063,7 +1081,16 @@ where
+   fetchCore (presetup : ModulePreSetup) : JobM ModuleOutputArtifacts := do
+     let depTrace ← getTrace
+     have : GetMTime Module := ⟨Module.getMTime (isModule := presetup.isModule)⟩
+-    have : CheckExists Module := ⟨Module.checkExists (isModule := presetup.isModule)⟩
++    -- The up-to-date check below looks for the artifacts (or else the archive);
++    -- remember what it found so that the check after it does not look again.
++    let artsExist ← IO.mkRef (none : Option Bool)
++    have : CheckExists Module := ⟨fun mod => do
++      let exist ← mod.checkArtifactsExist presetup.isModule
++      artsExist.set (some exist)
++      if exist then return true else mod.ltarFile.pathExists⟩
++    let checkArtifactsExist : JobM Bool := do
++      if let some exist ← artsExist.get then return exist
++      mod.checkArtifactsExist presetup.isModule
+     let savedTrace ← readTraceFile mod.traceFile
+     if (← mod.pkg.isArtifactCacheWritable) then
+       let restore ← mod.pkg.restoreAllArtifacts
+@@ -1073,7 +1100,7 @@ where
+       | .inr savedTrace =>
+         let status ← savedTrace.replayIfUpToDate' (oldTrace := presetup.srcMTime) mod depTrace
+         if status.isUpToDate then
+-          unless (← mod.checkArtifactsExist presetup.isModule) do
++          unless (← checkArtifactsExist) do
+             -- Restoring from the archive stamps the trace with the current input
+             -- hash, so only do it on a verified hash match; an mtime-only match
+             -- leaves the hash unconfirmed, so rebuild instead.
+@@ -1092,7 +1119,7 @@ where
+     else
+       let status ← savedTrace.replayIfUpToDate' (oldTrace := presetup.srcMTime) mod depTrace
+       if status.isUpToDate then
+-        unless (← mod.checkArtifactsExist presetup.isModule) do
++        unless (← checkArtifactsExist) do
+           -- As above: restore only on a verified hash match; an mtime-only match
+           -- rebuilds instead.
+           if status == .hashUpToDate then
+@@ -1132,7 +1159,7 @@ where
+     | .ok mtime =>
+       return arts.setMTime mtime
+     | .error (.noFileOrDirectory ..) => -- trace file may not exist
+-      return arts
++      arts.readMTimes
+     | .error e =>
+       error s!"failed to retrieve module artifact modification time: {e}"
+ 
+diff --git a/src/lake/Lake/Build/Trace.lean b/src/lake/Lake/Build/Trace.lean
+index de10607..54c35a5 100644
+--- a/src/lake/Lake/Build/Trace.lean
++++ b/src/lake/Lake/Build/Trace.lean
+@@ -153,7 +153,12 @@ public def ofDecimal? (s : String) : Option Hash :=
+ 
+ /-- Load a hash from a `.hash` file. -/
+ public def load? (hashFile : FilePath) : BaseIO (Option Hash) :=
+-  ofString? <$> IO.FS.readFile hashFile |>.catchExceptions fun _ => pure none
++  (do
++    -- A hash file holds 16 bytes; reading one more rejects longer contents.
++    -- Unlike `IO.FS.readFile`, this does not first `stat` the file for its size.
++    let bytes ← (← IO.FS.Handle.mk hashFile .read).read 17
++    return String.fromUTF8? bytes >>= ofString?)
++  |>.catchExceptions fun _ => pure none
+ 
+ @[inline] public def mix (h1 h2 : Hash) : Hash :=
+   mk <| mixHash h1.val h2.val

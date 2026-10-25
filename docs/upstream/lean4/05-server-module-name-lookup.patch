@@ -1,0 +1,41 @@
+diff --git a/src/Lean/Meta/LazyDiscrTree.lean b/src/Lean/Meta/LazyDiscrTree.lean
+index 54e08e1..4ba3ada 100644
+--- a/src/Lean/Meta/LazyDiscrTree.lean
++++ b/src/Lean/Meta/LazyDiscrTree.lean
+@@ -910,7 +910,7 @@ def createImportedEnvironmentSeq (cctx : Core.Context) (ngen : NameGenerator) (e
+       go (← ImportData.new) cacheRef {} start stop
+     where go d cacheRef (tree : PreDiscrTree α) (start stop : Nat) : BaseIO _ := do
+             if start < stop then
+-              let mname := env.header.moduleNames[start]!
++              let mname := env.header.modules[start]!.module
+               let mdata := env.header.moduleData[start]!
+               let tree ← loadImportedModule cctx env act d cacheRef tree mname mdata
+               go d cacheRef tree (start+1) stop
+diff --git a/src/Lean/MonadEnv.lean b/src/Lean/MonadEnv.lean
+index 6155582..1175144 100644
+--- a/src/Lean/MonadEnv.lean
++++ b/src/Lean/MonadEnv.lean
+@@ -193,7 +193,7 @@ def findModuleOf? [Monad m] [MonadEnv m] [MonadError m] (declName : Name) : m (O
+   discard <| getConstInfo declName -- ensure declaration exists
+   match (← getEnv).getModuleIdxFor? declName with
+   | none        => return none
+-  | some modIdx => return some ((← getEnv).allImportedModuleNames[modIdx.toNat]!)
++  | some modIdx => return some (← getEnv).header.modules[modIdx.toNat]!.module
+ 
+ /--
+ Returns `true` if the recursor of the inductive type `declName` eliminates into an arbitrary `Sort`,
+diff --git a/src/Lean/Server/References.lean b/src/Lean/Server/References.lean
+index 02c4ff2..b1c9c9b 100644
+--- a/src/Lean/Server/References.lean
++++ b/src/Lean/Server/References.lean
+@@ -234,7 +234,9 @@ end Ilean
+ def getModuleContainingDecl? (env : Environment) (declName : Name) : Option Name := do
+   let some modIdx := env.getModuleIdxFor? declName
+     | env.header.mainModule
+-  env.allImportedModuleNames[modIdx]?
++  -- not `env.allImportedModuleNames[modIdx]?`, which builds the array of all imported modules'
++  -- names on every call: this runs for every identifier when references are collected
++  env.header.modules[modIdx]? |>.map (·.module)
+ 
+ /--
+ Determines the `RefIdent` for the `Info` `i` of an identifier in `module` and

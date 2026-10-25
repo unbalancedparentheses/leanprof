@@ -1,0 +1,35 @@
+diff --git a/src/Lean/Util/Path.lean b/src/Lean/Util/Path.lean
+index 09c0253..f7de655 100644
+--- a/src/Lean/Util/Path.lean
++++ b/src/Lean/Util/Path.lean
+@@ -113,11 +113,28 @@ def initSearchPath (leanSysroot : FilePath) (sp : SearchPath := ∅) : IO Unit :
+ private def initSearchPathInternal : IO Unit := do
+   initSearchPath (← getBuildDir)
+ 
++/--
++The search path entry holding each module root found by `findOLean` (the entry with
++`Mathlib/` or `Mathlib.olean` for `Mathlib`), for the search path it was found in.
++-/
++private builtin_initialize oleanRootsRef : IO.Ref (SearchPath × Array (String × FilePath)) ←
++  IO.mkRef ({}, #[])
++
+ /-- Find the compiled `.olean` of a module in the `LEAN_PATH` search path. -/
+ partial def findOLean (mod : Name) : IO FilePath := do
+   let sp ← searchPathRef.get
+-  if let some fname ← sp.findWithExt "olean" mod then
+-    return fname
++  let root := mod.getRoot.toString (escape := false)
++  -- All modules of a root resolve to the same entry, and `SearchPath.findWithExt` checks each
++  -- entry before it with two `stat` calls: remember the entry for the root instead, as long as
++  -- the search path is the same. Importing a module calls this twice (`.olean`, `.ir`).
++  let (sp', roots) ← oleanRootsRef.get
++  if sp' == sp then
++    if let some (_, dir) := roots.find? (·.1 == root) then
++      return modToFilePath dir mod "olean"
++  if let some dir ← sp.findM? (fun p => (p / root).isDir <||> ((p / root).addExtension "olean").pathExists) then
++    oleanRootsRef.modify fun (sp', roots) =>
++      if sp' == sp then (sp, roots.push (root, dir)) else (sp, #[(root, dir)])
++    return modToFilePath dir mod "olean"
+   else
+     let pkg := FilePath.mk <| mod.getRoot.toString (escape := false)
+     throw <| IO.userError s!"unknown module prefix '{pkg}'\n\n\

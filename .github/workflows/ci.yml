@@ -108,7 +108,8 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof run --core --json core2.json corecopies -- 1000 2>&1 | tee cached.txt
           grep -q "(cached)" cached.txt
           if grep -q '"function":"Array.append"' plain.json; then echo "core copy seen without --core"; exit 1; fi
-          grep -q '"function":"Array.append","symbol":"[^"]*","scope":"appendShared","where":"","kind":"Array","copies":500,' core.json
+          # Lean's own function, placed in the toolchain's sources (LEANPROF_CORE_DIR)
+          grep -q '"function":"Array.append","symbol":"[^"]*","scope":"appendShared","where":"[^"]*/src/lean/Init/Data/Array/Basic.lean:[0-9]*","kind":"Array","copies":500,' core.json
           # references renamed, nothing defined under the shims' names, the runtime untouched
           lib=$(ls -d .lake/leanprof/core/*/ | head -1)
           nm "$lib/libInit.a" | grep -Eq ' U _?leanprof_array_push$'
@@ -129,6 +130,10 @@ jobs:
           LEANPROF_QUIET=1 lake exe leanprof explain --why copybug -- 2000 | tee why.txt
           grep -q "1999×" why.txt
           grep -q "the increment the IR analysis above points to" why.txt
+          # every recognised cause, end to end, as agents read it (Examples/ExplainPatterns.lean)
+          LEANPROF_QUIET=1 lake exe leanprof run explainpatterns -- 1000
+          .lake/build/bin/leanprof explain --json --top 20 > patterns.json
+          python3 -c "import json,sys; d=json.load(open('patterns.json')); c={f['cause'] for f in d['findings'] if f['fix_code']}; need={'nested-array-element','map-value-reinserted','stored-then-updated','multi-threaded-global','loop-over-updated-array'}; print(sorted(c)); sys.exit(0 if need <= c else 1)"
       - name: Automatic mode and dependency-wide copy detection
         run: |
           find .lake -name '*.c.o*' -delete
@@ -209,6 +214,8 @@ jobs:
           if lake exe leanprof report-md --fail-on bogus small.json large.json; then echo "expected an error"; exit 1; fi
       - name: Autoresearch demo (measure and judge)
         run: sh research/demo/run.sh
+      - name: Interleaved measurement and paired verdicts
+        run: python3 scripts/check-pair.py .lake/build/bin/leanprof
       - name: Inlay hints through the language server
         run: |
           LEANPROF_QUIET=1 lake exe leanprof run copybug -- 2000
@@ -269,7 +276,8 @@ jobs:
           lake exe leanprof elab --out broken.json Broken.lean 2> broken.txt || true
           rm Broken.lean
           cat broken.txt
-          grep -q "files had errors.*Broken.lean" broken.txt
+          grep -q "had errors" broken.txt
+          grep -q "^  Broken.lean:1: " broken.txt
           cp .lake/leanprof/elab.json base.json
           lake exe leanprof elab --heartbeats --threshold 0 Examples/ElabHeavy.lean
           lake exe leanprof compare base.json .lake/leanprof/elab.json
