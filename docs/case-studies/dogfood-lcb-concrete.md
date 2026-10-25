@@ -128,7 +128,7 @@ Concrete's own test suite (Nix) was not run.
 - **`report-md`** printed "(regression: the total grew)" in the details of a
   metric whose total fell.
 
-## Larger issues, not fixed
+## Larger issues, not fixed then (see the follow-up below)
 
 - `measure` counts allocations only in the project's code and has no
   `--core`: the `emitData` fix's time came from `List` code in Lean's library
@@ -149,3 +149,37 @@ Concrete's own test suite (Nix) was not run.
 - `stat`'s "2.31 s including process start" for a 0.31 s run is the first
   launch of a freshly linked 106 MB binary (warm runs start in 20 ms); not
   said.
+
+## Follow-up (branch `known-issues`)
+
+Each of the issues above, and two more found meanwhile, with what was done
+(details in the [CHANGELOG](../../CHANGELOG.md)):
+
+- **`measure --core`**: copies and allocations in Lean's libraries count;
+  `judge` refuses to compare a `--core` summary with a plain one. On
+  `corecopies`: 0 → 500 copies, 15 → 3,838 allocations.
+- **`elab` on `Check.lean`**: the memory was Lean's. `Elab.step` prints a
+  term's whole syntax at every nesting level, so the `mutual` block's
+  message was 1.74 GB, and `lean --json` with `trace.profiler` alone took
+  28.6 s and 10.3 GB to print it; leanprof reading it took the rest (61 s
+  in all). With one-line descriptions (`pp.oneline`) `elab --heartbeats`
+  takes 16.9 s and 1.36 GB (plain `lean`: 5.4 s, 0.78 GB), heartbeats
+  within 0.03%. The driver (the project on leanprof's Lean, tried by
+  switching the clone to 4.35.0) was not affected: 25.2 s, 1.26 GB.
+- **`explain` lines**: only structure updates next to the update are cited,
+  never comments; `elabModule`'s copy now cites no line instead of 38 (the
+  copy is `sp ++ "_"` at `Elab.lean:3356`; finding it is a ROADMAP item).
+- **MCP `explain`**: the command's own diagnosis; sampled reports refused.
+- **Tiny copies live**: snapshots mark them, `top` and MCP `live` summarize.
+- **Options and the last report**: `run --out`, `sample --json`, and
+  `report.json` is always the last command's (removed first, so a failed
+  run leaves none).
+- **`stat`**: launches the new binary once first and prints that launch.
+- **Interrupted runs** (found here: a killed `run` left instrumented
+  objects that later builds, leanprof's own included, kept): signals are
+  caught and the build put back; against SIGKILL, Lake's records of the
+  instrumented objects are deleted, so a plain `lake build` recompiles them
+  (14.2 s for concrete, only after a kill).
+- **`bench/run.py`'s lean-compiler-backend step** gave lcb no input (its
+  zlib files moved to compressed copies): `--lcb pinned` clones a pinned
+  commit, and the inputs are extracted.

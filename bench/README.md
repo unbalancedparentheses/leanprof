@@ -9,7 +9,8 @@ older head-to-head overhead benchmark against LeanProfiler below it.
 ```
 python3 bench/run.py                    # full: 7 runs, ~8 min on an M5 Max; writes RESULTS.md, results.json
 python3 bench/run.py --quick --check    # CI: 30% inputs, 3 runs, ~4 min, exits 1 on a failed check
-python3 bench/run.py --lcb DIR          # also the real program (a lean-compiler-backend checkout; or LCB_DIR)
+python3 bench/run.py --lcb pinned       # also the real program: lean-compiler-backend cloned at a pinned commit
+python3 bench/run.py --lcb DIR          # ... or a checkout of it (copied first; or LCB_DIR)
 python3 bench/run.py --before OLD.json  # adds a before/after table against an earlier results file
 ```
 

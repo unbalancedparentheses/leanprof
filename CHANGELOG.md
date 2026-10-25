@@ -70,6 +70,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   recompiles them normally (14.2 s for concrete's 114 objects, only after
   a kill). `leanprof doctor` puts a stashed normal build back.
   `scripts/interrupt-check.py` (CI) checks every signal.
+- `bench/run.py`'s lean-compiler-backend step failed ("input contains no
+  functions or data"): current checkouts keep zlib's inputs compressed in
+  `docs/benchmarks/arm-scaled-load/private/zlib/ir`, not in `zlib/`, so lcb
+  ran with none. The inputs are extracted from there (or taken from `zlib/`
+  in older checkouts), the command must succeed once before it is timed,
+  and `--lcb pinned` clones lean-compiler-backend at `d828ff3`
+  (checked: plain 0.216 s, `run` 1.13×, `--auto` 1.59×, `--allocs` 1.22×,
+  2 runs, shared Mac).
 
 ### Smaller fixes and maintenance
 
