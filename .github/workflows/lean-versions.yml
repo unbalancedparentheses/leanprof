@@ -98,6 +98,8 @@ jobs:
           sample=""
           if [ "$RUNNER_OS" = macOS ]; then sample=--sample; fi
           sh scripts/version-smoke.sh .lake/build/bin/leanprof "$TOOLCHAIN" $sample
+      - name: leanprof elab builds its driver for this Lean once, and reuses it
+        run: sh scripts/driver-cache-check.sh .lake/build/bin/leanprof "$TOOLCHAIN"
       - name: Report
         if: always()
         env:
