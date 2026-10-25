@@ -23,15 +23,18 @@ leanprof fix --dry-run                    # the same from the last report
    them (time spent copying, costliest first). It lists each one with
    either the edit it would make or the reason it has none. Then it picks
    the first finding that has an edit, or finding N with `--finding N`.
-3. **Check the original.** It builds EXE and runs the tests, which are
+3. **Check the original, in a git worktree.** Everything from here runs in
+   a git worktree of `HEAD` in `.lake/leanprof/fix/worktree`, never in your
+   checkout. The worktree uses your project's `.lake/packages` (a symbolic
+   link: no download, no rebuild of dependencies) and starts from a copy of
+   its `.lake/build`. In it, `fix` builds EXE and runs the tests, which are
    `--test CMD` (run with `sh -c`) or `lake test` when the project has a
    test driver. It records the output (stdout, or the file given with
    `--check-output FILE`) and runs `leanprof measure` (5 runs, `--runs N`).
    If the original fails to build or its tests fail, `fix` stops: nothing
    could be checked.
-4. **Try each alternative on a new branch**
-   (`leanprof-fix/<function>-<cause>`, or `--branch NAME`). Each step
-   below must pass before the next one runs:
+4. **Try each alternative** in the worktree. Each step below must pass
+   before the next one runs:
    - the program builds;
    - the tests pass;
    - the exit code and output are byte for byte the original's;
@@ -43,13 +46,22 @@ leanprof fix --dry-run                    # the same from the last report
      order, `--pairs N`) finds them no slower and with the same output. A
      significant speedup is reported. One is not required, because removing
      small copies often saves less time than the noise.
-5. **KEEP**: the edit is committed on the branch, with the evidence in the
-   message. **DISCARD**: the next alternative is tried. When none is left,
-   the branch is deleted and every reason is printed.
+5. **KEEP**: the edit is committed in the worktree, with the evidence in
+   the message, and your repository gets a new branch pointing at that
+   commit (`leanprof-fix/<function>-<cause>`, or `--branch NAME`).
+   **DISCARD**: the next alternative is tried. When none is left, every
+   reason is printed and no branch is created.
 
-Either way, your checkout ends where it started: the same branch, the same
-files. A working tree with uncommitted changes to tracked files is refused
-before anything runs (untracked files are allowed). The output of every step
+Either way the worktree is removed, and your checkout is never touched: the
+same branch, the same files, also when `fix` is interrupted. INT, TERM and
+HUP are passed on to the step that is running; `fix` then removes the
+worktree and exits with 128 + the signal's number. Only a signal that
+cannot be caught (`kill -9`) leaves the worktree behind, and the next `fix`
+removes it. A working tree with uncommitted changes to tracked files is
+refused before anything runs. Untracked files are allowed, but they are not
+in the worktree, so the file to fix must be committed. A path dependency
+given relative to the project that leads out of the git repository is
+refused, since the worktree's copy of the path would not reach it. The output of every step
 is saved in `.lake/leanprof/fix/log.txt`. Exit code: 0 for KEEP (or a dry
 run that printed a fix), 1 for DISCARD or when no finding has an edit, and
 2 for an error.
@@ -107,16 +119,16 @@ Copy sites that copied only empty or tiny values are left out, as in
 
 `scripts/fix-check.sh`, run in CI, copies `Tests/Fix` into a fresh git
 repository. It is a small project with no dependency on leanprof. The script
-runs `fix` five ways: on a tree with uncommitted changes (refused), with
+runs `fix` six ways: on a tree with uncommitted changes (refused), with
 `--dry-run`, on `buckets` (KEEP), on `smooth` (refused) and on `buckets`
-with a test the edit fails (DISCARD). The numbers below are from one
+with a test the edit fails (DISCARD), and interrupted by TERM. The numbers below are from one
 run on an Apple M5 Max (`--runs 3 --pairs 10`).
 
 `buckets` pushes onto `bs[i]!` while `bs` still holds it, so every push
 copies:
 
 ```
-leanprof fix: alternative 1 (Array.modify) on branch leanprof-fix/buckets-nested-array-element
+leanprof fix: alternative 1 (Array.modify)
   builds
   tests pass (`lake test`)
   output identical (stdout, 118 bytes)
@@ -129,7 +141,7 @@ leanprof fix: alternative 1 (Array.modify) on branch leanprof-fix/buckets-nested
   KEEP
     + paired time: median change -57.67%, 95% median interval [-59.09%, -56.14%] (10 pairs)
 
-KEEP: committed 99be65f on branch leanprof-fix/buckets-nested-array-element; your checkout is back on main, unchanged.
+KEEP: committed 99be65f on branch leanprof-fix/buckets-nested-array-element; your checkout is unchanged (the checks ran in a git worktree).
 ```
 
 The remaining copy is in `main`, a single `Array.map`.
@@ -147,7 +159,9 @@ values. `fix` refuses it from the code, before changing anything:
 ```
 
 With `--test 'grep -q "bs.set!" Fix.lean'`, a test the edit fails, `buckets`
-shows a DISCARD: the branch is deleted and every reason is printed.
+shows a DISCARD: no branch is created and every reason is printed. The
+script also sends TERM while the candidate is being checked: `fix` exits
+with 143, the worktree is gone and the checkout is untouched.
 
 ## On real projects
 

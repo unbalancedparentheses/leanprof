@@ -293,6 +293,19 @@ def spawnWait (cmd : String) (args : Array String) (env : Array (String × Optio
   guardSignals child.pid
   try child.wait finally guardSignals 0
 
+/-- `IO.Process.output`, with INT, TERM and HUP passed on to the child
+while it runs (`guardSignals`). -/
+def guardedOutput (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
+  let child ← IO.Process.spawn { args with stdout := .piped, stderr := .piped }
+  guardSignals child.pid
+  try
+    let err ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+    let stdout ← child.stdout.readToEnd
+    let stderr ← IO.ofExcept err.get
+    let exitCode ← child.wait
+    return { exitCode, stdout, stderr }
+  finally guardSignals 0
+
 structure RunOpts where
   auto : Option String := none
   timeTiny : Bool := false
@@ -2184,8 +2197,11 @@ def dispatch (argv : List String) : IO UInt32 := do
     | "explain" :: rest =>
       Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
     | "fix" :: rest =>
-      Leanprof.Fix.fixCmd rest fun args => do
-        IO.Process.output { cmd := (← IO.appPath).toString, args, env := #[("LEANPROF_QUIET", some "1")], stdin := .null }
+      -- a signal ends the current step; `fix` then removes its worktree
+      guardSignals 0
+      Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+      Leanprof.Fix.fixCmd rest fun args cwd => do
+        Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
     | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
     | "top" :: rest => LeanprofLive.topCmd rest
     | "dump" :: rest => LeanprofLive.dumpCmd rest

@@ -7,9 +7,11 @@
 #   buckets (nested-array-element)       -> KEEP, committed on a new branch
 #   smooth (loop-over-updated-array)     -> refused: the body writes an element
 #                                           not visited yet, nothing touched
-#   buckets, a test the edit fails       -> DISCARD, branch deleted
+#   buckets, a test the edit fails       -> DISCARD, no branch
+#   TERM while the candidate is checked  -> exit 143, worktree removed
 #
-# After each, the checkout must be on main with a clean tree. Exits 1 on any
+# The checks run in a git worktree (.lake/leanprof/fix/worktree). After each,
+# the checkout must be on main with a clean tree and no worktree. Exits 1 on any
 # unexpected result. CI runs it; run it from the repository root.
 set -eu
 
@@ -35,6 +37,7 @@ fail() { echo "fix-check: $1"; failed=1; }
 clean() {
   [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || fail "$1: not back on main"
   [ -z "$(git status --porcelain --untracked-files=no)" ] || fail "$1: the tree is not clean"
+  [ "$(git worktree list | wc -l)" -eq 1 ] || fail "$1: a git worktree was left: $(git worktree list)"
 }
 # the measurements are small: 3 runs, 10 pairs
 opts="--runs 3 --pairs 10"
@@ -96,6 +99,29 @@ grep -q "the tests fail" discard.txt || fail "discard: the reason is not the tes
 clean "discard"
 [ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "discard: the branch was not deleted"
 git diff --quiet HEAD -- Fix.lean || fail "discard: Fix.lean changed"
+
+echo
+echo "== TERM while the candidate is checked: the worktree goes, the checkout is untouched"
+log=.lake/leanprof/fix/log.txt
+rm -f "$log"
+"$lp" fix $opts --exe buckets > term.txt 2>&1 &
+pid=$!
+i=0
+# the second build in the log is the candidate's
+while [ $i -lt 1500 ]; do
+  n=$(grep -c '^== lake build' "$log" 2>/dev/null || true)
+  [ "${n:-0}" -ge 2 ] && break
+  sleep 0.2; i=$((i + 1))
+done
+grep -q "bs := bs.modify" .lake/leanprof/fix/worktree/Fix.lean 2>/dev/null || fail "term: the candidate was not in the worktree"
+grep -q "bs := bs.modify" Fix.lean && fail "term: the candidate is in the checkout"
+kill -TERM $pid
+code=0; wait $pid || code=$?
+cat term.txt
+[ $code = 143 ] || fail "term: exit code $code, not 143 (128 + TERM)"
+clean "term"
+[ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "term: a branch was left"
+[ ! -e .lake/leanprof/fix/worktree ] || fail "term: the worktree directory was left"
 
 [ $failed = 0 ] && echo "fix-check: all passed"
 exit $failed

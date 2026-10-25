@@ -31,11 +31,13 @@ changes what is stored (the code reading it must change too),
 causes have no code.
 
 This module plans the edits (pure, tested in `Tests/Main.lean`) and runs the
-proof: on a new git branch, build, run the tests, compare the program's
-output with the original's, `measure` both versions (exact copies and
+checks in a git worktree of HEAD (`.lake/leanprof/fix/worktree`), never in
+the user's checkout: build, run the tests, compare the program's output
+with the original's, `measure` both versions (exact copies and
 allocations), time both plain binaries with `measure-pair`, and `judge`.
-KEEP commits the edit with that evidence in the message; DISCARD removes the
-branch and says why. The working tree is left as it was in both cases.
+KEEP commits the edit in the worktree with that evidence in the message and
+gives the user's repository a branch pointing at it; DISCARD says why. The
+worktree is removed in both cases, and after INT, TERM or HUP (`Runner`).
 -/
 
 namespace Leanprof.Fix
@@ -357,14 +359,33 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: _ => .error s!"unknown argument {a}"
 
-/-- Run `cmd`, capturing its output; a missing program is exit code 127. -/
-def capture (cmd : String) (args : Array String) (env : Array (String × Option String) := #[]) :
-    IO IO.Process.Output := do
-  try IO.Process.output { cmd, args, env, stdin := .null }
-  catch e => return { exitCode := 127, stdout := "", stderr := toString e }
+/-- How `fix` runs a program and waits for it, and how it stops after a
+signal. The command line (`LeanprofCli.lean`) installs a runner that passes
+INT, TERM and HUP on to the child and a check that throws once one was
+caught (`c/cli.c`), so that `fix`'s cleanup runs; the defaults are plain
+`IO.Process.output` and no check. -/
+structure Runner where
+  output : IO.Process.SpawnArgs → IO IO.Process.Output := IO.Process.output
+  interrupted : IO Unit := pure ()
 
-def git (args : Array String) : IO String := do
-  let out ← capture "git" args
+instance : Inhabited Runner := ⟨{}⟩
+
+initialize runner : IO.Ref Runner ← IO.mkRef {}
+
+/-- Run `cmd` (in `cwd`), capturing its output; a missing program is exit
+code 127. Throws, before or after the child, if a signal was caught
+(`stop := false`, for the cleanup itself: it runs anyway). -/
+def capture (cmd : String) (args : Array String) (env : Array (String × Option String) := #[])
+    (cwd : Option FilePath := none) (stop := true) : IO IO.Process.Output := do
+  let r ← runner.get
+  if stop then r.interrupted
+  let out ← try r.output { cmd, args, env, cwd, stdin := .null }
+    catch e => pure { exitCode := 127, stdout := "", stderr := toString e }
+  if stop then r.interrupted
+  return out
+
+def git (args : Array String) (cwd : Option FilePath := none) : IO String := do
+  let out ← capture "git" args (cwd := cwd)
   unless out.exitCode == 0 do
     throw <| IO.userError s!"git {" ".intercalate args.toList} failed: {trim out.stderr}"
   return trim out.stdout
@@ -415,15 +436,17 @@ def describe (k : Nat) (f : Json) : String :=
     s!", {groupDigits (jnum f "copies").toUInt64.toNat} copies, {fmtNs (jnum f "copy_ns")} copying"
 
 /-- What the program printed (or wrote to `checkOutput`), run without probes
-the way `lake exe` runs it, and its exit code. -/
-def plainRun (exe : String) (args : Array String) (checkOutput : Option String) : IO (UInt32 × String) := do
+the way `lake exe` runs it in the project `cwd`, and its exit code. -/
+def plainRun (cwd : FilePath) (exe : String) (args : Array String) (checkOutput : Option String) :
+    IO (UInt32 × String) := do
+  let at_ (f : String) : FilePath := if (f : FilePath).isAbsolute then f else cwd / f
   if let some f := checkOutput then
-    if ← (f : FilePath).pathExists then IO.FS.removeFile f
-  let out ← capture "lake" (#["env", ((".lake" : FilePath) / "build" / "bin" / exe).toString] ++ args)
+    if ← (at_ f).pathExists then IO.FS.removeFile (at_ f)
+  let out ← capture "lake" (#["env", ((".lake" : FilePath) / "build" / "bin" / exe).toString] ++ args) (cwd := cwd)
   match checkOutput with
   | some f =>
-    if ← (f : FilePath).pathExists then
-      let b ← IO.FS.readBinFile f
+    if ← (at_ f).pathExists then
+      let b ← IO.FS.readBinFile (at_ f)
       return (out.exitCode, (String.fromUTF8? b).getD s!"(binary, {b.size} bytes, {hashOf b})")
     else return (out.exitCode, "(missing)")
   | none => return (out.exitCode, out.stdout)
@@ -445,10 +468,29 @@ def firstDifference (a b : String) : String := Id.run do
 /-- Wrap a paragraph at 72 columns for a commit message. -/
 def para (s : String) : String := Explain.wrap s "" 72
 
-/-- `leanprof fix`. `runSelf` runs another leanprof command (`run`,
-`measure`, `measure-pair`), capturing its output. Exit code 0: KEEP (or
-`--dry-run` printed a fix); 1: DISCARD, or no finding has a mechanical fix. -/
-def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output) : IO UInt32 := do
+/-- Why the project cannot be checked in a git worktree: a path dependency
+(`lake-manifest.json`) given relative to the project that leads out of the
+repository, which the worktree's copy of the path would not reach. -/
+def outsidePathDeps (cwd top : FilePath) : IO (Option String) := do
+  let m := cwd / "lake-manifest.json"
+  unless ← m.pathExists do return none
+  let some j := (Json.parse (← IO.FS.readFile m)).toOption | return none
+  let top ← IO.FS.realPath top
+  for p in jarr j "packages" do
+    unless jstr p "type" == "path" do continue
+    let d : FilePath := jstr p "dir"
+    if d.isAbsolute then continue
+    let r ← try IO.FS.realPath (cwd / d) catch _ => pure (cwd / d)
+    unless r.toString.startsWith (top.toString ++ "/") do
+      return some (s!"the path dependency {jstr p "name"} ({d}) is outside the git repository, so a git " ++
+        "worktree of it would not find it: apply the fix by hand (--dry-run prints it)")
+  return none
+
+/-- `leanprof fix`. `runSelf args cwd` runs another leanprof command
+(`run`, `measure`, `measure-pair`) in `cwd`, capturing its output. Exit
+code 0: KEEP (or `--dry-run` printed a fix); 1: DISCARD, or no finding has a
+mechanical fix. -/
+def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.Process.Output) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
   let dir : FilePath := ".lake" / "leanprof" / "fix"
   IO.FS.createDirAll dir
@@ -468,7 +510,7 @@ def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output
       throw <| IO.userError s!"the working tree has uncommitted changes; commit or stash them first:\n{dirty}"
   if let some exe := o.exe then
     IO.println s!"leanprof fix: profiling {exe} (leanprof run)"
-    let out ← runSelf (#["run", "--json", o.report, exe, "--"] ++ o.args)
+    let out ← runSelf (#["run", "--json", o.report, exe, "--"] ++ o.args) (← IO.currentDir)
     log "leanprof run" out
     unless out.exitCode == 0 && (← (o.report : FilePath).pathExists) do
       IO.eprintln s!"leanprof fix: `leanprof run {exe}` failed (exit code {out.exitCode}):\n{tailOf (out.stdout ++ out.stderr)}"
@@ -515,77 +557,103 @@ def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output
     IO.print (unifiedDiff file src plans[i].edits)
   if o.dryRun then return 0
   let exe := o.exe.get!
-  let testCmd ← match o.test with
-    | some t => pure (some t)
-    | none => do
-      if (← capture "lake" #["check-test"]).exitCode == 0 then pure (some "lake test") else pure none
-  let testsText := match testCmd with
-    | some t => s!"`{t}`"
-    | none => "none (no --test CMD and no Lake test driver)"
-  let build : IO (Except String Unit) := do
-    let out ← capture "lake" #["build", exe]
-    log s!"lake build {exe}" out
-    return if out.exitCode == 0 then .ok () else .error (tailOf (out.stdout ++ out.stderr))
-  let runTests : IO (Except String Unit) := do
-    let some t := testCmd | return .ok ()
-    let out ← capture "sh" #["-c", t]
-    log t out
-    return if out.exitCode == 0 then .ok () else .error (tailOf (out.stdout ++ out.stderr))
-  let checkArgs := match o.checkOutput with | some f => #["--check-output", f] | none => #[]
-  let measure (out : FilePath) : IO (Except String Judge.Summary) := do
-    let r ← runSelf (#["measure", "--runs", toString o.runs] ++ (if o.deps then #[] else #["--no-deps"]) ++
-      checkArgs ++ #["--out", out.toString, exe, "--"] ++ o.args)
-    log s!"leanprof measure into {out}" r
-    if r.exitCode != 0 then return .error (tailOf (r.stdout ++ r.stderr))
-    let j ← IO.ofExcept (Json.parse (← IO.FS.readFile out))
-    return Judge.Summary.ofJson j
-  let binPath : FilePath := ".lake" / "build" / "bin" / exe
-  let keepBinary (to : FilePath) : IO Unit := do
-    let out ← capture "cp" #["-p", binPath.toString, to.toString]
-    unless out.exitCode == 0 do throw <| IO.userError s!"could not copy {binPath}: {out.stderr}"
-  -- the original must build and pass its tests, or nothing can be checked
-  IO.println s!"\nleanprof fix: the original: build, tests ({testsText}), output, measure ({o.runs} runs)"
-  if let .error e := ← build then
-    IO.eprintln s!"leanprof fix: {exe} does not build before any change:\n{e}"; return 2
-  if let .error e := ← runTests then
-    IO.eprintln s!"leanprof fix: the tests fail before any change, so a fix cannot be checked:\n{e}"; return 2
-  let (baseCode, baseOut) ← plainRun exe o.args o.checkOutput
-  keepBinary (dir / "base-bin")
-  let mut base : Judge.Summary := {}
-  match ← measure (dir / "base.json") with
-  | .ok s => base := s
-  | .error e => IO.eprintln s!"leanprof fix: measuring the original failed:\n{e}"; return 2
-  IO.println s!"  copies {groupDigits base.copies}, exit code {baseCode}, time median {Judge.fmtMs base.median}"
-  -- the branch starts where the user is
-  let origBranch ← git #["rev-parse", "--abbrev-ref", "HEAD"]
-  let orig ← if origBranch == "HEAD" then git #["rev-parse", "HEAD"] else pure origBranch
-  let mut branch := o.branch.getD (branchName (jstr f "function") (jstr f "cause"))
-  if o.branch.isNone then
-    let stem := branch
-    let mut n := 2
-    while (← capture "git" #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]).exitCode == 0 do
-      branch := s!"{stem}-{n}"; n := n + 1
-  discard <| git #["checkout", "-q", "-b", branch]
-  let original ← IO.FS.readFile file
+  -- everything from here runs in a git worktree of HEAD, never in the
+  -- user's checkout: an interruption, a crash or a test that writes files
+  -- cannot leave the candidate there. On KEEP the checkout gets the branch.
+  let cwd ← IO.currentDir
+  let absDir := cwd / dir
+  let top : FilePath := ← git #["rev-parse", "--show-toplevel"]
+  let pre ← git #["rev-parse", "--show-prefix"]
+  let head ← git #["rev-parse", "HEAD"]
+  unless (← capture "git" #["ls-files", "--error-unmatch", "--", file]).exitCode == 0 do
+    IO.eprintln s!"leanprof fix: {file} is not committed: fix checks the edit in a git worktree of HEAD"; return 2
+  if let some why ← outsidePathDeps cwd top then
+    IO.eprintln s!"leanprof fix: {why}"; return 2
+  let wtRoot := absDir / "worktree"
+  -- a worktree left by a run that was killed (SIGKILL cannot be caught)
+  discard <| capture "git" #["worktree", "remove", "--force", wtRoot.toString]
+  if ← wtRoot.pathExists then IO.FS.removeDirAll wtRoot
+  discard <| capture "git" #["worktree", "prune"]
+  let wt := if pre.isEmpty then wtRoot else wtRoot / pre
+  let removeWorktree : IO Unit := do
+    let r ← capture "git" #["worktree", "remove", "--force", wtRoot.toString] (stop := false)
+    if r.exitCode != 0 then
+      try IO.FS.removeDirAll wtRoot catch _ => pure ()
+      discard <| capture "git" #["worktree", "prune"] (stop := false)
   -- a reference: `finally` does not see the updates of a `let mut` made in `try`
-  let keptRef ← IO.mkRef (none : Option String)
+  let keptRef ← IO.mkRef (none : Option (String × String))
   let reasons ← IO.mkRef (#[] : Array String)
+  let wtFile := wt / file
   try
+    discard <| git #["worktree", "add", "--detach", "-q", wtRoot.toString, head]
+    -- the dependencies as they are (no download, no rebuild); the
+    -- project's own build as a starting point
+    if ← (cwd / ".lake" / "packages").pathExists then
+      IO.FS.createDirAll (wt / ".lake")
+      discard <| capture "ln" #["-s", (cwd / ".lake" / "packages").toString, (wt / ".lake" / "packages").toString]
+    if ← (cwd / ".lake" / "build").pathExists then
+      IO.FS.createDirAll (wt / ".lake")
+      let c ← capture "cp" #["-cRp", (cwd / ".lake" / "build").toString, (wt / ".lake" / "build").toString]
+      if c.exitCode != 0 then
+        if ← (wt / ".lake" / "build").pathExists then IO.FS.removeDirAll (wt / ".lake" / "build")
+        discard <| capture "cp" #["-Rp", (cwd / ".lake" / "build").toString, (wt / ".lake" / "build").toString]
+    let testCmd ← match o.test with
+      | some t => pure (some t)
+      | none => do
+        if (← capture "lake" #["check-test"] (cwd := wt)).exitCode == 0 then pure (some "lake test") else pure none
+    let testsText := match testCmd with
+      | some t => s!"`{t}`"
+      | none => "none (no --test CMD and no Lake test driver)"
+    let build : IO (Except String Unit) := do
+      let out ← capture "lake" #["build", exe] (cwd := wt)
+      log s!"lake build {exe}" out
+      return if out.exitCode == 0 then .ok () else .error (tailOf (out.stdout ++ out.stderr))
+    let runTests : IO (Except String Unit) := do
+      let some t := testCmd | return .ok ()
+      let out ← capture "sh" #["-c", t] (cwd := wt)
+      log t out
+      return if out.exitCode == 0 then .ok () else .error (tailOf (out.stdout ++ out.stderr))
+    let checkArgs := match o.checkOutput with | some f => #["--check-output", f] | none => #[]
+    let measure (out : FilePath) : IO (Except String Judge.Summary) := do
+      let r ← runSelf (#["measure", "--runs", toString o.runs] ++ (if o.deps then #[] else #["--no-deps"]) ++
+        checkArgs ++ #["--out", out.toString, exe, "--"] ++ o.args) wt
+      log s!"leanprof measure into {out}" r
+      if r.exitCode != 0 then return .error (tailOf (r.stdout ++ r.stderr))
+      let j ← IO.ofExcept (Json.parse (← IO.FS.readFile out))
+      return Judge.Summary.ofJson j
+    let binPath : FilePath := wt / ".lake" / "build" / "bin" / exe
+    let keepBinary (to : FilePath) : IO Unit := do
+      let out ← capture "cp" #["-p", binPath.toString, to.toString]
+      unless out.exitCode == 0 do throw <| IO.userError s!"could not copy {binPath}: {out.stderr}"
+    -- the original must build and pass its tests, or nothing can be checked
+    IO.println s!"\nleanprof fix: the original, in a git worktree of HEAD ({dir / "worktree"}): build, tests ({testsText}), output, measure ({o.runs} runs)"
+    if let .error e := ← build then
+      throw <| IO.userError s!"{exe} does not build before any change (in a worktree of HEAD: untracked files are not in it):\n{e}"
+    if let .error e := ← runTests then
+      throw <| IO.userError s!"the tests fail before any change, so a fix cannot be checked:\n{e}"
+    let (baseCode, baseOut) ← plainRun wt exe o.args o.checkOutput
+    keepBinary (absDir / "base-bin")
+    let base ← match ← measure (absDir / "base.json") with
+      | .ok s => pure s
+      | .error e => throw <| IO.userError s!"measuring the original failed:\n{e}"
+    IO.println s!"  copies {groupDigits base.copies}, exit code {baseCode}, time median {Judge.fmtMs base.median}"
+    let original ← IO.FS.readFile wtFile
     for h : i in [0:plans.size] do
       let plan := plans[i]
       let tag := s!"alternative {i + 1} ({plan.what})"
-      IO.println s!"\nleanprof fix: {tag} on branch {branch}"
-      IO.FS.writeFile file ("\n".intercalate (applyEdits src plan.edits).toList)
+      IO.println s!"\nleanprof fix: {tag}"
+      let candidate := "\n".intercalate (applyEdits src plan.edits).toList
+      IO.FS.writeFile wtFile candidate
       let fail (why : String) : IO Unit := do
         IO.println (Explain.wrap s!"  DISCARD: {why}" "    ")
-        IO.FS.writeFile file original
+        IO.FS.writeFile wtFile original
       if let .error e := ← build then
         fail s!"it does not build:\n{e}"; reasons.modify (·.push <| s!"{tag}: it does not build"); continue
       IO.println "  builds"
       if let .error e := ← runTests then
         fail s!"the tests fail ({testsText}):\n{e}"; reasons.modify (·.push <| s!"{tag}: the tests fail"); continue
       if testCmd.isSome then IO.println s!"  tests pass ({testsText})"
-      let (code, out) ← plainRun exe o.args o.checkOutput
+      let (code, out) ← plainRun wt exe o.args o.checkOutput
       if code != baseCode then
         let why := s!"the exit code changed: {baseCode} -> {code}"
         fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
@@ -593,9 +661,9 @@ def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output
         let why := s!"the output changed ({o.checkOutput.getD "stdout"}), {firstDifference baseOut out}"
         fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
       IO.println s!"  output identical ({o.checkOutput.getD "stdout"}, {out.utf8ByteSize} bytes)"
-      keepBinary (dir / "candidate-bin")
+      keepBinary (absDir / "candidate-bin")
       let mut new : Judge.Summary := {}
-      match ← measure (dir / "new.json") with
+      match ← measure (absDir / "new.json") with
       | .ok s => new := s
       | .error e =>
         fail s!"measuring it failed:\n{e}"; reasons.modify (·.push <| s!"{tag}: measuring it failed"); continue
@@ -605,14 +673,14 @@ def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output
         let why := "`judge` of the two measure summaries says DISCARD: " ++
           (if exact.worse.isEmpty then "nothing improved beyond noise" else "; ".intercalate exact.worse.toList)
         fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
-      let pairOut ← runSelf (#["measure-pair", "--base", (dir / "base-bin").toString,
-        "--candidate", (dir / "candidate-bin").toString, "--runs", toString o.pairs,
-        "--out", (dir / "paired.json").toString] ++ checkArgs ++ #["--"] ++ o.args)
+      let pairOut ← runSelf (#["measure-pair", "--base", (absDir / "base-bin").toString,
+        "--candidate", (absDir / "candidate-bin").toString, "--runs", toString o.pairs,
+        "--out", (absDir / "paired.json").toString] ++ checkArgs ++ #["--"] ++ o.args) wt
       log "leanprof measure-pair" pairOut
       if pairOut.exitCode != 0 then
         fail s!"measure-pair failed:\n{tailOf (pairOut.stdout ++ pairOut.stderr)}"
         reasons.modify (·.push <| s!"{tag}: measure-pair failed"); continue
-      let pj ← IO.ofExcept (Json.parse (← IO.FS.readFile (dir / "paired.json")))
+      let pj ← IO.ofExcept (Json.parse (← IO.FS.readFile (absDir / "paired.json")))
       let paired ← IO.ofExcept (Judge.judgePaired pj 1 o.allowOverloaded)
       IO.println s!"  leanprof judge (measure-pair, {o.pairs} pairs of plain binaries):\n{verdictLines paired}"
       unless paired.worse.isEmpty do
@@ -633,24 +701,31 @@ def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output
         s!"- leanprof measure ({o.runs} runs of each, with probes), leanprof judge:\n{verdictLines exact}\n" ++
         s!"- leanprof measure-pair ({o.pairs} pairs of plain binaries, AB/BA order), leanprof judge:\n" ++
           s!"{verdictLines paired}\n"
-      IO.FS.writeFile (dir / "commit-message.txt") msg
-      discard <| git #["commit", "-q", "-F", (dir / "commit-message.txt").toString, "--", file]
-      keptRef.set <| some (← git #["rev-parse", "--short", "HEAD"])
+      IO.FS.writeFile (absDir / "commit-message.txt") msg
+      discard <| git #["commit", "-q", "-F", (absDir / "commit-message.txt").toString, "--", file] (cwd := wt)
+      let sha ← git #["rev-parse", "HEAD"] (cwd := wt)
+      keptRef.set (some (sha, plan.what))
       break
+    -- the branch, in the user's repository, only for a kept commit
+    if let some (sha, _) ← keptRef.get then
+      let mut branch := o.branch.getD (branchName (jstr f "function") (jstr f "cause"))
+      if o.branch.isNone then
+        let stem := branch
+        let mut n := 2
+        while (← capture "git" #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]).exitCode == 0 do
+          branch := s!"{stem}-{n}"; n := n + 1
+      discard <| git #["branch", branch, sha]
+      keptRef.set (some (← git #["rev-parse", "--short", sha], branch))
   finally
-    if (← keptRef.get).isNone then IO.FS.writeFile file original
-    let back ← capture "git" #["checkout", "-q", orig]
-    if back.exitCode != 0 then
-      IO.eprintln s!"leanprof fix: could not go back to {orig} (still on {branch}): {trim back.stderr}"
-    else if (← keptRef.get).isNone then discard <| capture "git" #["branch", "-q", "-D", branch]
+    removeWorktree
   match ← keptRef.get with
-  | some sha =>
-    IO.println s!"\nKEEP: committed {sha} on branch {branch}; your checkout is back on {orig}, unchanged."
+  | some (sha, branch) =>
+    IO.println s!"\nKEEP: committed {sha} on branch {branch}; your checkout is unchanged (the checks ran in a git worktree)."
     IO.println s!"  see it: git show {branch}    take it: git merge {branch}"
     IO.println s!"  (the commit message holds the evidence; the steps' output is in {logPath})"
     return 0
   | none =>
-    IO.println s!"\nDISCARD: no alternative was kept, branch {branch} deleted; your checkout is back on {orig}, unchanged."
+    IO.println s!"\nDISCARD: no alternative was kept and no branch was created; your checkout is unchanged."
     for r in ← reasons.get do IO.println (Explain.wrap s!"  - {r}" "    ")
     IO.println s!"  (the steps' output is in {logPath})"
     return 1

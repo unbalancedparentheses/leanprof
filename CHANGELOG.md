@@ -169,6 +169,16 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   refused with the reason. `Tests/Main.lean` checks 13 refused shapes;
   `fix-check.sh` now expects `smooth` to be refused before any change, and
   covers DISCARD with a test the edit fails.
+- `fix` checked out its branch and wrote the candidate into your checkout,
+  and a TERM or HUP while it built, tested or measured killed it before its
+  cleanup ran: the candidate stayed in the file and the branch stayed
+  checked out. Now every step after profiling runs in a git worktree of
+  `HEAD` (`.lake/leanprof/fix/worktree`, with your `.lake/packages` linked
+  and a copy of `.lake/build`); your repository only gets the branch, on
+  KEEP. INT, TERM and HUP are passed on to the running step, then the
+  worktree is removed and `fix` exits with 128 + the signal.
+  `fix-check.sh` sends TERM during the candidate's tests and checks the
+  checkout, the branches and the worktree list.
 
 ### Smaller fixes and maintenance
 
