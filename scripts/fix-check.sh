@@ -5,7 +5,9 @@
 #   a tree with uncommitted changes      -> refused, nothing touched
 #   --dry-run                            -> the diff, nothing touched
 #   buckets (nested-array-element)       -> KEEP, committed on a new branch
-#   smooth (loop-over-updated-array)     -> DISCARD: output changed, branch deleted
+#   smooth (loop-over-updated-array)     -> refused: the body writes an element
+#                                           not visited yet, nothing touched
+#   buckets, a test the edit fails       -> DISCARD, branch deleted
 #
 # After each, the checkout must be on main with a clean tree. Exits 1 on any
 # unexpected result. CI runs it; run it from the repository root.
@@ -75,15 +77,25 @@ grep -q "paired time: median change" message.txt || fail "buckets: no paired int
 git diff main "$branch" | grep -q '^+    bs := bs.modify i (·.push v)$' || fail "buckets: the commit is not the edit"
 
 echo
-echo "== smooth: DISCARD (the output changes)"
-if "$lp" fix $opts --exe buckets -- --smooth > discard.txt 2>&1; then fail "smooth: kept"; fi
-cat discard.txt
-grep -q "^DISCARD" discard.txt || fail "smooth: no DISCARD"
-grep -q "the output changed" discard.txt || fail "smooth: the reason is not the output"
-grep -q "tests pass" discard.txt || fail "smooth: the tests were expected to pass"
+echo "== smooth: refused (the loop rewrite could change what it computes)"
+if "$lp" fix $opts --exe buckets -- --smooth > refused-loop.txt 2>&1; then fail "smooth: not refused"; fi
+sed -n '/^leanprof fix: [0-9]* finding/,$p' refused-loop.txt
+grep -q "which fix cannot show" refused-loop.txt || fail "smooth: no reason given for refusing the loop rewrite"
+grep -q "none of these findings has a mechanical fix" refused-loop.txt || fail "smooth: not refused before any change"
 clean "smooth"
-[ -z "$(git branch --list 'leanprof-fix/smooth*')" ] || fail "smooth: the branch was not deleted"
+[ -z "$(git branch --list 'leanprof-fix/smooth*')" ] || fail "smooth: a branch was created"
 git diff --quiet HEAD -- Fix.lean || fail "smooth: Fix.lean changed"
+
+echo
+echo "== buckets with a test the edit fails: DISCARD"
+git branch -q -D "$branch"
+if "$lp" fix $opts --exe buckets --test 'grep -q "bs.set!" Fix.lean' > discard.txt 2>&1; then fail "discard: kept"; fi
+cat discard.txt
+grep -q "^DISCARD" discard.txt || fail "discard: no DISCARD"
+grep -q "the tests fail" discard.txt || fail "discard: the reason is not the tests"
+clean "discard"
+[ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "discard: the branch was not deleted"
+git diff --quiet HEAD -- Fix.lean || fail "discard: Fix.lean changed"
 
 [ $failed = 0 ] && echo "fix-check: all passed"
 exit $failed

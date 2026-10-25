@@ -63,16 +63,26 @@ declaration line for line, and that version must make no copies.
 
 | cause | before | after |
 |---|---|---|
-| `nested-array-element` | `xs := xs.set! i (xs[i]!.push v)` | `xs := xs.modify i (·.push v)`. When one site has several such lines, they are tried together first, then one at a time |
+| `nested-array-element` | `xs := xs.set! i (xs[i]!.push v)` | `xs := xs.modify i (·.push v)`, only when the element read is at the same index, written the same way (`xs.set! i (xs[j]!.push v)` is refused). When one site has several such lines, they are tried together first, then one at a time |
 | `map-value-reinserted` (`getD`) | `let a := m.getD k d` … `m := m.insert k (a.push v)` | `m := m.alter k fun a? => some ((a?.getD d).push v)`, with the read line removed (only when `a` is not used anywhere else); or `m := (m.erase k).insert k (a.push v)` |
 | `map-value-reinserted` (`get!`) | `let a := m[k]!` … `m := m.insert k { a with … }` | `m := m.modify k fun a => { a with … }`; or erase before inserting |
 | `map-value-reinserted` (`get?`, `match`) | `\| some a => m := m.insert k (a.push v)` | `\| some a => m := (m.erase k).insert k (a.push v)` |
-| `loop-over-updated-array` | `for x in xs do` | `for i in [0:xs.size] do` followed by `let x := xs[i]!` |
+| `loop-over-updated-array` | `let mut j := 0`, `for x in xs do`, a body that ends with `j := j + 1` | `for i in [0:xs.size] do` followed by `let x := xs[i]!` |
+
+`fix` must not commit a change that alters what the program computes, and
+the checks below run one workload: identical output on it is evidence, not
+proof. So each rewrite is applied only when the code shows it computes the
+same values on every input.
 
 The loop rewrite changes what the body reads: `xs[i]!` is the current
 array, not the one the loop started with. The two give the same values only
-when the body changes elements it has already visited, or appends. The
-output comparison is what catches the other case.
+when the body changes no element it has not visited yet and never shrinks
+`xs`. `fix` applies it only in the shape where that is visible in the text:
+the line before the loop is `let mut j := 0`, the body is flat (no nested
+blocks, no `continue`), ends with `j := j + 1` and assigns `j` nowhere else,
+and the only assignments to `xs` are `xs := xs.set! j …`, `xs := xs.modify j …`
+(the element just visited) and `xs := xs.push …`. Any other loop is refused
+with the reason, even if its output would not change on your workload.
 
 These causes are refused, with a reason:
 
@@ -86,7 +96,9 @@ These causes are refused, with a reason:
 
 `fix` also refuses code in a dependency (`.lake/packages`), a source line
 that no longer matches the report, an insert that continues onto the next
-line, and a loop that binds a membership proof (`for h : x in xs`).
+line, a loop that binds a membership proof (`for h : x in xs`), and the
+loops and nested updates above whose rewrite it cannot show to be the same
+computation.
 
 Copy sites that copied only empty or tiny values are left out, as in
 `explain`. `fix` prints how many it left out, and `--all` includes them.
@@ -95,8 +107,9 @@ Copy sites that copied only empty or tiny values are left out, as in
 
 `scripts/fix-check.sh`, run in CI, copies `Tests/Fix` into a fresh git
 repository. It is a small project with no dependency on leanprof. The script
-runs `fix` four ways: on a tree with uncommitted changes (refused), with
-`--dry-run`, on `buckets` and on `smooth`. The numbers below are from one
+runs `fix` five ways: on a tree with uncommitted changes (refused), with
+`--dry-run`, on `buckets` (KEEP), on `smooth` (refused) and on `buckets`
+with a test the edit fails (DISCARD). The numbers below are from one
 run on an Apple M5 Max (`--runs 3 --pairs 10`).
 
 `buckets` pushes onto `bs[i]!` while `bs` still holds it, so every push
@@ -121,17 +134,20 @@ KEEP: committed 99be65f on branch leanprof-fix/buckets-nested-array-element; you
 
 The remaining copy is in `main`, a single `Array.map`.
 
-`smooth` loops over the array it updates. The loop rewrite builds, and the
-tests pass, because they check only sizes. The output changes, though: the
-body writes the element the next pass reads.
+`smooth` loops over the array it updates, and the body writes the element
+the *next* pass reads (`xs.set! ((j + 1) % xs.size) …`). The loop rewrite
+would build and pass the tests, which check only sizes, but compute other
+values. `fix` refuses it from the code, before changing anything:
 
 ```
-  tests pass (`lake test`)
-  DISCARD: the output changed (stdout), line 1: `smooth sum 2098950, first 1999, last 1999` became
-    `smooth sum 197901666, first 99950, last 99949`
-
-DISCARD: no alternative was kept, branch leanprof-fix/smooth-loop-over-updated-array deleted; your checkout is back on main, unchanged.
+     not mechanical: reading `xs[i]!` instead of the elements the loop started with gives the same
+       values only when the body changes no element it has not visited yet, which fix cannot show
+       here (`xs := xs.set! ((j + 1) % xs.size) (x + j % 3)` uses `j` other than as the index of an
+       update of `xs`): apply the fix by hand if it holds
 ```
+
+With `--test 'grep -q "bs.set!" Fix.lean'`, a test the edit fails, `buckets`
+shows a DISCARD: the branch is deleted and every reason is printed.
 
 ## On real projects
 

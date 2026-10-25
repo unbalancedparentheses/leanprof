@@ -156,6 +156,20 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   (`8a0d286`) avoided with a second pass. On lean-regex `32af6f3`, no
   finding has a mechanical fix (all are `shared-on-entry`).
 
+### Review fixes: `fix` and the MCP server (review of 2026-10-25)
+
+- `fix` committed rewrites that change what the program computes when the
+  one workload it runs did not show it. `xs.set! i (xs[j]!.push v)` became
+  `xs.modify i (·.push v)` (it updates `xs[i]`, not `xs[j]`), and every
+  `for x in xs` loop became an index loop reading the current array. Now
+  `Array.modify` needs the same index on both sides, and the loop rewrite
+  needs a body that provably changes no element it has not visited yet: a
+  `let mut j := 0` counter, a flat body ending with `j := j + 1`, and `xs`
+  assigned only by `set!`/`set`/`modify` at `j` or `push`. Anything else is
+  refused with the reason. `Tests/Main.lean` checks 13 refused shapes;
+  `fix-check.sh` now expects `smooth` to be refused before any change, and
+  covers DISCARD with a test the edit fails.
+
 ### Smaller fixes and maintenance
 
 - When one function's self time is half the run or more, `run` says that

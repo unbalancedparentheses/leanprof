@@ -11,12 +11,19 @@ certainty, prints the fix as Lean code with the program's own names
 so applying it is mechanical:
 
 * `nested-array-element`: `xs := xs.set! i (xs[i]!.push v)` becomes
-  `xs := xs.modify i (·.push v)`;
+  `xs := xs.modify i (·.push v)` (the same index, written the same way, on
+  both sides);
 * `map-value-reinserted`: `let v := m.getD k d` … `m := m.insert k (v.push x)`
   becomes `m := m.alter k fun v? => …` (`modify` for `get!`), the read line
   removed, or the insert becomes `(m.erase k).insert k …`;
 * `loop-over-updated-array`: `for x in xs do` becomes
-  `for i in [0:xs.size] do` followed by `let x := xs[i]!`.
+  `for i in [0:xs.size] do` followed by `let x := xs[i]!`, only when the
+  body provably changes no element it has not visited yet
+  (`loopRewriteUnsafe`).
+
+Each rewrite is applied only when its text shows it computes the same
+values on every input: the output comparison covers one workload, so it
+checks the edit, it does not prove it.
 
 The others are not mechanical, and `fix` says why: `stored-then-updated`
 changes what is stored (the code reading it must change too),
@@ -164,6 +171,64 @@ def notMechanical (cause : String) (hasCode : Bool) : String :=
   | _ => if hasCode then s!"no mechanical edit for `{cause}` yet"
     else s!"explain prints no code for `{cause}`, only advice"
 
+/-- Why replacing `for x in c do` (line `fl`) by a loop over the indices
+reading `c[i]!` could change what the loop computes, or `none` when it
+provably cannot.
+
+`for x in c` visits the elements `c` had when the loop started; `c[i]!`
+reads the current array. They agree when the body never changes an element
+it has not visited yet and never shrinks `c`. That is what this checks, on
+the text, in the one shape it can be sure of:
+
+* the line before the loop is `let mut j := 0`, the body's last line is
+  `j := j + 1`, and the body has no other assignment to `j`, no `continue`
+  and no nested block (every line at the body's indentation), so `j` is the
+  index of the element being visited;
+* the only assignments to `c` are `c := c.set! j E`, `c := c.set j E`,
+  `c := c.modify j F` (the element just visited) and `c := c.push E`
+  (beyond the visited range); other lines may read `c` but not bind it.
+
+Anything else is refused: the output comparison only covers the workload
+`fix` runs, so it cannot be the proof. -/
+def loopRewriteUnsafe (src : Array String) (fl : Nat) (c : String) : Option String := Id.run do
+  let forLine := lineAt src fl
+  let ind := (indentOf forLine).length
+  -- the counter: the nearest non-blank line before the loop
+  let prev := ((src.extract 0 (fl - 1)).toList.reverse.find? fun l => !(codeOf l).isEmpty).getD ""
+  let pc := codeOf prev
+  let j := trim (dropRightChars (dropChars pc 8) 5)
+  unless (indentOf prev).length == ind && pc == s!"let mut {j} := 0" &&
+      !j.isEmpty && j.toList.all Explain.isIdentChar && !has j "." && j != c do
+    return some s!"the line before the loop is not `let mut j := 0`, a counter of the elements visited"
+  let body := (src.extract fl src.size).toList.takeWhile fun l => (codeOf l).isEmpty || (indentOf l).length > ind
+  let body := (body.filter fun l => !(codeOf l).isEmpty).toArray
+  let some first := body[0]? | return some "the loop has no body"
+  let bi := (indentOf first).length
+  if body.any (fun l => (indentOf l).length != bi) then
+    return some "the loop body has nested blocks"
+  unless codeOf body.back! == s!"{j} := {j} + 1" do
+    return some s!"the loop body does not end with `{j} := {j} + 1`"
+  for l in body.pop do
+    let t := codeOf l
+    let ts := Explain.tokens t
+    if ts.contains "continue" || ts.contains "fun" || ts.contains "do" then
+      return some s!"`{t}`: the body has `continue`, `fun` or `do`"
+    let update := [".set! ", ".set ", ".modify "].any fun op => t.startsWith s!"{c} := {c}{op}{j} " &&
+      (Explain.splitTop (dropChars t (c.length + 4))).size == 3 && balanced t
+    let push := t.startsWith s!"{c} := {c}.push " && (Explain.splitTop (dropChars t (c.length + 4))).size == 2 &&
+      balanced t && Explain.countWord t j == 0
+    if update || push then continue
+    if Explain.countWord t j > 0 then
+      return some s!"`{t}` uses `{j}` other than as the index of an update of `{c}`"
+    if Explain.countWord t c > 0 then
+      -- a read of `c` is fine; anything that could rebind it is not
+      let binder := ((dropChars t 4).splitOn " := ").head!
+      let name := dropChars binder (if binder.startsWith "mut " then 4 else 0)
+      let readOnly := t.startsWith "let " && (t.splitOn ":=").length == 2 && !has t "←" && !has t "<-" &&
+        !name.isEmpty && name.toList.all Explain.isWordChar && name != c
+      unless readOnly do return some s!"`{t}` may change `{c}`"
+  return none
+
 /-- The edits that apply each alternative of a finding's `fix_code` to the
 source lines `src` of its file, or why there is none. -/
 def plansFor (f : Json) (src : Array String) : Except String (Array Plan) := do
@@ -233,6 +298,11 @@ def plansFor (f : Json) (src : Array String) : Except String (Array Plan) := do
     let t := codeOf forLine
     unless t.startsWith "for " && t.endsWith " do" do throw s!"line {fl} is not `for … in … do` (changed since the report?)"
     if has ((t.splitOn " in ").head!) ":" then throw s!"the loop at line {fl} binds a membership proof: apply the fix by hand"
+    let c := trim (dropRightChars (" in ".intercalate ((t.splitOn " in ").drop 1)) 3)
+    if let some why := loopRewriteUnsafe src fl c then
+      throw (s!"reading `{c}[i]!` instead of the elements the loop started with gives the same values only " ++
+        s!"when the body changes no element it has not visited yet, which fix cannot show here ({why}): " ++
+        "apply the fix by hand if it holds")
     -- the body's indentation, from its first line
     let bodyIndent := ((src.extract fl src.size).find? (fun l => !(codeOf l).isEmpty)).map indentOf |>.getD (indentOf forLine ++ "  ")
     for alt in code do

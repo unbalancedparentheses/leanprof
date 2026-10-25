@@ -1,8 +1,8 @@
 import Fix
 
 /-! `lake test` of the fixture: checks sizes only, so a change to the values
-`smooth` computes passes it (the output comparison of `leanprof fix` has to
-catch that). -/
+`smooth` computes would pass it (`leanprof fix` has to refuse that rewrite
+itself). -/
 
 def main : IO UInt32 := do
   let bs := buckets 160 16
