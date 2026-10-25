@@ -9,8 +9,9 @@
  * HUP (and an INT sent by another process; the terminal's Ctrl-C already
  * reaches the child, which is in the same process group) are passed on to
  * the child, the command waits for it, puts the normal build back, and exits
- * as if killed by the signal (128 + its number). A second signal while
- * nothing runs ends the command at once. */
+ * as if killed by the signal (128 + its number). `measure` and
+ * `measure-pair` register each program they run the same way. A second
+ * signal while nothing runs ends the command at once. */
 #include <lean/lean.h>
 #include <signal.h>
 #include <string.h>

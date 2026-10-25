@@ -29,6 +29,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   was reported at 0.53–0.61 of its time, now 0.80–0.91 (the rest is the
   loop around it). The exit report, live snapshots and `Leanprof.totalNs`
   share the estimate.
+- `measure` and `measure-pair` pass INT, TERM and HUP on to the program
+  they are running, as `run` does: a TERM to `measure` left a long program
+  running and the instrumented build in place until it ended, and a second
+  signal then ended leanprof without cleaning up. `scripts/interrupt-check.py`
+  covers both commands.
 
 ### Compile time: a project view and published profiles
 

@@ -293,6 +293,21 @@ def spawnWait (cmd : String) (args : Array String) (env : Array (String × Optio
   guardSignals child.pid
   try child.wait finally guardSignals 0
 
+/-- `IO.Process.output` with INT, TERM and HUP passed on to the child while it
+runs, as `spawnWait` does: an interrupted `measure` waits for its program to
+stop and puts the normal build back, instead of leaving the program running
+(and a second signal ending leanprof before it cleans up). -/
+def outputGuarded (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
+  let child ← IO.Process.spawn { args with stdout := .piped, stderr := .piped, stdin := .null }
+  guardSignals child.pid
+  try
+    let stdout ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
+    let stderr ← child.stderr.readToEnd
+    let exitCode ← child.wait
+    let stdout ← IO.ofExcept stdout.get
+    return { exitCode, stdout, stderr }
+  finally guardSignals 0
+
 structure RunOpts where
   auto : Option String := none
   timeTiny : Bool := false
@@ -1445,9 +1460,10 @@ def measureCmd (argv : List String) : IO UInt32 := do
       -- a stale output file must not pass for this run's
       if let some f := o.checkOutput then
         if ← (f : FilePath).pathExists then IO.FS.removeFile f
+      -- a signal between two runs: no next run
+      checkInterrupted
       let t0 ← IO.monoNanosNow
-      guardSignals 0
-      let out ← IO.Process.output { cmd := (exePath exe).toString, args := o.args, env }
+      let out ← outputGuarded { cmd := (exePath exe).toString, args := o.args, env }
       let t1 ← IO.monoNanosNow
       checkInterrupted
       if i < o.warmup then continue
@@ -1597,10 +1613,12 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
         let checked := o.checkOutput.map fun p => dirs[side]! / p
         if let some p := checked then
           if ← p.pathExists then IO.FS.removeFile p
+        checkInterrupted
         let t0 ← IO.monoNanosNow
         let sideEnv := lakeEnvs[side]! ++ env
-        let result ← IO.Process.output { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env := sideEnv }
+        let result ← outputGuarded { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env := sideEnv }
         let elapsed := (← IO.monoNanosNow) - t0
+        checkInterrupted
         if phase == 0 then
           if result.exitCode != 0 then throw <| IO.userError s!"warmup failed for {binaries[side]!}: {result.stderr}"
           continue

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""An interrupted `leanprof run` must not leave instrumented objects behind.
+"""An interrupted `leanprof run` or `measure` must not leave instrumented
+objects, or the program, behind.
 
     python3 scripts/interrupt-check.py [LEANPROF]
 
@@ -7,7 +8,9 @@ In a fresh project that does not depend on leanprof (Tests/Smoke's setup, a
 program that waits), `leanprof run` is stopped while the program runs:
 
 - by SIGTERM, SIGHUP and SIGINT: leanprof passes the signal on, puts the
-  normal build back itself and exits with 128 + the signal;
+  normal build back itself and exits with 128 + the signal; so does
+  `leanprof measure` (and `measure-pair`, which builds nothing, passes the
+  signal on too);
 - by SIGKILL (nothing can be caught): a plain `lake build` afterwards must
   compile normal objects (leanprof forgot Lake's records of the instrumented
   ones), and `leanprof doctor` puts the stashed normal build back.
@@ -46,12 +49,23 @@ def normal(work):
     return not os.path.exists(report)
 
 
-def interrupted_run(work, sig):
-    """`leanprof run` stopped by `sig` once the program has started; its exit code."""
+def running(started):
+    """The program started with this argument is still running."""
+    return subprocess.run(["pgrep", "-f", started], stdout=subprocess.DEVNULL).returncode == 0
+
+
+def interrupted_run(work, sig, cmd=("run",)):
+    """`leanprof CMD` stopped by `sig` once the program has started; its exit
+    code, its stderr, and whether the program was still running afterwards."""
     started = os.path.join(work, "started")
     if os.path.exists(started):
         os.remove(started)
-    p = subprocess.Popen([LP, "run", "smoke", "--", started], cwd=work, stdout=subprocess.DEVNULL,
+    if cmd[0] == "measure-pair":
+        bin = os.path.join(work, ".lake", "build", "bin", "smoke")
+        args = [LP, "measure-pair", "--base", bin, "--candidate", bin, "--warmup", "0", "--", started]
+    else:
+        args = [LP, *cmd, "smoke", "--", started]
+    p = subprocess.Popen(args, cwd=work, stdout=subprocess.DEVNULL,
                          stderr=subprocess.PIPE, text=True, env=dict(os.environ, LEANPROF_QUIET="1"))
     deadline = time.time() + 600
     while not os.path.exists(started) and p.poll() is None and time.time() < deadline:
@@ -62,9 +76,10 @@ def interrupted_run(work, sig):
     except subprocess.TimeoutExpired:
         p.kill()
         _, err = p.communicate()
+    left = running(started)
     # with SIGKILL the program outlives leanprof
     subprocess.run(["pkill", "-KILL", "-f", started])
-    return p.returncode, err
+    return p.returncode, err, left
 
 
 work = tempfile.mkdtemp(prefix="leanprof-interrupt-")
@@ -76,11 +91,14 @@ try:
     subprocess.run(["lake", "build", "smoke"], cwd=work, check=True, stdout=subprocess.DEVNULL)
     check("the plain build is normal", normal(work))
     stash = os.path.join(work, ".lake", "leanprof", "normal-objects")
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        rc, err = interrupted_run(work, sig)
-        check(f"{sig.name}: leanprof exits with 128 + {int(sig)}", rc == 128 + int(sig), f"rc={rc} {err[-500:]}")
-        check(f"{sig.name}: the normal build is back", not os.path.exists(stash) and normal(work), err[-500:])
-    rc, err = interrupted_run(work, signal.SIGKILL)
+    for cmd in (("run",), ("measure", "--runs", "1", "--warmup", "0"), ("measure-pair",)):
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            what = f"{cmd[0]}, {sig.name}"
+            rc, err, left = interrupted_run(work, sig, cmd)
+            check(f"{what}: leanprof exits with 128 + {int(sig)}", rc == 128 + int(sig), f"rc={rc} {err[-500:]}")
+            check(f"{what}: the program is not left running", not left)
+            check(f"{what}: the normal build is back", not os.path.exists(stash) and normal(work), err[-500:])
+    rc, err, _ = interrupted_run(work, signal.SIGKILL)
     check("SIGKILL: the normal objects are still set aside", os.path.exists(stash), f"rc={rc}")
     subprocess.run(["lake", "build", "smoke"], cwd=work, check=True, stdout=subprocess.DEVNULL)
     check("SIGKILL: a plain lake build afterwards is normal", normal(work))
