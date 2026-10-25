@@ -14,7 +14,7 @@ Neighbours, and how leanprof should compare with each:
 | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler), `trace.profiler` | elaboration time, source navigation | connect compile-time and runtime diagnosis; refresh comparisons against current native capture |
 
 Status (2026-10-25): M1–M9 are largely done. What remains is in the next
-three sections: v0.1.0, v0.2.0, and the work after it. Each item comes from
+sections: v0.1.0, two bigger bets, v0.2.0, and the work after it. Each item comes from
 profiling real projects with leanprof (see [case studies](docs/case-studies/))
 or from using it in agent loops. Unchecked items are planned work, not claims
 about current capabilities.
@@ -72,6 +72,30 @@ including refreshed comparisons against current alternatives.
 - [ ] Consolidation: command modules in `LeanprofCli/`, one typed report
   module, `c/` split behind `c/internal.h`, CI checks as local scripts,
   formatters and linters, `research/` renamed `autoresearch/`.
+
+## Bigger bets (after v0.1.0)
+
+Two changes in reach rather than features: they would help far more Lean
+users than the rest of v0.2.0, and take priority over its long tail.
+
+- [ ] **Find copies without running anything.** Today a copy is found only if
+  a workload happens to run that path. The compiler already knows the risky
+  spots: in its intermediate code, an array push or set on a value whose
+  reference count was just increased will copy. A pass reading that code
+  flags every likely copy across a whole package, including libraries with no
+  executable, and in the editor as you type, at no runtime cost. The runtime
+  profiler then confirms which flags matter and how much: "profile, then fix"
+  becomes "never write it". The most uncertain bet (compiler internals change;
+  false positives) and the biggest. First step: a prototype on one compiler
+  intermediate representation, checked against the copies already found at
+  run time in lean-compiler-backend and Lake.
+- [ ] **Make compile time the main target.** Most Lean users write proofs,
+  not programs, and what they wait on is elaboration: Mathlib builds, slow
+  `simp` calls, instance search. The compile-time side already works (all of
+  Batteries in 17 s). Point the autoresearch loop at Mathlib's slowest files.
+  Speedups are easy to verify: the proofs still check and heartbeat counts
+  are exact. Results stay local branches until the maintainer decides to
+  propose them upstream.
 
 ## v0.2.0: make any Lean project faster
 
