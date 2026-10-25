@@ -8,9 +8,9 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
-| `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
-| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
-| `sample [--rate HZ] [--top N] [--out F] [--cwd DIR] EXE [-- ARGS]` | sample with samply, report per Lean declaration; exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
+| `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
+| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
+| `sample [--rate HZ] [--top N] [--out F] [--json F] [--cwd DIR] EXE [-- ARGS]` | sample with samply (`--out`: samply's profile), report per Lean declaration (`--json`: a copy of the report); exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--scope NAME] [--heartbeats-files F…] [--check-output F] [--no-allocs] [--core] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time of the process or, with `--scope`, of one `profile!` scope, output; `self_check_warning`, empty unless copies may be undercounted) |
@@ -23,9 +23,16 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `mcp` | Model Context Protocol server on stdio for AI agents ([live](live.md#mcp-server)) |
 | `doctor` | check the tools and project setup leanprof needs, and that copy detection works with this Lean ([self-check](how-it-works.md#self-check-is-copy-detection-working)) |
 
-Reports go to `.lake/leanprof/`: `report.json` (run and sample),
-`elab.json`, `measure.json`, samply's profile `EXE.json`, and the page of
-`leanprof html`, `report.html`.
+Reports go to `.lake/leanprof/`: `report.json` (run, stat, sample and
+measure), `elab.json`, `measure.json`, samply's profile `EXE.json`, and the
+page of `leanprof html`, `report.html`.
+
+`report.json` is always the last report: `run`, `stat` and `sample` remove
+it before they start (so a failed build or a killed program leaves none,
+rather than an older one) and write it at the end, also when `--json FILE`
+(`--out FILE` in `run` and `stat`) saves a copy elsewhere. `explain`,
+`html`, `#leanprof` and the MCP `report`, `hot` and `explain` tools read it
+unless given another file.
 
 ## Environment variables
 

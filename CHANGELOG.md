@@ -19,6 +19,15 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   were second in `top`). `LEANPROF_ALL_COPIES=1` lists them.
   `top --attach` on a program that had already exited now shows its last
   snapshot (it printed nothing).
+- The last report is well-defined: `.lake/leanprof/report.json` is what
+  `run`, `stat`, `sample` and `measure` leave, also when `--json FILE` saves
+  a copy elsewhere (`run --json F` did not update it, so `explain` read an
+  older report). `run` and `stat` remove it (and FILE) before they start,
+  so a failed build or a killed program leaves no older report passing for
+  this one (the MCP `run` tool summarized a stale one after a failed build).
+  `run` and `stat` take `--out FILE` as another spelling of `--json FILE`,
+  and `sample` takes `--json FILE` (a copy of its report; `--out` is still
+  samply's profile).
 
 ### Smaller fixes and maintenance
 
