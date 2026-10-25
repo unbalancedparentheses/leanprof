@@ -26,6 +26,105 @@ leanprof run --json new.json myapp -- bench-input
 leanprof compare baseline.json new.json
 ```
 
+### Why it got worse
+
+For each declaration whose heartbeats regressed, `compare` (and the
+Action's comment) also says what changed inside it, from what the two
+`elab` reports record about that declaration:
+
+- the constants credited with its work: definitions `isDefEq` unfolded and
+  `whnf` reduced, instances tried, simp lemmas that rewrote, each with the
+  heartbeats of the work it caused and how many times;
+- its repeated operations (the same instance search or unification done
+  more than once);
+- with `elab --counts` on both commits, Lean's exact `diagnostics` counters
+  for it: declarations unfolded by the elaborator and by the kernel,
+  instances used, simp lemmas used and failed, theorems `grind`
+  instantiated.
+
+Each comes with its `file:line` and its base and head values, increases
+first. Counts do not vary between runs; heartbeats nearly so (in the
+Batteries example below, four profiles of the same commit gave the
+regressed declaration totals up to 370 heartbeats apart, in about 876,000),
+so a constant credited with less than 1,000 heartbeats more, as often as
+before, is listed after the real changes and never named as the cause. When
+nothing recorded changed, the explanation says so ("cause not attributed")
+and names where the change is (elaboration, kernel, compiler, linters);
+operations under the profiler's threshold (10,000 heartbeats by default,
+`--threshold` lowers it) are not timed, so their heartbeats count in the
+operation around them, but `--counts` still counts them. Heartbeats
+credited to different constants overlap (reducing `Decidable.decide`
+reduces the definition it evaluates), so they need not add up to the
+change. Each list keeps the 20 largest entries per declaration (10 per
+counter); a constant missing from a full list is shown as "not listed",
+never as 0.
+
+```
+leanprof elab --heartbeats --counts --out base-elab.json Foo.lean   # on the base commit
+leanprof elab --heartbeats --counts --out head-elab.json Foo.lean   # on the change
+leanprof compare base-elab.json head-elab.json
+```
+
+```
+why (what changed inside each declaration that got more expensive; counts are exact, heartbeats nearly so)
+  Regress.lean unfold_case (Regress.lean:21): 6.95 kHB -> 57.47 kHB  [elaboration +50.53 kHB]
+    whnf reduces Decidable.decide (Init/Prelude.lean:1158): 0.00 kHB, 0× -> 46.40 kHB, 1×  (+46.40 kHB)
+    whnf reduces tri (Regress.lean:11): 0.00 kHB, 0× -> 46.16 kHB, 162×  (+46.16 kHB)
+    unfolded (count) Add.add (Init/Prelude.lean:1638): 1 -> 144  (+143)
+    unfolded (count) tri (Regress.lean:11): 1 -> 72  (+71)
+    …
+```
+
+(`Tests/Regress`: `tri` went from a closed form to a recursive definition,
+so `decide` in `unfold_case` reduces it 72 times.)
+
+For copies, `--explain HEAD_EXPLAIN.json` adds `leanprof explain`'s cause
+to each call site that copies more (run `leanprof explain --report
+head.json --top 1000 --out head-explain.json` in the head checkout, where
+its emitted C is). An `explain.json` of another run is refused (its counts
+do not match). Allocation sites that allocate more are listed without a
+cause: explain explains copies, and says only whether the same function
+also copies more.
+
+### Worked example: Batteries
+
+[Batteries #1880](https://github.com/leanprover-community/batteries/pull/1880)
+("perf: make a List.filter grind annotation less aggressive") replaced
+`@[grind =>]` on `List.getElem_filter_eq_getElem_getElem_findIdxs` by a
+narrower `grind_pattern`: with the old annotation, `grind` turns any
+indexing into a filtered list into reasoning about `findIdxs`.
+[`reproduce/why-batteries.sh`](../../reproduce/why-batteries.sh) undoes it
+on Batteries 66e46918 (the last commit on Lean v4.35.0, the version leanprof
+is built with): base is 66e46918, head is a local commit with the old
+annotation back, so this is the known regression replayed on a pinned
+commit, not a commit from Batteries' history. It runs the Action's
+profiling step on both (`scripts/action-local.sh`, which posts nothing) with
+`elab-files: Batteries/Data/List/Lemmas.lean`. The comment (first block):
+
+> ### leanprof: compile cost: ❌ regression
+>
+> | metric | base | head | change | check |
+> |---|---:|---:|---:|---|
+> | compile heartbeats | 96.35 MHB | 96.41 MHB | +65.20 kHB (+0.07%) | ❌ fail |
+>
+> <details><summary>why <code>Batteries/Data/List/Lemmas.lean getElem_getElem_findIdxs_sub</code> got more expensive: +90.23 kHB; top change: grind instantiated (count) <code>getElem_filter_eq_getElem_getElem_findIdxs</code> +1</summary>
+>
+> | what changed | | defined at | base | head | change |
+> |---|---|---|---:|---:|---:|
+> | grind instantiated (count) | `getElem_filter_eq_getElem_getElem_findIdxs` | `Batteries/Data/List/Lemmas.lean:539` | 0 | 1 | +1 |
+> | … | | | | | |
+>
+> </details>
+
+That is the cause: `getElem_getElem_findIdxs_sub`'s `grind` now instantiates
+the re-annotated theorem, and its proof grows (kernel +34.71 kHB, with
+`Int.rec` unfolded by the kernel 245 → 315 times). The heartbeats of that
+extra work are not credited to a constant (the operations are under the
+10,000-heartbeat threshold), and the comment says so. The other regressed
+declaration, the re-annotated theorem itself (+8.69 kHB, the attribute now
+elaborated with it), shows only small changes in how often things were
+used and a note that the heartbeats are not credited to a named constant.
+
 ## GitHub Action
 
 The action in this repository does that for every pull request, with no
@@ -68,8 +167,15 @@ The comment (one per pull request, updated on each push) looks like this:
 > | compile heartbeats | 2.18 MHB | 2.36 MHB | +181.41 kHB (+8.34%) | ❌ fail |
 > | time (wall, noisy) | 18.56 ms | 18.46 ms | −0.10 ms (−0.51%) | noisy, not checked |
 >
-> followed by collapsible tables of the call sites, scopes and declarations
+> followed by a collapsed "why" block per regressed declaration (its top
+> cause in the summary line), explain's cause per copy site that copies
+> more, and collapsible tables of the call sites, scopes and declarations
 > that changed.
+
+The comment stays under 60,000 characters (GitHub's limit is 65,536): the
+summary and tables first, then as many explanations as fit, then a line
+saying how many were left out (`leanprof compare` in the job log has them
+all).
 
 Copies, allocations, calls and heartbeats are exact, so any regression is
 real; time varies between runs and is shown but never fails the job. The
@@ -89,6 +195,7 @@ job fails when a metric named in `fail-on` regresses (after commenting):
 | `allocs` | `false` | `leanprof run --allocs` |
 | `elab-files` | | files for `leanprof elab --heartbeats` (globs allowed) |
 | `fail-on` | `copies` | comma-separated from `copies`, `allocs`, `calls`, `heartbeats`; or `none` |
+| `explain` | `true` | say why: `elab --counts` (elaboration up to twice as slow) and `leanprof explain` on each commit |
 | `working-directory` | `.` | the Lake project, relative to the repository root |
 | `setup` | | command run in each checkout first, e.g. `lake exe cache get` for Mathlib projects |
 | `base-ref`, `head-ref` | the pull request's base and head | commits to compare (for other events) |
@@ -103,8 +210,10 @@ Outputs: `report` (path of the Markdown file) and `regressed` (`true` or
 How it works: the action installs elan (each commit then uses its own
 `lean-toolchain`), builds leanprof's command once per version and caches it,
 checks out base and then head in one extra worktree (so dependency builds
-are reused), runs `leanprof run` and `leanprof elab --heartbeats` on each,
-logs `leanprof compare`, and renders the comment with `leanprof report-md`.
+are reused), runs `leanprof run` and `leanprof elab --heartbeats` on each
+(with `explain: true`, also `elab --counts` and `leanprof explain` in that
+commit's checkout, which only reads its emitted C), logs `leanprof compare`,
+and renders the comment with `leanprof report-md`.
 The project does not need to depend on leanprof. The report also goes to
 the job summary.
 
@@ -129,7 +238,11 @@ leanprof report-md --fail-on copies base.json head.json > comment.md
 
 `report-md` takes one pair of `run --json` reports, one pair of
 `elab --heartbeats` reports, or both (`BASE.json NEW.json BASE_ELAB.json
-NEW_ELAB.json`), and exits 1 when a `--fail-on` metric regressed.
+NEW_ELAB.json`), and exits 1 when a `--fail-on` metric regressed;
+`--explain head-explain.json` adds explain's causes for copies.
+`scripts/action-local.sh REPO BASE HEAD FILES [EXE [ARGS]]` runs the
+action's profiling step on two commits of any checkout and prints the
+comment, without posting it.
 This repository's own pull requests run the action on `copybug`
 ([`.github/workflows/action-demo.yml`](../../.github/workflows/action-demo.yml)).
 
