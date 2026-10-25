@@ -138,18 +138,21 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   `explain` whose cause has a mechanical edit and applies it. The causes are
   `nested-array-element` (`Array.modify`), `map-value-reinserted` (`alter`
   or `modify` with the read line removed, or erase before inserting) and
-  `loop-over-updated-array` (an index loop). Every other cause is refused
-  with a reason. The check runs on a new git branch: build, tests, output
-  compared with the original's, `measure` of both versions, `measure-pair`
-  of both plain binaries, and `judge`. KEEP commits on the branch with the
-  counts, verdicts and paired interval in the message. DISCARD deletes the
-  branch. The checkout ends as it started, and a tree with uncommitted
+  `loop-over-updated-array` (an index loop), each only when the code shows
+  it computes the same values (see the review fixes below). Every other
+  cause is refused with a reason. The check runs in a git worktree of
+  `HEAD`: build, tests, output compared with the original's, `measure` of
+  both versions, `measure-pair` of both plain binaries, and `judge`. KEEP
+  commits with the counts, verdicts and paired interval in the message and
+  gives your repository a new branch at that commit. DISCARD creates no
+  branch. The checkout is never touched, and a tree with uncommitted
   changes is refused. See the [guide](docs/guide/fix.md).
 - Tests: each edit of `Examples/ExplainPatterns.lean` gives the fixed
-  declaration line for line. `scripts/fix-check.sh` (in CI) covers four
-  runs on the `Tests/Fix` fixture: KEEP (19,985 copies -> 1), DISCARD when
-  the output changes although the tests pass, a dry run, and a tree with
-  uncommitted changes.
+  declaration line for line. `scripts/fix-check.sh` (in CI) runs `fix` on
+  the `Tests/Fix` fixture: KEEP (19,985 copies -> 1, with git hooks that
+  must not run), a loop rewrite refused from the code, DISCARD when a test
+  fails or rewrites the file, TERM during the checks, a dry run, and a tree
+  with uncommitted changes.
 - On lean-compiler-backend `a623acc`, `fix --all` applied `explain`'s
   `Array.modify` to `CFG.build` and DISCARDed it: copies went from 119,516
   to 86,449, but allocations rose by 59,514, the same cost the hand-made fix

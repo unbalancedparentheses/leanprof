@@ -110,11 +110,14 @@ users than the rest of v0.2.0, and take priority over its long tail.
 Ranked; the first two are planned next to the gap-closing work, the rest
 after v0.2.0.
 
-- [x] **`leanprof fix`.** Apply the fix `explain` prints, then prove it:
+- [x] **`leanprof fix`.** Apply the fix `explain` prints, then check it:
   identical output, tests pass, `judge` says KEEP. Leave a commit with the
   evidence. For people, not only agents. Done for the three causes whose
   code replaces lines (`nested-array-element`, `map-value-reinserted`,
-  `loop-over-updated-array`; [guide](docs/guide/fix.md)). Still open: edits
+  `loop-over-updated-array`; [guide](docs/guide/fix.md)). The checks run one
+  workload, so they are evidence, not proof: each rewrite is applied only
+  where the code shows it computes the same values, in a git worktree that
+  an interruption cannot leave in your checkout, with git hooks off. Still open: edits
   for `stored-then-updated` and `multi-threaded-global`, which need the
   code that reads the value or the loop's bounds.
 - [ ] **Regressions explained.** When the Action fails a pull request, say
