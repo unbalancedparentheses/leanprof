@@ -118,9 +118,10 @@ lean_lib LeanprofHtml where
 /-- `leanprof top`, `dump` and `mcp`, imported by the command line. -/
 lean_lib LeanprofLive
 
-/-- `leanprof elab`, imported by the command, and its tests (run by `tests`). -/
+/-- `leanprof elab`, imported by the command, and its tests (run by `tests`), with those of
+why a declaration got more expensive (`Tests/Regress.lean`). -/
 lean_lib LeanprofElab where
-  roots := #[`LeanprofElab, `LeanprofElabRange, `Tests.Elab]
+  roots := #[`LeanprofElab, `LeanprofElabRange, `Tests.Elab, `Tests.Regress]
 
 /-- `leanprof elab`'s in-process Lean frontend: elaborates a file with every term and
 tactic timed against its exact source range (LeanprofElabDriver.lean). It runs the

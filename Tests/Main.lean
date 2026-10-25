@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Tests.Elab import Tests.ExplainFixes
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Tests.Elab import Tests.ExplainFixes import Tests.Regress
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -421,6 +421,8 @@ def tests : StateT Nat IO Unit := do
   -- END leanprof judge
   -- leanprof elab: reading traces (Tests/Elab.lean)
   Tests.Elab.run fun n ok d => check n ok d
+  -- why a declaration or copy site got worse (Tests/Regress.lean)
+  Tests.Regress.run fun n ok d => check n ok d
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0
