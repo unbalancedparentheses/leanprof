@@ -6,6 +6,31 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### `leanprof fix`: apply explain's fix, check it, commit it with the evidence
+
+- `leanprof fix [--exe EXE -- ARGS] [--test CMD] [--check-output FILE]
+  [--finding N] [--all] [--dry-run]` takes the costliest finding of
+  `explain` whose cause has a mechanical edit and applies it. The causes are
+  `nested-array-element` (`Array.modify`), `map-value-reinserted` (`alter`
+  or `modify` with the read line removed, or erase before inserting) and
+  `loop-over-updated-array` (an index loop). Every other cause is refused
+  with a reason. The check runs on a new git branch: build, tests, output
+  compared with the original's, `measure` of both versions, `measure-pair`
+  of both plain binaries, and `judge`. KEEP commits on the branch with the
+  counts, verdicts and paired interval in the message. DISCARD deletes the
+  branch. The checkout ends as it started, and a tree with uncommitted
+  changes is refused. See the [guide](docs/guide/fix.md).
+- Tests: each edit of `Examples/ExplainPatterns.lean` gives the fixed
+  declaration line for line. `scripts/fix-check.sh` (in CI) covers four
+  runs on the `Tests/Fix` fixture: KEEP (19,985 copies -> 1), DISCARD when
+  the output changes although the tests pass, a dry run, and a tree with
+  uncommitted changes.
+- On lean-compiler-backend `a623acc`, `fix --all` applied `explain`'s
+  `Array.modify` to `CFG.build` and DISCARDed it: copies went from 119,516
+  to 86,449, but allocations rose by 59,514, the same cost the hand-made fix
+  (`8a0d286`) avoided with a second pass. On lean-regex `32af6f3`, no
+  finding has a mechanical fix (all are `shared-on-entry`).
+
 ### Smaller fixes and maintenance
 
 - `leanprof doctor`'s copy-detection self-check could not run on Linux

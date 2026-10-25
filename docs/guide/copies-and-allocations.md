@@ -153,6 +153,11 @@ updates over 10 keys or slots):
 | | | `state.atomically (modify (·.push v))` with `initialize state : Std.Mutex (Array Nat)` | `let mut buf := #[]`, `buf := buf.push v`, then `state.atomically (modify (· ++ buf))` once | 399 → 0 per update |
 | `loop-over-updated-array` | the loop's state arrives shared, and the loop is `for x in xs` over the array it updates | `for x in xs do xs := xs.set! j (x + 1)` | `for i in [0:xs.size] do` with `let x := xs[i]!` | 10 → 0 (one full copy per run of the loop) |
 
+For `nested-array-element`, `map-value-reinserted` and `loop-over-updated-array`
+the printed code replaces source lines one for one. `leanprof fix` applies it
+on a new branch, then builds, tests, compares the output, measures and judges
+it, and commits only a KEEP ([applying a fix](fix.md)).
+
 Why the global case cannot be fixed with `modify`: a value created by
 `initialize` is marked persistent, and what is later stored in a persistent
 `IO.Ref` (a `Std.Mutex` keeps its state in one) is marked multi-threaded, as
