@@ -2,12 +2,73 @@
 
 [Website and documentation](https://unbalancedparentheses.github.io/leanprof)
 
-> In Lean, `arr.push x` is fast only when nothing else refers to `arr`; if
-> something does, Lean silently copies the whole array first. One stray
-> reference turns a linear loop quadratic, and nothing in your code, your
-> types, or a normal profiler tells you. **leanprof is the only tool that shows
-> you those copies: the line, how many, how many bytes, how much time, and why
-> the value was shared, with the fix.**
+> **Find out why your Lean 4 code is slow, and how to fix it.**
+>
+> leanprof profiles Lean programs and proofs without changing your project. It
+> counts what makes Lean slow that no other profiler sees (copies of shared
+> arrays and strings, allocations, failed reuse, the unfolds and instance
+> searches behind compile time), names the line and the cause, and prints the
+> fix. In CI it fails a pull request on "+1 copy" and says what made it slower.
+
+- A compiler written in Lean: **22% faster**, from changes leanprof's loop
+  found and kept ([merged](docs/case-studies/autoresearch-lean-compiler-backend.md)).
+- Three of Mathlib's slowest files: **46–69% fewer heartbeats**, same terms
+  ([case study](docs/case-studies/mathlib.md)).
+- A **2.4% slowdown caught 4 times in 5** where LeanBench caught none
+  ([comparison](docs/case-studies/leanbench.md)).
+
+Why copies: `arr.push x` is fast only when nothing else refers to `arr`; if
+something does, Lean silently copies the whole array first. One stray
+reference turns a linear loop quadratic, and nothing in your code, your
+types, or a normal profiler tells you. leanprof shows each one: the line, how
+many, how many bytes, how much time, why the value was shared, and the fix.
+
+## Why leanprof, and not the alternatives
+
+- **It sees the costs that are specific to Lean.** Copies of shared values,
+  allocations, failed reuse and closure calls, counted exactly per source
+  line, with the cause read from the compiler's IR and the fix written with
+  your own names; `leanprof fix` applies the mechanical ones and keeps an
+  edit only when the output, the tests and the measurements agree. samply,
+  perf, [LeanProfiler](https://github.com/lean-dojo/LeanProfiler),
+  [LeanBench](https://github.com/alok/LeanBench) and
+  [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
+  report time only.
+- **It says why a pull request got slower.** Copies, allocations and calls are
+  exact counts, so CI can fail on "+1 copy" without noise; the comment names
+  the declaration that got more expensive and the unfold, instance search,
+  `simp` lemma or `grind` theorem behind it. Against LeanBench it caught a
+  2.4% slowdown 4 times in 5 (LeanBench at its 5% threshold: 0 in 5), with no
+  false alarm in 20 unchanged runs ([case study](docs/case-studies/leanbench.md)).
+- **Its probes cost nanoseconds, not microseconds.** About 5–7 ns per scope on
+  the Mac and 23 ns on Linux, constant and subtracted; LeanProfiler's span
+  costs 4.7 µs at first and 96 µs once its events accumulate. With probes
+  placed where LeanProfiler's spans are, leanprof is as accurate or better on
+  every benchmark workload ([results](bench/RESULTS.md)).
+- **Nothing to change in your project.** It profiles any Lake project from
+  outside: every function with `--auto`, dependencies included, and puts your
+  normal build back afterwards. LeanProfiler and LeanBench need code in
+  your project.
+- **Sampling that knows Lean.** It runs samply and adds Lean names, file:line,
+  the runtime's share (allocation, freeing, copying) and which of your
+  functions library code ran under. On Linux it rebuilds the stacks perf
+  cuts short: deep recursion 1.2 points off its true share, against samply's
+  14.8.
+- **Run time and compile time in one tool.** Compile cost per declaration,
+  term and tactic in exact heartbeats, the definitions unfolded behind it,
+  repeated work, and a project-to-tactic [viewer](docs/profiles/README.md);
+  full profiles cost 1.3–1.9 times less per file than lean-source-profiler's
+  detailed mode.
+- **Built for agents.** An MCP server, ranked findings as JSON, paired
+  verdicts, and an [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
+  that made a compiler written in Lean 22% faster, merged after review.
+
+**Where it is behind:** LeanBench reaches a time verdict faster (0.74 s
+against 2.9–7.1 s); lean-source-profiler publishes all of Mathlib, leanprof
+Batteries and 40 Mathlib modules; exact compile-time ranges need the Lean
+leanprof was built with; tiny `profile!` scopes are timed less accurately
+than by sampling. Details and every number in
+[where leanprof wins, and where it does not](#where-leanprof-wins-and-where-it-does-not).
 
 ## What it found in real code
 
