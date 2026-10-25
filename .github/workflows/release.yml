@@ -97,13 +97,12 @@ jobs:
       - name: Install it with the install script
         run: |
           (cd dist && shasum -a 256 *.tar.gz > SHA256SUMS)
-          # the script as users run it (piped, so not as a clone), from this archive
+          # the script as users run it (piped, so not as a clone), from this archive,
+          # with the pinned samply it fetches (checksum-verified) for this platform
           LEANPROF_HOME="$RUNNER_TEMP/home" LEANPROF_DOWNLOAD="file://$PWD/dist" \
-            sh -s -- --release "$TAG" --bin "$RUNNER_TEMP/bin" < scripts/install.sh
+            sh -s -- --release "$TAG" --bin "$RUNNER_TEMP/bin" --samply < scripts/install.sh
           "$RUNNER_TEMP/bin/leanprof" help | grep -q report-md
-      - name: Install samply (macOS)
-        if: runner.os == 'macOS'
-        run: brew install samply
+          "$RUNNER_TEMP/home/samply/samply" --version
       - name: Smoke test the installed command on a project outside this repository
         run: |
           sample=""
