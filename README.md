@@ -125,7 +125,7 @@ of the run, to agents.
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
 | A running program, live; the last seconds as a timeline | `leanprof top myapp`, `leanprof dump PID` |
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects; a project view from project to tactic, compared with a base ([published profiles](docs/profiles/README.md): Batteries, Mathlib's 40 slowest modules) | `leanprof elab [--project] [--heartbeats]`, `leanprof html` |
-| Regressions in CI, exact for copies, allocations, calls and heartbeats; PR comments | `leanprof compare`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
+| Regressions in CI, exact for copies, allocations, calls and heartbeats; PR comments that say why: the definitions unfolded, simp lemmas, instances and `grind` theorems that changed in each slower declaration, explain's cause per copy site | `leanprof compare`, [GitHub Action](docs/guide/ci-and-regressions.md#why-it-got-worse) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
 | Everything next to the code, or in one shareable page | `#leanprof`, [VS Code](docs/guide/vscode.md), `leanprof html` |
@@ -243,7 +243,7 @@ reproduction.
 | Peak memory per scope, freeing pauses | ✅ | – | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads | – |
 | Compile time | per file, declaration, term and tactic (exact ranges with the Lean leanprof was built with); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
-| Exact regression checks, PR comments | ✅ | thresholded time | – | – | mean against a saved baseline, fixed threshold |
+| Exact regression checks, PR comments | ✅, with the cause of each ([example](docs/guide/ci-and-regressions.md#worked-example-batteries)) | thresholded time | – | – | mean against a saved baseline, fixed threshold |
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |
 | Seeded slowdowns caught, quiet machine ([case study](docs/case-studies/leanbench.md)) | 2%: 5/5, 5% and up: 5/5; never a false alarm in 20 | – | – | – | at a 5% threshold: 2%: 0/5, 4.8%: 2/5, 10% and up: 5/5; 0 false alarms in 20 |

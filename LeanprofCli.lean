@@ -2,6 +2,7 @@ import Lean.Data.Json
 import Leanprof.Core
 import Leanprof.Explain
 import Leanprof.Judge
+import Leanprof.Regress
 import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
@@ -28,6 +29,7 @@ import LeanprofElab
 -/
 
 open Lean System
+open Leanprof.Regress (mdCode mdProse htmlCode)
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
@@ -65,10 +67,12 @@ def commands : List (String × String × String) := [
     "heartbeats, which are the same on every run. With the project on leanprof's Lean, terms and tactics\n" ++
     "are timed by exact source range (line:column); --compact times only those (close to plain lean).\n" ++
     "--no-driver elaborates with `lean --json` instead."),
-  ("compare", "[--threshold PCT] [--min-ms MS] BASE.json NEW.json",
+  ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
-    "by more than PCT% (default 10) and MS ms (default 1)."),
+    "by more than PCT% (default 10) and MS ms (default 1). For each declaration that got more\n" ++
+    "expensive, what changed inside it (definitions unfolded, instances, simp lemmas, repeated work,\n" ++
+    "`--counts` counters); --explain names explain's cause for each copy site that copies more."),
   ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
@@ -86,10 +90,12 @@ def commands : List (String × String × String) := [
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
     "machine was overloaded while measuring (--allow-overloaded judges a paired session anyway, for a\n" ++
     "machine that is always shared; the verdict says so)."),
-  ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
+  ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] [--explain NEW_EXPLAIN.json] [--max-chars N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
-    "with pass/fail per exact metric. Exit 1 if a metric named by --fail-on (default: copies) regressed."),
+    "with pass/fail per exact metric, and why each regressed declaration or copy site got worse (as\n" ++
+    "`compare`). At most N characters (default 60000, under GitHub's comment limit).\n" ++
+    "Exit 1 if a metric named by --fail-on (default: copies) regressed."),
   ("explain", "[--report FILE] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]]",
     "For each copy of a shared value in the last report, say where the second reference comes from,\n" ++
     "read from the compiler's IR (.lake/build/ir/*.c), with source lines and, when the cause is\n" ++
@@ -728,17 +734,116 @@ def fmtTime (ns : Float) : String :=
 `too_small`): what is left of a scope after subtracting the probes' cost. -/
 def tooSmallLabel : String := "< probe cost"
 
+/-! ## Why a declaration or copy site got worse (compare, report-md) -/
+
+/-- `n` with thousands separators. -/
+def groupDigits (n : Nat) : String :=
+  if _h : n < 1000 then toString n
+  else
+    let r := n % 1000
+    groupDigits (n / 1000) ++ "," ++ (if r < 10 then "00" else if r < 100 then "0" else "") ++ toString r
+termination_by n
+decreasing_by omega
+
+/-- What a row of `Regress.Explanation` is, in words. -/
+def whatLabel : String → String
+  | "unfold" => "isDefEq unfolds"
+  | "whnf" => "whnf reduces"
+  | "instance" => "instance tried"
+  | "simp" => "simp lemma rewrote with"
+  | "repeated" => "repeated operation"
+  | "unfolds" => "unfolded (count)"
+  | "kernel" => "kernel unfolded (count)"
+  | "instances" => "instance used (count)"
+  | "simp_used" => "simp lemma used (count)"
+  | "simp_failed" => "simp lemma failed (count)"
+  | "grind_instances" => "grind instantiated (count)"
+  | w => w
+
+def fmtKHB (x : Float) : String := s!"{fmt2 (x / 1000)} kHB"
+
+def fmtSigned (f : Float → String) (d : Float) : String :=
+  if d > 0 then s!"+{f d}" else if d < 0 then s!"−{f d.abs}" else "0"
+
+/-- One side of a row: heartbeats (and how many times), or a count. -/
+def rowSide (r : Leanprof.Regress.Row) (v : Option Float) (t : Option Nat) : String :=
+  match v with
+  | none => "not listed"
+  | some x =>
+    if r.isCount then groupDigits x.toUInt64.toNat
+    -- no heartbeats credited on either side: only how often
+    else if r.base.getD 0 == 0 && r.new.getD 0 == 0 && t.isSome then s!"{t.getD 0}×"
+    else s!"{fmtKHB x}{match t with | some t => s!", {t}×" | none => ""}"
+
+def rowChange (r : Leanprof.Regress.Row) : String :=
+  match r.delta? with
+  | none => "?"
+  | some d =>
+    if r.isCount then fmtSigned (fun x => groupDigits x.toUInt64.toNat) d
+    else if d == 0 then s!"{if r.timesDelta > 0 then "+" else "−"}{r.timesDelta.natAbs}×"
+    else fmtSigned fmtKHB d
+
+/-- The rows to show of an explanation: credited work, then exact counts, `n` of each. -/
+def shownRows (e : Leanprof.Regress.Explanation) (n : Nat) : Array Leanprof.Regress.Row × Nat :=
+  let rows := (e.work.toList.take n ++ e.counts.toList.take n).toArray
+  (rows, e.work.size + e.counts.size - rows.size)
+
+/-- The explanation's headline: its largest change. -/
+def topCause (e : Leanprof.Regress.Explanation) : Option Leanprof.Regress.Row :=
+  e.headline
+
+/-- What changed inside each regressed declaration, as `compare` prints it. -/
+def whyText (e : Leanprof.Regress.Explanation) (top : Nat) : Array String := Id.run do
+  let mut out := #[s!"  {e.key} ({e.pos}): {fmtKHB e.base} -> {fmtKHB e.new}" ++
+    (if e.parts.isEmpty then "" else
+      s!"  [{", ".intercalate (e.parts.toList.map fun (p, x, y) => s!"{p} {fmtSigned fmtKHB (y - x)}")}]")]
+  let (rows, more) := shownRows e top
+  for r in rows do
+    out := out.push s!"    {whatLabel r.what} {r.name}{if r.loc.isEmpty then "" else s!" ({r.loc})"}: {rowSide r r.base r.baseTimes} -> {rowSide r r.new r.newTimes}  ({rowChange r})"
+  if more > 0 then out := out.push s!"    ({more} more changed)"
+  for n in e.notes do out := out.push s!"    note: {n}"
+  return out
+
+/-- The regressed declarations of two `elab` reports (as `compare` counts them),
+explained, largest increase first. -/
+def explainElab (bj nj : Json) (regressed : Array String) : Array Leanprof.Regress.Explanation :=
+  let bi := Leanprof.Regress.loadElab bj
+  let ni := Leanprof.Regress.loadElab nj
+  regressed.filterMap fun k => do
+    let b ← bi.decls.get? k
+    let n ← ni.decls.get? k
+    return Leanprof.Regress.explainDecl bi ni k b n
+
+/-- explain's cause of a copy site, in one line (`none`: no explain.json). -/
+def copyCauseText (fs : Option (Array Leanprof.Regress.Finding)) (key : String) (count : Nat) : Option String := do
+  let fs ← fs
+  match Leanprof.Regress.findingsFor fs key count with
+  | .error e => return s!"cause not attributed: {e}"
+  | .ok #[] => return "cause not attributed: explain.json has no finding for this site (explain only explains its --top sites)"
+  | .ok found =>
+    return "; ".intercalate (found.toList.map fun f =>
+      let lines := if f.lines.isEmpty then "" else s!" ({f.file}: {", ".intercalate (f.lines.toList.map toString)})"
+      s!"{if f.cause.isEmpty then "" else s!"{f.cause}: "}{f.why}{lines}")
+
+def loadFindings (path : Option String) : IO (Option (Array Leanprof.Regress.Finding)) := do
+  let some p := path | return none
+  return some (Leanprof.Regress.loadExplain (← IO.ofExcept (Json.parse (← IO.FS.readFile p))))
+
 def compare (argv : List String) : IO UInt32 := do
-  let rec parse (thr minMs : Float) (files : List String) : List String → Except String (Float × Float × List String)
-    | [] => .ok (thr, minMs, files.reverse)
-    | "--threshold" :: v :: rest => parse (v.toNat!.toFloat) minMs files rest
-    | "--min-ms" :: v :: rest => parse thr (v.toNat!.toFloat) files rest
-    | a :: rest => parse thr minMs (a :: files) rest
-  let (thr, minMs, files) ← IO.ofExcept (parse 10 1 [] argv)
+  let rec parse (thr minMs : Float) (ex : Option String) (files : List String) :
+      List String → Except String (Float × Float × Option String × List String)
+    | [] => .ok (thr, minMs, ex, files.reverse)
+    | "--threshold" :: v :: rest => parse (v.toNat!.toFloat) minMs ex files rest
+    | "--min-ms" :: v :: rest => parse thr (v.toNat!.toFloat) ex files rest
+    | "--explain" :: v :: rest => parse thr minMs (some v) files rest
+    | a :: rest => parse thr minMs ex (a :: files) rest
+  let (thr, minMs, explainPath, files) ← IO.ofExcept (parse 10 1 none [] argv)
   let [basePath, newPath] := files | throw <| IO.userError (usageFor "compare")
   let base ← loadReport basePath
   let new ← loadReport newPath
+  let findings ← loadFindings explainPath
   let mut regressions := 0
+  let mut slowerDecls : Array String := #[]
   IO.println s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
   let keys := (base.scopes.toList.map (·.1) ++ new.scopes.toList.map (·.1)).eraseDups
   let amt (x : Float) := if base.exact then s!"{fmt2 (x / 1000)} kHB" else fmtTime x
@@ -760,6 +865,7 @@ def compare (argv : List String) : IO UInt32 := do
       let callsChanged := bc != nc
       let mark := if slower || callsChanged then "REGRESSION" else if pct < -thr then "faster" else "ok"
       if slower || callsChanged then regressions := regressions + 1
+      if slower && base.isElab && new.isElab then slowerDecls := slowerDecls.push k
       let amt (r : Report) (x : Float) :=
         if base.exact then s!"{fmt2 (x / 1000)} kHB" else time r x
       let change := if (small base || small new) && !base.exact then "" else s!" ({fmt2 pct}%)"
@@ -771,6 +877,12 @@ def compare (argv : List String) : IO UInt32 := do
     | none, none => pure ()
   if base.isElab && new.isElab && base.total > 0 then
     IO.println s!"total: {amt base.total} -> {amt new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
+  if base.exact && new.exact && !slowerDecls.isEmpty then
+    let bj ← IO.ofExcept (Json.parse (← IO.FS.readFile basePath))
+    let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile newPath))
+    IO.println "why (what changed inside each declaration that got more expensive; counts are exact, heartbeats nearly so)"
+    for e in explainElab bj nj slowerDecls do
+      for l in whyText e 8 do IO.println l
   IO.println "copies of shared or multi-threaded values (any increase is a regression)"
   let ckeys := (base.copies.toList.map (·.1) ++ new.copies.toList.map (·.1)).eraseDups
   for k in ckeys do
@@ -779,6 +891,7 @@ def compare (argv : List String) : IO UInt32 := do
     if n > b then
       regressions := regressions + 1
       IO.println s!"  REGRESSION  {k}: {b} -> {n}"
+      if let some c := copyCauseText findings k n then IO.println s!"    why: {c}"
     else if n < b then
       IO.println s!"  fewer  {k}: {b} -> {n}"
   -- allocations: exact; judged on the total, since inlining and refactoring
@@ -798,6 +911,8 @@ def compare (argv : List String) : IO UInt32 := do
         (Int.ofNat y1 - x1).natAbs > (Int.ofNat y2 - x2).natAbs
     for (k, x, y) in changed.toList.take 10 do
       IO.println s!"  {if y > x then "more" else "fewer"}  {k}: {x} -> {y}"
+      if y > x && findings.isSome then
+        IO.println "    why: cause not attributed: explain explains copies, not allocations"
     if changed.size > 10 then IO.println s!"  ({changed.size - 10} more sites changed)"
   else if base.allocs.isEmpty != new.allocs.isEmpty then
     IO.println "allocations counted in only one report (run --allocs); not compared"
@@ -1547,27 +1662,10 @@ def judgeCmd (argv : List String) : IO UInt32 := do
 
 /-! ## report-md -/
 
-/-- `n` with thousands separators. -/
-def groupDigits (n : Nat) : String :=
-  if _h : n < 1000 then toString n
-  else
-    let r := n % 1000
-    groupDigits (n / 1000) ++ "," ++ (if r < 10 then "00" else if r < 100 then "0" else "") ++ toString r
-termination_by n
-decreasing_by omega
-
 def fmtCount (x : Float) : String := groupDigits x.abs.round.toUInt64.toNat
 
 def fmtHeartbeats (x : Float) : String :=
   if x.abs ≥ 1e6 then s!"{fmt2 (x / 1e6)} MHB" else s!"{fmt2 (x / 1000)} kHB"
-
-/-- A name as inline code in a Markdown table. Names come from the profiled
-code (a pull request's, in the Action): a backtick, `|` or line break would
-end the code span or the row and let the rest be read as Markdown or HTML in
-the comment. -/
-def mdCode (s : String) : String :=
-  let s := ((s.replace "`" "'").replace "|" "\\|").map fun c => if c == '\n' || c == '\r' then ' ' else c
-  s!"`{s}`"
 
 /-- `+12 (+3.40%)`: the change from `b` to `n`, formatted with `f`. -/
 def fmtChange (f : Float → String) (b n : Float) : String :=
@@ -1647,6 +1745,8 @@ structure MdOpts where
   title : String := "leanprof"
   top : Nat := 10
   files : Array String := #[]
+  explain : Option String := none
+  maxChars : Nat := 60000
 
 def mdMetricIds : List String := ["copies", "allocs", "calls", "heartbeats"]
 
@@ -1662,9 +1762,52 @@ partial def parseReportMd (o : MdOpts) : List String → Except String MdOpts
   | "--min-ms" :: v :: rest => parseReportMd { o with minMs := v.toNat!.toFloat } rest
   | "--title" :: v :: rest => parseReportMd { o with title := v } rest
   | "--top" :: v :: rest => parseReportMd { o with top := v.toNat! } rest
+  | "--explain" :: v :: rest => parseReportMd { o with explain := some v } rest
+  | "--max-chars" :: v :: rest => parseReportMd { o with maxChars := v.toNat! } rest
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
     else parseReportMd { o with files := o.files.push a } rest
+
+/-- What can be said about an allocation site `key` (`function in scope`) that
+allocates more: explain names causes of copies only. `copied`: the copy sites
+that copy more. -/
+def allocNote (copied : Array (String × Float × Float)) (key : String) : String :=
+  let (fn, sc) := match key.splitOn " in " with
+    | f :: rest => (f, " in ".intercalate rest)
+    | [] => (key, "")
+  let same := copied.filter fun (ck, _, _) => ck.startsWith s!"{fn} [" && ck.endsWith s!"] in {sc}"
+  "Cause not attributed: explain explains copies, not allocations." ++
+    (if same.isEmpty then "" else s!" The same function copies more too ({", ".intercalate (same.toList.map fun (ck, cx, cy) => s!"{mdCode ck} {fmtChange fmtCount cx cy}")}).")
+
+/-- `s` cut to about `n` characters, at a space. -/
+def shorten (s : String) (n : Nat) : String :=
+  if s.length ≤ n then s
+  else
+    let cut := String.ofList (s.toList.take n)
+    let words := cut.splitOn " "
+    " ".intercalate (words.take (words.length - 1)) ++ " …"
+
+/-- What changed inside a regressed declaration, as a collapsed block of the comment. -/
+def whyMd (e : Leanprof.Regress.Explanation) (rowsEach : Nat := 5) : String := Id.run do
+  let headline := match topCause e with
+    | some r => s!"; top change: {whatLabel r.what} {htmlCode r.name} {rowChange r}"
+    | none => "; cause not attributed"
+  let mut l : Array String := #[
+    s!"<details><summary>why {htmlCode e.key} got more expensive: {fmtSigned fmtHeartbeats (e.new - e.base)}{headline}</summary>", "",
+    s!"{mdCode e.pos}: {fmtHeartbeats e.base} → {fmtHeartbeats e.new}" ++
+      (if e.parts.isEmpty then "" else
+        s!" ({", ".intercalate (e.parts.toList.map fun (p, x, y) => s!"{p} {fmtSigned fmtHeartbeats (y - x)}")})")]
+  let (rows, more) := shownRows e rowsEach
+  unless rows.isEmpty do
+    l := l ++ #["", "| what changed | | defined at | base | head | change |", "|---|---|---|---:|---:|---:|"]
+    for r in rows do
+      l := l.push s!"| {whatLabel r.what} | {mdCode r.name} | {if r.loc.isEmpty then "" else mdCode r.loc} | {rowSide r r.base r.baseTimes} | {rowSide r r.new r.newTimes} | {rowChange r} |"
+    if more > 0 then l := l.push s!"\n… and {more} more changed (`leanprof compare` lists them)"
+  unless e.notes.isEmpty do
+    l := l.push ""
+    for n in e.notes do l := l.push s!"- {n}"
+  l := l ++ #["", "</details>"]
+  return "\n".intercalate l.toList
 
 /-- A Markdown summary of two pairs of reports (a run's and an elab's), for a
 pull-request comment. Exits 1 when a metric named by `--fail-on` regressed. -/
@@ -1735,7 +1878,8 @@ def reportMd (argv : List String) : IO UInt32 := do
     out := out.push s!"| time (wall, noisy) | {fmtMs b.wall} | {fmtMs n.wall} | {fmtChange fmtMs b.wall n.wall} | noisy, not checked |"
   out := out.push ""
   let enforced := if o.failOn.isEmpty then "nothing (fail-on: none)" else ", ".intercalate o.failOn
-  out := out.push s!"Exact metrics (copies, allocations, calls, heartbeats) do not vary between runs; time does, so it is shown but never checked. Enforced: {enforced}."
+  out := out.push s!"Copies, allocations and calls do not vary between runs and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: {enforced}."
+  let introEnd := out.size
   let row (m : MdMetric) (k : String) (x y : Float) : String :=
     let mark := if !m.bad.any (·.1 == k) then "" else if o.failOn.contains m.id then " ❌" else " ⚠️"
     s!"| {mdCode k} | {m.fmt x} | {m.fmt y} | {fmtChange m.fmt x y}{mark} |"
@@ -1769,7 +1913,52 @@ def reportMd (argv : List String) : IO UInt32 := do
         out := out.push s!"| {mdCode k} | {fmtMs x} | {fmtMs y} | {fmtChange fmtMs x y} |"
       out := out.push ""
       out := out.push "</details>"
-  IO.println ("\n".intercalate out.toList)
+  -- why: what changed inside each regressed declaration and copy site
+  let mut why : Array String := #[]
+  if let some m := metrics.find? (·.id == "heartbeats") then
+    if !m.bad.isEmpty then
+      let i := if run.isSome then 2 else 0
+      let bj ← IO.ofExcept (Json.parse (← IO.FS.readFile o.files[i]!))
+      let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile o.files[i + 1]!))
+      for e in explainElab bj nj ((m.bad.toList.take o.top).toArray.map (·.1)) do
+        why := why.push (whyMd e)
+  if let some m := metrics.find? (·.id == "copies") then
+    if !m.bad.isEmpty then
+      let findings ← loadFindings o.explain
+      let mut items : Array String := #[]
+      for (k, x, y) in m.bad.toList.take o.top do
+        let cause := (copyCauseText findings k y.toUInt64.toNat).getD
+          "cause not attributed: no `leanprof explain` findings were given (`report-md --explain HEAD_EXPLAIN.json`)"
+        items := items.push s!"- {mdCode k}: {fmtChange fmtCount x y} copies. {mdProse (shorten cause 600)}"
+      -- allocation sites that went up, with the copies made in the same function and scope
+      why := why.push ("\n".intercalate ([
+        s!"<details><summary>why: {m.bad.size} copy {if m.bad.size == 1 then "site copies" else "sites copy"} more (causes from leanprof explain on the head)</summary>", ""] ++
+        items.toList ++ ["", "</details>"]))
+  -- allocation sites that went up: explain has no causes for them; say which also copy more
+  if let some am := metrics.find? (·.id == "allocs") then
+    if !am.bad.isEmpty then
+      let copied := ((metrics.find? (·.id == "copies")).map (·.bad)).getD #[]
+      let mut items : Array String := #[]
+      for (k, x, y) in am.bad.toList.take o.top do
+        items := items.push (s!"- {mdCode k}: {fmtChange fmtCount x y} allocations. " ++ allocNote copied k)
+      why := why.push ("\n".intercalate ([
+        s!"<details><summary>why: {am.bad.size} allocation {if am.bad.size == 1 then "site allocates" else "sites allocate"} more</summary>", ""] ++
+        items.toList ++ ["", "</details>"]))
+  -- within GitHub's comment limit: the summary and tables first, then as many explanations as fit
+  let core := ("\n".intercalate out.toList).length
+  let mut shown : Array String := #[]
+  let mut used := core
+  let mut dropped := 0
+  for w in why do
+    if used + w.length + 2 + 200 ≤ o.maxChars then
+      shown := shown.push w
+      used := used + w.length + 2
+    else dropped := dropped + 1
+  if dropped > 0 then
+    shown := shown.push s!"_{dropped} more {if dropped == 1 then "explanation" else "explanations"} not shown (comment size limit); `leanprof compare` prints all of them._"
+  let whyLines := shown.toList.flatMap fun w => ["", w]
+  let final := out.toList.take introEnd ++ whyLines ++ out.toList.drop introEnd
+  IO.println ("\n".intercalate final)
   return if failed.isEmpty then 0 else 1
 
 /-! ## doctor -/

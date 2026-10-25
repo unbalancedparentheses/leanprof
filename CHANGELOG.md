@@ -103,6 +103,34 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   (checked: plain 0.216 s, `run` 1.13×, `--auto` 1.59×, `--allocs` 1.22×,
   2 runs, shared Mac).
 
+### Why a regression happened
+
+- `leanprof compare` and `report-md` (the Action's comment) say what made
+  each regressed declaration more expensive: the definitions unfolded and
+  reduced, instances, simp lemmas and repeated operations whose credited
+  heartbeats or counts changed, and with `elab --counts` Lean's exact
+  counters (unfolds, kernel unfolds, instances, simp lemmas used and failed,
+  theorems `grind` instantiated), each with `file:line`, increases first.
+  What the reports do not record is said to be not attributed, never
+  estimated. `--explain HEAD_EXPLAIN.json` adds `leanprof explain`'s cause
+  to each copy site that copies more (refused when it is of another run).
+- `elab.json` records per declaration `causes`, `repeated` and `counts`,
+  and whether `--counts` was on; declarations are keyed by their whole name
+  (one longer than the 60 characters kept of its text, as with
+  `@[grind =>] theorem …`, no longer appears as removed and added).
+  `explain.json` findings carry their scope.
+- The GitHub Action names the causes (input `explain`, default `true`: `elab
+  --counts` and `leanprof explain` on each commit), in a collapsed block per
+  regressed declaration with its top change in the summary line; the comment
+  stays under 60,000 characters (`report-md --max-chars`). Names from the
+  pull request are escaped in prose too (`mdProse`, `htmlCode`).
+- `Tests/Regress` and `scripts/regress-check.py` (in CI): known regressions
+  (a lemma joins the simp set, a definition gets more expensive to unfold, an
+  array is kept across a push) through the real pipeline, and golden
+  `report-md` output. `reproduce/why-batteries.sh` replays Batteries #1880
+  undone and prints the comment; `scripts/action-local.sh` runs the
+  Action's profiling step on any two commits without posting.
+
 ### Smaller fixes and maintenance
 
 - `leanprof doctor`'s copy-detection self-check could not run on Linux

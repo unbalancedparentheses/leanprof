@@ -1,0 +1,109 @@
+{
+ "alloc_ns": 2.85,
+ "allocations": [
+  {
+   "allocs": 301,
+   "bytes": 7224,
+   "est_ns": 857,
+   "function": "collect (in Std.Legacy.Range.forIn'.loop)",
+   "pct_run": 0.005,
+   "scope": "-",
+   "where": "Main.lean:6"
+  },
+  {
+   "allocs": 1,
+   "bytes": 32,
+   "est_ns": 3,
+   "function": "collect",
+   "pct_run": 0.0,
+   "scope": "-",
+   "where": "Main.lean:6"
+  },
+  {
+   "allocs": 1,
+   "bytes": 32,
+   "est_ns": 3,
+   "function": "main",
+   "pct_run": 0.0,
+   "scope": "-",
+   "where": "Main.lean:14"
+  },
+  {
+   "allocs": 1,
+   "bytes": 24,
+   "est_ns": 3,
+   "function": "run_main",
+   "pct_run": 0.0,
+   "scope": "-",
+   "where": ""
+  },
+  {
+   "allocs": 1,
+   "bytes": 16,
+   "est_ns": 3,
+   "function": "initialize_regress_Main",
+   "pct_run": 0.0,
+   "scope": "-",
+   "where": ""
+  }
+ ],
+ "closures": [],
+ "copies": [
+  {
+   "bytes": 358800,
+   "copies": 300,
+   "copy_ns": 176769,
+   "function": "collect (in Std.Legacy.Range.forIn'.loop)",
+   "kind": "Array",
+   "multi_threaded": 0,
+   "pct_run": 0.964,
+   "persistent": 1,
+   "scope": "-",
+   "shared": 299,
+   "symbol": "lp_regress___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00collect_spec__0___redArg",
+   "tiny": false,
+   "where": "Main.lean:6"
+  }
+ ],
+ "dropped": 0,
+ "light_overhead_by_path_ns": {
+  "auto": 10.2,
+  "closure": 16.2,
+  "monadic": 10.2,
+  "pure": 10.1
+ },
+ "memory": {
+  "end_commit": 7340032,
+  "peak_commit": 7340032,
+  "peak_rss": 10420224,
+  "samples": 13,
+  "scopes": [],
+  "start_commit": 4456448,
+  "sys_ns": 5808000,
+  "user_ns": 957000,
+  "wall_ns": 6726509
+ },
+ "overhead_by_path_ns": {
+  "auto": 13.4,
+  "closure": 18.9,
+  "direct": 12.1,
+  "monadic": 13.3,
+  "pure": 13.4
+ },
+ "overhead_ns": 13.4,
+ "probe_ns": 0,
+ "resolution_ns": 1.0,
+ "reuse": [],
+ "run_ns": 18335731,
+ "scopes": [],
+ "self_check": {
+  "checked": "Array.push, Array.set!, String.push, String.append, ByteArray.push, ByteArray.set!",
+  "lean": "4.35.0",
+  "ok": true,
+  "warning": ""
+ },
+ "tasks": [],
+ "version": 3,
+ "waits": [],
+ "wall_ns": 18335731
+}

@@ -1387,7 +1387,7 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
       pure ((← IO.FS.readFile file).splitOn "\n").toArray else pure #[]
   let decl := if line > 0 && line ≤ src.size then declLines src (line - 1) else #[]
   let site := fun (cause why fix : String) (code : Array String) (lines : Array Nat) (conf : String) (strength : Nat) =>
-    Json.mkObj [("symbol", sym), ("function", jstr c "function"), ("where", wherePos), ("kind", kind),
+    Json.mkObj [("symbol", sym), ("function", jstr c "function"), ("scope", jstr c "scope"), ("where", wherePos), ("kind", kind),
       ("cause", cause), ("why", why), ("fix", fix), ("fix_code", Json.arr (code.map toJson)),
       ("file", file), ("lines", Json.arr ((lines.qsort (· < ·)).map toJson)), ("confidence", conf), ("strength", (strength : Json)),
       ("copies", (copies.toUInt64.toNat : Json)), ("shared", (shared.toUInt64.toNat : Json)),
