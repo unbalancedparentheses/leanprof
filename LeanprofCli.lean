@@ -31,9 +31,9 @@ open Lean System
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
-    "time; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
+    "time, except functions too small to time, which --time-tiny includes; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
     ".lake/leanprof/report.json. Memory (peak, per scope) is always sampled.\n" ++
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
@@ -44,7 +44,7 @@ def commands : List (String × String × String) := [
     "--all-copies lists copies of constants and of empty or tiny values row by row (summarized\n" ++
     "by default). --trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
     "--cwd DIR runs EXE in DIR (for programs that read the current directory)."),
-  ("stat", "[--auto | --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("stat", "[--auto | --auto-all] [--time-tiny] [--no-allocs] [--no-frees] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
     "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
     "unless turned off (they slow the program down); --auto times every function."),
@@ -252,6 +252,7 @@ def spawnWait (cmd : String) (args : Array String) (env : Array (String × Optio
 
 structure RunOpts where
   auto : Option String := none
+  timeTiny : Bool := false
   trace : Option String := none
   json : Option String := none
   keep : Bool := false
@@ -265,10 +266,16 @@ structure RunOpts where
   exe : Option String := none
   args : Array String := #[]
 
+/-- `--time-tiny`: `--auto` also times functions too small to time
+(scripts/leanprof-tiny.awk), which it otherwise leaves out. -/
+def tinyEnv (opts : RunOpts) : Array (String × Option String) :=
+  #[("LEANPROF_AUTO_TINY", if opts.timeTiny then some "1" else none)]
+
 partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | [] => .ok opts
   | "--auto" :: rest => parseRun { opts with auto := some "1" } rest
   | "--auto-all" :: rest => parseRun { opts with auto := some "all" } rest
+  | "--time-tiny" :: rest => parseRun { opts with timeTiny := true } rest
   | "--trace" :: f :: rest => parseRun { opts with trace := some f } rest
   | "--json" :: f :: rest => parseRun { opts with json := some f } rest
   | "--keep" :: rest => parseRun { opts with keep := true } rest
@@ -551,7 +558,7 @@ def run (argv : List String) : IO UInt32 := do
   let coreEnv ← if opts.core then
       pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees).toString)]
     else pure #[]
-  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees coreEnv opts.deps
+  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees (coreEnv ++ tinyEnv opts) opts.deps
   if rc != 0 then return rc
   -- the report `#leanprof` reads, unless another path was asked for
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
@@ -1691,7 +1698,7 @@ def statCmd (argv : List String) : IO UInt32 := do
   let some exe := opts.exe | throw <| IO.userError (usageFor "stat")
   let allocs := !offAllocs
   let frees := !offFrees
-  let rc ← buildWithShims exe opts.auto allocs (frees := frees) (deps := opts.deps)
+  let rc ← buildWithShims exe opts.auto allocs (frees := frees) (extraEnv := tinyEnv opts) (deps := opts.deps)
   if rc != 0 then return rc
   IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
   let json := opts.json.getD ".lake/leanprof/report.json"

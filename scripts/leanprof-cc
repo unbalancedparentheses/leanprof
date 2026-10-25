@@ -88,14 +88,42 @@ if [ -n "${LEANPROF_SANITIZE:-}" ]; then
     *) set -- "-fsanitize=$LEANPROF_SANITIZE" -fno-omit-frame-pointer -g "$@" ;;
   esac
 fi
+timed=
 case " $* " in
   *" -c "*)
     case "${LEANPROF_AUTO:-}:$*" in
-      all:*) set -- -finstrument-functions-after-inlining "$@" ;;
+      all:*) timed=1 ;;
       1:*/.lake/packages/*) ;;
-      1:*) set -- -finstrument-functions-after-inlining "$@" ;;
+      1:*) timed=1 ;;
     esac ;;
 esac
+# Functions too small to time (straight-line code calling only O(1)
+# operations, see leanprof-tiny.awk) are left out of --auto, unless
+# LEANPROF_AUTO_TINY=1: their probes would cost several times their work,
+# in their own time and in that of every function around them. The source
+# is rewritten into a temporary copy with those functions marked.
+tmpdir=
+if [ -n "$timed" ]; then
+  set -- -finstrument-functions-after-inlining "$@"
+  if [ "${LEANPROF_AUTO_TINY:-}" != 1 ]; then
+    src=
+    for a in "$@"; do
+      case "$a" in *.c) [ -f "$a" ] && src=$a ;; esac
+    done
+    if [ -n "$src" ] && tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/leanprof-cc.XXXXXX")"; then
+      out="$tmpdir/$(basename "$src")"
+      if awk -f "$(cd "$(dirname "$0")" && pwd)/leanprof-tiny.awk" "$src" > "$out" &&
+          grep -q '^static void \*const lpf_untimed_fns' "$out"; then
+        for a in "$@"; do
+          shift
+          if [ "$a" = "$src" ]; then set -- "$@" "$out"; else set -- "$@" "$a"; fi
+        done
+        # quoted includes still resolve next to the original
+        set -- -iquote "$(dirname "$src")" "$@"
+      fi
+    fi
+  fi
+fi
 # When linking, export symbols so the report can name functions,
 # find the toolchain's static libraries (gmp, libuv, ...), and link
 # leanprof's runtime into projects that do not depend on leanprof
@@ -119,6 +147,12 @@ case " $* " in
 esac
 if [ "$real" = leanc_bundled ]; then
   unset LEAN_CC
-  exec "$prefix/bin/leanc" "$@"
+  real="$prefix/bin/leanc"
 fi
-exec "$real" "$@"
+if [ -z "$tmpdir" ]; then
+  exec "$real" "$@"
+fi
+"$real" "$@"
+rc=$?
+rm -rf "$tmpdir"
+exit $rc

@@ -8,6 +8,11 @@
   "buildWithHistory": 1,
   "main": 1
  },
+ "auto.tiny_rules": [
+  "l_tiny",
+  "l_tiny___boxed"
+ ],
+ "auto.untimed>0": true,
  "compare.self": 0,
  "demangle": true,
  "doctor": 0,

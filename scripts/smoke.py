@@ -75,6 +75,66 @@ def other_project():
     return out
 
 
+# Functions in the shape Lean emits, for leanprof-tiny.awk: which ones
+# `--auto` leaves untimed as too small to time.
+TINY_FIXTURE = r"""
+LEAN_EXPORT uint64_t l_tiny(uint64_t v_i_1_){
+_start:
+{
+uint64_t v_x_2_;
+v_x_2_ = lean_uint64_mul(v_i_1_, 3ULL);
+return v_x_2_;
+}
+}
+LEAN_EXPORT lean_object* l_tiny___boxed(lean_object* v_i_3_){
+_start:
+{
+uint64_t v_b_4_; uint64_t v_r_5_;
+v_b_4_ = lean_unbox_uint64(v_i_3_);
+lean_dec_ref(v_i_3_);
+v_r_5_ = l_tiny(v_b_4_);
+return lean_box_uint64(v_r_5_);
+}
+}
+LEAN_EXPORT lean_object* l_loop(lean_object* v_n_6_){
+_start:
+{
+if (lean_nat_dec_eq(v_n_6_, lean_box(0))) { return v_n_6_; }
+v_n_6_ = lean_nat_sub(v_n_6_, lean_box(1));
+goto _start;
+}
+}
+LEAN_EXPORT lean_object* l_drops(lean_object* v_xs_7_){
+_start:
+{
+lean_dec(v_xs_7_);
+return lean_box(0);
+}
+}
+LEAN_EXPORT lean_object* l_calls(lean_object* v_f_8_){
+_start:
+{
+return lean_apply_1(v_f_8_, lean_box(0));
+}
+}
+LEAN_EXPORT lean_object* l_callsLoop(lean_object* v_n_9_){
+_start:
+{
+return l_loop(v_n_9_);
+}
+}
+"""
+
+
+def tiny_marks():
+    src = os.path.join(tempfile.mkdtemp(), "fixture.c")
+    with open(src, "w") as f:
+        f.write(TINY_FIXTURE)
+    out = sh("awk", "-f", os.path.join(ROOT, "scripts", "leanprof-tiny.awk"), src).stdout
+    return sorted(l.split("(")[2].split()[-1] for l in out.splitlines()
+                  if l.startswith("__attribute__((no_instrument_function))"))
+
+
 def facts():
     out = {}
     sh("lake", "build", "leanprof", "copybug", "tasks", "taskchains", "server", "tests", "demangle-check")
@@ -99,6 +159,9 @@ def facts():
     au = load("/tmp/smoke-auto.json")
     calls = {s["name"]: s["calls"] for s in au["scopes"] if s.get("auto")}
     out["auto.calls"] = {k: calls.get(k) for k in ("main", "buildWithHistory", "build")}
+    # tiny functions are left untimed (here leanprof's own, linked in)
+    out["auto.untimed>0"] = len(au.get("untimed", [])) > 0
+    out["auto.tiny_rules"] = tiny_marks()
     # tasks
     sh(LP, "run", "--json", "/tmp/smoke-tasks.json", "tasks")
     tk = load("/tmp/smoke-tasks.json")

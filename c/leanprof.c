@@ -16,6 +16,8 @@
 #include <time.h>
 #include <unistd.h>
 #ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
 #include <mach/mach_time.h>
 #endif
 
@@ -2739,6 +2741,48 @@ static int lpf_by_allocs(const void *a, const void *b) {
     return x->bytes < y->bytes ? 1 : x->bytes > y->bytes ? -1 : 0;
 }
 
+/* Functions `--auto` left untimed as too small to time (scripts/leanprof-tiny.awk
+ * puts their addresses in section lpf_untimed): names, sorted, once. */
+#ifdef __APPLE__
+static void *const *lpf_untimed_fns(size_t *n) {
+    unsigned long size = 0;
+    const struct mach_header *h = _dyld_get_image_header(0);
+    uint8_t *p = h != NULL ? getsectiondata((const struct mach_header_64 *)h, "__DATA", "__lpf_untimed", &size) : NULL;
+    *n = p != NULL ? size / sizeof(void *) : 0;
+    return (void *const *)p;
+}
+#else
+extern void *const __start_lpf_untimed[] __attribute__((weak));
+extern void *const __stop_lpf_untimed[] __attribute__((weak));
+static void *const *lpf_untimed_fns(size_t *n) {
+    *n = __start_lpf_untimed != NULL && __stop_lpf_untimed > __start_lpf_untimed
+             ? (size_t)(__stop_lpf_untimed - __start_lpf_untimed) : 0;
+    return __start_lpf_untimed;
+}
+#endif
+static char **lpf_untimed;
+static size_t lpf_nuntimed;
+static void lpf_untimed_load(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+    size_t n;
+    void *const *fns = lpf_untimed_fns(&n);
+    if (n == 0 || (lpf_untimed = calloc(n, sizeof(char *))) == NULL) return;
+    for (size_t i = 0; i < n; i++) {
+        char name[256];
+        lpf_symbol_name(fns[i], name, sizeof name);
+        if (name[0] && (lpf_untimed[lpf_nuntimed] = strdup(name)) != NULL) lpf_nuntimed++;
+    }
+    qsort(lpf_untimed, lpf_nuntimed, sizeof(char *), lpf_cmp_str);
+    size_t m = 0; /* `f` and `f___boxed` are one name */
+    for (size_t i = 0; i < lpf_nuntimed; i++) {
+        if (m > 0 && strcmp(lpf_untimed[m - 1], lpf_untimed[i]) == 0) free(lpf_untimed[i]);
+        else lpf_untimed[m++] = lpf_untimed[i];
+    }
+    lpf_nuntimed = m;
+}
+
 static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                      double wall, uint64_t dropped) {
     char w[32], wp[32];
@@ -2921,6 +2965,15 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
     lpf_mem_print(f, tick);
     if (hidden > 0)
         fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (--all-copies shows them)\n", hidden);
+    lpf_untimed_load();
+    if (lpf_nuntimed > 0) {
+        fprintf(f, "\nleanprof: %zu function%s too small to time left untimed (their time is in their callers'; "
+                   "`leanprof sample` has their share, `run --auto --time-tiny` counts their calls):",
+                lpf_nuntimed, lpf_nuntimed == 1 ? "" : "s");
+        for (size_t i = 0; i < lpf_nuntimed && i < 8; i++) fprintf(f, "%s %s", i ? "," : "", lpf_untimed[i]);
+        if (lpf_nuntimed > 8) fprintf(f, ", ... (%zu more in the JSON report)", lpf_nuntimed - 8);
+        fputc('\n', f);
+    }
     if (dropped > 0) fprintf(f, "\nleanprof: %llu events dropped (table full)\n", (unsigned long long)dropped);
     fprintf(f, "\n");
 }
@@ -3059,6 +3112,15 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
         fputc('}', f);
     }
     fprintf(f, "]");
+    lpf_untimed_load();
+    if (lpf_nuntimed > 0) {
+        fprintf(f, ",\"untimed\":[");
+        for (size_t i = 0; i < lpf_nuntimed; i++) {
+            if (i) fputc(',', f);
+            lpf_json_str(f, lpf_untimed[i]);
+        }
+        fputc(']', f);
+    }
     lpf_counters_json(f);
     lpf_mem_json(f, tick);
     fprintf(f, "}\n");

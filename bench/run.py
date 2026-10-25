@@ -200,8 +200,10 @@ def leanprof_report(path):
         # (the empty array literal a loop starts from), not the hidden copy
         n = c["function"].split(" (in ")[0].split(".")[-1]
         copies[n] = copies.get(n, 0) + c.get("shared", c["copies"])
+    # functions `--auto` left untimed as too small to time: no row, no count
+    untimed = sorted({short(n) for n in d.get("untimed", []) if short(n)})
     return {"times": times, "calls": calls, "allocs": allocs, "copies": copies, "near": near,
-            "overhead_ns": d.get("overhead_ns"), "dropped": d.get("dropped", 0)}
+            "untimed": untimed, "overhead_ns": d.get("overhead_ns"), "dropped": d.get("dropped", 0)}
 
 
 def sample_report(path):
@@ -407,19 +409,24 @@ def analyse(runs, configs):
                     out["share_note"] = "components missing from the report"
                 # call counts
                 if "calls" in reps[0]:
-                    checked, wrong = 0, {}
+                    checked, wrong, untimed = 0, {}, set()
                     for rep in reps:
                         for name, n in expected_calls.items():
                             if cfg in SPANS_ONLY and name not in rep["calls"]:
                                 continue  # only phases and tasks are spans
                             if cfg == "auto" and name in LABEL_ONLY:
                                 continue  # a `profile!` label inside a function, not a function
+                            if name in rep.get("untimed", ()):
+                                untimed.add(name)
+                                continue  # left untimed as too small to time (`--time-tiny` counts it)
                             checked += 1
                             got = rep["calls"].get(name, 0)
                             if got != n:
                                 wrong[name] = (got, n)
                     out["calls_checked"] = checked
                     out["calls_wrong"] = wrong
+                    if untimed:
+                        out["untimed"] = sorted(untimed)
                 if cfg in SHIMS and expected_copies:
                     wrong = {}
                     for rep in reps:
@@ -572,9 +579,11 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
     table("Exact call counts", "calls",
           lambda o: ("–" if "calls_checked" not in o else
                      ("✅ exact" if not o["calls_wrong"] else
-                      "❌ " + ", ".join(f"{k} {g:,} of {n:,}" for k, (g, n) in o["calls_wrong"].items()))),
+                      "❌ " + ", ".join(f"{k} {g:,} of {n:,}" for k, (g, n) in o["calls_wrong"].items()))
+                     + ("".join(f", `{k}` untimed" for k in o.get("untimed", [])))),
           "Every function or scope with a known call count (samplers have no counts; LeanProfiler only "
-          "has phase and task spans).",
+          "has phase and task spans). Untimed: a function `run --auto` leaves out as too small to time "
+          "(no row, no count; `--time-tiny` times it).",
           cfgs=[c for c in cols if c in LEANPROF_EXACT or c in SPANS_ONLY])
 
     L.append("## Per component\n")
