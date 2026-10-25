@@ -28,7 +28,7 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   judged on time (one gave −5.2%, interval [−7.7%, −2.1%], "not judged").
 - `sample --out FILE` in a project where leanprof had not run before ended
   with "no such file or directory (file: .lake/leanprof/report.json)" after
-  printing the report, and exited 1 (concrete, with `--out` in a scratch
+  printing the report (concrete, with `--out` in a scratch
   directory): the directory is now created.
 - `explain` after `sample`: `sample` writes `.lake/leanprof/report.json` (for
   `#leanprof`) without copy counts, and `explain` then said "the report has no
