@@ -104,6 +104,13 @@ opaque depth : BaseIO Nat
 @[extern "leanprof_demangle"]
 opaque demangle (sym : @& String) : String
 
+/-- Whether copy detection works in this build: runs a known copy of each
+kind (`Array.push`, `String.push`, ...) through the copy flags once and
+returns a warning naming the kinds whose copies were not counted, or `""`.
+The same check runs at exit; its copies never appear in the report. -/
+@[extern "leanprof_self_check"]
+opaque selfCheck : BaseIO String
+
 /-- Run `x` and fail if it copied a shared or multi-threaded value. -/
 def expectNoCopies (x : IO α) : IO α := do
   let before ← copies
@@ -129,6 +136,12 @@ namespace Leanprof
 initializers say which modules it links), instead of this process's. -/
 @[extern "leanprof_set_symbols"]
 opaque setSymbols (names : @& Array String) : BaseIO Unit
+
+/-- Also resolve `whereIs` for Lean's own declarations (`Lean.*`, `Lake.*`,
+...) from the toolchain at this prefix (`lean --print-prefix`): its
+`lib/lean/*.ilean` files and `src/lean` sources. -/
+@[extern "leanprof_set_core_dir"]
+opaque setCoreDir (dir : @& String) : BaseIO Unit
 
 end Leanprof
 

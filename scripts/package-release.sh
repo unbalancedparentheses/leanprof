@@ -18,7 +18,7 @@ mkdir -p "$dir/.lake/build/bin" "$dir/bin" "$dir/c" "$dir/scripts"
 cp .lake/build/bin/leanprof "$dir/.lake/build/bin/"
 # `leanprof elab`'s in-process frontend (exact source ranges), next to it
 cp .lake/build/bin/leanprof-elab-driver "$dir/.lake/build/bin/"
-cp c/leanprof.c c/*.inc.c c/*.h "$dir/c/"
+cp c/*.c c/*.h "$dir/c/"
 cp scripts/leanprof-cc "$dir/scripts/"
 cp LICENSE README.md CHANGELOG.md "$dir/"
 cat > "$dir/bin/leanprof" <<'SH'

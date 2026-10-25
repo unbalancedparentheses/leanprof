@@ -95,6 +95,16 @@ def explanations : CommandElabM (Array Json) := do
 /-- What a row marked `near_probe_cost` means. -/
 def nearProbeNote : String := "near the probe cost: use `leanprof sample` for this function's time"
 
+/-- How a time too small to measure is shown, never as 0: what is left of a
+scope after subtracting the probes' cost, or a copy shorter than one clock
+tick. -/
+def tooSmallScope : String := "< probe cost"
+def tooSmallTick : String := "< 1 clock tick"
+
+/-- Whether a row lists `field` in `too_small`. -/
+def isTooSmall (r : Json) (field : String) : Bool :=
+  (arr r "too_small").any (·.getStr?.toOption == some field)
+
 /-- Hints and summary lines for one report. -/
 def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Array String) := do
   let j ← match Json.parse (← (IO.FS.readFile path : IO String)) with
@@ -115,10 +125,11 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     let calls := (num s "calls").toUInt64.toNat
     let pct := if wall > 0 then total / wall * 100 else 0
     let near := (s.getObjVal? "near_probe_cost").toOption == some (.bool true)
+    let t (field : String) := if isTooSmall s field then tooSmallScope else fmtNs (num s field)
     let label :=
       if compile then s!"⚙ {amount total} to compile"
       else if sampled then s!"≈ {fmtNs total} CPU · {fmt1 pct}%"
-      else s!"⏱ {fmtNs total}{if near then "*" else ""} · {fmt1 pct}% · {calls}×"
+      else s!"⏱ {t "total_ns"}{if near then "*" else ""} · {fmt1 pct}% · {calls}×"
     let tip :=
       if compile then
         let ops := (arr s "top").toList.map fun o => s!"\n  {amount (num o "amount")}  {str o "op"}"
@@ -134,8 +145,8 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
           (if ops.isEmpty then "" else "\ncostliest operations:" ++ String.join ops) ++
           (if defs.isEmpty then "" else "\ndefinitions behind it:" ++ String.join defs)
       else if sampled then s!"{str s "name"}: {fmtNs total} CPU inclusive, {fmtNs (num s "self_ns")} self (sampled)"
-      else s!"{str s "name"}: {calls} calls, total {fmtNs total}, self {fmtNs (num s "self_ns")}, " ++
-        s!"mean {fmtNs (num s "mean_ns")}, p50 {fmtNs (num s "p50_ns")}, p99 {fmtNs (num s "p99_ns")}" ++
+      else s!"{str s "name"}: {calls} calls, total {t "total_ns"}, self {t "self_ns"}, " ++
+        s!"mean {t "mean_ns"}, p50 {t "p50_ns"}, p99 {t "p99_ns"}" ++
         (if near then s!"\n* {nearProbeNote}" else "")
     if (best.get? line).all (·.1 < total) then best := best.insert line (total, label, tip)
     lines := lines.push s!"{file}:{line}  {label}  ({str s "name"})"
@@ -175,16 +186,23 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
   let explained ← explanations
   for c in arr j "copies" do
     let shared := num c "shared" + num c "multi_threaded"
-    if shared == 0 then continue
+    -- copies of empty or tiny values are summarized in the report, not hinted
+    if shared == 0 || (c.getObjValAs? Bool "tiny").toOption == some true then continue
     let some line := lineIn file (str c "where") | continue
     let why := if num c "multi_threaded" > 0 then "multi-threaded" else "shared"
-    let label := s!"⚠ {shared.toUInt64} copies · {fmtBytes (num c "bytes")} · {fmtNs (num c "copy_ns")}"
+    let ct := if isTooSmall c "copy_ns" then tooSmallTick else fmtNs (num c "copy_ns")
+    -- its share of the run (`pct_run`; older reports: of the wall time)
+    let share := if (c.getObjVal? "pct_run").isOk then num c "pct_run"
+      else if wall > 0 then num c "copy_ns" / wall * 100 else 0
+    let label := s!"⚠ {shared.toUInt64} copies · {fmtBytes (num c "bytes")} · {ct} · {fmt1 share}%"
     let tip := s!"{str c "function"} copied a {why} {str c "kind"} {shared.toUInt64} times " ++
-      s!"({fmtBytes (num c "bytes")}, {fmtNs (num c "copy_ns")}) in scope {str c "scope"}. " ++
+      s!"({fmtBytes (num c "bytes")}, {ct}, {fmt1 share}% of the run) in scope {str c "scope"}. " ++
       "Each copy happens because another reference to the value is still alive (or the value " ++
       "was shared between threads), so Lean cannot update it in place." ++
       String.join ((explained.filter (str · "symbol" == str c "symbol")).toList.map fun e =>
         s!"\n\nwhy: {str e "why"}" ++ (if (str e "fix").isEmpty then "" else s!"\nfix: {str e "fix"}") ++
+          String.join ((((e.getObjValAs? (Array String) "fix_code").toOption).getD #[]).toList.map
+            fun c => s!"\n```lean\n{c}\n```") ++
           s!"\n(leanprof explain; confidence {str e "confidence"})")
     hint (endOfLine fm line) label tip
     lines := lines.push s!"{file}:{line}  {label}  ({str c "function"})"

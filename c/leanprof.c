@@ -154,6 +154,8 @@ typedef struct lpf_thread {
     struct lpf_flight_thread *flight;
     void *shares;
     struct lpf_thread *free_next;
+    uint8_t selfcheck;         /* the self-check is running: copies go to selfcheck_seen, not the report */
+    uint32_t selfcheck_seen[LP_KINDS];
     struct lpf_thread *next;
 } lpf_thread;
 
@@ -1141,6 +1143,7 @@ static inline lpf_pending lpf_begin(void *pc, lean_object *o, uint8_t kind, size
 static inline void lpf_end(const lpf_pending *p) {
     uint64_t elapsed = lpf_now() - p->start;
     lpf_thread *t = lpf_thread_get();
+    if (LEAN_UNLIKELY(t->selfcheck)) { t->selfcheck_seen[p->kind]++; return; }
     const lean_object *site = lpf_site(t);
     if (LEAN_UNLIKELY(lpf_tracing)) lpf_trace(t, 'C', p->pc, p->kind, p->start, p->bytes);
     lpf_copy *c = lpf_copy_get(t, p->pc, site, p->kind);
@@ -1220,6 +1223,113 @@ LEAN_EXPORT lean_obj_res leanprof_string_append(lean_obj_arg s1, b_lean_obj_arg 
 
 LEAN_EXPORT lean_obj_res leanprof_string_utf8_set(lean_obj_arg s, b_lean_obj_arg i, uint32_t c) {
     LP_MAYBE_COPY(LP_STRING, s, lean_string_size(s), lean_string_utf8_set(s, i, c));
+}
+
+/* ---------- self-check ----------
+ * c/selfcheck.c is compiled with the copy flags, like the program's code.
+ * Once, at exit (and for `leanprof doctor`), each of its operations runs on
+ * a shared one-element value: the shims must see one copy each. A copy they
+ * do not see means copies of that kind may be undercounted with this Lean
+ * version (Lean 4.36 made lean_string_push inline, and String copies went
+ * uncounted until leanprof also renamed lean_string_push_cold). The check's
+ * copies go to per-thread counters (lpf_end), never into the report. It
+ * costs six copies of one-element values and a few allocations. */
+#include "selfcheck.h"
+
+#ifndef LEAN_VERSION_STRING
+#define LEAN_VERSION_STRING "?"
+#endif
+
+static const struct {
+    uint8_t kind;
+    const char *op, *call;
+} lpf_sc_ops[LPS_OPS] = {
+    [LPS_ARRAY_PUSH] = {LP_ARRAY, "Array.push", "lean_array_push"},
+    [LPS_ARRAY_SET] = {LP_ARRAY, "Array.set!", "lean_copy_expand_array_nonlinear"},
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 36)
+    [LPS_STRING_PUSH] = {LP_STRING, "String.push", "lean_string_push_cold"},
+#else
+    [LPS_STRING_PUSH] = {LP_STRING, "String.push", "lean_string_push"},
+#endif
+    [LPS_STRING_APPEND] = {LP_STRING, "String.append", "lean_string_append"},
+    [LPS_BYTE_ARRAY_PUSH] = {LP_SCALAR_ARRAY, "ByteArray.push", "lean_byte_array_push"},
+    [LPS_BYTE_ARRAY_SET] = {LP_SCALAR_ARRAY, "ByteArray.set!", "lean_copy_sarray_nonlinear"},
+};
+
+static int lpf_sc_done;
+static char lpf_sc_checked[256]; /* the operations run, for doctor */
+static char lpf_sc_msg[768];     /* the warning; empty when every copy was seen */
+
+static lean_object *lpf_sc_input(uint8_t kind) {
+    if (kind == LP_ARRAY) return lean_array_push(lean_mk_empty_array_with_capacity(lean_box(2)), lean_box(0));
+    if (kind == LP_STRING) return lean_mk_string("a");
+    return lean_byte_array_push(lean_mk_empty_byte_array(lean_box(2)), 0);
+}
+
+static void lpf_sc_append(char *buf, size_t cap, const char *s) {
+    size_t n = strlen(buf);
+    if (n + 1 < cap) snprintf(buf + n, cap - n, "%s", s);
+}
+
+static void lpf_self_check(void) {
+    if (__atomic_exchange_n(&lpf_sc_done, 1, __ATOMIC_ACQ_REL)) return;
+    lpf_thread *t = lpf_thread_get();
+    uint8_t missed[LPS_OPS] = {0};
+    int any = 0;
+    for (unsigned op = 0; op < LPS_OPS; op++) {
+        uint8_t kind = lpf_sc_ops[op].kind;
+        lean_object *x = lpf_sc_input(kind);
+        lean_inc(x); /* shared: the operation must copy it */
+        uint32_t before = t->selfcheck_seen[kind];
+        t->selfcheck = 1;
+        lean_object *r = leanprof_selfcheck_op(op, x);
+        t->selfcheck = 0;
+        lean_dec(x);
+        if (r == NULL) continue; /* not in this Lean version */
+        lean_dec(r);
+        lpf_sc_append(lpf_sc_checked, sizeof lpf_sc_checked, lpf_sc_checked[0] ? ", " : "");
+        lpf_sc_append(lpf_sc_checked, sizeof lpf_sc_checked, lpf_sc_ops[op].op);
+        missed[op] = t->selfcheck_seen[kind] == before;
+        any |= missed[op];
+    }
+    if (!any) return;
+    /* "copies of String may be undercounted with Lean 4.36.0: ..." per kind */
+    for (uint8_t kind = 0; kind < LP_KINDS; kind++) {
+        int n = 0;
+        for (unsigned op = 0; op < LPS_OPS; op++) {
+            if (!missed[op] || lpf_sc_ops[op].kind != kind) continue;
+            char part[192];
+            if (n++ == 0)
+                snprintf(part, sizeof part, "%scopies of %s may be undercounted with Lean %s: a known copy through %s (%s)",
+                         lpf_sc_msg[0] ? "; " : "", lpf_kind_name[kind], LEAN_VERSION_STRING, lpf_sc_ops[op].op,
+                         lpf_sc_ops[op].call);
+            else
+                snprintf(part, sizeof part, ", %s (%s)", lpf_sc_ops[op].op, lpf_sc_ops[op].call);
+            lpf_sc_append(lpf_sc_msg, sizeof lpf_sc_msg, part);
+        }
+        if (n > 0) lpf_sc_append(lpf_sc_msg, sizeof lpf_sc_msg, " was not counted");
+    }
+    lpf_sc_append(lpf_sc_msg, sizeof lpf_sc_msg,
+                  leanprof_selfcheck_flags()
+                      ? " (leanprof's shims do not cover this Lean version; please report it at "
+                        "https://github.com/unbalancedparentheses/leanprof/issues)"
+                      : " (the self-check was compiled without leanprof's copy flags)");
+}
+
+/* The self-check's warning, or "" when every known copy was counted. */
+LEAN_EXPORT lean_obj_res leanprof_self_check(void) {
+    lpf_self_check();
+    return lean_mk_string(lpf_sc_msg);
+}
+
+/* For `leanprof doctor`'s probe: the warning (or "") and what was checked. */
+LEAN_EXPORT const char *leanprof_self_check_message(void) {
+    lpf_self_check();
+    return lpf_sc_msg;
+}
+LEAN_EXPORT const char *leanprof_self_check_ops(void) {
+    lpf_self_check();
+    return lpf_sc_checked;
 }
 
 /* ---------- tasks ----------
@@ -1703,7 +1813,7 @@ static char lpf_root_pkg[256];
  * the program runs elsewhere (`leanprof run --cwd`). */
 static const char *lpf_proj_path(const char *rel, char *out, size_t cap) {
     const char *proj = getenv("LEANPROF_PROJECT");
-    if (proj == NULL || proj[0] == 0) snprintf(out, cap, "%s", rel);
+    if (proj == NULL || proj[0] == 0 || rel[0] == '/') snprintf(out, cap, "%s", rel);
     else snprintf(out, cap, "%s/%s", proj, rel);
     return out;
 }
@@ -2087,6 +2197,33 @@ static void lpf_index_dir(const char *dir, const char *prefix, const char *pkg, 
     closedir(d);
 }
 
+/* Lean's own declarations (Init, Std, Lean, Lake): their `.ilean` files are in
+ * a toolchain's lib/lean and their sources in its src/lean. They are read on
+ * the first name the project does not know, from the toolchain prefix that
+ * leanprof_set_core_dir or LEANPROF_CORE_DIR gives (`leanprof sample`, `run`). */
+static char lpf_core_dir[1024];
+static int lpf_core_indexed;
+
+LEAN_EXPORT lean_obj_res leanprof_set_core_dir(b_lean_obj_arg dir) {
+    snprintf(lpf_core_dir, sizeof lpf_core_dir, "%s", lean_string_cstr(dir));
+    lpf_core_indexed = 0;
+    return lean_box(0);
+}
+
+/* Index Lean's own declarations once; whether any were added. */
+static int lpf_index_core(void) {
+    if (lpf_core_indexed) return 0;
+    lpf_core_indexed = 1;
+    const char *dir = lpf_core_dir[0] ? lpf_core_dir : getenv("LEANPROF_CORE_DIR");
+    if (dir == NULL || dir[0] == 0) return 0;
+    char lib[1200], src[1200];
+    snprintf(lib, sizeof lib, "%s/lib/lean", dir);
+    snprintf(src, sizeof src, "%s/src/lean/", dir);
+    size_t before = lpf_ndecls;
+    lpf_index_dir(lib, src, NULL, 0);
+    return lpf_ndecls > before;
+}
+
 /* file:line of a reported function name, or "" when unknown. */
 static const char *lpf_where(const char *fn, char *out, size_t cap) {
     pthread_mutex_lock(&lpf_where_lock);
@@ -2117,10 +2254,14 @@ static const char *lpf_where(const char *fn, char *out, size_t cap) {
     char *in = strstr(name, " (in ");
     if (in != NULL) *in = 0;
     out[0] = 0;
-    for (size_t i = 0; i < lpf_ndecls; i++) {
-        if (strcmp(lpf_decls[i].name, name) == 0) {
-            snprintf(out, cap, "%s:%u", lpf_decls[i].file, lpf_decls[i].line);
-            break;
+    for (int pass = 0; pass < 2 && out[0] == 0; pass++) {
+        /* the second pass also looks among Lean's own declarations */
+        if (pass == 1 && !lpf_index_core()) break;
+        for (size_t i = 0; i < lpf_ndecls; i++) {
+            if (strcmp(lpf_decls[i].name, name) == 0) {
+                snprintf(out, cap, "%s:%u", lpf_decls[i].file, lpf_decls[i].line);
+                break;
+            }
         }
     }
     pthread_mutex_unlock(&lpf_where_lock);
@@ -2311,6 +2452,72 @@ static void lpf_fmt_bytes(double b, char *buf, size_t n) {
     else snprintf(buf, n, "%.2f GiB", b / (1024.0 * 1024 * 1024));
 }
 
+/* Times leanprof cannot tell from zero are never shown as 0. A scope's time
+ * that is gone after subtracting the probes' cost is "< probe" (below what
+ * the probes themselves cost); a copy or wait shorter than one clock tick is
+ * "< tick" with the tick's length. */
+#define LP_PROBE_LABEL "< probe"
+static void lpf_fmt_scope_time(double ns, char *buf, size_t n) {
+    if (ns < 0.5) snprintf(buf, n, LP_PROBE_LABEL);
+    else lpf_fmt_time(ns, buf, n);
+}
+static void lpf_fmt_tick_time(double ns, double tick, char *buf, size_t n) {
+    if (ns < 0.5) {
+        char t[24];
+        lpf_fmt_time(tick, t, sizeof t);
+        snprintf(buf, n, "< %s", t);
+    } else {
+        lpf_fmt_time(ns, buf, n);
+    }
+}
+
+/* The run that shares are against: the wall time without the probes'
+ * calibrated cost (like the scopes' times), and never less than the longest
+ * scope. */
+static double lpf_run_base(const lpf_scope_sum *S, size_t ns, double tick, double wall);
+
+/* A copy row of empty or tiny values: at most LP_TINY_BYTES per copy on
+ * average (an empty array, an array of one or two elements, a short
+ * string), such as the first push into an empty array slot, that took less
+ * than LP_TINY_SHARE of the run. Such rows are summarized in one row unless
+ * `--all-copies` (LEANPROF_ALL_COPIES=1, or LEANPROF_ALL=1) shows them. The
+ * share matters: an empty array with a large capacity is copied with its
+ * capacity, which can take long. */
+#define LP_TINY_BYTES 16
+#define LP_TINY_SHARE 0.01
+static double lpf_report_tick, lpf_report_base; /* set by lpf_report */
+static int lpf_tiny(const lpf_copy_sum *c) {
+    return c->kind < LP_KINDS && c->total > 0 && c->bytes <= (uint64_t)LP_TINY_BYTES * c->total &&
+           (double)c->ticks * lpf_report_tick < LP_TINY_SHARE * lpf_report_base;
+}
+
+/* Calibrated cost of one small allocation and its free, in ns (set by
+ * lpf_report when allocations were counted): an allocation site's time is
+ * estimated as its count times this. Measured cache-warm on the reporting
+ * thread, so it is a lower bound: the real cost adds cache misses on the
+ * memory and the work of initializing it. */
+static double lpf_alloc_ns;
+static void lpf_calibrate_alloc(double tick) {
+    enum { N = 512, R = 41 };
+    static lean_object *v[N];
+    double per[R];
+    for (int r = 0; r < R; r++) {
+        uint64_t t0 = lpf_now();
+        for (int i = 0; i < N; i++) v[i] = lean_alloc_small_object(16 + 8 * (unsigned)(i % 7));
+        for (int i = 0; i < N; i++) lean_free_small_object(v[i]);
+        per[r] = (double)(lpf_now() - t0) * tick / N;
+    }
+    /* the median batch: the first ones warm the allocator's pages up */
+    for (int a = 0; a < R; a++)
+        for (int b = a + 1; b < R; b++)
+            if (per[b] < per[a]) {
+                double x = per[a];
+                per[a] = per[b];
+                per[b] = x;
+            }
+    lpf_alloc_ns = per[R / 2] > 0 ? per[R / 2] : tick;
+}
+
 static void lpf_json_str(FILE *f, const char *s) {
     fputc('"', f);
     for (; *s; s++) {
@@ -2335,16 +2542,40 @@ static const lpf_scope_sum *lpf_find_scope(const lpf_scope_sum *S, size_t ns, co
  * thread times the calibrated cost of a pair (set by lpf_report). */
 static double lpf_probe_ns;
 
+/* A share of the run, two decimals below 1% (a finding at 0.02% is not 0). */
+static void lpf_fmt_pct(double pct, char *buf, size_t n) {
+    snprintf(buf, n, pct < 1.0 ? "%.2f%%" : "%.1f%%", pct);
+}
+
+static double lpf_run_base(const lpf_scope_sum *S, size_t ns, double tick, double wall) {
+    double base = wall - lpf_probe_ns;
+    for (size_t k = 0; k < ns; k++)
+        if (!S[k].is_task && (double)S[k].total * tick > base) base = (double)S[k].total * tick;
+    return base;
+}
+
+/* Copies shown row by row: those of shared or multi-threaded values, unless
+ * empty or tiny; with --all-copies (or LEANPROF_ALL=1) every row. */
+static int lpf_all_copies(void) {
+    const char *a = getenv("LEANPROF_ALL_COPIES");
+    return lpf_show_all() || (a != NULL && strcmp(a, "1") == 0);
+}
+
+/* The allocation rows, costliest (estimated) first: count, then bytes. */
+static int lpf_by_allocs(const void *a, const void *b) {
+    const lpf_copy_sum *x = *(const lpf_copy_sum *const *)a, *y = *(const lpf_copy_sum *const *)b;
+    if (x->total != y->total) return x->total < y->total ? 1 : -1;
+    return x->bytes < y->bytes ? 1 : x->bytes > y->bytes ? -1 : 0;
+}
+
 static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                      double wall, uint64_t dropped) {
     char w[32], wp[32];
     lpf_fmt_time(wall, w, sizeof w);
     /* %wall is against the wall time without the probes, like the times */
-    double base = wall - lpf_probe_ns;
-    for (size_t k = 0; k < ns; k++)
-        if (!S[k].is_task && (double)S[k].total * tick > base) base = (double)S[k].total * tick;
+    double base = lpf_run_base(S, ns, tick, wall);
     lpf_fmt_time(base, wp, sizeof wp);
-    int any_fn = 0;
+    int any_fn = 0, any_small = 0;
     size_t ntasks = 0, nwaits = 0, nallocs = 0, nnear = 0;
     for (size_t k = 0; k < ns; k++) {
         any_fn |= S[k].is_fn;
@@ -2365,15 +2596,20 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         for (size_t k = 0; k < ns; k++) {
             if (S[k].is_task) continue;
             char tt[32], st[32], mt[32], p50[32], p99[32];
-            lpf_fmt_time((double)S[k].total * tick, tt, sizeof tt);
+            double v[5] = {(double)S[k].total * tick, (double)S[k].self * tick,
+                           (double)S[k].sum * tick / (double)S[k].calls,
+                           (double)lpf_percentile(S[k].hist, S[k].calls, 0.50) * tick,
+                           (double)lpf_percentile(S[k].hist, S[k].calls, 0.99) * tick};
+            for (int i = 0; i < 5; i++) any_small |= v[i] < 0.5;
+            lpf_fmt_scope_time(v[0], tt, sizeof tt);
             if (lpf_near_probe(&S[k])) {
                 strncat(tt, "*", sizeof tt - strlen(tt) - 1);
                 nnear++;
             }
-            lpf_fmt_time((double)S[k].self * tick, st, sizeof st);
-            lpf_fmt_time((double)S[k].sum * tick / (double)S[k].calls, mt, sizeof mt);
-            lpf_fmt_time((double)lpf_percentile(S[k].hist, S[k].calls, 0.50) * tick, p50, sizeof p50);
-            lpf_fmt_time((double)lpf_percentile(S[k].hist, S[k].calls, 0.99) * tick, p99, sizeof p99);
+            lpf_fmt_scope_time(v[1], st, sizeof st);
+            lpf_fmt_scope_time(v[2], mt, sizeof mt);
+            lpf_fmt_scope_time(v[3], p50, sizeof p50);
+            lpf_fmt_scope_time(v[4], p99, sizeof p99);
             char shown[300];
             if (any_fn && !S[k].is_fn) snprintf(shown, sizeof shown, "\"%s\"", S[k].name); /* a profile! label */
             else snprintf(shown, sizeof shown, "%s", S[k].name);
@@ -2389,24 +2625,32 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         }
         if (nnear > 0)
             fprintf(f, "* near the probe cost: use `leanprof sample` for this function's time\n");
+        if (any_small)
+            fprintf(f, "%s: less than the probes' own cost (%.1f ns per scope), too small to measure\n",
+                    LP_PROBE_LABEL, lpf_overhead_of(lpf_main_path()));
     }
-    const char *all = getenv("LEANPROF_ALL");
-    int show_all = all != NULL && strcmp(all, "1") == 0;
-    size_t shown = 0, hidden = 0;
+    int show_all = lpf_all_copies();
+    size_t shown = 0, hidden = 0, ntiny = 0;
+    uint64_t tiny_n = 0, tiny_b = 0, tiny_t = 0;
     for (size_t k = 0; k < nc; k++) {
         if (C[k].kind >= LP_KINDS) continue;
-        if (show_all || lpf_interesting(&C[k])) shown++;
-        else hidden++;
+        if (!show_all && !lpf_interesting(&C[k])) hidden++;
+        else if (!show_all && lpf_tiny(&C[k])) {
+            ntiny++;
+            tiny_n += C[k].count[LP_SHARED] + C[k].count[LP_MULTI_THREADED];
+            tiny_b += C[k].bytes;
+            tiny_t += C[k].ticks;
+        } else shown++;
     }
-    if (shown > 0) {
-        fprintf(f, "\ncopies of non-exclusive values (each one copied the whole value)\n");
-        fprintf(f, "%8s %11s %10s %7s  %-11s %-14s %-18s %s\n", "copies", "bytes", "time", "%scope", "kind", "why",
-                "in scope", "function  (where)");
+    if (shown + ntiny > 0) {
+        fprintf(f, "\ncopies of non-exclusive values (each one copied the whole value; costliest first)\n");
+        fprintf(f, "%8s %11s %10s %6s %7s  %-11s %-14s %-18s %s\n", "copies", "bytes", "time", "%run", "%scope", "kind",
+                "why", "in scope", "function  (where)");
         for (size_t k = 0; k < nc; k++) {
-            if (C[k].kind >= LP_KINDS || (!show_all && !lpf_interesting(&C[k]))) continue;
+            if (C[k].kind >= LP_KINDS || (!show_all && (!lpf_interesting(&C[k]) || lpf_tiny(&C[k])))) continue;
             char bt[32], tt[32], share[16] = "-", why[64] = "";
             lpf_fmt_bytes((double)C[k].bytes, bt, sizeof bt);
-            lpf_fmt_time((double)C[k].ticks * tick, tt, sizeof tt);
+            lpf_fmt_tick_time((double)C[k].ticks * tick, tick, tt, sizeof tt);
             const lpf_scope_sum *sc = C[k].label ? lpf_find_scope(S, ns, C[k].label) : NULL;
             if (sc != NULL && sc->total > 0)
                 snprintf(share, sizeof share, "%.1f%%", 100.0 * (double)C[k].ticks / (double)sc->total);
@@ -2417,10 +2661,23 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
                 if (why[0]) strncat(why, "+", sizeof why - strlen(why) - 1);
                 strncat(why, lpf_reason_name[r], sizeof why - strlen(why) - 1);
             }
-            fprintf(f, "%8llu %11s %10s %7s  %-11s %-14s %-18s %s", (unsigned long long)C[k].total, bt, tt, share,
-                    lpf_kind_name[C[k].kind], why, C[k].scope, C[k].fn);
+            char pr[16];
+            lpf_fmt_pct(wall > 0 ? 100.0 * (double)C[k].ticks * tick / wall : 0.0, pr, sizeof pr);
+            fprintf(f, "%8llu %11s %10s %6s %7s  %-11s %-14s %-18s %s", (unsigned long long)C[k].total, bt, tt, pr,
+                    share, lpf_kind_name[C[k].kind], why, C[k].scope, C[k].fn);
             if (C[k].where[0]) fprintf(f, "  (%s)", C[k].where);
             fputc('\n', f);
+        }
+        if (ntiny > 0) {
+            char bt[32], tt[32], pr[16];
+            lpf_fmt_bytes((double)tiny_b, bt, sizeof bt);
+            lpf_fmt_tick_time((double)tiny_t * tick, tick, tt, sizeof tt);
+            lpf_fmt_pct(wall > 0 ? 100.0 * (double)tiny_t * tick / wall : 0.0, pr, sizeof pr);
+            fprintf(f, "%8llu %11s %10s %6s %7s  %zu site%s copied only empty or tiny values (at most %d bytes "
+                       "each, such as a first push into an empty array; under %.0f%% of the run each; "
+                       "--all-copies shows them)\n",
+                    (unsigned long long)tiny_n, bt, tt, pr, "-",
+                    ntiny, ntiny == 1 ? "" : "s", LP_TINY_BYTES, LP_TINY_SHARE * 100);
         }
     }
     if (ntasks > 0) {
@@ -2430,47 +2687,51 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         for (size_t k = 0; k < ns; k++) {
             if (!S[k].is_task) continue;
             char rt[32], rm[32], wm[32], wx[32];
-            lpf_fmt_time((double)S[k].total * tick, rt, sizeof rt);
-            lpf_fmt_time((double)S[k].sum * tick / (double)S[k].calls, rm, sizeof rm);
-            lpf_fmt_time((double)S[k].wait * tick / (double)S[k].calls, wm, sizeof wm);
-            lpf_fmt_time((double)S[k].wait_max * tick, wx, sizeof wx);
+            lpf_fmt_tick_time((double)S[k].total * tick, tick, rt, sizeof rt);
+            lpf_fmt_tick_time((double)S[k].sum * tick / (double)S[k].calls, tick, rm, sizeof rm);
+            lpf_fmt_tick_time((double)S[k].wait * tick / (double)S[k].calls, tick, wm, sizeof wm);
+            lpf_fmt_tick_time((double)S[k].wait_max * tick, tick, wx, sizeof wx);
             fprintf(f, "%8llu %10s %10s %10s %10s  %s\n", (unsigned long long)S[k].calls, rt, rm, wm, wx,
                     S[k].name + 8 /* drop "task <- " */);
         }
     }
     if (nallocs > 0) {
-        /* biggest allocation sites first */
-        size_t *idx = malloc(nallocs * sizeof(size_t)), m = 0;
+        /* costliest (estimated) allocation sites first */
+        const lpf_copy_sum **idx = malloc(nallocs * sizeof(*idx));
+        size_t m = 0;
         for (size_t k = 0; k < nc && idx != NULL; k++)
-            if (C[k].kind == LP_ALLOC) idx[m++] = k;
-        for (size_t a = 0; idx != NULL && a < m; a++)
-            for (size_t b = a + 1; b < m; b++)
-                if (C[idx[b]].bytes > C[idx[a]].bytes) {
-                    size_t tmp = idx[a];
-                    idx[a] = idx[b];
-                    idx[b] = tmp;
-                }
+            if (C[k].kind == LP_ALLOC) idx[m++] = &C[k];
+        if (idx != NULL) qsort(idx, m, sizeof(*idx), lpf_by_allocs);
         uint64_t all_n = 0, all_b = 0;
         for (size_t a = 0; a < m; a++) {
-            all_n += C[idx[a]].total;
-            all_b += C[idx[a]].bytes;
+            all_n += idx[a]->total;
+            all_b += idx[a]->bytes;
         }
-        char tb[32];
+        char tb[32], te[32];
         lpf_fmt_bytes((double)all_b, tb, sizeof tb);
-        fprintf(f, "\nallocations: %llu, %s (from compiled Lean code; frees are not tracked)\n",
-                (unsigned long long)all_n, tb);
-        fprintf(f, "%10s %11s %7s  %-18s %s\n", "allocs", "bytes", "share", "in scope", "function  (where)");
+        lpf_fmt_time((double)all_n * lpf_alloc_ns, te, sizeof te);
+        char ap[16];
+        lpf_fmt_pct(wall > 0 ? 100.0 * (double)all_n * lpf_alloc_ns / wall : 0.0, ap, sizeof ap);
+        fprintf(f, "\nallocations: %llu, %s, est. %s (%s of the run at %.1f ns each, allocation and free; "
+                   "from compiled Lean code)\n",
+                (unsigned long long)all_n, tb, te, ap, lpf_alloc_ns);
+        fprintf(f, "%10s %11s %10s %6s  %-18s %s\n", "allocs", "bytes", "est. time", "%run", "in scope",
+                "function  (where)");
         for (size_t a = 0; a < m && a < 20; a++) {
-            const lpf_copy_sum *c = &C[idx[a]];
-            char bb[32];
+            const lpf_copy_sum *c = idx[a];
+            char bb[32], et[32], pr[16];
             lpf_fmt_bytes((double)c->bytes, bb, sizeof bb);
-            fprintf(f, "%10llu %11s %6.1f%%  %-18s %s", (unsigned long long)c->total, bb,
-                    all_b ? 100.0 * (double)c->bytes / (double)all_b : 0.0, c->scope, c->fn);
+            lpf_fmt_time((double)c->total * lpf_alloc_ns, et, sizeof et);
+            lpf_fmt_pct(wall > 0 ? 100.0 * (double)c->total * lpf_alloc_ns / wall : 0.0, pr, sizeof pr);
+            fprintf(f, "%10llu %11s %10s %6s  %-18s %s", (unsigned long long)c->total, bb, et, pr, c->scope, c->fn);
             if (c->where[0]) fprintf(f, "  (%s)", c->where);
             fputc('\n', f);
         }
         if (m > 20) fprintf(f, "(%zu more sites in the JSON report)\n", m - 20);
         free(idx);
+    } else {
+        fprintf(f, "\nallocations: not counted (`leanprof run --allocs` counts them, at a cost of about 6 ns per "
+                   "allocation that is not subtracted from the times)\n");
     }
     if (nwaits > 0) {
         fprintf(f, "\nblocking waits (IO.wait, Task.get)\n");
@@ -2478,8 +2739,8 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         for (size_t k = 0; k < nc; k++) {
             if (C[k].kind != LP_WAIT) continue;
             char bt[32], mt[32];
-            lpf_fmt_time((double)C[k].ticks * tick, bt, sizeof bt);
-            lpf_fmt_time((double)C[k].ticks * tick / (double)(C[k].total ? C[k].total : 1), mt, sizeof mt);
+            lpf_fmt_tick_time((double)C[k].ticks * tick, tick, bt, sizeof bt);
+            lpf_fmt_tick_time((double)C[k].ticks * tick / (double)(C[k].total ? C[k].total : 1), tick, mt, sizeof mt);
             fprintf(f, "%8llu %10s %10s  %-18s %s", (unsigned long long)C[k].total, bt, mt, C[k].scope, C[k].fn);
             if (C[k].where[0]) fprintf(f, "  (%s)", C[k].where);
             fputc('\n', f);
@@ -2488,14 +2749,36 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
     lpf_counters_print(f);
     lpf_mem_print(f, tick);
     if (hidden > 0)
-        fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (LEANPROF_ALL=1 shows them)\n", hidden);
+        fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (--all-copies shows them)\n", hidden);
     if (dropped > 0) fprintf(f, "\nleanprof: %llu events dropped (table full)\n", (unsigned long long)dropped);
     fprintf(f, "\n");
 }
 
+/* `,"too_small":["total_ns",...]`: the time fields too small to measure
+ * (written as 0), when there are any. */
+static void lpf_json_too_small(FILE *f, const char *const *names, const double *v, int n) {
+    int any = 0;
+    for (int i = 0; i < n; i++) {
+        if (v[i] >= 0.5) continue;
+        fprintf(f, "%s\"%s\"", any ? "," : ",\"too_small\":[", names[i]);
+        any = 1;
+    }
+    if (any) fputc(']', f);
+}
+
 static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                           double wall, uint64_t dropped) {
+    double base = lpf_run_base(S, ns, tick, wall);
     fprintf(f, "{\"version\":3,\"wall_ns\":%.0f,\"probe_ns\":%.0f,\"overhead_ns\":%.1f,", wall, lpf_probe_ns, lpf_overhead_of(lpf_main_path()));
+    fprintf(f, "\"run_ns\":%.0f,\"resolution_ns\":%.3f,", base, tick);
+    if (lpf_alloc_ns > 0) fprintf(f, "\"alloc_ns\":%.2f,", lpf_alloc_ns);
+    fprintf(f, "\"self_check\":{\"ok\":%s,\"lean\":", lpf_sc_msg[0] ? "false" : "true");
+    lpf_json_str(f, LEAN_VERSION_STRING);
+    fprintf(f, ",\"checked\":");
+    lpf_json_str(f, lpf_sc_checked);
+    fprintf(f, ",\"warning\":");
+    lpf_json_str(f, lpf_sc_msg);
+    fprintf(f, "},");
     fprintf(f, "\"overhead_by_path_ns\":{\"direct\":%.1f,\"auto\":%.1f,\"pure\":%.1f,\"closure\":%.1f,\"monadic\":%.1f},",
             lpf_overhead_of(LP_PATH_DIRECT), lpf_overhead_of(LP_PATH_HOOK), lpf_overhead_of(LP_PATH_PURE),
             lpf_overhead_of(LP_PATH_SCOPE), lpf_overhead_of(LP_PATH_ENTER));
@@ -2511,13 +2794,19 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
         fprintf(f, ",\"auto\":%s", S[k].is_fn ? "true" : "false");
         fprintf(f, ",\"calls\":%llu,\"total_ns\":%.0f,\"self_ns\":%.0f,\"min_ns\":%.0f,\"max_ns\":%.0f,"
                    "\"mean_ns\":%.0f,\"p50_ns\":%.0f,\"p99_ns\":%.0f,\"allocs\":%llu,\"alloc_bytes\":%llu,"
-                   "\"allocs_self\":%llu,\"alloc_bytes_self\":%llu,\"probes_ns\":%.0f,\"near_probe_cost\":%s}",
+                   "\"allocs_self\":%llu,\"alloc_bytes_self\":%llu,\"probes_ns\":%.0f,\"near_probe_cost\":%s",
                 (unsigned long long)S[k].calls, (double)S[k].total * tick, (double)S[k].self * tick,
                 (double)S[k].min * tick, (double)S[k].max * tick, (double)S[k].sum * tick / (double)S[k].calls,
                 (double)lpf_percentile(S[k].hist, S[k].calls, 0.50) * tick,
                 (double)lpf_percentile(S[k].hist, S[k].calls, 0.99) * tick, (unsigned long long)S[k].allocs_total,
                 (unsigned long long)S[k].bytes_total, (unsigned long long)S[k].allocs_self,
                 (unsigned long long)S[k].bytes_self, S[k].probes * tick, lpf_near_probe(&S[k]) ? "true" : "false");
+        static const char *const tn[] = {"total_ns", "self_ns", "mean_ns", "p50_ns", "p99_ns"};
+        double tv[] = {(double)S[k].total * tick, (double)S[k].self * tick, (double)S[k].sum * tick / (double)S[k].calls,
+                       (double)lpf_percentile(S[k].hist, S[k].calls, 0.50) * tick,
+                       (double)lpf_percentile(S[k].hist, S[k].calls, 0.99) * tick};
+        lpf_json_too_small(f, tn, tv, 5);
+        fputc('}', f);
     }
     fprintf(f, "],\"allocations\":[");
     first = 1;
@@ -2530,8 +2819,9 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
         lpf_json_str(f, C[k].scope);
         fprintf(f, ",\"where\":");
         lpf_json_str(f, C[k].where);
-        fprintf(f, ",\"allocs\":%llu,\"bytes\":%llu}", (unsigned long long)C[k].total,
-                (unsigned long long)C[k].bytes);
+        fprintf(f, ",\"allocs\":%llu,\"bytes\":%llu,\"est_ns\":%.0f,\"pct_run\":%.3f}", (unsigned long long)C[k].total,
+                (unsigned long long)C[k].bytes, (double)C[k].total * lpf_alloc_ns,
+                base > 0 ? 100.0 * (double)C[k].total * lpf_alloc_ns / base : 0.0);
     }
     fprintf(f, "],\"tasks\":[");
     first = 1;
@@ -2540,9 +2830,14 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
         fprintf(f, "%s{\"spawned_by\":", first ? "" : ",");
         first = 0;
         lpf_json_str(f, S[k].name + 8);
-        fprintf(f, ",\"tasks\":%llu,\"run_total_ns\":%.0f,\"run_sum_ns\":%.0f,\"wait_ns\":%.0f,\"wait_max_ns\":%.0f}",
+        fprintf(f, ",\"tasks\":%llu,\"run_total_ns\":%.0f,\"run_sum_ns\":%.0f,\"wait_ns\":%.0f,\"wait_max_ns\":%.0f",
                 (unsigned long long)S[k].calls, (double)S[k].total * tick, (double)S[k].sum * tick,
                 (double)S[k].wait * tick, (double)S[k].wait_max * tick);
+        static const char *const tn[] = {"run_total_ns", "run_sum_ns", "wait_ns", "wait_max_ns"};
+        double tv[] = {(double)S[k].total * tick, (double)S[k].sum * tick, (double)S[k].wait * tick,
+                       (double)S[k].wait_max * tick};
+        lpf_json_too_small(f, tn, tv, 4);
+        fputc('}', f);
     }
     fprintf(f, "],\"waits\":[");
     first = 1;
@@ -2555,8 +2850,12 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
         lpf_json_str(f, C[k].scope);
         fprintf(f, ",\"where\":");
         lpf_json_str(f, C[k].where);
-        fprintf(f, ",\"waits\":%llu,\"blocked_ns\":%.0f}", (unsigned long long)C[k].total,
+        fprintf(f, ",\"waits\":%llu,\"blocked_ns\":%.0f", (unsigned long long)C[k].total,
                 (double)C[k].ticks * tick);
+        static const char *const tn[] = {"blocked_ns"};
+        double tv[] = {(double)C[k].ticks * tick};
+        lpf_json_too_small(f, tn, tv, 1);
+        fputc('}', f);
     }
     fprintf(f, "],\"copies\":[");
     first = 1;
@@ -2572,10 +2871,15 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
         fprintf(f, ",\"where\":");
         lpf_json_str(f, C[k].where);
         fprintf(f, ",\"kind\":\"%s\",\"copies\":%llu,\"bytes\":%llu,\"copy_ns\":%.0f,\"shared\":%llu,"
-                   "\"multi_threaded\":%llu,\"persistent\":%llu}",
+                   "\"multi_threaded\":%llu,\"persistent\":%llu,\"pct_run\":%.3f,\"tiny\":%s",
                 lpf_kind_name[C[k].kind], (unsigned long long)C[k].total, (unsigned long long)C[k].bytes,
                 (double)C[k].ticks * tick, (unsigned long long)C[k].count[LP_SHARED],
-                (unsigned long long)C[k].count[LP_MULTI_THREADED], (unsigned long long)C[k].count[LP_PERSISTENT]);
+                (unsigned long long)C[k].count[LP_MULTI_THREADED], (unsigned long long)C[k].count[LP_PERSISTENT],
+                base > 0 ? 100.0 * (double)C[k].ticks * tick / base : 0.0, lpf_tiny(&C[k]) ? "true" : "false");
+        static const char *const tn[] = {"copy_ns"};
+        double tv[] = {(double)C[k].ticks * tick};
+        lpf_json_too_small(f, tn, tv, 1);
+        fputc('}', f);
     }
     fprintf(f, "]");
     lpf_counters_json(f);
@@ -2693,6 +2997,7 @@ static void lpf_report(void) {
     lpf_calibrate(); /* the CPU is warm now; keeps the lower estimate */
     double tick = lpf_ns_per_tick();
     double wall = (double)(lpf_now() - lpf_start) * tick;
+    lpf_self_check(); /* after the wall time: its ~20 µs are not the program's */
     uint64_t pairs = 0;
     for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
         if (t->pairs > pairs) pairs = t->pairs;
@@ -2824,11 +3129,27 @@ static void lpf_report(void) {
     }
     pthread_mutex_unlock(&lpf_lock);
 
+    /* Self is total minus the children. When the children run for about what
+     * their probes cost, subtracting the probes can leave them below zero, and
+     * the parent's self above its total; that excess is subtraction error, not
+     * time, so self stops at the total. */
+    for (size_t k = 0; k < ns; k++)
+        if (S[k].self > S[k].total) S[k].self = S[k].total;
+
     qsort(S, ns, sizeof(lpf_scope_sum), lpf_by_total);
     qsort(C, nc, sizeof(lpf_copy_sum), lpf_by_cost);
+    for (size_t k = 0; k < nc; k++)
+        if (C[k].kind == LP_ALLOC) {
+            lpf_calibrate_alloc(tick);
+            break;
+        }
+    lpf_report_tick = tick;
+    lpf_report_base = lpf_run_base(S, ns, tick, wall);
 
     const char *quiet = getenv("LEANPROF_QUIET");
     if (quiet == NULL || strcmp(quiet, "1") != 0) lpf_print(stderr, S, ns, C, nc, tick, wall, dropped);
+    if (lpf_sc_msg[0] && (quiet == NULL || strcmp(quiet, "1") != 0))
+        fprintf(stderr, "leanprof: warning: %s\n", lpf_sc_msg);
 
     const char *trace = getenv("LEANPROF_TRACE");
     if (trace != NULL && trace[0] != 0) lpf_write_trace(trace, tick);

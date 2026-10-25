@@ -66,15 +66,30 @@ target leanprof_o pkg : FilePath := do
   let live ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "live.inc.c"))
   -- LEANPROF_SANITIZE (CI, with LEAN_CC=scripts/leanprof-cc): the runtime
   -- with the same sanitizers as the rest of the program, compiled by clang
+  let selfcheck ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "selfcheck.h"))
   let sanitize := (← IO.getEnv "LEANPROF_SANITIZE").getD ""
   let (cc, sanArgs) := if sanitize.isEmpty then ("cc", #[]) else
     ("clang", #[s!"-fsanitize={sanitize}", "-fno-omit-frame-pointer", "-g"])
   buildO oFile srcJob weakArgs (#["-fPIC", "-O2", "-Wall"] ++ sanArgs) cc
-    (return (((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain).mix live)
+    (return ((((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain).mix live).mix selfcheck)
+
+/-- The runtime's self-check (`c/selfcheck.c`), compiled with `copyFlags` like
+the programs it vouches for: at exit, each of its known copies must reach a
+shim, or the report warns that copies may be undercounted. -/
+target selfcheck_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "selfcheck.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "selfcheck.c"
+  let header ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "selfcheck.h"))
+  let sanitize := (← IO.getEnv "LEANPROF_SANITIZE").getD ""
+  let (cc, sanArgs) := if sanitize.isEmpty then ("cc", #[]) else
+    ("clang", #[s!"-fsanitize={sanitize}", "-fno-omit-frame-pointer", "-g"])
+  buildO oFile srcJob #["-I", (← getLeanIncludeDir).toString] (#["-fPIC", "-O2", "-Wall"] ++ copyFlags ++ sanArgs) cc
+    (return (← getLeanTrace).mix header)
 
 extern_lib leanprof_c pkg := do
   let o ← pkg.target ``leanprof_o |>.fetch
-  buildStaticLib (pkg.staticLibDir / nameToStaticLib "leanprof_c") #[o]
+  let sc ← pkg.target ``selfcheck_o |>.fetch
+  buildStaticLib (pkg.staticLibDir / nameToStaticLib "leanprof_c") #[o, sc]
 
 lean_exe overhead where
   root := `Examples.Overhead
@@ -146,5 +161,17 @@ lean_exe stress where
 requests with an occasional slow one. -/
 lean_exe server where
   root := `Examples.Server
+  moreLeancArgs := copyFlags
+  moreLinkArgs := linkFlags
+
+/-- The causes `leanprof explain` recognises, each next to its fix
+(`Examples/ExplainPatterns.lean`), and their tests (`Tests/ExplainFixes.lean`,
+run by `tests`), which check the diagnosis and count both versions' copies. -/
+lean_lib ExplainPatterns where
+  roots := #[`Examples.ExplainPatterns, `Tests.ExplainFixes]
+  moreLeancArgs := copyFlags
+
+lean_exe explainpatterns where
+  root := `Examples.ExplainPatternsMain
   moreLeancArgs := copyFlags
   moreLinkArgs := linkFlags

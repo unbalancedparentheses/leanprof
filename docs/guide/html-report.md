@@ -43,8 +43,9 @@ Without arguments it reads `report.json`, `elab.json` and `measure.json` from
     kernel, compiler, linters).
 - **Tables**, sortable by any column and filterable: scopes (or sampled
   declarations and self time per function), copies with why
-  (shared, multi-threaded, persistent) and their share of the scope's time,
-  allocations, reuse failures, closures, tasks, waits, frees, memory per
+  (shared, multi-threaded, persistent, tiny), their share of the run and of
+  the scope's time, sorted by time, allocations with an estimated time and
+  share of the run, reuse failures, closures, tasks, waits, frees, memory per
   scope, compile cost per line, repeated work, and operation kinds.
 - **Source**: every `file:line` in a table is a link that opens the lines
   around it, read from the project when the page was made, with the hints
@@ -52,6 +53,8 @@ Without arguments it reads `report.json`, `elab.json` and `measure.json` from
   `▲` allocations, `⚙` compile cost). The Source tab lists all of them per
   file. `--context N` sets how many lines around each position are kept
   (default 3).
+- Times too small to measure read `< probe cost` (a scope's time after
+  subtracting the probes) or `< 1 clock tick` (a copy), never 0.
 
 ## Comparing two reports
 
@@ -66,7 +69,8 @@ leanprof html -o pr.html base.json head.json base-elab.json head-elab.json
 The page shows the new report, each summary tile with its change from the
 base, and a Comparison tab that applies the rules of
 [`leanprof compare`](ci-and-regressions.md): more copies of shared values at
-a site, a changed call count, a scope slower by more than `--threshold`
+a site, more allocations in total (when both reports counted them), a
+changed call count, a scope slower by more than `--threshold`
 percent (default 10) and `--min-ms` (default 1), or, for `elab --heartbeats`
 reports, a declaration up by more than 1% and 1,000 heartbeats. Regressions
 are listed first and counted in a banner at the top. Two `measure` summaries

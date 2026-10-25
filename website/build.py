@@ -4,7 +4,7 @@
     python3 website/build.py [--out _site]
 
 The docs pages are rendered from docs/guide, docs/case-studies and bench at
-build time, and the landing page takes its message ("Why leanprof", the
+build time, and the landing page takes its message ("Where leanprof wins", the
 comparison table, the opening paragraph) from README.md, so the site cannot
 drift from the repository. The numbers the landing page states in its own
 words are listed in FACTS below and the build fails unless each one appears
@@ -56,7 +56,9 @@ NAV = [
         "docs/case-studies/lean-regex.md",
         "docs/case-studies/concrete.md",
         "docs/case-studies/batteries.md",
+        "docs/case-studies/mathlib.md",
         "docs/case-studies/compile-time-vs-lean-source-profiler.md",
+        "docs/case-studies/leanbench.md",
     ]),
     ("Benchmarks", [
         "bench/README.md",
@@ -400,8 +402,8 @@ def build_landing(outdir):
     code_html, hints_html = editor_hint()
     subs = {
         "opening": inline_md(readme_opening(readme), out),
-        "why_intro": inline_md(readme_section(readme, "Why leanprof").split("\n\n", 1)[0], out),
-        "why": inline_md(readme_section(readme, "Why leanprof").split("\n\n", 1)[1], out),
+        "why_intro": inline_md(readme_section(readme, "Where leanprof wins, and where it does not").split("\n\n", 1)[0], out),
+        "why": inline_md(readme_section(readme, "Where leanprof wins, and where it does not").split("\n\n", 1)[1], out),
         "compare": inline_md(readme_section(readme, "How it compares").split("\n### ", 1)[0], out),
         "source": source_listing("Examples/CopyBug.lean", 17, 23, {21, 22}),
         "run": terminal("output/run.txt", mark=lambda l: "15.3 MiB" in l),

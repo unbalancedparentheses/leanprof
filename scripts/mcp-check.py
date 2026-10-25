@@ -56,7 +56,7 @@ check("initialize", r["result"]["protocolVersion"] == "2025-06-18" and "tools" i
 send({"jsonrpc": "2.0", "method": "notifications/initialized"})  # no reply expected
 
 names = {t["name"] for t in call("tools/list")["result"]["tools"]}
-want = {"run", "sample", "stat", "elab", "measure", "report", "hot", "explain", "compare", "judge", "live", "dump"}
+want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump"}
 check("tools/list", want <= names, names)
 
 text, err = tool("run", executable="copybug", args=["1000"], json=".lake/leanprof/mcp-small.json")
@@ -84,6 +84,34 @@ check("measure", not err, text)
 text, err = tool("measure", executable="copybug", args=["500"], runs=2, out=".lake/leanprof/mcp-m2.json")
 text, err = tool("judge", base=".lake/leanprof/mcp-m1.json", new=".lake/leanprof/mcp-m2.json")
 check("judge", not err and ("KEEP" in text or "DISCARD" in text), text)
+
+# a paired session of two prebuilt binaries, judged from one file
+text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
+                 args=["500"], runs=6, warmup=1, out=".lake/leanprof/mcp-pair.json")
+check("measure_pair", not err and "6 pairs" in text, text)
+text, err = tool("judge", pair=".lake/leanprof/mcp-pair.json", min_change="1")
+check("judge (paired)", not err and "paired time" in text, text)
+
+# refused: arbitrary programs, writes outside the project, signals to every process
+text, err = tool("measure_pair", base="/bin/echo", candidate="/bin/echo", runs=6)
+check("measure_pair refuses a binary Lake did not build", err and "not a binary built by Lake" in text, text)
+text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
+                 base_cwd="/", runs=6)
+check("measure_pair refuses a working directory that is not a Lake project", err and "not a Lake project" in text, text)
+text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
+                 check_output="../x", runs=6)
+check("measure_pair refuses an output file outside the project", err and "inside the project" in text, text)
+text, err = tool("run", executable="copybug", json="/tmp/leanprof-mcp-outside.json")
+check("run refuses a report path outside the project", err and "inside the project" in text, text)
+text, err = tool("measure", executable="copybug", out="../outside.json")
+check("measure refuses a summary path outside the project", err and "inside the project" in text, text)
+text, err = tool("run", executable="--core")
+check("run refuses an option as the executable", err and "not an executable name" in text, text)
+for pid in ["-1", "0", "../../etc/x"]:
+    text, err = tool("dump", pid=pid)
+    check(f"dump refuses pid {pid!r}", err and "not a process id" in text, text)
+    text, err = tool("live", pid=pid)
+    check(f"live refuses pid {pid!r}", err and "not a process id" in text, text)
 
 # a running program: live snapshot and flight-recorder dump
 env = dict(os.environ, LEANPROF_LIVE="1", LEANPROF_FLIGHT=".lake/leanprof", LEANPROF_QUIET="1")

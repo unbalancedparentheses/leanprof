@@ -49,6 +49,40 @@ PY
 LEANPROF_QUIET=1 "$lp" explain --why smoke -- 2000 > why.txt
 grep -q "1999×" why.txt
 
+echo "== self-check: a missing shim is reported"
+# leanprof as installed, but with the String.push shims taken out of the
+# compiler wrapper (as Lean 4.36's inline lean_string_push once did to every
+# String copy): the run, its JSON and doctor must warn
+broken="$work/broken"
+mkdir -p "$broken/.lake/build/bin" "$broken/scripts"
+# the command itself, behind any launcher or install script: doctor says
+# where its files are
+real="$("$lp" doctor | sed -n 's/.*leanprof files at //p' | head -1)/.lake/build/bin/leanprof"
+cp "$real" "$broken/.lake/build/bin/leanprof"
+cp -R "$root/c" "$broken/"
+grep -v -e '-Dlean_string_push=' -e '-Dlean_string_push_cold=' "$root/scripts/leanprof-cc" > "$broken/scripts/leanprof-cc"
+chmod +x "$broken/scripts/leanprof-cc"
+python3 - <<'PY'
+import json, sys
+d = json.load(open('run.json'))
+print('self-check', d['self_check'])
+sys.exit(0 if d['self_check']['ok'] and d['self_check']['warning'] == '' else 1)
+PY
+"$broken/.lake/build/bin/leanprof" run --json broken.json smoke -- 200 > broken.out 2> broken.err || true
+grep -q "warning: copies of String may be undercounted with Lean" broken.err || { tail -40 broken.err; exit 1; }
+python3 - <<'PY'
+import json, sys
+d = json.load(open('broken.json'))
+sc = d['self_check']
+print('self-check without the String.push shims:', sc['warning'])
+strings = sum(c.get('shared', 0) for c in d['copies'] if c['kind'] == 'String')
+sys.exit(0 if not sc['ok'] and 'copies of String may be undercounted' in sc['warning'] and 'Array' not in sc['warning'] and strings == 0 else 1)
+PY
+"$broken/.lake/build/bin/leanprof" doctor > broken-doctor.txt || true
+grep -q "!!  copies of String may be undercounted" broken-doctor.txt || { cat broken-doctor.txt; exit 1; }
+"$lp" doctor | grep "copy detection works"
+rm -rf "$broken"
+
 echo "== leanprof elab"
 "$lp" elab --heartbeats Main.lean > elab.txt
 head -12 elab.txt

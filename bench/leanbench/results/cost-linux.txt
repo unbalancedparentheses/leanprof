@@ -1,0 +1,10 @@
+load: 3.06 1.00 1.17
+setup LeanBench: lake build bench from scratch (fetch + LeanBench + Cli + workload): 21.57 s
+setup plain exe: lake build work after that: 0.34 s
+setup leanprof: first measure (builds runtime + shims): 3.22 s
+verdict 1: LeanBench 0.62 s, leanprof 6.53 s, lake rebuild after leanprof 10.25 s
+verdict 2: LeanBench 0.63 s, leanprof 6.43 s, lake rebuild after leanprof 10.25 s
+verdict 3: LeanBench 0.62 s, leanprof 6.54 s, lake rebuild after leanprof 10.25 s
+verdict 4: LeanBench 0.62 s, leanprof 6.53 s, lake rebuild after leanprof 10.25 s
+verdict 5: LeanBench 0.63 s, leanprof 6.53 s, lake rebuild after leanprof 10.25 s
+load: 1.45 1.05 1.16

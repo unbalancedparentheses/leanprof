@@ -2,7 +2,8 @@
 
 A release is a version tag. Pushing it runs
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which
-builds the `leanprof` command on macOS arm64 and Linux x86-64, installs each
+builds the `leanprof` command on macOS arm64 and x86-64 and Linux x86-64 and
+arm64, installs each
 archive with [`scripts/install.sh`](scripts/install.sh) and profiles a
 project outside this repository with it (`run`, `--allocs --counters
 --frees`, `explain --why`, `elab`, and `sample` on macOS), packages the VS
@@ -64,7 +65,7 @@ if one was created (`gh release delete v0.2.0`), and tag again.
 leanprof-vX.Y.Z-PLATFORM/
   bin/leanprof              launcher: put this directory on PATH or symlink it
   .lake/build/bin/leanprof  the command itself
-  c/                        runtime source (leanprof.c, *.inc.c, headers),
+  c/                        runtime source (leanprof.c, selfcheck.c, *.inc.c, headers),
                             compiled for each project's Lean version
   scripts/leanprof-cc       compiler wrapper used by `leanprof run`
 ```

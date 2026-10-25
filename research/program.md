@@ -31,6 +31,10 @@ no lakefile changes are needed).
    leanprof measure --runs 5 --heartbeats-files FILES --out .lake/research/base.json EXE -- ARGS
    ```
 
+   `measure` counts allocations (about 6 ns each; both sides of every
+   comparison pay it). Only if that makes the workload too slow, add
+   `--no-allocs`, for the whole session: `judge` then cannot see them.
+
 6. Create `research/results.tsv` (untracked: add it to `.git/info/exclude`)
    with the header and the baseline row (see below).
 
@@ -41,7 +45,20 @@ Repeat until the time budget is spent:
 1. **Look.** Read the last report and choose one hotspot:
    - `.lake/leanprof/report.json` (from `measure`, or
      `leanprof run --json ...`) lists copies of shared values per function;
-     each one copies a whole `Array`, `ByteArray` or `String`.
+     each one copies a whole `Array`, `ByteArray` or `String`. With
+     allocations counted (`measure` does; `run --allocs`), it lists
+     allocations per function too. Each row has `pct_run`, its share of the
+     run: pick findings by that, not by counts (20,000 copies at 0.02% of
+     the run are not worth an experiment; allocations at 1% rarely are).
+   - `leanprof explain --json` reads that report and prints the copy sites
+     as ranked findings: `cause` (`nested-array-element`,
+     `map-value-reinserted`, `stored-then-updated`, `multi-threaded-global`,
+     `loop-over-updated-array`, or a general one), `file` and `lines`, `why`,
+     `fix`, and `fix_code`: the rewrite as Lean code with the program's own
+     names (alternatives; apply one), plus `copies` and `estimated_cost_ns`
+     (time spent copying at that site). A finding with `fix_code` is the
+     cheapest experiment to try first; the fixes for the recognised causes
+     are tested to remove the copies.
    - `leanprof sample EXE -- ARGS` shows CPU time per Lean declaration and
      what the runtime spent its time on (copying, freeing, allocation, ...).
    - `leanprof elab --heartbeats FILES` shows compile cost per line and
@@ -70,14 +87,27 @@ DISCARD when any of these hold:
 - the command, the exit code or the output hash changed, or the output was
   not the same on every run;
 - copies of shared or multi-threaded values went up (they are exact counts);
+- allocations by compiled Lean code went up (exact counts; if a threaded
+  program's count varies between runs, only when every new run allocated
+  more than every base run). A change that removes copies by allocating
+  more elsewhere is not an improvement: fix the allocations too, or drop it;
 - compile heartbeats of `FILES` went up by more than 1% and 1,000
   (heartbeats are exact, but an edit moves neighbouring declarations by a
   few);
 - every new run was slower than every base run.
 
-Otherwise KEEP when copies or heartbeats went down by those margins, or
-every new run was faster than every base run (new max below base min; with
-5 runs each, chance alone does that about 1 time in 252). A change within
+Time is not judged at all when the machine was overloaded (1-minute load
+average above the number of CPUs) during either `measure`; run the loop on
+a quiet machine, or rely on the exact metrics.
+
+Otherwise KEEP when copies went down, allocations went down by at least 1%
+of the base count and 100 (a smaller cut is exact but too small to show in
+time; it is listed, not counted), heartbeats went down by more than 1% and
+1,000, or every new run was faster than every base run (new max below base
+min) and the median moved by at least 1% (`--min-change`). Base and new are
+measured one after the other, so a quiet machine's drift of about 1% can
+separate the runs by itself: unchanged code gave 2 such verdicts in 20 before
+the 1% floor. A change within
 the noise is DISCARDed: it has to show that it helps. Call counts are
 listed but not judged, since restructuring code changes them legitimately.
 
@@ -112,6 +142,29 @@ new summary.
   consecutive DISCARDs, and summarize what was kept, what was tried and
   what you would try next.
 - Leave the branch with only KEEP commits and a clean tree.
+
+## Qualify a kept branch before merging
+
+Build the original baseline and final candidate from clean checkouts. Check the
+whole branch on inputs and option combinations beyond the optimization workload,
+including malformed inputs: diagnostics and refusal behavior are part of the
+contract. Run the full test suite on both under the same pinned toolchain. If a
+host-specific baseline failure exists, record it by test name and compare the
+candidate's failure and log; do not turn it into an unexplained skipped test.
+
+Review every removed validation against all return paths of the function said
+to guarantee it. In the compiler case study, SSA construction validated renamed
+functions but returned already-SSA functions unchecked. A focused regression
+test caught the missing check even though hundreds of CLI comparisons passed.
+
+Confirm speedups on ordinary binaries without probes, after builds and tests
+finish. Use `leanprof measure-pair --base BASE_BINARY --candidate NEW_BINARY
+--out paired.json -- ARGS`, then `leanprof judge paired.json` (see the
+[paired measurement guide](../docs/guide/ci-and-regressions.md#interleaved-timing-of-ordinary-binaries)).
+This timing-only check complements the exact-metric verdict; it does not replace it. Warm both binaries, alternate their order, save every run and machine
+load, and check outputs. A confidence interval from one machine does not cover
+other workloads or platforms. Keep allocation reductions separate from runtime
+speedups. The [LCB qualification scripts](lcb/README.md) provide a concrete example.
 
 ## Demo
 

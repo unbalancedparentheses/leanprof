@@ -87,7 +87,7 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       run: |
-        hash=$(cat lean-toolchain lakefile.lean lake-manifest.json LeanprofCli.lean Leanprof.lean Leanprof/*.lean c/leanprof.c | shasum -a 256 | cut -c1-16)
+        hash=$(cat lean-toolchain lakefile.lean lake-manifest.json LeanprofCli.lean Leanprof.lean Leanprof/*.lean c/*.c c/*.h | shasum -a 256 | cut -c1-16)
         echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
     - name: Restore leanprof's command
@@ -134,10 +134,14 @@ runs:
     - name: Verdict
       if: steps.profile.outputs.regressed == 'true' || steps.profile.outputs.head-failed == 'true'
       shell: bash
+      # values reach the script as variables, never pasted into its text
+      env:
+        LP_HEAD_FAILED: ${{ steps.profile.outputs.head-failed }}
+        LP_FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        if [ "${{ steps.profile.outputs.head-failed }}" = true ]; then
+        if [ "$LP_HEAD_FAILED" = true ]; then
           echo "::error::leanprof could not profile the head commit (see the log of 'Profile base and head')"
         else
-          echo "::error::leanprof: a metric in fail-on (${{ inputs.fail-on }}) regressed; see the report"
+          echo "::error::leanprof: a metric in fail-on ($LP_FAIL_ON) regressed; see the report"
         fi
         exit 1
