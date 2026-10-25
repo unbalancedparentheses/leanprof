@@ -11,7 +11,7 @@ Neighbours, and how leanprof should compare with each:
 | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | manual spans, Perfetto, regression comparison | add automatic instrumentation, lower overhead, live traces, paired comparison |
 | samply / perf | sampling, no annotations | add Lean-aware names and source lines, merged with exact counts |
 | [LeanBench](https://github.com/alok/LeanBench) | benchmark harness, saved baselines | match its cost (0.6 s per verdict against 6.5 s) and per-benchmark precision, keep exact copies and allocations, compare by interleaved runs ([case study](docs/case-studies/leanbench.md)) |
-| [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler), `trace.profiler` | elaboration time | not compete; running programs only |
+| [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler), `trace.profiler` | elaboration time, source navigation | connect compile-time and runtime diagnosis; refresh comparisons against current native capture |
 
 Status (2026-10-23): M1–M9 are largely done; what remains before and after
 the first releases is in the next two sections, which come from profiling
@@ -20,6 +20,95 @@ real projects with leanprof (see [case studies](docs/case-studies/)).
 The [competitive priorities](docs/research/competitive-priorities.md) define
 what evidence is still needed to become the best choice across these jobs,
 including refreshed comparisons against current alternatives.
+
+The product and LLM priorities below consolidate work across the milestones;
+unchecked items are planned work, not claims about current capabilities.
+
+## Product priorities: from diagnosis to verified improvement
+
+- [ ] **Calibrate verdicts.** Publish false-positive rates, detection rates for
+  seeded 1%, 2% and 5% changes, inconclusive outcomes and total experiment cost
+  on quiet and loaded hosts. Use fixed protocols, not reruns until KEEP.
+- [ ] **Improve attribution.** Validate tiny functions, recursion and overlapping
+  tasks against known answers; repair Linux unwinding and sampling flags.
+  Separate CPU time, elapsed time, waiting and probe overhead, with explicit
+  uncertainty and aggregation rules so concurrent work is not double-counted.
+- [ ] **Broaden memory coverage.** Identify core-library and precompiled code
+  coverage; add RC-operation costs, retained-memory attribution and object
+  lifetime analysis beyond existing allocation counts and peak-live metrics.
+  Distinguish unobserved activity from measured zero and self-check counting.
+- [ ] **Make the first investigation automatic.** Discover executable, test or
+  library workloads, show the top three findings with source and next steps,
+  and handle dependency instrumentation and build restoration. Validate a
+  fresh install and first useful diagnosis on unfamiliar external projects.
+- [ ] **Navigate large projects.** Drill from project to module to declaration
+  to operation, compare runs at each level, and detect stale source mappings.
+  Evaluate the workflow against the current lean-source-profiler viewer.
+- [ ] **Shorten iteration.** Preserve ordinary builds, support named and scoped
+  benchmarks, and link a finding to its before/after experiment. Report setup,
+  collection and analysis costs separately; avoid startup diluting local gains.
+- [ ] **Demonstrate end-to-end value.** Have independent users diagnose and fix
+  real issues in unfamiliar projects. Publish correctness, time to verified
+  improvement, failed diagnoses and reproduction instructions alongside
+  current-version comparisons. Feature counts alone are not success criteria.
+
+## LLM agents: reliable evidence and bounded experiments
+
+Existing foundations: MCP tools, ranked `explain` suggestions, `measure-pair`,
+paired `judge`, and the scripted autoresearch demo. MCP currently wraps results
+in text; tool availability alone does not make the full optimization loop robust.
+
+- [ ] **P0 — Stable machine-readable contracts.** Version CLI JSON and MCP
+  structured results with shared schemas and contract tests. Return typed
+  findings, metric units, measurement mode, coverage, uncertainty, artifact IDs
+  and verdict reasons. Separate a valid DISCARD from a failed measurement;
+  distinguish no improvement, insufficient evidence and correctness failure.
+  Supply error codes, retryability and recovery instructions without requiring
+  agents to parse terminal prose.
+- [ ] **P0 — Provenance and freshness.** Attach source revision and dirty-tree
+  content fingerprints, executable hashes, Lean/tool versions, build flags,
+  platform, workload/input hashes and measurement settings to every experiment.
+  Check comparison compatibility and source freshness before giving advice;
+  explain mismatches and any intentional differences. Link source ranges to
+  the exact snapshot measured, not just a filename in the current checkout.
+- [ ] **P0 — A complete experiment operation.** Connect baseline capture,
+  candidate measurement, correctness checks and judgement under one experiment
+  ID. Keep timing and instrumented counts separate but linked. Require the
+  configured tests and output checks before accepting a change, preserve proof
+  and test obligations, and validate on held-out inputs. Return KEEP, DISCARD
+  or an explicit inconclusive/error reason with the evidence behind it.
+- [ ] **P1 — Discovery without guesswork.** Add machine-readable project and
+  capability discovery (`doctor --json` or equivalent MCP tool): Lean version,
+  available targets and modes, instrumentation coverage, required dependencies,
+  and actionable setup failures. Do not silently pick an ambiguous workload.
+- [ ] **P1 — Bounded, recoverable jobs.** Give long builds and profiles job IDs,
+  status/progress, cancellation, time/resource/output limits and resumable
+  artifact retrieval. Execute literal argument arrays in explicit working
+  directories; document trust boundaries and require explicit authorization for
+  destructive or external actions. Test cleanup after failure and cancellation.
+- [ ] **P1 — Compact, queryable evidence.** Return a small ranked summary first,
+  then filter/page by module, declaration, operation or finding ID. Allow agents
+  to request source, causal evidence, confidence and before/after deltas for one
+  finding without re-reading the whole trace. Preserve full raw artifacts;
+  expose truncation and missing data rather than silently dropping evidence.
+- [ ] **P1 — Hypotheses tied to evidence.** For each suggested fix, state the
+  observed cause, supporting locations, expected affected metric, semantic
+  constraints and a concrete validation experiment. Distinguish observations
+  from hypotheses; verify improvements by measurement rather than predictions.
+- [ ] **P2 — Experiment memory.** Store an append-only log of hypothesis, patch
+  fingerprint, workload, checks, measurements, verdict and rejection reason.
+  Retrieve relevant prior attempts to avoid repeating failures; invalidate old
+  conclusions when code or workloads change. Keep held-out evaluation separate
+  from the inputs used to guide optimization.
+- [ ] **Evidence gate — Evaluate agents using leanprof.** Use fixed tasks with
+  known bottlenecks plus unseen real projects. Compare the same model and budget
+  with ordinary tools versus leanprof. Publish correct fixes, false KEEPs,
+  missed issues, tool failures, calls/tokens and elapsed time. A speedup with
+  weakened tests, proofs or changed required behavior is a failed attempt.
+
+Start with structured contracts, provenance and the experiment lifecycle.
+Evaluate each increment on the fixed agent tasks; extra automation should not
+precede trustworthy counting and calibrated verdicts.
 
 ## v0.1.0: honest numbers, installable
 
