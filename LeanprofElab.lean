@@ -378,6 +378,11 @@ structure LineCost where
   name : String := ""
   top : Array (Float × String) := #[]  -- most expensive nested operations
   consts : Std.HashMap String (String × Float × Nat) := {}  -- constant ↦ (kind, cost, times)
+  /-- Repeatable operations (the outermost of a nest) on this line: (class, operation) ↦
+  (times, total), for `compare` to name the repeated work of one declaration. -/
+  ops : Std.HashMap (String × String) (Nat × Float) := {}
+  /-- `diagnostics` counters of this line's commands (`--counts`): (constant, counter) ↦ count. -/
+  diag : Std.HashMap (String × String) Nat := {}
   deriving Inhabited
 
 structure OpCost where
@@ -548,9 +553,11 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
   let mut a := a
   let nodes ← match p with
     | .diag counts =>
+      let mut c := a.lines.getD key {}
       for (name, ctr, n) in counts do
         a := a.addDiag name ctr n key
-      return a
+        c := { c with diag := c.diag.insert (name, ctr) (c.diag.getD (name, ctr) 0 + n) }
+      return { a with lines := a.lines.insert key c }
     | .trace nodes => pure nodes
   let some root := nodes[0]? | return a
   -- A command Lean expands into others (`theorem Foo.bar` into `namespace Foo theorem bar
@@ -658,7 +665,8 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
         let o' : OpCost := { count := o.count + 1, total := o.total + amt, maxOne := max o.maxOne amt,
                              firstAt := if o.firstAt.isEmpty then key else o.firstAt }
         a := { a with ops := a.ops.insert k o' }
-        c := { c with top := c.top.push (amt, s!"[{n.cls}] {normalizeOp n.text}") }
+        let (lc, lt) := c.ops.getD k (0, 0)
+        c := { c with top := c.top.push (amt, s!"[{n.cls}] {normalizeOp n.text}"), ops := c.ops.insert k (lc + 1, lt + amt) }
   -- the constants behind the work
   for (name, kind, cost) in attributions nodes do
     let cost := cost.map (· * scale)
@@ -1128,8 +1136,8 @@ def splitPos (k : String) : String × Nat :=
   | [f, l] => (f, l.toNat!)
   | _ => (k, 0)
 
-/-- Name of the declaration that starts closest above `key` in its file. -/
-def ownerName (named : Std.HashMap String (Array (Nat × String))) (key : String) : String := Id.run do
+/-- The declaration that starts closest above `key` in its file: its line and name. -/
+def owner (named : Std.HashMap String (Array (Nat × String))) (key : String) : Nat × String := Id.run do
   let (f, l) := splitPos key
   let mut best := 0
   let mut name := ""
@@ -1137,7 +1145,34 @@ def ownerName (named : Std.HashMap String (Array (Nat × String))) (key : String
     if l' ≤ l && l' ≥ best then
       best := l'
       name := n
-  return name
+  return (best, name)
+
+/-- Name of the declaration that starts closest above `key` in its file. -/
+def ownerName (named : Std.HashMap String (Array (Nat × String))) (key : String) : String :=
+  (owner named key).2
+
+/-- `diagnostics` counters Lean reports at a tactic (`simp`'s), on a line with no
+cost of its own: moved to the declaration that starts closest above, so that
+they count for it. -/
+def ownDiagnostics (named : Std.HashMap String (Array (Nat × String))) (lines : Std.HashMap String LineCost) :
+    Std.HashMap String LineCost := Id.run do
+  let mut out := lines
+  for (k, c) in lines do
+    if c.total > 0 || c.diag.isEmpty then continue
+    let (l, _) := owner named k
+    let dest := s!"{(splitPos k).1}:{l}"
+    if l == 0 || dest == k then continue
+    let some d := out.get? dest | continue
+    out := out.insert dest { d with diag := c.diag.fold (fun m key n => m.insert key (m.getD key 0 + n)) d.diag }
+    out := out.erase k
+  return out
+
+/-- How many causes, repeated operations and counters `elab.json` keeps per line. -/
+def causeLimit : Nat := 20
+
+/-- The `diagnostics` counters kept per line, each cut at `causeLimit / 2` (`simp_tried` is
+`simp_used` and `simp_failed` together). -/
+def countCounters : List String := ["unfolds", "kernel", "instances", "simp_used", "simp_failed"]
 
 def kindLabel : String → String
   | "unfold" => "isDefEq unfolds"
@@ -1239,12 +1274,16 @@ def main (argv : List String) : IO UInt32 := do
   let failed := acc.files.filter (·.2.errors > 0)
   -- costliest lines; kernel and compiler work can sit on a line of its own: name it after
   -- the declaration that starts closest above it
-  let lineCosts : Array (String × LineCost) := acc.lines.toArray.map fun (k, c) =>
+  let lineCosts : Array (String × LineCost) := (ownDiagnostics named acc.lines).toArray.map fun (k, c) =>
     if c.name.isEmpty then (k, { c with name := ownerName named k }) else (k, c)
   let rows := (lineCosts.filter (·.2.total > 0)).qsort (fun a b => a.2.total > b.2.total || (a.2.total == b.2.total && a.1 < b.1))
   let lineConsts (c : LineCost) : Array (String × String × Float × Nat) :=
     ((c.consts.toArray.filter fun (s, _) => (acc.consts.get? s).all (keep s)).map fun (s, (k, x, t)) => (s, k, x, t))
       |>.filter (·.2.2.1 > 0) |>.qsort (fun a b => a.2.2.1 > b.2.2.1 || (a.2.2.1 == b.2.2.1 && a.1 < b.1))
+  -- every constant credited on a line, costliest first, then most often
+  let causesOf (c : LineCost) : Array (String × String × Float × Nat) :=
+    ((c.consts.toArray.filter fun (s, _) => (acc.consts.get? s).all (keep s)).map fun (s, (k, x, t)) => (s, k, x, t))
+      |>.qsort (fun a b => a.2.2.1 > b.2.2.1 || (a.2.2.1 == b.2.2.1 && (a.2.2.2 > b.2.2.2 || (a.2.2.2 == b.2.2.2 && a.1 < b.1))))
   let whereOf (s : String) : String := ((locOf s).map (s!"  ({·.pos})")).getD ""
   IO.println s!"\n  costliest {if acc.files.size > 1 then "declarations" else "lines"} (elab / kernel / compiler / lint)"
   for (k, c) in rows.toList.take o.top do
@@ -1326,7 +1365,22 @@ def main (argv : List String) : IO UInt32 := do
     ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint),
     ("top", Json.arr (c.top.map fun (a, op) => Json.mkObj [("amount", toJson a), ("op", Json.str op)])),
     ("unfolded", Json.arr (((lineConsts c).toList.take 5).toArray.map fun (s, kind, x, t) =>
-      Json.mkObj (constJson s kind x t)))]
+      Json.mkObj (constJson s kind x t))),
+    -- for `compare` and `report-md`, to say what made a declaration more expensive: every
+    -- constant credited on the line (also those credited no cost: how many times counts too),
+    -- its repeated operations and its `diagnostics` counters, each list cut at `causeLimit`
+    ("causes", Json.arr (((causesOf c).toList.take causeLimit).toArray.map fun (s, kind, x, t) =>
+      Json.mkObj [("name", Json.str (userName s)), ("kind", Json.str kind), ("amount", toJson x),
+        ("count", toJson t), ("where", Json.str (((locOf s).map (·.pos)).getD ""))])),
+    ("repeated", Json.arr ((((c.ops.toArray.filter (·.2.1 > 1)).qsort fun a b =>
+        a.2.2 > b.2.2 || (a.2.2 == b.2.2 && (a.1.1 < b.1.1 || (a.1.1 == b.1.1 && a.1.2 < b.1.2)))).toList.take (causeLimit / 2)).toArray.map
+      fun ((cls, op), (n, x)) => Json.mkObj [("class", Json.str cls), ("op", Json.str (String.ofList (op.toList.take 160))),
+        ("count", toJson n), ("total", toJson x)])),
+    ("counts", Json.arr ((countCounters.toArray.flatMap fun ctr =>
+      (((c.diag.toArray.filter (·.1.2 == ctr)).qsort fun a b => a.2 > b.2 || (a.2 == b.2 && a.1.1 < b.1.1)).toList.take
+        (causeLimit / 2)).toArray).map
+      fun ((s, ctr), n) => Json.mkObj [("name", Json.str (userName s)), ("counter", Json.str ctr), ("count", toJson n),
+        ("where", Json.str (((locOf s).map (·.pos)).getD ""))]))]
   let repeated := reps.map fun ((cls, op), oc) => Json.mkObj [("class", Json.str cls), ("op", Json.str op),
     ("count", toJson oc.count), ("total", toJson oc.total), ("first_at", Json.str oc.firstAt)]
   let constants := (consts.qsort fun a b => a.2.cost > b.2.cost || (a.2.cost == b.2.cost && a.1 < b.1)).map fun (s, c) =>
@@ -1358,7 +1412,7 @@ def main (argv : List String) : IO UInt32 := do
         Json.mkObj [("range", Json.str k), ("pos", Json.str s!"{(k.dropEnd (c.src.range.length + 1)).toString}:{c.src.line}"),
           ("kind", Json.str (if c.tactic then "tactic" else "term")), ("syntax", Json.str c.src.kind),
           ("text", Json.str c.src.text), ("amount", toJson c.total), ("count", toJson c.count)])),
-      ("threshold", toJson o.thresholdValue),
+      ("threshold", toJson o.thresholdValue), ("counts", Json.bool (o.defs && o.diagnostics)),
       ("timing", Json.mkObj [("build_ns", toJson (tBuilt - tStart)), ("profile_ns", toJson (tProfiled - tBuilt)),
         ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])]).compress
   if !failed.isEmpty then
