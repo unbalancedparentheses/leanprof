@@ -1,0 +1,24 @@
+[
+ {
+  "bytes": 358800,
+  "cause": "field-of-kept-structure",
+  "confidence": "high: the IR takes a second reference on every path to the update; no source line matched",
+  "copies": 300,
+  "copy_ns": 139054,
+  "estimated_cost_ns": 139054,
+  "file": "Main.lean",
+  "fix": "Take `fst` out of the structure before updating it: set the field to an empty value, update the value you took out, and store it back. `modify fun s => { s with f := s.f.push v }` is in place only when nothing else holds `s`.",
+  "fix_code": [],
+  "function": "collect (in Std.Legacy.Range.forIn'.loop)",
+  "kind": "Array",
+  "lines": [],
+  "multi_threaded": 0,
+  "rank": 1,
+  "scope": "-",
+  "shared": 299,
+  "strength": 3,
+  "symbol": "lp_regress___private_Init_Data_Range_Basic_0__Std_Legacy_Range_forIn_x27_loop___at___00collect_spec__0___redArg",
+  "where": "Main.lean:6",
+  "why": "`fst` is a field of a structure (`b`) that is rebuilt with the same field, so the structure and the Array.push both refer to the Array: the update copies it."
+ }
+]

@@ -1,0 +1,9 @@
+# Two versions of a small project with known regressions (base/ and head/),
+# profiled by scripts/regress-check.py to test that `compare` and `report-md`
+# name what made each one worse. No dependency on leanprof.
+name = "regress"
+defaultTargets = ["regress"]
+
+[[lean_exe]]
+name = "regress"
+root = "Main"

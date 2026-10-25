@@ -213,6 +213,8 @@ jobs:
           grep -q '`buildWithHistory (in Std.Legacy.Range.forIn.\{0,1\}.loop) \[Array\] in buildWithHistory`' worse.md
           lake exe leanprof report-md --fail-on none small.json large.json | grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ⚠️ worse (not enforced) |'
           if lake exe leanprof report-md --fail-on bogus small.json large.json; then echo "expected an error"; exit 1; fi
+      - name: Why a regression happened (Tests/Regress, golden report-md)
+        run: python3 scripts/regress-check.py
       - name: Autoresearch demo (measure and judge)
         run: sh research/demo/run.sh
       - name: Interleaved measurement and paired verdicts

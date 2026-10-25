@@ -1,0 +1,1233 @@
+{
+ "compact": false,
+ "constants": [
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 200,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "Add.add",
+   "sites": 3,
+   "unfolds": 1,
+   "where": "Init/Prelude.lean:1638"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "DecidableEq",
+   "sites": 1,
+   "unfolds": 2,
+   "where": "Init/Prelude.lean:1200"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "Div.div",
+   "sites": 1,
+   "unfolds": 1,
+   "where": "Init/Prelude.lean:1662"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 200,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "HAdd.hAdd",
+   "sites": 3,
+   "unfolds": 1,
+   "where": "Init/Prelude.lean:1481"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "HDiv.hDiv",
+   "sites": 1,
+   "unfolds": 1,
+   "where": "Init/Prelude.lean:1518"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "HMul.hMul",
+   "sites": 1,
+   "unfolds": 1,
+   "where": "Init/Prelude.lean:1500"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 18,
+   "kind": "",
+   "module": "Init.Grind.Ring.Envelope",
+   "name": "Lean.Grind.CommRing.OfCommSemiring.instOfNatQ",
+   "sites": 5,
+   "where": "Init/Grind/Ring/Envelope.lean:520"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 79,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "List.brecOn",
+   "sites": 1,
+   "where": "Init/Prelude.lean:3096"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 40,
+   "kind": "",
+   "module": "",
+   "name": "List.brecOn.go",
+   "sites": 1,
+   "where": ""
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 119,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "List.casesOn",
+   "sites": 1,
+   "where": "Init/Prelude.lean:3096"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 79,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "List.length",
+   "sites": 1,
+   "where": "Init/Prelude.lean:3182"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 119,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "List.length._f",
+   "sites": 1,
+   "where": "Init/Prelude.lean:3182"
+  },
+  {
+   "amount": 0,
+   "count": 40,
+   "kind": "simp",
+   "module": "Init.Data.List.Basic",
+   "name": "List.length_cons",
+   "simp_tried": 40,
+   "simp_used": 40,
+   "sites": 2,
+   "where": "Init/Data/List/Basic.lean:89"
+  },
+  {
+   "amount": 0,
+   "count": 1,
+   "kind": "simp",
+   "module": "Init.Data.List.Basic",
+   "name": "List.length_nil",
+   "simp_tried": 1,
+   "simp_used": 1,
+   "sites": 2,
+   "where": "Init/Data/List/Basic.lean:84"
+  },
+  {
+   "amount": 0,
+   "count": 40,
+   "kind": "simp",
+   "module": "Init.Data.List.Basic",
+   "name": "List.map_cons",
+   "simp_tried": 40,
+   "simp_used": 40,
+   "sites": 2,
+   "where": "Init/Data/List/Basic.lean:469"
+  },
+  {
+   "amount": 0,
+   "count": 1,
+   "kind": "simp",
+   "module": "Init.Data.List.Basic",
+   "name": "List.map_nil",
+   "simp_tried": 1,
+   "simp_used": 1,
+   "sites": 2,
+   "where": "Init/Data/List/Basic.lean:468"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 160,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "List.rec",
+   "sites": 1,
+   "where": "Init/Prelude.lean:3096"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "Mul.mul",
+   "sites": 1,
+   "unfolds": 1,
+   "where": "Init/Prelude.lean:1648"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "Nat.decEq",
+   "sites": 1,
+   "unfolds": 1,
+   "where": "Init/Prelude.lean:1975"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 2,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "Nat.instDiv",
+   "sites": 2,
+   "where": "Init/Prelude.lean:2320"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kind": "",
+   "module": "",
+   "name": "Nat.reduceAdd (builtin simproc)",
+   "simp_used": 39,
+   "sites": 1,
+   "where": ""
+  },
+  {
+   "amount": 0,
+   "count": 1,
+   "kind": "simp",
+   "module": "Init.Data.Nat.Basic",
+   "name": "Nat.zero_add",
+   "simp_tried": 1,
+   "simp_used": 1,
+   "sites": 2,
+   "where": "Init/Data/Nat/Basic.lean:135"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 84,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "OfNat.ofNat",
+   "sites": 2,
+   "unfolds": 4,
+   "where": "Init/Prelude.lean:1393"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "",
+   "name": "decide",
+   "sites": 1,
+   "where": ""
+  },
+  {
+   "amount": 0,
+   "count": 1,
+   "kind": "simp",
+   "module": "Init.SimpLemmas",
+   "name": "eq_self",
+   "simp_tried": 1,
+   "simp_used": 1,
+   "sites": 2,
+   "where": "Init/SimpLemmas.lean:36"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 12,
+   "kernel": 3,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instAddNat",
+   "sites": 6,
+   "where": "Init/Prelude.lean:1892"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 119,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instDecidableEqList.match_1",
+   "sites": 1,
+   "where": "Init/Prelude.lean:3147"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 1,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instDecidableEqNat",
+   "sites": 1,
+   "where": "Init/Prelude.lean:1995"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 12,
+   "kernel": 3,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instHAdd",
+   "sites": 6,
+   "where": "Init/Prelude.lean:1784"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 2,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instHDiv",
+   "sites": 2,
+   "where": "Init/Prelude.lean:1796"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 2,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instHMul",
+   "sites": 2,
+   "where": "Init/Prelude.lean:1792"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 2,
+   "kernel": 1,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instMulNat",
+   "sites": 2,
+   "where": "Init/Prelude.lean:1913"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "instances": 89,
+   "kernel": 45,
+   "kind": "",
+   "module": "Init.Prelude",
+   "name": "instOfNatNat",
+   "sites": 5,
+   "where": "Init/Prelude.lean:1395"
+  },
+  {
+   "amount": 0,
+   "count": 19,
+   "kernel": 5,
+   "kind": "unfold",
+   "module": "Init.Prelude",
+   "name": "outParam",
+   "sites": 5,
+   "unfolds": 80,
+   "where": "Init/Prelude.lean:733"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "",
+   "name": "step",
+   "sites": 1,
+   "where": "Regress.lean:7"
+  },
+  {
+   "amount": 0,
+   "count": 0,
+   "kernel": 1,
+   "kind": "",
+   "module": "",
+   "name": "tri",
+   "sites": 1,
+   "unfolds": 1,
+   "where": "Regress.lean:11"
+  }
+ ],
+ "copies": [],
+ "counts": true,
+ "elab": true,
+ "exact_ranges": true,
+ "files": [
+  {
+   "compile_ns": 14099,
+   "elab_ns": 586321,
+   "errors": 0,
+   "file": "Regress.lean",
+   "first_error": "",
+   "kernel_ns": 54249,
+   "key": "module Regress",
+   "lint_ns": 12785,
+   "module": "Regress",
+   "total_ns": 667454,
+   "wall_ns": 226821959
+  }
+ ],
+ "kinds": [
+  {
+   "class": "Elab.step",
+   "total": 381475
+  },
+  {
+   "class": "Elab.app.args",
+   "total": 141025
+  },
+  {
+   "class": "Kernel",
+   "total": 54190
+  },
+  {
+   "class": "Meta.letToHave.debug",
+   "total": 22198
+  },
+  {
+   "class": "Elab.command",
+   "total": 19474
+  },
+  {
+   "class": "Compiler",
+   "total": 14035
+  },
+  {
+   "class": "Elab.lint",
+   "total": 12747
+  },
+  {
+   "class": "Elab.def.processPreDef",
+   "total": 6139
+  },
+  {
+   "class": "Elab.async",
+   "total": 5883
+  },
+  {
+   "class": "Elab.definition.value",
+   "total": 5421
+  },
+  {
+   "class": "Elab.definition.header",
+   "total": 4756
+  },
+  {
+   "class": "Meta.letToHave",
+   "total": 111
+  }
+ ],
+ "project": false,
+ "ranges": [
+  {
+   "amount": 282092,
+   "count": 1,
+   "kind": "tactic",
+   "pos": "Regress.lean:17",
+   "range": "Regress.lean:17:3-17:7",
+   "syntax": "Lean.Parser.Tactic.simp",
+   "text": "simp"
+  },
+  {
+   "amount": 171437,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:13",
+   "range": "Regress.lean:13:21-16:116",
+   "syntax": "Lean.Parser.Term.binrel",
+   "text": "([step 1, step 2, step 3, step 4, step 5, step 6, step 7, step 8, step 9, step 10, step 11, step 12,"
+  },
+  {
+   "amount": 167925,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:13",
+   "range": "Regress.lean:13:21-16:111",
+   "syntax": "Lean.Parser.Term.proj",
+   "text": "([step 1, step 2, step 3, step 4, step 5, step 6, step 7, step 8, step 9, step 10, step 11, step 12,"
+  },
+  {
+   "amount": 166936,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:13",
+   "range": "Regress.lean:13:22-16:103",
+   "syntax": "Lean.Parser.Term.app",
+   "text": "[step 1, step 2, step 3, step 4, step 5, step 6, step 7, step 8, step 9, step 10, step 11, step 12, "
+  },
+  {
+   "amount": 164837,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:13",
+   "range": "Regress.lean:13:22-16:94",
+   "syntax": "Lean.Parser.Term.let",
+   "text": "[step 1, step 2, step 3, step 4, step 5, step 6, step 7, step 8, step 9, step 10, step 11, step 12, "
+  },
+  {
+   "amount": 30063,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:11",
+   "range": "Regress.lean:11:28-11:43",
+   "syntax": "Lean.Parser.Term.binop",
+   "text": "n * (n + 1) / 2"
+  },
+  {
+   "amount": 13385,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:23",
+   "range": "Regress.lean:23:33-23:46",
+   "syntax": "Lean.Parser.Term.binrel",
+   "text": "a + b = b + a"
+  },
+  {
+   "amount": 13339,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:9",
+   "range": "Regress.lean:9:29-9:43",
+   "syntax": "Lean.Parser.Term.binrel",
+   "text": "step n = n + 1"
+  },
+  {
+   "amount": 10977,
+   "count": 1,
+   "kind": "term",
+   "pos": "Regress.lean:7",
+   "range": "Regress.lean:7:29-7:34",
+   "syntax": "Lean.Parser.Term.binop",
+   "text": "n + 1"
+  }
+ ],
+ "repeated": [],
+ "scopes": [
+  {
+   "causes": [
+    {
+     "amount": 0,
+     "count": 40,
+     "kind": "simp",
+     "name": "List.length_cons",
+     "where": "Init/Data/List/Basic.lean:89"
+    },
+    {
+     "amount": 0,
+     "count": 40,
+     "kind": "simp",
+     "name": "List.map_cons",
+     "where": "Init/Data/List/Basic.lean:469"
+    },
+    {
+     "amount": 0,
+     "count": 1,
+     "kind": "simp",
+     "name": "List.length_nil",
+     "where": "Init/Data/List/Basic.lean:84"
+    },
+    {
+     "amount": 0,
+     "count": 1,
+     "kind": "simp",
+     "name": "List.map_nil",
+     "where": "Init/Data/List/Basic.lean:468"
+    },
+    {
+     "amount": 0,
+     "count": 1,
+     "kind": "simp",
+     "name": "Nat.zero_add",
+     "where": "Init/Data/Nat/Basic.lean:135"
+    },
+    {
+     "amount": 0,
+     "count": 1,
+     "kind": "simp",
+     "name": "eq_self",
+     "where": "Init/SimpLemmas.lean:36"
+    }
+   ],
+   "compile_ns": 0,
+   "counts": [
+    {
+     "count": 2,
+     "counter": "unfolds",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 197,
+     "counter": "kernel",
+     "name": "Add.add",
+     "where": "Init/Prelude.lean:1638"
+    },
+    {
+     "count": 197,
+     "counter": "kernel",
+     "name": "HAdd.hAdd",
+     "where": "Init/Prelude.lean:1481"
+    },
+    {
+     "count": 160,
+     "counter": "kernel",
+     "name": "List.rec",
+     "where": "Init/Prelude.lean:3096"
+    },
+    {
+     "count": 119,
+     "counter": "kernel",
+     "name": "List.casesOn",
+     "where": "Init/Prelude.lean:3096"
+    },
+    {
+     "count": 119,
+     "counter": "kernel",
+     "name": "List.length._f",
+     "where": "Init/Prelude.lean:3182"
+    },
+    {
+     "count": 119,
+     "counter": "kernel",
+     "name": "instDecidableEqList.match_1",
+     "where": "Init/Prelude.lean:3147"
+    },
+    {
+     "count": 80,
+     "counter": "kernel",
+     "name": "OfNat.ofNat",
+     "where": "Init/Prelude.lean:1393"
+    },
+    {
+     "count": 79,
+     "counter": "kernel",
+     "name": "List.brecOn",
+     "where": "Init/Prelude.lean:3096"
+    },
+    {
+     "count": 79,
+     "counter": "kernel",
+     "name": "List.length",
+     "where": "Init/Prelude.lean:3182"
+    },
+    {
+     "count": 41,
+     "counter": "kernel",
+     "name": "instOfNatNat",
+     "where": "Init/Prelude.lean:1395"
+    },
+    {
+     "count": 80,
+     "counter": "instances",
+     "name": "instOfNatNat",
+     "where": "Init/Prelude.lean:1395"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "Lean.Grind.CommRing.OfCommSemiring.instOfNatQ",
+     "where": "Init/Grind/Ring/Envelope.lean:520"
+    },
+    {
+     "count": 40,
+     "counter": "simp_used",
+     "name": "List.length_cons",
+     "where": "Init/Data/List/Basic.lean:89"
+    },
+    {
+     "count": 40,
+     "counter": "simp_used",
+     "name": "List.map_cons",
+     "where": "Init/Data/List/Basic.lean:469"
+    },
+    {
+     "count": 39,
+     "counter": "simp_used",
+     "name": "Nat.reduceAdd (builtin simproc)",
+     "where": ""
+    },
+    {
+     "count": 1,
+     "counter": "simp_used",
+     "name": "List.length_nil",
+     "where": "Init/Data/List/Basic.lean:84"
+    },
+    {
+     "count": 1,
+     "counter": "simp_used",
+     "name": "List.map_nil",
+     "where": "Init/Data/List/Basic.lean:468"
+    },
+    {
+     "count": 1,
+     "counter": "simp_used",
+     "name": "Nat.zero_add",
+     "where": "Init/Data/Nat/Basic.lean:135"
+    },
+    {
+     "count": 1,
+     "counter": "simp_used",
+     "name": "eq_self",
+     "where": "Init/SimpLemmas.lean:36"
+    }
+   ],
+   "elab_ns": 495856,
+   "kernel_ns": 54249,
+   "key": "Regress.lean simp_case",
+   "lint_ns": 12785,
+   "name": "theorem simp_case : ([step 1, step 2, step 3, step 4, step 5",
+   "pos": "Regress.lean:13",
+   "repeated": [],
+   "top": [
+    {
+     "amount": 282334,
+     "op": "[Elab.step] simp"
+    },
+    {
+     "amount": 171613,
+     "op": "[Elab.step] expected type: Sort ?u.n, term ([step 1, step 2, step 3, step 4, step 5, step 6, step 7, step 8, step 9, step 10, step 1"
+    }
+   ],
+   "total_ns": 562890,
+   "unfolded": []
+  },
+  {
+   "causes": [
+    {
+     "amount": 0,
+     "count": 9,
+     "kind": "unfold",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    }
+   ],
+   "compile_ns": 14099,
+   "counts": [
+    {
+     "count": 27,
+     "counter": "unfolds",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "Lean.Grind.CommRing.OfCommSemiring.instOfNatQ",
+     "where": "Init/Grind/Ring/Envelope.lean:520"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "Nat.instDiv",
+     "where": "Init/Prelude.lean:2320"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instAddNat",
+     "where": "Init/Prelude.lean:1892"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instHAdd",
+     "where": "Init/Prelude.lean:1784"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instHDiv",
+     "where": "Init/Prelude.lean:1796"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instHMul",
+     "where": "Init/Prelude.lean:1792"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instMulNat",
+     "where": "Init/Prelude.lean:1913"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instOfNatNat",
+     "where": "Init/Prelude.lean:1395"
+    }
+   ],
+   "elab_ns": 36405,
+   "kernel_ns": 0,
+   "key": "Regress.lean tri",
+   "lint_ns": 0,
+   "name": "def tri (n : Nat) : Nat := n * (n + 1) / 2",
+   "pos": "Regress.lean:11",
+   "repeated": [],
+   "top": [
+    {
+     "amount": 30260,
+     "op": "[Elab.step] expected type: Nat, term n * (n + 1) / 2"
+    }
+   ],
+   "total_ns": 50504,
+   "unfolded": []
+  },
+  {
+   "causes": [
+    {
+     "amount": 0,
+     "count": 4,
+     "kind": "unfold",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    }
+   ],
+   "compile_ns": 0,
+   "counts": [
+    {
+     "count": 24,
+     "counter": "unfolds",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "instAddNat",
+     "where": "Init/Prelude.lean:1892"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "instHAdd",
+     "where": "Init/Prelude.lean:1784"
+    }
+   ],
+   "elab_ns": 16015,
+   "kernel_ns": 0,
+   "key": "Regress.lean unchanged",
+   "lint_ns": 0,
+   "name": "theorem unchanged (a b : Nat) : a + b = b + a := Nat.add_com",
+   "pos": "Regress.lean:22",
+   "repeated": [],
+   "top": [
+    {
+     "amount": 13560,
+     "op": "[Elab.step] expected type: Sort ?u.n, term a + b = b + a"
+    }
+   ],
+   "total_ns": 16015,
+   "unfolded": []
+  },
+  {
+   "causes": [
+    {
+     "amount": 0,
+     "count": 3,
+     "kind": "unfold",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    }
+   ],
+   "compile_ns": 0,
+   "counts": [
+    {
+     "count": 9,
+     "counter": "unfolds",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "Lean.Grind.CommRing.OfCommSemiring.instOfNatQ",
+     "where": "Init/Grind/Ring/Envelope.lean:520"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instAddNat",
+     "where": "Init/Prelude.lean:1892"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instHAdd",
+     "where": "Init/Prelude.lean:1784"
+    },
+    {
+     "count": 1,
+     "counter": "instances",
+     "name": "instOfNatNat",
+     "where": "Init/Prelude.lean:1395"
+    }
+   ],
+   "elab_ns": 15681,
+   "kernel_ns": 0,
+   "key": "Regress.lean step",
+   "lint_ns": 0,
+   "name": "def step (n : Nat) : Nat := n + 1",
+   "pos": "Regress.lean:7",
+   "repeated": [],
+   "top": [
+    {
+     "amount": 11217,
+     "op": "[Elab.step] expected type: Nat, term n + 1"
+    }
+   ],
+   "total_ns": 15681,
+   "unfolded": []
+  },
+  {
+   "causes": [
+    {
+     "amount": 0,
+     "count": 3,
+     "kind": "unfold",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    }
+   ],
+   "compile_ns": 0,
+   "counts": [
+    {
+     "count": 18,
+     "counter": "unfolds",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 2,
+     "counter": "kernel",
+     "name": "Add.add",
+     "where": "Init/Prelude.lean:1638"
+    },
+    {
+     "count": 2,
+     "counter": "kernel",
+     "name": "HAdd.hAdd",
+     "where": "Init/Prelude.lean:1481"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "instAddNat",
+     "where": "Init/Prelude.lean:1892"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "instHAdd",
+     "where": "Init/Prelude.lean:1784"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "outParam",
+     "where": "Init/Prelude.lean:733"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "step",
+     "where": "Regress.lean:7"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "Lean.Grind.CommRing.OfCommSemiring.instOfNatQ",
+     "where": "Init/Grind/Ring/Envelope.lean:520"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "instAddNat",
+     "where": "Init/Prelude.lean:1892"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "instHAdd",
+     "where": "Init/Prelude.lean:1784"
+    },
+    {
+     "count": 2,
+     "counter": "instances",
+     "name": "instOfNatNat",
+     "where": "Init/Prelude.lean:1395"
+    }
+   ],
+   "elab_ns": 15333,
+   "kernel_ns": 0,
+   "key": "Regress.lean step_eq",
+   "lint_ns": 0,
+   "name": "theorem step_eq (n : Nat) : step n = n + 1 := by unfold step",
+   "pos": "Regress.lean:9",
+   "repeated": [],
+   "top": [
+    {
+     "amount": 13516,
+     "op": "[Elab.step] expected type: Sort ?u.n, term step n = n + 1"
+    }
+   ],
+   "total_ns": 15333,
+   "unfolded": []
+  },
+  {
+   "causes": [],
+   "compile_ns": 0,
+   "counts": [
+    {
+     "count": 4,
+     "counter": "unfolds",
+     "name": "OfNat.ofNat",
+     "where": "Init/Prelude.lean:1393"
+    },
+    {
+     "count": 2,
+     "counter": "unfolds",
+     "name": "DecidableEq",
+     "where": "Init/Prelude.lean:1200"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "Add.add",
+     "where": "Init/Prelude.lean:1638"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "Div.div",
+     "where": "Init/Prelude.lean:1662"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "HAdd.hAdd",
+     "where": "Init/Prelude.lean:1481"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "HDiv.hDiv",
+     "where": "Init/Prelude.lean:1518"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "HMul.hMul",
+     "where": "Init/Prelude.lean:1500"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "Mul.mul",
+     "where": "Init/Prelude.lean:1648"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "Nat.decEq",
+     "where": "Init/Prelude.lean:1975"
+    },
+    {
+     "count": 1,
+     "counter": "unfolds",
+     "name": "tri",
+     "where": "Regress.lean:11"
+    },
+    {
+     "count": 4,
+     "counter": "kernel",
+     "name": "OfNat.ofNat",
+     "where": "Init/Prelude.lean:1393"
+    },
+    {
+     "count": 4,
+     "counter": "kernel",
+     "name": "instOfNatNat",
+     "where": "Init/Prelude.lean:1395"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "Add.add",
+     "where": "Init/Prelude.lean:1638"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "DecidableEq",
+     "where": "Init/Prelude.lean:1200"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "Div.div",
+     "where": "Init/Prelude.lean:1662"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "HAdd.hAdd",
+     "where": "Init/Prelude.lean:1481"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "HDiv.hDiv",
+     "where": "Init/Prelude.lean:1518"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "HMul.hMul",
+     "where": "Init/Prelude.lean:1500"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "Mul.mul",
+     "where": "Init/Prelude.lean:1648"
+    },
+    {
+     "count": 1,
+     "counter": "kernel",
+     "name": "Nat.decEq",
+     "where": "Init/Prelude.lean:1975"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "Lean.Grind.CommRing.OfCommSemiring.instOfNatQ",
+     "where": "Init/Grind/Ring/Envelope.lean:520"
+    },
+    {
+     "count": 4,
+     "counter": "instances",
+     "name": "instOfNatNat",
+     "where": "Init/Prelude.lean:1395"
+    },
+    {
+     "count": 1,
+     "counter": "instances",
+     "name": "instDecidableEqNat",
+     "where": "Init/Prelude.lean:1995"
+    }
+   ],
+   "elab_ns": 6946,
+   "kernel_ns": 0,
+   "key": "Regress.lean unfold_case",
+   "lint_ns": 0,
+   "name": "theorem unfold_case : tri 100 = 5050 := by decide",
+   "pos": "Regress.lean:19",
+   "repeated": [],
+   "top": [],
+   "total_ns": 6946,
+   "unfolded": []
+  },
+  {
+   "causes": [],
+   "compile_ns": 0,
+   "counts": [],
+   "elab_ns": 53,
+   "kernel_ns": 0,
+   "key": "Regress.lean /-! The compile-time fixture of scripts/ #1",
+   "lint_ns": 0,
+   "name": "/-! The compile-time fixture of scripts/regress-check.py. Ag",
+   "pos": "Regress.lean:1",
+   "repeated": [],
+   "top": [],
+   "total_ns": 53,
+   "unfolded": []
+  },
+  {
+   "causes": [],
+   "compile_ns": 0,
+   "counts": [],
+   "elab_ns": 32,
+   "kernel_ns": 0,
+   "key": "Regress.lean unchanged",
+   "lint_ns": 0,
+   "name": "theorem unchanged (a b : Nat) : a + b = b + a := Nat.add_com",
+   "pos": "Regress.lean:24",
+   "repeated": [],
+   "top": [],
+   "total_ns": 32,
+   "unfolded": []
+  }
+ ],
+ "tactics": [
+  {
+   "amount": 282092,
+   "count": 1,
+   "pos": "Regress.lean:17",
+   "range": "Regress.lean:17:3-17:7",
+   "tactic": "simp"
+  }
+ ],
+ "threshold": 10000,
+ "unit": "heartbeats",
+ "version": 3,
+ "wall_ns": 667454
+}
