@@ -6,6 +6,27 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Mac accuracy: the runtime is compiled without the machine outliner
+
+- On macOS, times of small scopes were over-reported since enter and exit
+  were inlined into every probe (`a009129`): `run --auto` on the `alloc`
+  workload was 22 pp off in share of time (`phAllocTree` at 2.4× its time),
+  `profile!` on `rec` 7–9 pp (`fib` at 4.2–4.7×). Apple clang outlines
+  repeated instruction sequences on arm64 even at -O2, so the program's
+  probes became chains of calls to shared outlined pieces (25 in
+  `__cyg_profile_func_exit`) that calibration's own copies did not make: a
+  real probe cost ~5 ns more than calibrated, and the report kept it. The
+  runtime is now built with `-mno-outline` on macOS (by the lakefile, and by
+  `leanprof run` for projects that do not depend on leanprof). On the M5
+  Max, two alternated suite runs each: `alloc` under `--auto` 22.0–22.1 →
+  3.2–3.3 pp, `rec` under `profile!` 7.0–8.6 → 2.3–2.5 pp and under
+  `--auto` 5.1–5.2 → 1.7 pp, `tiny` under `--auto` 9.9–11.2 → 4.2–5.3 pp;
+  probes are cheaper too (9.3 → 6.3 ns a scope on `tiny`, `rec` under
+  `--auto` 4.0–4.2× → 3.2–3.3×). `tasks`' share error rose (`profile!`
+  0.4–0.9 → 1.8–2.6 pp) as its times moved from a uniform 1.6× to 1.03–1.27×.
+  The tests and the smoke check fail if the runtime contains outlined code.
+  Linux builds do not get the flag and are unchanged (not re-measured).
+
 ### Dogfooding on lean-compiler-backend and concrete
 
 - `elab`: "definitions behind the work" placed a definition at any

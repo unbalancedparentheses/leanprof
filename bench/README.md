@@ -23,7 +23,7 @@ sysctl`).
 
 **Results: [RESULTS.md](RESULTS.md)** (the table at its top is the
 headline), raw numbers in [results.json](results.json), the same suite with
-the runtime before the first round of fixes below in [results-before.json](results-before.json); RESULTS.md ends with a before/after table against `main` before the second round.
+the runtime before the first round of fixes below in [results-before.json](results-before.json); RESULTS.md ends with a before/after table against `main` before the Mac outliner fix (2026-10-25; that run has no lean-compiler-backend section: the suite's `lcb` invocation fails against the current lean-compiler-backend, before and after alike, so its figures below are from the second round).
 
 ### What it measures
 
@@ -79,17 +79,18 @@ inclusive time of its top declarations (there is no ground truth there).
 - **Call and copy counts are exact** in every leanprof mode on every
   workload (see the first round of fixes below).
 - **Where scopes do real work, leanprof's totals match the plain program**:
-  `mix`, `alloc`, `copy` are reported at 0.92–1.03 of plain time, with share
-  errors of 0.4–0.5 pp for `profile!`, as good as samply (0.5–1.0 pp).
+  `mix`, `alloc`, `copy` are reported at 0.98–1.02 of plain time under
+  `profile!`, with share errors of 0.2–0.4 pp (samply 1.0–2.1 pp on this
+  run).
 - **Where scopes do a few nanoseconds of work, the report says so.** A
-  scope costs about 8 ns (`profile!`, pure or monadic, and `--auto`). What
-  the subtraction gets wrong is now a nanosecond or two per scope, either
-  way: loops of 1 ns functions (`tiny`) come out at 0.5–1.4 of their time,
-  `fib` at 0.5–1.7, steps of a few ns on 2–8 threads at 1.2–1.5. Those rows
-  are flagged "near the probe cost" (`*`), and RESULTS.md's "Flag
-  calibration" line checks the threshold: unflagged component rows within
-  14% of the truth (median 3%), flagged ones off by 22% in the median.
-  `leanprof sample` is within 2 pp everywhere, at 1.0–1.3× slowdown.
+  scope costs 6–7 ns (`tiny`; `--auto` on `rec`, where every recursive
+  function is timed, 14 ns a counted call). What the subtraction gets wrong
+  is a nanosecond or two per scope: loops of 1 ns functions (`tiny`) come
+  out at 0.6–1.4 of their time, `fib` at 1.1–1.7, steps of a few ns on 2–8
+  threads at 1.0–1.6. Those rows are flagged "near the probe cost" (`*`),
+  and RESULTS.md's "Flag calibration" line checks the threshold: unflagged
+  component rows within 14% of the truth (median 2%), flagged ones off by
+  12% in the median. `leanprof sample` is within 3 pp everywhere.
 - **lean-compiler-backend** (0.39 s): `run` 1.10×, `--counters` 1.18×,
   `--allocs` 1.23×, `--frees` 1.40×, `--auto` 1.52× (before this round:
   1.21×, 1.72×, 2.12×, 2.27×, 3.69×). `sample` agrees with samply within
@@ -167,6 +168,46 @@ or better everywhere, but the program is 1.1–1.4× slower against
 LeanProfiler's 1.0–1.05×: leanprof calibrates its probes for 10–15 ms
 at the first scope, inside the first phase, which these 40–120 ms
 workloads see.
+
+### Mac: probes outlined by the compiler (2026-10-25)
+
+From `a009129` (enter and exit inlined into every probe, for the Linux
+round above) the Mac's accuracy fell: `run --auto` on `alloc` 22 pp share
+error (`phAllocTree` at 2.4× its time), `profile!` on `rec` 7–9 pp (`fib`
+at 4.2–4.7×), while calibration reported cheaper probes than before (4.7
+against 8.2 ns direct). Apple clang runs its machine outliner on arm64 even
+at -O2: the inlined copies of enter and exit in the program's probes became
+chains of calls to shared outlined pieces (25 in `__cyg_profile_func_exit`,
+26 in `leanprof_exit`), while calibration's copies, specialized for its
+internal scopes, stayed straight-line. A real probe cost ~5 ns more than
+calibration measured, and that stayed in the report. The runtime is now
+compiled with `-mno-outline` on macOS (the lakefile, and the runtime
+`leanprof run` compiles for projects that do not depend on leanprof); the
+tests and the smoke check fail if the runtime has outlined code. The flag
+is passed on macOS only, so Linux builds are unchanged.
+
+Same machine, 7 runs each, `main` (`79ee65d`) then the fix, alternated
+under the benchmark lock (load 2.3–3.8 on 18 cores; RESULTS.md has the
+full before/after table):
+
+| | before | after |
+|---|---|---|
+| `alloc` share error, `--auto` | 22.0 / 22.1 pp | 3.3 / 3.2 pp |
+| `rec` share error, `profile!` / `--auto` | 7.0–8.6 / 5.1–5.2 pp | 2.3–2.5 / 1.7 pp |
+| `tiny` share error, `--auto` | 9.9–11.2 pp | 4.2–5.3 pp |
+| `rec` reported/plain, `profile!` / `--auto` | 1.41–1.53 / 2.13–2.21 | 1.04–1.06 / 1.18–1.27 |
+| cost per scope (`tiny`, `profile!`) | 9.3 ns | 6.3 ns |
+| `rec` slowdown, `--auto` | 4.03–4.15× | 3.19–3.26× |
+
+`tasks` gets worse in share error (`profile!` 0.4–0.9 → 1.8–2.6 pp) while
+its times get better: before, every task function was over-reported by the
+same ~1.6×, so the shares happened to be right; after, they are at
+1.03–1.07 on 2 and 4 threads and 1.23–1.27 on 8, where the probes cost more
+than calibration measures on one thread. Still left: calibration's copies
+are specialized for its internal kind of scope (no forwarding check, no
+tracing check), 13–17 instructions fewer at enter than the program's;
+that is likely part of the 1.2–1.7 ns per call `--auto` still leaves on
+`rec` (not measured separately).
 
 ### Second round: accuracy and overhead (2026-10-23)
 
