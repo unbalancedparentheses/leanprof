@@ -188,7 +188,9 @@ start:
 - `tasks` (`name` is the spawning scope): `tasks`, `run_ns`, `wait_ns`,
   `wait_max_ns`;
 - `copies` (`name` is the function): `scope`, `kind`, `copies`,
-  `persistent`, `bytes`, `copy_ns`;
+  `persistent`, `bytes`, `copy_ns`, `tiny` (as in the report, against the
+  time so far; `top`, MCP `live` and `hot` summarize such rows in one line,
+  and `LEANPROF_ALL_COPIES=1` turns the mark off);
 - `allocations`: `scope`, `allocs`, `bytes`; `waits`: `scope`, `waits`,
   `blocked_ns`;
 - `stacks`: per busy thread, `thread` and `frames` (`name`, `elapsed_ns`),

@@ -181,6 +181,11 @@ def sortedRows (r : Rates) (sec : Section) (cur : Json) : Array Json :=
     let rb := r.rate sec.key b sec.sortBy
     if ra != rb then ra > rb else num a sec.sortBy > num b sec.sortBy
 
+/-- "N sites that copied only empty or tiny values, M copies". -/
+def tinySummary (tiny : Array Json) : String :=
+  let copies := tiny.foldl (fun a c => a + num c "copies") 0
+  s!"{tiny.size} site{if tiny.size == 1 then "" else "s"} copying only empty or tiny values, {fmtCount copies} copies"
+
 /-- One frame: a header, what each thread is inside now, and each non-empty
 section, within `width` columns and about `height` lines. -/
 def render (label : String) (prev? : Option Json) (cur : Json) (width height : Nat)
@@ -220,12 +225,20 @@ def render (label : String) (prev? : Option Json) (cur : Json) (width height : N
   let free := if height > out.size + 3 * present.length then height - out.size - 3 * present.length else 3 * present.length
   let per := rowsPer.getD (max 3 (free / max 1 present.length))
   for sec in present do
-    let rows := sortedRows r sec cur
+    let all := sortedRows r sec cur
+    -- copies of empty or tiny values (`tiny`), summarized in one line as
+    -- `run` and the MCP tools do: listed, they push out the copies worth fixing
+    let tiny := all.filter (bool · "tiny")
+    let rows := all.filter (!bool · "tiny")
     out := out.push ""
     out := out.push s!"{sec.title}{if rows.size > per then s!" ({per} of {rows.size})" else ""}"
+    if rows.isEmpty then
+      out := out.push s!"({tinySummary tiny}; LEANPROF_ALL_COPIES=1 lists them)"
+      continue
     out := out.push sec.header
     for row in rows[0:min per rows.size] do
       out := out.push (sec.line r row)
+    unless tiny.isEmpty do out := out.push s!"(and {tinySummary tiny}, not listed)"
   return out.map (clip · width)
 
 /-! ## `leanprof top` -/
@@ -345,10 +358,15 @@ def topCmd (argv : List String) : IO UInt32 := do
       match ← pidOf with
       | some pid => return !(← pidAlive pid)
       | none => return false
-    let (last, _) ← watch o (if o.attach.isSome then p else s!"pid {p}") path finished
+    let label := if o.attach.isSome then p else s!"pid {p}"
+    let (last, drawn) ← watch o label path finished
       (pure #[s!"leanprof top: waiting for {path} (start the program with LEANPROF_LIVE=1 or LEANPROF_LIVE={path})"])
     match last with
     | some s =>
+      -- a program that had exited (or exits now): its last snapshot, drawn once
+      if num s "seq" != drawn then
+        let (h, w) ← termSize
+        draw ansi (render label none s w (h - 1) o.rows)
       if !bool s "exited" && (← finished) then
         IO.eprintln s!"leanprof top: the program is gone; its last snapshot is shown"
       return 0

@@ -454,6 +454,10 @@ static double lpf_unit_ticks(void);
 static double lpf_scale(uint64_t timed, uint64_t light) {
     return timed > 0 ? (double)(timed + light) / (double)timed : 1.0;
 }
+/* Copy rows of empty or tiny values (lpf_tiny below; live snapshots mark
+ * them the same way, against the time so far) */
+#define LP_TINY_BYTES 16
+#define LP_TINY_SHARE 0.01
 #include "live.inc.c" /* live snapshots (LEANPROF_LIVE), flight recorder (LEANPROF_FLIGHT, LEANPROF_SLOW_MS) */
 
 /* Make room for frame `d`; 0 if the stack cannot grow.
@@ -2653,9 +2657,8 @@ static double lpf_run_base(const lpf_scope_sum *S, size_t ns, double tick, doubl
  * than LP_TINY_SHARE of the run. Such rows are summarized in one row unless
  * `--all-copies` (LEANPROF_ALL_COPIES=1, or LEANPROF_ALL=1) shows them. The
  * share matters: an empty array with a large capacity is copied with its
- * capacity, which can take long. */
-#define LP_TINY_BYTES 16
-#define LP_TINY_SHARE 0.01
+ * capacity, which can take long. (LP_TINY_BYTES and LP_TINY_SHARE are
+ * defined above, before live.inc.c.) */
 static double lpf_report_tick, lpf_report_base; /* set by lpf_report */
 static int lpf_tiny(const lpf_copy_sum *c) {
     return c->kind < LP_KINDS && c->total > 0 && c->bytes <= (uint64_t)LP_TINY_BYTES * c->total &&

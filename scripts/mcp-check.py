@@ -140,6 +140,26 @@ check("dump", ok, text)
 server.terminate()
 server.wait()
 
+# live snapshots mark copies of tiny values (`tiny`), and the live view and
+# `hot` summarize them as `run` does; LEANPROF_ALL_COPIES=1 lists them
+snap = ".lake/leanprof/mcp-live-tiny.json"
+for all_copies in ("0", "1"):
+    env = dict(os.environ, LEANPROF_LIVE=snap, LEANPROF_QUIET="1", LEANPROF_ALL_COPIES=all_copies)
+    subprocess.run([".lake/build/bin/server", "5", "5"], env=env, stdout=subprocess.DEVNULL, check=True)
+    rows = json.load(open(snap))["copies"]
+    text, err = tool("live", path=snap)
+    copies = text.split("copies of shared values")[-1].split("\n\n")[0]
+    if all_copies == "0":
+        check("live snapshot marks tiny copies", rows and all(r["tiny"] for r in rows), rows)
+        check("live view summarizes tiny copies", not err and "copying only empty or tiny values" in copies
+              and "Examples/Server.lean" not in copies, text)
+        text, err = tool("hot", kind="copies", path=snap)
+        check("hot copies of a live snapshot leaves out tiny values",
+              not err and "copied only empty or tiny values" in text and "Server.lean" not in text, text)
+    else:
+        check("LEANPROF_ALL_COPIES=1 lists tiny copies live", not err and rows and not any(r["tiny"] for r in rows)
+              and "Examples/Server.lean:26" in copies, text)
+
 check("ping", call("ping")["result"] == {})
 r = call("tools/call", {"name": "nope", "arguments": {}})
 check("unknown tool", r.get("error", {}).get("code") == -32602, r)

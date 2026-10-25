@@ -13,6 +13,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   real lean-compiler-backend speedup (`emitData`) was entirely in such code,
   invisible to `judge`'s allocation rule. Summaries record `core`, and
   `judge` discards a comparison of a `--core` summary with a plain one.
+- Live snapshots mark copies of empty or tiny values (`tiny`, the report's
+  rule against the time so far), and `top` and MCP `live` summarize them in
+  one line as `run` and MCP `hot` do (`SSA.fresh`'s 17,775 9-byte copies
+  were second in `top`). `LEANPROF_ALL_COPIES=1` lists them.
+  `top --attach` on a program that had already exited now shows its last
+  snapshot (it printed nothing).
 
 ### Smaller fixes and maintenance
 

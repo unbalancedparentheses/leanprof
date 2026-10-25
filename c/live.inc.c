@@ -53,6 +53,7 @@ static void lpf_task_name(const void *parent, uint8_t parent_kind, char *out, si
 static void lpf_json_str(FILE *f, const char *s);
 static const char *lpf_label_pos(const char *label);
 static int lpf_show_all(void);
+static int lpf_all_copies(void);
 static uint64_t lpf_clamp(double v);
 static const char *lpf_skip_package(const char *s);
 static void lpf_mem_read(uint64_t *commit, uint64_t *rss, uint64_t *peak_commit, uint64_t *peak_rss);
@@ -790,13 +791,21 @@ static void lpf_live_write(int final) {
                         (unsigned long long)rw->calls, (double)rw->total * tick, (double)rw->wait * tick,
                         (double)rw->wait_max * tick);
                 break;
-            case LV_COPY:
+            case LV_COPY: {
+                /* empty or tiny values, as the report's lpf_tiny, but against
+                 * the time so far: `top` and the MCP tools summarize them */
+                uint64_t all = rw->calls + rw->persistent;
+                int tiny = !lpf_all_copies() && rw->kind < LP_KINDS && all > 0 && rw->bytes <= (uint64_t)LP_TINY_BYTES * all &&
+                           (double)rw->ticks < LP_TINY_SHARE * (double)(now - lpf_start);
                 fprintf(f, ",\"scope\":");
                 lpf_json_str(f, rw->scope);
-                fprintf(f, ",\"kind\":\"%s\",\"copies\":%llu,\"persistent\":%llu,\"bytes\":%llu,\"copy_ns\":%.0f}",
+                fprintf(f, ",\"kind\":\"%s\",\"copies\":%llu,\"persistent\":%llu,\"bytes\":%llu,\"copy_ns\":%.0f,"
+                           "\"tiny\":%s}",
                         lpf_kind_name[rw->kind < LP_KINDS ? rw->kind : 0], (unsigned long long)rw->calls,
-                        (unsigned long long)rw->persistent, (unsigned long long)rw->bytes, (double)rw->ticks * tick);
+                        (unsigned long long)rw->persistent, (unsigned long long)rw->bytes, (double)rw->ticks * tick,
+                        tiny ? "true" : "false");
                 break;
+            }
             case LV_ALLOC:
                 fprintf(f, ",\"scope\":");
                 lpf_json_str(f, rw->scope);
