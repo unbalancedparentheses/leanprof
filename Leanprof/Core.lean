@@ -86,6 +86,13 @@ opaque copies : BaseIO Nat
 @[extern "leanprof_calls"]
 opaque calls (site : @& String) : BaseIO Nat
 
+/-- The calls of `site` that were timed. A scope too small to time (its
+probes cost about as much as its calls) is timed on about one call in 64
+after its first 1,024, and only counted otherwise; its times are the timed
+calls' scaled up to all of them. -/
+@[extern "leanprof_timed_calls"]
+opaque timedCalls (site : @& String) : BaseIO Nat
+
 /-- Total time in scopes named `site` (outermost calls, with leanprof's own
 overhead removed), in nanoseconds, on all threads. -/
 @[extern "leanprof_total_ns"]

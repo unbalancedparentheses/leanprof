@@ -667,8 +667,8 @@ static void lpf_mem_print(FILE *f, double tick) {
     lpf_free_totals(F, nf, &all);
     char tt[32], p50[32], p99[32], mx[32];
     lpf_fmt_time((double)all.ticks * tick, tt, sizeof tt);
-    lpf_fmt_time((double)lpf_percentile(all.hist, all.cascades, 0.50) * tick, p50, sizeof p50);
-    lpf_fmt_time((double)lpf_percentile(all.hist, all.cascades, 0.99) * tick, p99, sizeof p99);
+    lpf_fmt_time((double)lpf_percentile(all.hist, 0.50) * tick, p50, sizeof p50);
+    lpf_fmt_time((double)lpf_percentile(all.hist, 0.99) * tick, p99, sizeof p99);
     lpf_fmt_time((double)all.max * tick, mx, sizeof mx);
     fprintf(f,
             "\nfrees: %llu objects in %llu cascades took %s (pause p50 %s, p99 %s, max %s); "
@@ -679,8 +679,8 @@ static void lpf_mem_print(FILE *f, double tick) {
             "mt decs", "in scope", "function  (where)");
     for (size_t k = 0; k < nf && k < 20; k++) {
         lpf_fmt_time((double)F[k].ticks * tick, tt, sizeof tt);
-        lpf_fmt_time((double)lpf_percentile(F[k].hist, F[k].cascades, 0.50) * tick, p50, sizeof p50);
-        lpf_fmt_time((double)lpf_percentile(F[k].hist, F[k].cascades, 0.99) * tick, p99, sizeof p99);
+        lpf_fmt_time((double)lpf_percentile(F[k].hist, 0.50) * tick, p50, sizeof p50);
+        lpf_fmt_time((double)lpf_percentile(F[k].hist, 0.99) * tick, p99, sizeof p99);
         lpf_fmt_time((double)F[k].max * tick, mx, sizeof mx);
         char *sep = strchr(F[k].name, '\x1f');
         const char *scope = sep ? sep + 1 : "-";
@@ -718,8 +718,8 @@ static void lpf_free_json(FILE *f, const lpf_free_sum *F, size_t n, double tick,
         fprintf(f, ",\"cascades\":%llu,\"objects\":%llu,\"free_ns\":%.0f,\"p50_ns\":%.0f,\"p99_ns\":%.0f,"
                    "\"max_ns\":%.0f,\"mt_decrements\":%llu}",
                 (unsigned long long)F[k].cascades, (unsigned long long)F[k].objects, (double)F[k].ticks * tick,
-                (double)lpf_percentile(F[k].hist, F[k].cascades, 0.50) * tick,
-                (double)lpf_percentile(F[k].hist, F[k].cascades, 0.99) * tick, (double)F[k].max * tick,
+                (double)lpf_percentile(F[k].hist, 0.50) * tick,
+                (double)lpf_percentile(F[k].hist, 0.99) * tick, (double)F[k].max * tick,
                 (unsigned long long)F[k].mt_decs);
     }
 }
@@ -756,8 +756,8 @@ static void lpf_mem_json(FILE *f, double tick) {
     fprintf(f, ",\"frees\":{\"cascades\":%llu,\"objects\":%llu,\"free_ns\":%.0f,\"p50_ns\":%.0f,\"p99_ns\":%.0f,"
                "\"max_ns\":%.0f,\"mt_decrements\":%llu,\"sites\":[",
             (unsigned long long)all.cascades, (unsigned long long)all.objects, (double)all.ticks * tick,
-            (double)lpf_percentile(all.hist, all.cascades, 0.50) * tick,
-            (double)lpf_percentile(all.hist, all.cascades, 0.99) * tick, (double)all.max * tick,
+            (double)lpf_percentile(all.hist, 0.50) * tick,
+            (double)lpf_percentile(all.hist, 0.99) * tick, (double)all.max * tick,
             (unsigned long long)all.mt_decs);
     lpf_free_json(f, F, nf, tick, 1);
     fprintf(f, "],\"scopes\":[");

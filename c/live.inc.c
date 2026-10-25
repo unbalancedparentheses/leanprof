@@ -638,18 +638,21 @@ static void lpf_lv_collect(int final) {
             uint64_t calls = LP_LD(s->calls);
             if (calls == 0) continue;
             double inner = lpf_inner_ticks(s);
-            rw->calls += calls;
             if (rw->cls == LV_TASK) {
+                rw->calls += calls;
                 rw->total += lpf_clamp((double)LP_LD(s->sum) - (double)calls * inner - (double)LP_LD(s->desc_sum) * pair);
                 rw->wait += LP_LD(s->wait);
                 uint64_t wm = LP_LD(s->wait_max);
                 if (wm > rw->wait_max) rw->wait_max = wm;
                 continue;
             }
-            rw->total += lpf_clamp((double)LP_LD(s->total) - (double)LP_LD(s->outer) * inner -
-                                   (double)LP_LD(s->desc_total) * pair);
-            rw->self += lpf_clamp((double)LP_LD(s->self) - (double)(calls + LP_LD(s->fwd)) * inner -
-                                  (double)LP_LD(s->kids) * pair);
+            /* a light scope's timed calls stand for all of them, as at exit */
+            uint64_t outer = LP_LD(s->outer), lcalls = LP_LD(s->lcalls);
+            rw->calls += calls + lcalls;
+            rw->total += lpf_clamp(lpf_scale(outer, LP_LD(s->louter)) *
+                                   ((double)LP_LD(s->total) - (double)outer * inner - (double)LP_LD(s->desc_total) * pair));
+            rw->self += lpf_clamp(lpf_scale(calls, lcalls) * ((double)LP_LD(s->self) -
+                                  (double)(calls + LP_LD(s->fwd)) * inner - (double)LP_LD(s->kids) * pair));
             uint64_t mx = LP_LD(s->max);
             if (mx > rw->max) rw->max = mx;
             rw->allocs += LP_LD(s->allocs_total);
@@ -770,15 +773,15 @@ static void lpf_live_write(int final) {
                         rc += lpf_lv_diff[b];
                     }
                     fprintf(f, ",\"recent\":{\"calls\":%llu,\"p50_ns\":%.0f,\"p99_ns\":%.0f}", (unsigned long long)rc,
-                            (double)lpf_percentile(lpf_lv_diff, rc, 0.50) * tick,
-                            (double)lpf_percentile(lpf_lv_diff, rc, 0.99) * tick);
+                            (double)lpf_percentile(lpf_lv_diff, 0.50) * tick,
+                            (double)lpf_percentile(lpf_lv_diff, 0.99) * tick);
                 }
                 fprintf(f, ",\"auto\":%s,\"calls\":%llu,\"total_ns\":%.0f,\"self_ns\":%.0f,\"max_ns\":%.0f,"
                            "\"p50_ns\":%.0f,\"p99_ns\":%.0f,\"allocs\":%llu,\"alloc_bytes\":%llu}",
                         rw->is_fn ? "true" : "false", (unsigned long long)rw->calls, (double)rw->total * tick,
                         (double)rw->self * tick, (double)rw->max * tick,
-                        (double)lpf_percentile(rw->hist, rw->calls, 0.50) * tick,
-                        (double)lpf_percentile(rw->hist, rw->calls, 0.99) * tick, (unsigned long long)rw->allocs,
+                        (double)lpf_percentile(rw->hist, 0.50) * tick,
+                        (double)lpf_percentile(rw->hist, 0.99) * tick, (unsigned long long)rw->allocs,
                         (unsigned long long)rw->bytes);
                 break;
             }
@@ -834,6 +837,7 @@ static void lpf_live_write(int final) {
         for (uint32_t k = 0; k < d && k < 64; k++) {
             lpf_scope *s = LP_LD(stack[k].scope);
             uint64_t start = LP_LD(stack[k].start);
+            if (LP_LD(stack[k].light)) continue; /* only counted: no start time */
             size_t slot = s ? lpf_rec_find(s) : SIZE_MAX;
             if (slot == SIZE_MAX || lpf_recs[slot].row < 0) continue;
             if (!any) fprintf(f, "%s{\"thread\":%u,\"frames\":[", first ? "" : ",", t->id);

@@ -48,6 +48,14 @@ def scopedHistory (n : Nat) : Array Nat × Array (Array Nat) := profile! "test.h
 
 /-- Scalar results pass through `profile!` unboxed. -/
 def scopedU64 (n : UInt64) : UInt64 := profile! "test.u64" (n * 3 + 1)
+
+/-- A scope of a nanosecond or two, `n` times. -/
+@[noinline] def tinyStep (i : UInt64) : UInt64 := profile! "test.tiny" (i * 3 + 1)
+def tinyLoop (n : Nat) : UInt64 := Id.run do
+  let mut acc : UInt64 := 0
+  for i in [0:n] do
+    acc := acc + tinyStep (acc + i.toUInt64)
+  return acc
 def scopedFloat (x : Float) : Float := profile! "test.float" (x * 2.0)
 def scopedBool (n : Nat) : Bool := profile! "test.bool" (n % 2 == 0)
 
@@ -177,6 +185,14 @@ def tests : StateT Nat IO Unit := do
   check "pure scope times the work inside it, not before it"
     (ha.size == 2000 && hh.size == 2000 && (inside > 0.5 * wall.toFloat || sanitized) && (← calls "test.history") == 1)
     s!"inside={inside} wall={wall}"
+  -- a scope too small to time goes light: counted on every call, timed on a sample
+  let n := n500 * 400
+  let _ ← IO.lazyPure fun _ => tinyLoop n
+  let timed ← timedCalls "test.tiny"
+  check "a tiny scope still counts every call" ((← calls "test.tiny") == n) s!"calls={← calls "test.tiny"}"
+  check "a tiny scope is timed on a sample of its calls" (timed ≥ 1024 && timed < n / 4) s!"timed={timed} of {n}"
+  check "a tiny scope's time stands for all its calls" ((← totalNs "test.tiny") ≥ 0)
+  check "a scope with real work is timed on every call" ((← timedCalls "test.history") == 1)
   let u ← IO.lazyPure fun _ => scopedU64 n20.toUInt64
   let fl ← IO.lazyPure fun _ => scopedFloat n20.toFloat
   let bo ← IO.lazyPure fun _ => scopedBool n20
