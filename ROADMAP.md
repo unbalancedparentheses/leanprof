@@ -159,6 +159,21 @@ provenance and one complete experiment operation come first.
   lean-compiler-backend), several workload sizes, held-out inputs for the
   final check, configured tests and proofs required before KEEP. Returns KEEP,
   DISCARD or an explicit inconclusive/error reason with its evidence.
+- [ ] **No KEEP for a change that weakens what it must preserve.** Refuse
+  a candidate whose diff touches tests, theorem statements or expected
+  outputs, adds `sorry`, an `axiom`, `@[implemented_by]` or `@[extern]`,
+  turns a `decide` or a proof into something weaker, or changes the
+  project's axioms (`#print axioms` on the declarations it touches). In Lean
+  the cheapest "speedup" is deleting a proof obligation; lean-compiler-backend
+  needed its own proof-axiom audit to catch that.
+- [ ] **Cheaper iterations.** In the lean-compiler-backend run most of each
+  experiment was the rebuild (about 90 s), not the measurement: keep the
+  base build, rebuild only the candidate's changed modules, and use the
+  exact counts as a first filter (if copies, allocations and calls did not
+  change, say so before spending seconds on timing).
+- [ ] **A compile-time loop for libraries.** For Mathlib-style code with no
+  executable, the experiment's measure is `elab --heartbeats` on the
+  modules the change touches and their dependents: exact, no timing noise.
 - [x] Interleaved plain-binary timing: `measure-pair` alternates AB/BA and
   `judge PAIR.json` uses a paired 95% median interval. Exact allocation
   checks remain in the existing instrumented `measure` workflow.
