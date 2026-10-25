@@ -4,7 +4,7 @@
 "Time of tiny functions in the exact modes".
 
 Runs bench/run.py (7 runs of six workloads with known ground truth, every
-configuration interleaved; about 10 minutes on an M5 Max), its reports
+configuration interleaved; about 5 minutes on an M5 Max), its reports
 written outside the tree, then:
 
   exact   every leanprof mode's call and copy counts equal the program's own,

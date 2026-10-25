@@ -18,18 +18,18 @@ usage() {
   cat <<'EOF'
 usage: scripts/reproduce.sh CLAIM [OPTIONS]
 
-  claim             time (M5 Max)  checks
-  copybug           ~1 min         README example: 2,001 copies (1,999 shared), fib 10,945 calls, explain
-  smoke             ~1 min         Tests/Smoke from outside: 1,999 + 999 copies, fib 242,785 calls
-  lean-regex        ~5 min         lean-regex 32af6f3: copies, allocations, closure calls, heartbeats
-  leanprofiler      ~3 min         LeanProfiler 35e1899: copies per span (exact), span cost growth (timing)
-  leanbench         ~3 min         LeanBench case study: copies 0 -> 1,980, allocations 46,214 -> 48,214
-                                   (--timing: the detection trials, ~1 h, quiet machine only)
-  batteries         ~5 min         Batteries v4.35.0: elab --project time, heartbeats, unfold counts
-                                   (--lsp: also lean-source-profiler's whole-project runs, ~5 min more)
-  lcb-fixes         ~15 min        lean-compiler-backend a25c541 -> 854fcc2: 11,946,202 -> 7,719,273 allocations
-  lcb-autoresearch  ~25 min        854fcc2 -> f9ed557 counts (exact); 854fcc2 -> ac8324e plain time -22%, 540 cases
-  bench-suite       ~10 min        bench/run.py: exact counts, accuracy table within stated ranges
+  claim             time (M5 Max, already built; a first run also clones and builds)
+  copybug           ~15 s          README example: 2,001 copies (1,999 shared), fib 10,945 calls, explain
+  smoke             ~15 s          Tests/Smoke from outside: 1,999 + 999 copies, fib 242,785 calls
+  lean-regex        ~2 min         lean-regex 32af6f3: copies, allocations, closure calls, heartbeats
+  leanprofiler      ~30 s          LeanProfiler 35e1899: copies per span (exact), span cost growth (timing)
+  leanbench         ~40 s          LeanBench case study: copies 0 -> 1,980, allocations 46,214 -> 48,214
+                                   (--timing: the detection trials, ~15 min, quiet machine only)
+  batteries         ~2 min         Batteries v4.35.0: elab --project time, heartbeats, unfold counts
+                                   (--lsp: also lean-source-profiler's whole-project runs, ~3.5 min more)
+  lcb-fixes         ~1 min         lean-compiler-backend a25c541 -> 854fcc2: 11,946,202 -> 7,719,273 allocations
+  lcb-autoresearch  ~2 min         854fcc2 -> f9ed557 counts (exact); 854fcc2 -> ac8324e plain time -22%, 540 cases
+  bench-suite       ~5 min         bench/run.py: exact counts, accuracy table within stated ranges
 
   list              this table
   exact             copybug, smoke, leanprofiler, leanbench, lean-regex: exact parts only (CI)
