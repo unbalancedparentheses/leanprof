@@ -184,7 +184,7 @@ comments. LSP has neither.
   files of the Lean it was built with; for a project on another toolchain,
   `elab` fell back to `lean --json` (tactics by line, by their text; no
   terms). As LSP does, `elab` now compiles a driver for the project's
-  toolchain the first time it needs one (3 to 7 s) and keeps it
+  toolchain the first time it needs one (seconds) and keeps it
   ([compile time](../guide/compile-time.md), "Another Lean").
 - **Terms and tactics under the threshold** are not recorded on their own
   (their time is in the range around them); LSP records every one.

@@ -11,7 +11,7 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `leanprof elab` on a project whose Lean is not leanprof's no longer falls
   back to `lean --json` with approximate ranges: the first run builds
   `leanprof-elab-driver` for that Lean, with that Lean (`lean -c`, `leanc`
-  against its shared libraries; 3 to 7 s), from the driver's source
+  against its shared libraries; 3 to 7 s on an M5 Max), from the driver's source
   compiled into the command, and keeps it in `~/.cache/leanprof/drivers/`
   (`LEANPROF_CACHE`, `XDG_CACHE_HOME`) by Lean commit, driver source and
   Lean directory. Later runs reuse it. Terms and tactics then have exact

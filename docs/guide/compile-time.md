@@ -162,8 +162,8 @@ leanprof's own Lean. The driver source builds on every supported Lean
 versions workflow checks `"exact_ranges":true` on each, daily).
 
 Building takes 3 to 7 s once per Lean (lean4-cli at `v4.34.0`, 5 builds,
-Apple M5 Max under load 6 to 48); after that, finding the driver is one
-file check. A driver built this way elaborates as fast as the one built
+Apple M5 Max under load 6 to 48; 26 s once at load 57); after that,
+finding the driver is one file check. A driver built this way elaborates as fast as the one built
 with leanprof: on lean4-cli's `Cli/Basic.lean` with Lean 4.35.0, 5.90 to
 6.22 s of CPU time per profile against 5.84 to 5.99 s (10 runs each, the
 same 373 ranges).
