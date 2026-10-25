@@ -244,7 +244,7 @@ reproduction.
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – | – |
 | Peak memory per scope, freeing pauses | ✅ | – | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads | – |
-| Compile time | per file, declaration, term and tactic (exact ranges with the Lean leanprof was built with); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
+| Compile time | per file, declaration, term and tactic (exact ranges on every supported Lean: on another Lean than leanprof's, a driver is built for it once, in 3 to 7 s); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
 | Exact regression checks, PR comments | ✅, with the cause of each ([example](docs/guide/ci-and-regressions.md#worked-example-batteries)) | thresholded time | – | – | mean against a saved baseline, fixed threshold |
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |

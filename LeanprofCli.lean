@@ -65,8 +65,9 @@ def commands : List (String × String × String) := [
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
     "the package in parallel (--module-glob: those matching, e.g. 'Foo.Data.*'). --counts adds Lean's exact\n" ++
     "unfold counts (slower). --heartbeats counts\n" ++
-    "heartbeats, which are the same on every run. With the project on leanprof's Lean, terms and tactics\n" ++
-    "are timed by exact source range (line:column); --compact times only those (close to plain lean).\n" ++
+    "heartbeats, which are the same on every run. Terms and tactics are timed by exact source range\n" ++
+    "(line:column); --compact times only those (close to plain lean). On another Lean than leanprof's,\n" ++
+    "the first run builds its driver for that Lean (seconds, once; ~/.cache/leanprof/drivers).\n" ++
     "--no-driver elaborates with `lean --json` instead."),
   ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
