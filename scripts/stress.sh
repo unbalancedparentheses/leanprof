@@ -4,7 +4,9 @@
 # recorder on, sends SIGUSR1 for dumps while it runs, and checks that it
 # finishes in time with exact counts, a final snapshot that agrees with them,
 # and whole, balanced dumps. The flight buffers are small (STRESS_RING events
-# per thread), so they are compacted constantly and dumps stay quick.
+# per thread), so they are compacted constantly and dumps stay quick. Then
+# it runs again with live snapshots only, so tiny scopes go light (sampled)
+# while the live thread reads them.
 #   scripts/stress.sh [OUTDIR] [stress args...]   (STRESS_TIMEOUT: seconds, default 600)
 set -u
 out=${1:-.lake/leanprof/stress}
@@ -70,4 +72,29 @@ for f in dumps:
 print(len(dumps), 'dumps:', sorted(set(t.split(' on ')[0] for t in triggers)))
 ok = ok and 'SIGUSR1' in triggers and any('stress.slow' in t for t in triggers)
 sys.exit(0 if ok else 1)
+PY
+[ $? = 0 ] || exit 1
+# Again with live snapshots only: the flight recorder keeps every scope fully
+# timed, so this is the run in which tiny scopes (stress.leaf) go light while
+# the live thread reads their counters.
+LEANPROF_QUIET=1 LEANPROF_JSON="$out/light.json" LEANPROF_LIVE="$out/light-live.json" LEANPROF_LIVE_MS=1 \
+  "$bin" "$@" > "$out/light-stdout.txt" 2> "$out/light-stderr.txt"
+rc=$?
+if [ $rc != 0 ]; then echo "stress (light scopes): exit code $rc"; head -50 "$out/light-stderr.txt"; exit 1; fi
+python3 - "$out" <<'PY'
+import json, sys
+out = sys.argv[1]
+expected = {}
+for line in open(f'{out}/light-stdout.txt'):
+    if '(expected' in line:
+        name, rest = line.split(':', 1)
+        expected[name] = int(rest.split('(expected')[1].strip(' )\n'))
+live = {s['name']: s for s in json.load(open(f'{out}/light-live.json'))['scopes']}
+leaf = {s['name']: s for s in json.load(open(f'{out}/light.json'))['scopes']}.get('stress.leaf', {})
+calls, timed = leaf.get('calls', 0), leaf.get('timed_calls', leaf.get('calls', 0))
+print('light scopes: stress.leaf', calls, 'calls,', timed, 'timed; live snapshot',
+      live.get('stress.leaf', {}).get('calls'))
+# every call counted, the same in the last snapshot, and only a sample timed
+sys.exit(0 if calls >= expected['stress.leaf'] and live.get('stress.leaf', {}).get('calls') == calls
+         and 0 < timed < calls else 1)
 PY

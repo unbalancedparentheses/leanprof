@@ -930,8 +930,9 @@ LP_HOT void lpf_exit_light(lpf_thread *t, lpf_frame *f, uint32_t d) {
     uint64_t probes = LP_LD(lpf_w_light[f->path]) + f->desc;
     s->active--;
     if (LEAN_UNLIKELY(f->counted)) lpf_exit_allocs(t, f, s, d);
-    if (s->active == 0) s->louter++;
-    if (!f->fwd) s->lcalls++;
+    /* read by the live thread and the queries: published like the other counters */
+    if (s->active == 0) LP_ADD(s->louter, 1);
+    if (!f->fwd) LP_ADD(s->lcalls, 1);
     if (d > 0) {
         lpf_frame *p = &t->stack[d - 1];
         if (!f->fwd) p->child += s->est;

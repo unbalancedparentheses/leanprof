@@ -13,6 +13,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   `lean_nat_add`, `lean_nat_sub` and `lean_nat_succ` (big-number code,
   linear in their operands) as O(1); a `Nat` comparison counts only against
   a constant small number. Functions using them are timed again.
+- Light scopes count their calls with atomic stores, as the other counters
+  are: the live thread reads them while the program runs (a C data race
+  before). `scripts/stress.sh` runs again with live snapshots only, so that
+  its tiny scopes go light under TSan in CI.
 
 ### Compile time: a project view and published profiles
 
