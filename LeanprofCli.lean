@@ -1090,6 +1090,8 @@ def sample (argv : List String) : IO UInt32 := do
       ("total_ns", toJson (w * 1000)), ("self_ns", toJson (selfT.getD n 0 * 1000)), ("calls", toJson (0 : Nat))]
   let report := Json.mkObj [("version", toJson (3 : Nat)), ("sampled", Json.bool true),
     ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[])]
+  -- (with --out elsewhere, nothing has created .lake/leanprof yet)
+  IO.FS.createDirAll ".lake/leanprof"
   IO.FS.writeFile ".lake/leanprof/report.json" report.compress
   IO.println s!"\nflamegraph with Lean names: samply load {out}"
   IO.println "in the editor: add `#leanprof` to a file to see these numbers next to its code"
