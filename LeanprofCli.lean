@@ -94,7 +94,7 @@ def commands : List (String × String × String) := [
     "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
     "#leanprof hovers."),
-  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]",
+  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
     "inserted back, an index loop for a loop over the array it updates), then check it: on a new git\n" ++
@@ -104,7 +104,8 @@ def commands : List (String × String × String) := [
     "KEEP commits on the branch with the evidence in the message; DISCARD deletes the branch and says\n" ++
     "why. The checkout is left as it was; a tree with uncommitted changes is refused. --exe profiles\n" ++
     "EXE first (otherwise the last report is read); --finding N picks finding N of the list printed;\n" ++
-    "--dry-run prints the findings and the diff only."),
+    "--all also considers copy sites of only empty or tiny values (as explain --all); --dry-run\n" ++
+    "prints the findings and the diff only."),
   ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
     "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++

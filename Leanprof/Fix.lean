@@ -121,7 +121,9 @@ def unifiedDiff (file : String) (src : Array String) (edits : Array Edit) (ctx :
 /-- The comment at the end of a source line, with the space before it. -/
 def commentOf (l : String) : String :=
   match l.splitOn "--" with
-  | _ :: rest@(_ :: _) => " --" ++ "--".intercalate rest
+  | c :: rest@(_ :: _) =>
+    let sp := String.ofList ((c.toList.reverse.takeWhile (· == ' ')).reverse)
+    (if sp.isEmpty then " " else sp) ++ "--" ++ "--".intercalate rest
   | _ => ""
 
 /-- Brackets balance in `s` (outside string literals). -/
@@ -177,14 +179,23 @@ def plansFor (f : Json) (src : Array String) : Except String (Array Plan) := do
   let mut skipped : Array String := #[]
   match cause with
   | "nested-array-element" =>
+    -- each code line rewrites one source line (`C.set! I (C[I]!.op V)`):
+    -- together they are the fix; each alone is tried after them
+    let mut single : Array Plan := #[]
     for alt in code do
       match lines.find? fun l => Explain.modifyRewrite (lineAt src l) == some alt with
       | some l =>
         let old := lineAt src l
-        plans := plans.push {
+        single := single.push {
           cause := cause, file := file, code := alt, what := "Array.modify",
           edits := #[{ first := l, count := 1, lines := #[indentOf old ++ alt ++ commentOf old] }] }
       | none => skipped := skipped.push s!"`{alt}` does not rewrite a line of {file} (changed since the report?)"
+    if single.size > 1 then
+      plans := plans.push {
+        cause := cause, file := file, code := "\n".intercalate (single.map (·.code)).toList,
+        what := s!"Array.modify ({single.size} lines)", edits := single.flatMap (·.edits) }
+      plans := plans ++ single.map fun p => { p with what := s!"Array.modify (line {p.edits[0]!.first} only)" }
+    else plans := single
   | "map-value-reinserted" =>
     let dl := declLine f
     if dl == 0 || dl > src.size then throw "the finding has no declaration line"
@@ -251,6 +262,7 @@ structure Opts where
   branch : Option String := none
   allowOverloaded : Bool := false
   top : Nat := 20
+  all : Bool := false
 
 partial def parseOpts (o : Opts) : List String → Except String Opts
   | [] => .ok o
@@ -271,6 +283,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--branch" :: b :: rest => parseOpts { o with branch := some b } rest
   | "--allow-overloaded" :: rest => parseOpts { o with allowOverloaded := true } rest
   | "--top" :: n :: rest => parseOpts { o with top := n.toNat! } rest
+  | "--all" :: rest => parseOpts { o with all := true } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: _ => .error s!"unknown argument {a}"
 
@@ -390,9 +403,13 @@ def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output
     unless out.exitCode == 0 && (← (o.report : FilePath).pathExists) do
       IO.eprintln s!"leanprof fix: `leanprof run {exe}` failed (exit code {out.exitCode}):\n{tailOf (out.stdout ++ out.stderr)}"
       return 2
-  let findings ← Explain.findingsOf o.report o.top
+  let (findings, tiny) ← Explain.findingsOf o.report o.top o.all
+  -- with --all too: only sites that copied shared values (not only constants)
+  let findings := findings.filter fun f => jnum f "shared" + jnum f "multi_threaded" > 0
+  let tinyNote := if tiny > 0 then
+      s!" ({tiny} site(s) that copied only empty or tiny values left out; --all considers them)" else ""
   if findings.isEmpty then
-    IO.println s!"leanprof fix: no copies of shared values in {o.report}: nothing to fix"
+    IO.println s!"leanprof fix: no copies of shared values in {o.report}: nothing to fix{tinyNote}"
     return 1
   let srcCache ← IO.mkRef ({} : Std.HashMap String (Array String))
   let readSrc (file : String) : IO (Array String) := do
@@ -401,7 +418,7 @@ def fixCmd (argv : List String) (runSelf : Array String → IO IO.Process.Output
     srcCache.modify (·.insert file s)
     return s
   let listed ← listFindings findings readSrc
-  IO.println s!"leanprof fix: {findings.size} finding(s) in {o.report}, costliest first:"
+  IO.println s!"leanprof fix: {findings.size} finding(s) in {o.report}, costliest first{tinyNote}:"
   for (k, f, r) in listed do
     IO.println s!"  {describe k f}"
     match r with

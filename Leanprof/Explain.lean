@@ -1467,8 +1467,9 @@ def rankedSites (j : Json) (all : Bool := false) : Array Json × Nat :=
   (sites, candidates.size - sites.size)
 
 /-- The findings of the `top` costliest copy sites of the report at `report`,
-as `explain --json` prints them (each with its site's `rank`). -/
-def findingsOf (report : String) (top : Nat := 10) : IO (Array Json) := do
+as `explain --json` prints them (each with its site's `rank`), and how many sites were
+left out for copying only empty or tiny values (`all` keeps them, as `explain --all`). -/
+def findingsOf (report : String) (top : Nat := 10) (all : Bool := false) : IO (Array Json × Nat) := do
   unless ← (report : FilePath).pathExists do
     throw <| IO.userError s!"no report at {report}: run `leanprof run EXE` first"
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile report))
@@ -1478,11 +1479,12 @@ def findingsOf (report : String) (top : Nat := 10) : IO (Array Json) := do
   let cache ← IO.mkRef ({} : CCache)
   let mut entries : Array Json := #[]
   let mut rank : Nat := 0
-  for c in (rankedSites j).1.toList.take top do
+  let (sites, tiny) := rankedSites j all
+  for c in sites.toList.take top do
     rank := rank + 1
     let (_, js) ← explainSite cache c #[] runNs
     if let .arr a := js then entries := entries ++ a.map (·.setObjVal! "rank" (rank : Json))
-  return entries
+  return (entries, tiny)
 
 def explainCmd (argv : List String) (runLeanprof : Array String → Array (String × Option String) → IO UInt32) :
     IO UInt32 := do

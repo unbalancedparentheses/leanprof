@@ -350,6 +350,19 @@ def tests : StateT Nat IO Unit := do
     ("lines", Lean.toJson #[2]), ("fix_code", Lean.toJson #["xs := xs.modify i (·.push v)"])]
   check "fix: a source line that no longer matches the report is refused"
     (match Fix.plansFor stale #["def f := 1", "  xs := xs.push 1"] with | .error e => e.contains "changed since" | .ok _ => false) ""
+  -- two rewrites of one site (lean-compiler-backend's CFG.build): both lines
+  -- first, then each alone
+  let twoSrc := #["def build := Id.run do", "    succ := succ.set! i (succ[i]!.push t)  -- out",
+    "    pred := pred.set! t (pred[t]!.push i)"]
+  let two := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", "CFG.lean"), ("where", "CFG.lean:1"),
+    ("lines", Lean.toJson #[2, 3]), ("fix_code", Lean.toJson #["succ := succ.modify i (·.push t)", "pred := pred.modify t (·.push i)"])]
+  match Fix.plansFor two twoSrc with
+  | .ok ps =>
+    check "fix: two rewrites of one site are applied together, then alone" (ps.size == 3 &&
+      Fix.applyEdits twoSrc ps[0]!.edits == #["def build := Id.run do", "    succ := succ.modify i (·.push t)  -- out",
+        "    pred := pred.modify t (·.push i)"] && ps[1]!.edits.size == 1 && ps[2]!.edits.size == 1)
+      s!"{ps.map (·.what)} {ps.map (Fix.applyEdits twoSrc ·.edits)}"
+  | .error e => check "fix: two rewrites of one site are applied together, then alone" false e
   check "fix: branch names from the function and cause"
     (Fix.branchName "Foo.groupBy (in Std.Legacy.Range.forIn'.loop)" "map-value-reinserted" ==
       "leanprof-fix/groupBy-map-value-reinserted") (Fix.branchName "Foo.groupBy (in x)" "c")
