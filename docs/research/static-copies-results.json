@@ -1,0 +1,294 @@
+{
+  "analyzerSha256": "27dbcd337d5093d3312b7dfa04b45a3bf7147dbf1b7149f932254e81e39ae8a8",
+  "date": "2026-10-25",
+  "examples": {
+    "falseNegativeFunctions": 6,
+    "falsePositiveFunctions": 0,
+    "irSha256": "4fc0b190775ac2154763307e107d6fefac7cbdc32b4207d9d55d038c0e292b03",
+    "leanGithash": "eb6cafb7290e8bd5f2937522d8d804f58f02bafc",
+    "leanVersion": "4.35.0",
+    "rows": [
+      {
+        "copies": 390,
+        "declaration": "nestedBuckets",
+        "warning": true
+      },
+      {
+        "copies": 0,
+        "declaration": "nestedBucketsFixed",
+        "warning": false
+      },
+      {
+        "copies": 390,
+        "declaration": "groupBy",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "groupByAlter",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "groupByErase",
+        "warning": false
+      },
+      {
+        "copies": 390,
+        "declaration": "groupByOpt",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "groupByOptErase",
+        "warning": false
+      },
+      {
+        "copies": 390,
+        "declaration": "addMembers",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "addMembersModify",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "addMembersErase",
+        "warning": false
+      },
+      {
+        "copies": 399,
+        "declaration": "keepHistory",
+        "warning": true
+      },
+      {
+        "copies": 0,
+        "declaration": "keepHistoryLengths",
+        "warning": false
+      },
+      {
+        "copies": 399,
+        "declaration": "logGlobal",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "logLocal",
+        "warning": false
+      },
+      {
+        "copies": 399,
+        "declaration": "logMutex",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "logMutexLocal",
+        "warning": false
+      },
+      {
+        "copies": 10,
+        "declaration": "bumpAll",
+        "warning": false
+      },
+      {
+        "copies": 0,
+        "declaration": "bumpAllIndexed",
+        "warning": false
+      }
+    ],
+    "trueNegativeFunctions": 10,
+    "truePositiveFunctions": 2,
+    "workload": {
+      "k": 10,
+      "n": 400
+    }
+  },
+  "exporterSha256": "6636817ff9989bc605bfe85b90e0a34efc9a9af292615b8aa98aec8d83eb5bc7",
+  "metric": "Leanprof.copies: instrumented nonconstant copy counts; excludes persistent constants",
+  "realProjects": {
+    "graphsIdentical": true,
+    "lake": {
+      "arrayPushSites": 142,
+      "emptySitesSuppressed": 4,
+      "findings": [],
+      "functions": 1028,
+      "knownMiss": "Multi-threaded job queue: no interprocedural/multi-threaded ownership model",
+      "leanGithash": "eb6cafb7290e8bd5f2937522d8d804f58f02bafc",
+      "leanVersion": "4.35.0"
+    },
+    "results": {
+      "after": {
+        "buildFindings": 0,
+        "findings": [],
+        "irSha256": "12556acb0c5de32a89affabee40a929f9c983e89c5dcb6f3e82120f9ae486b92",
+        "measurements": [
+          {
+            "blocks": 10,
+            "copies": 1,
+            "graphHash": "35fdc003a2ee92ee430f857fe4d0b11d1240424ce0622ce20a59e36b9c3abde8"
+          },
+          {
+            "blocks": 40,
+            "copies": 1,
+            "graphHash": "129700a7a372cd289bd38726f5bfbddb2c9d8ef69050c7bd8dcbdba65fd302e0"
+          },
+          {
+            "blocks": 100,
+            "copies": 1,
+            "graphHash": "64d1fb69c3de790efe3bce743a831a08aff533232089add20dab6c207ef521c7"
+          }
+        ],
+        "otherFindings": 0
+      },
+      "before": {
+        "buildFindings": 2,
+        "findings": [
+          {
+            "classification": "likely-copy",
+            "conditions": [
+              {
+                "branch": "List.cons",
+                "site": 0
+              },
+              {
+                "branch": "Option.some",
+                "site": 7
+              },
+              {
+                "branch": "Bool.false",
+                "site": 13
+              },
+              {
+                "branch": "Bool.true",
+                "site": 49
+              },
+              {
+                "branch": "Bool.false",
+                "site": 20
+              }
+            ],
+            "evidence": {
+              "holders": [
+                {
+                  "reason": "read from a live container",
+                  "site": 18,
+                  "variable": 13
+                }
+              ],
+              "incrementSite": 22,
+              "trackedReferences": 2
+            },
+            "explanation": "The receiver still has another reference at this update; Array.push is expected to copy when this path executes.",
+            "function": "List.forIn'.loop._at_.LeanCompilerBackend.CFG.build.spec_5._redArg",
+            "irExpression": "Array.push \u25fe x_18 x_9",
+            "irSite": 23,
+            "module": "LeanCompilerBackend.CFG",
+            "operation": "Array.push",
+            "receiver": 18,
+            "source": {
+              "column": 4,
+              "declaration": "LeanCompilerBackend.CFG.build",
+              "line": 13,
+              "module": "LeanCompilerBackend.CFG",
+              "precision": "declaration"
+            },
+            "suggestion": "Avoid retaining the old array across this push. For nested arrays, try Array.modify; for history, consider storing prefix lengths only when that preserves the intended snapshots."
+          },
+          {
+            "classification": "likely-copy",
+            "conditions": [
+              {
+                "branch": "List.cons",
+                "site": 0
+              },
+              {
+                "branch": "Option.some",
+                "site": 7
+              },
+              {
+                "branch": "Bool.false",
+                "site": 13
+              },
+              {
+                "branch": "Bool.true",
+                "site": 49
+              },
+              {
+                "branch": "Bool.false",
+                "site": 20
+              }
+            ],
+            "evidence": {
+              "holders": [
+                {
+                  "reason": "read from a live container",
+                  "site": 25,
+                  "variable": 12
+                }
+              ],
+              "incrementSite": 27,
+              "trackedReferences": 2
+            },
+            "explanation": "The receiver still has another reference at this update; Array.push is expected to copy when this path executes.",
+            "function": "List.forIn'.loop._at_.LeanCompilerBackend.CFG.build.spec_5._redArg",
+            "irExpression": "Array.push \u25fe x_22 x_2",
+            "irSite": 28,
+            "module": "LeanCompilerBackend.CFG",
+            "operation": "Array.push",
+            "receiver": 22,
+            "source": {
+              "column": 4,
+              "declaration": "LeanCompilerBackend.CFG.build",
+              "line": 13,
+              "module": "LeanCompilerBackend.CFG",
+              "precision": "declaration"
+            },
+            "suggestion": "Avoid retaining the old array across this push. For nested arrays, try Array.modify; for history, consider storing prefix lengths only when that preserves the intended snapshots."
+          }
+        ],
+        "irSha256": "653e40f22cf6555f227f6d7a5affc7a3e753913cfd08fe38ba98dd99b74e14c7",
+        "measurements": [
+          {
+            "blocks": 10,
+            "copies": 17,
+            "graphHash": "35fdc003a2ee92ee430f857fe4d0b11d1240424ce0622ce20a59e36b9c3abde8"
+          },
+          {
+            "blocks": 40,
+            "copies": 77,
+            "graphHash": "129700a7a372cd289bd38726f5bfbddb2c9d8ef69050c7bd8dcbdba65fd302e0"
+          },
+          {
+            "blocks": 100,
+            "copies": 197,
+            "graphHash": "64d1fb69c3de790efe3bce743a831a08aff533232089add20dab6c207ef521c7"
+          }
+        ],
+        "otherFindings": 0
+      }
+    },
+    "revisions": {
+      "after": {
+        "revision": "8a0d286fba88298d6f8074e598781478bf6c5cc9",
+        "sourceHashes": {
+          "CFG.lean": "1247747ac14068ed84e8ad0810d9f499f170060540fc0514805dbefa97240ca9",
+          "IR.lean": "d02f024ab8f4289caed351df81030ff98162c5bc4f37d8215bfb87889dac0676"
+        },
+        "toolchain": "leanprover/lean4:v4.34.1"
+      },
+      "before": {
+        "revision": "a623accdc611b2659941b220af54fd42d4b87d75",
+        "sourceHashes": {
+          "CFG.lean": "420c938a07b0eb61f9ce3c31ceb49dc06eabd529cd98c145af72885d6df49c76",
+          "IR.lean": "d02f024ab8f4289caed351df81030ff98162c5bc4f37d8215bfb87889dac0676"
+        },
+        "toolchain": "leanprover/lean4:v4.34.1"
+      }
+    },
+    "scope": "real CFG sources on a synthetic branching CFG; not a full compiler benchmark"
+  },
+  "schema": 1
+}
