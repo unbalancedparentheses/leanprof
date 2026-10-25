@@ -30,9 +30,10 @@ The constants are then looked up in the environment of the profiled modules
 `--project` profiles every built module of the current Lake package, several
 files at a time, and aggregates across files.
 
-When the project's Lean is the one leanprof was built with, files are elaborated
-by `leanprof-elab-driver` instead of `lean` (same options, same output format),
-which adds the exact source range of every term and tactic (LeanprofElabRange.lean).
+Files are elaborated by `leanprof-elab-driver` instead of `lean` (same options,
+same output format), which adds the exact source range of every term and tactic:
+the driver built with leanprof on leanprof's Lean, else one built for the
+project's Lean the first time it is needed (LeanprofElabRange.lean).
 -/
 
 open Lean System
@@ -1248,7 +1249,7 @@ def main (argv : List String) : IO UInt32 := do
   let tBuilt ← IO.monoNanosNow
   let le ← leanEnv
   -- exact source ranges need leanprof's own frontend, built with the project's Lean
-  let le ← if !o.driver then pure le else match ← findDriver le.lean with
+  let le ← if !o.driver then pure le else match ← findDriver le.lean le.sysroot with
     | .ok d => pure { le with driver := d }
     | .error why => do
       IO.eprintln s!"leanprof: elaborating with `lean` ({why}): tactics are placed by their text, terms are not timed{if o.compact then "; --compact needs the driver, so this is a full profile" else ""}"

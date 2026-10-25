@@ -122,6 +122,19 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
     (parseSrcRange "@12:3-12:40 Lean.Parser.Tactic.simp | simp [a | b]" ==
       some { range := "12:3-12:40", line := 12, kind := "Lean.Parser.Tactic.simp", text := "simp [a | b]" } &&
      parseSrcRange "omega" == none && shortKind "Lean.Parser.Tactic.omega" == "omega") ""
+  -- the driver for another Lean is built from the source compiled into the command,
+  -- linked against that Lean's core shared libraries, kept by commit, source and Lean directory
+  if let some disk ← (try some <$> IO.FS.readFile "LeanprofElabDriver.lean" catch _ => pure none) then
+    check "elab: the driver source compiled into the command is LeanprofElabDriver.lean" (driverSource == disk) ""
+  let flags ← sharedLibFlags ((← Lean.findSysroot) / "lib" / "lean")
+  check "elab: a driver is linked against Lean's core shared libraries"
+    (flags.contains "-lleanshared" && flags.contains "-lInit_shared" && !flags.contains "-lLake_shared") s!"{flags}"
+  let d1 ← cachedDriverDir "/a/lean" "0123456789abcdef"
+  let d2 ← cachedDriverDir "/b/lean" "0123456789abcdef"
+  let d3 ← cachedDriverDir "/a/lean" "0123456789abcdef"
+  check "elab: drivers are cached by Lean commit and directory"
+    (d1 == d3 && d1 != d2 && (d1.fileName.getD "").startsWith "0123456789ab-" && d1.parent.bind (·.fileName) == some "drivers")
+    s!"{d1} {d2}"
   check "elab: a command named without the `set_option … in` and `open … in` before it"
     (dropInPrefix "set_option maxHeartbeats 400000 in open Foo Bar in theorem t : True := trivial" ==
       "theorem t : True := trivial" && dropInPrefix "open Foo" == "open Foo" &&
