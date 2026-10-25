@@ -104,7 +104,7 @@ inclusive time of its top declarations (there is no ground truth there).
 A dedicated idle machine (Arch Linux, kernel 7.2, `performance` governor,
 boost off, the suite pinned to cores 0–7) run with
 `servers/leanprof-bench-run.sh` from the dotfiles. Before (`8d9f807`) and
-after this round, 7 runs each:
+after this round, 7 runs each (raw results in [linux/](linux/README.md)):
 
 | | before | after |
 |---|---|---|

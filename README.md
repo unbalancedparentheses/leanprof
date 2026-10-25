@@ -131,8 +131,9 @@ of the run, to agents.
 ## Where leanprof wins, and where it does not
 
 Measured, with the method and raw numbers linked. "Mac" is an Apple M5 Max
-shared with other work; "Linux" is a dedicated, idle AMD Ryzen 9 7950X3D with
-the CPU frequency fixed ([results](bench/RESULTS.md)).
+shared with other work ([results](bench/RESULTS.md)); "Linux" is a dedicated,
+idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/after/RESULTS.md),
+[before the Linux fixes](bench/linux/before/RESULTS.md)).
 
 **Ahead, clearly:**
 
@@ -151,28 +152,36 @@ the CPU frequency fixed ([results](bench/RESULTS.md)).
   Its newer native compact mode needs a fresh comparison; these historical
   numbers do not establish a lead over its current version.
 - **Overhead against LeanProfiler.** A profiled scope costs about 8 ns on the
-  Mac (51 ns on Linux, see below) and stays constant however long the program
+  Mac (23 ns on Linux, see below) and stays constant however long the program
   runs; LeanProfiler's span grows from 4.6 µs to 88 µs as
   events accumulate (25 ns with recording off).
 - **Breadth.** Run time, memory, tasks, compile time, CI, editor, HTML, live
   view and MCP in one tool that needs no change to the project.
 
+- **Sampling deep recursion on Linux.** perf copies at most 64 KiB of a
+  thread's stack per sample, so samply loses the outer frames of deep
+  recursion (14.8 points off on the `rec` benchmark). `leanprof sample`
+  completes those stacks from the thread's last whole one: 1.2 points.
+- **Like-for-like with LeanProfiler.** With leanprof's scopes exactly where
+  LeanProfiler's spans are, leanprof is as accurate or better on every
+  workload on Linux (worst: 0.6 points against 0.7).
+
 **Even, or behind:**
 
-- **Probe cost on Linux: about 51 ns per scope**, against 8 ns on the Mac
-  (the Linux clock is still `clock_gettime`). Tiny functions slow down a lot
-  under `profile!` and `--auto` there; being fixed.
+- **Probe cost on Linux: about 23 ns per scope** (51 ns before it read the
+  CPU's counter instead of `clock_gettime`), against 8 ns on the Mac. Tiny
+  functions still run about 18× slower under `profile!` there.
 - **Time of tiny functions in the exact modes.** When a call costs about as
   much as its probes, its time can be off by half either way; such rows are
   marked `*`. LeanProfiler, timing only whole phases, was more accurate
   there; `leanprof sample` is the tool for those functions.
 - **Sampling** is as accurate as samply (it runs samply underneath; on the
   Mac within 0.1–1.9 points of each function's true share, samply 0.5–2.9)
-  and adds Lean names, file:line and the runtime breakdown. On Linux both
-  misattribute deep recursion (about 14 points off) because Lean's C has no
-  frame pointers; being fixed.
-- **`--auto` on Linux** is 6–8 points off on allocation- and copy-heavy
-  workloads; being fixed.
+  and adds Lean names, file:line and the runtime breakdown (on Linux, see
+  deep recursion above).
+- **`--auto` on Linux** is 2.6–3.2 points off on allocation- and copy-heavy
+  workloads (6.5–8.2 before the Linux fixes; samply 0.5) and 10.4 points
+  off on deep recursion (7.1 before): use `sample` or `profile!` there.
 - **Cost per verdict in the instrumented comparison.** LeanBench needed 0.6 s
   per verdict to leanprof's 6.5 s, and times the benchmarked action itself.
   `measure-pair` now avoids instrumentation and rebuilds for timing-only
@@ -198,7 +207,7 @@ reproduction.
 | | leanprof | [LeanProfiler](https://github.com/lean-dojo/LeanProfiler) | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler) | samply / perf | [LeanBench](https://github.com/alok/LeanBench) |
 |---|---|---|---|---|---|
 | Run time | exact and sampled | manual spans | – | sampled | wall time per named benchmark: mean, stddev, percentiles |
-| Overhead while recording | about 8 ns per scope on the Mac, 51 ns on Linux (being fixed); constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low | none (times the plain build, two clock reads per sample) |
+| Overhead while recording | about 8 ns per scope on the Mac, 23 ns on Linux; constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low | none (times the plain build, two clock reads per sample) |
 | Works without changing the project | ✅ | – | ✅ | ✅ | – (a dependency and a bench module) |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names | your benchmark names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – | – |
