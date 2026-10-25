@@ -292,7 +292,8 @@ partial def attributions (nodes : Array TNode) : Array (String × String × Opti
 
 /-- The counters of one `diagnostics` message: (constant, counter, count).
 Counters: `unfolds` (whnf and isDefEq), `instances` (used), `kernel`
-(unfolded by the kernel), `simp_used`, `simp_tried`, `simp_failed`.
+(unfolded by the kernel), `simp_used`, `simp_tried`, `simp_failed`,
+`grind_instances` (theorems `grind` instantiated by E-matching).
 One line of the message at a time, with the counts so far and the section
 the line is in. -/
 def diagLine (st : Array (String × String × Nat) × String) (line : String) :
@@ -310,6 +311,7 @@ def diagLine (st : Array (String × String × Nat) × String) (line : String) :
       | "reduction", _ => "unfolds"
       | "type_class", _ => "instances"
       | "kernel", _ => "kernel"
+      | "thm", _ => "grind_instances"
       | "simp", s => if s.startsWith "used" then "simp_used" else "simp_tried"
       | _, _ => ""
     if ctr.isEmpty then return (out, sect)
@@ -331,7 +333,7 @@ def parseDiag (data : String) : Array (String × String × Nat) :=
 /-- Does a message with this first line look like `diagnostics` output? -/
 def diagHeader (line : String) : Bool :=
   line.startsWith "[diag] Diagnostics" || line.startsWith "[simp] Diagnostics" ||
-    line.startsWith "[kernel] Diagnostics"
+    line.startsWith "[kernel] Diagnostics" || line.startsWith "[grind] Diagnostics"
 
 def hasArrow (line : String) : Bool := (line.splitOn " ↦ ").length > 1
 
@@ -376,6 +378,8 @@ structure LineCost where
   compile : Float := 0
   lint : Float := 0
   name : String := ""
+  /-- the name it declares, from the whole text (`name` is cut at 60 characters) -/
+  declared : String := ""
   top : Array (Float × String) := #[]  -- most expensive nested operations
   consts : Std.HashMap String (String × Float × Nat) := {}  -- constant ↦ (kind, cost, times)
   /-- Repeatable operations (the outermost of a nest) on this line: (class, operation) ↦
@@ -611,7 +615,7 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
       -- commands sharing a line (`variable (x) in` puts its inner `variable` at the position of
       -- the declaration it wraps): the line is named after the one that declares something
       if c.name.isEmpty || ((declName c.name).isNone && (declName name).isSome) then
-        c := { c with name }
+        c := { c with name, declared := (declName (text.replace "\n" " ")).getD "" }
   if !a.files.isEmpty then a := { a with files := a.files.modify (a.files.size - 1) fun (k, _) => (k, f) }
   -- tactic steps, by the line each is on: found in the source after the command's start,
   -- in the order Lean ran them; a step nested in one on the same line is not counted again
@@ -1172,7 +1176,7 @@ def causeLimit : Nat := 20
 
 /-- The `diagnostics` counters kept per line, each cut at `causeLimit / 2` (`simp_tried` is
 `simp_used` and `simp_failed` together). -/
-def countCounters : List String := ["unfolds", "kernel", "instances", "simp_used", "simp_failed"]
+def countCounters : List String := ["unfolds", "kernel", "instances", "simp_used", "simp_failed", "grind_instances"]
 
 def kindLabel : String → String
   | "unfold" => "isDefEq unfolds"
@@ -1243,7 +1247,7 @@ def main (argv : List String) : IO UInt32 := do
     if c.name.isEmpty then continue
     let (f, l) := splitPos k
     named := named.insert f ((named.getD f #[]).push (l, c.name))
-    if let some d := declName c.name then
+    if let some d := (if c.declared.isEmpty then declName c.name else some c.declared) then
       let unfolds := ["def", "abbrev", "instance", "theorem", "lemma", "opaque"].any fun kw => (c.name.splitOn s!"{kw} ").length > 1
       unless spaces.contains f do
         spaces := spaces.insert f (namespacesOf ((← (try IO.FS.readFile f catch _ => pure ""))))
@@ -1253,7 +1257,14 @@ def main (argv : List String) : IO UInt32 := do
       localDecls := localDecls.insert full (k, unfolds)
   let locOf (s : String) : Option Loc := match locs.get? s with
     | some l => some l
-    | none => (findDecl? localDecls (userName s)).map fun (k, u) => { pos := k, unfoldable := u }
+    | none =>
+      let found := (findDecl? localDecls (userName s)) <|>
+        -- printed relative to an open namespace (`grind`'s counters): the one declaration
+        -- of the profiled files whose name ends so
+        match localDecls.toList.filter (·.1.endsWith ("." ++ userName s)) with
+        | [(_, v)] => some v
+        | _ => none
+      found.map fun (k, u) => { pos := k, unfoldable := u }
   -- `whnf` reduces applications of anything (structures, variables): keep only
   -- constants that unfold
   let keep (s : String) (c : ConstCost) : Bool :=
@@ -1275,7 +1286,11 @@ def main (argv : List String) : IO UInt32 := do
   -- costliest lines; kernel and compiler work can sit on a line of its own: name it after
   -- the declaration that starts closest above it
   let lineCosts : Array (String × LineCost) := (ownDiagnostics named acc.lines).toArray.map fun (k, c) =>
-    if c.name.isEmpty then (k, { c with name := ownerName named k }) else (k, c)
+    if c.name.isEmpty then
+      let (l, name) := owner named k
+      let declared := ((acc.lines.get? s!"{(splitPos k).1}:{l}").map (·.declared)).getD ""
+      (k, { c with name, declared })
+    else (k, c)
   let rows := (lineCosts.filter (·.2.total > 0)).qsort (fun a b => a.2.total > b.2.total || (a.2.total == b.2.total && a.1 < b.1))
   let lineConsts (c : LineCost) : Array (String × String × Float × Nat) :=
     ((c.consts.toArray.filter fun (s, _) => (acc.consts.get? s).all (keep s)).map fun (s, (k, x, t)) => (s, k, x, t))
@@ -1360,7 +1375,8 @@ def main (argv : List String) : IO UInt32 := do
     return out
   let scopes := rows.map fun (k, c) => Json.mkObj [("name", Json.str (c.name.replace "\n" " ")), ("pos", Json.str k),
     -- what `compare` matches on: the declaration, so edits that move lines still compare
-    ("key", Json.str ((declName c.name).map (fun d => s!"{(splitPos k).1} {d}") |>.getD (anonKey.getD k k))),
+    ("key", Json.str (((if c.declared.isEmpty then declName c.name else some c.declared)).map
+      (fun d => s!"{(splitPos k).1} {d}") |>.getD (anonKey.getD k k))),
     ("total_ns", toJson c.total), ("elab_ns", toJson c.elaboration), ("kernel_ns", toJson c.kernel),
     ("compile_ns", toJson c.compile), ("lint_ns", toJson c.lint),
     ("top", Json.arr (c.top.map fun (a, op) => Json.mkObj [("amount", toJson a), ("op", Json.str op)])),
@@ -1387,7 +1403,7 @@ def main (argv : List String) : IO UInt32 := do
     let l := locOf s
     Json.mkObj (constJson s c.kind c.cost c.count ++
       [("module", Json.str ((l.map (·.module)).getD ""))] ++
-      (["unfolds", "kernel", "instances", "simp_used", "simp_tried", "simp_failed"].filterMap fun ctr =>
+      (["unfolds", "kernel", "instances", "simp_used", "simp_tried", "simp_failed", "grind_instances"].filterMap fun ctr =>
         (c.diag.get? ctr).map fun n => (ctr, toJson n)))
   let fileJson := (acc.files.qsort (·.1 < ·.1)).map fun (f, c) => Json.mkObj [("file", Json.str f),
     ("module", Json.str c.module), ("key", Json.str s!"module {c.module}"),

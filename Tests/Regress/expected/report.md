@@ -6,11 +6,11 @@
 | allocations | 5 | 305 | +300 (+6000.00%) | ⚠️ worse (not enforced) |
 | calls | 0 | 0 | 0 | ✅ pass |
 | compile heartbeats | 667.45 kHB | 790.92 kHB | +123.47 kHB (+18.50%) | ❌ fail |
-| time (wall, noisy) | 11.32 ms | 15.27 ms | +3.95 ms (+34.89%) | noisy, not checked |
+| time (wall, noisy) | 11.84 ms | 18.34 ms | +6.50 ms (+54.87%) | noisy, not checked |
 
-Exact metrics (copies, allocations, calls, heartbeats) do not vary between runs; time does, so it is shown but never checked. Enforced: copies, heartbeats.
+Copies, allocations and calls do not vary between runs and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: copies, heartbeats.
 
-<details><summary>why <code>Regress.lean simp_case</code> got more expensive: +56.97 kHB; most changed: simp lemma rewrote with <code>step_eq</code> +41×</summary>
+<details><summary>why <code>Regress.lean simp_case</code> got more expensive: +56.97 kHB; top change: simp lemma used (count) <code>step_eq</code> +41</summary>
 
 `Regress.lean:15`: 562.89 kHB → 619.86 kHB (elaboration +49.03 kHB, kernel +7.94 kHB)
 
@@ -25,11 +25,11 @@ Exact metrics (copies, allocations, calls, heartbeats) do not vary between runs;
 
 … and 1 more changed (`leanprof compare` lists them)
 
-- no constant is credited with more heartbeats (only how often each was used changed): the 56,966 heartbeats are in work not credited to a named constant (operations under 10,000 heartbeats are not timed: `--threshold` lowers it)
+- no constant is credited with more than 1,000 more heartbeats (what changed is how often each was used): the 56,966 heartbeats are in work not credited to a named constant (operations under 10,000 heartbeats are not timed: `--threshold` lowers it)
 
 </details>
 
-<details><summary>why <code>Regress.lean unfold_case</code> got more expensive: +50.53 kHB; most changed: whnf reduces <code>tri</code> +46.16 kHB</summary>
+<details><summary>why <code>Regress.lean unfold_case</code> got more expensive: +50.53 kHB; top change: whnf reduces <code>tri</code> +46.16 kHB</summary>
 
 `Regress.lean:21`: 6.95 kHB → 57.47 kHB (elaboration +50.53 kHB)
 
@@ -40,8 +40,8 @@ Exact metrics (copies, allocations, calls, heartbeats) do not vary between runs;
 | unfolded (count) | `Add.add` | `Init/Prelude.lean:1638` | 1 | 144 | +143 |
 | unfolded (count) | `HAdd.hAdd` | `Init/Prelude.lean:1481` | 1 | 144 | +143 |
 | unfolded (count) | `tri` | `Regress.lean:11` | 1 | 72 | +71 |
-| kernel unfolded (count) | `OfNat.ofNat` | `Init/Prelude.lean:1393` | 4 | 0 | −4 |
-| kernel unfolded (count) | `instOfNatNat` | `Init/Prelude.lean:1395` | 4 | 0 | −4 |
+| unfolded (count) | `Nat.casesOn` | `Init/Prelude.lean:1349` | not listed | 72 | ? |
+| unfolded (count) | `Nat.rec` | `Init/Prelude.lean:1349` | not listed | 72 | ? |
 
 … and 15 more changed (`leanprof compare` lists them)
 
@@ -49,22 +49,22 @@ Exact metrics (copies, allocations, calls, heartbeats) do not vary between runs;
 
 </details>
 
-<details><summary>why <code>Regress.lean tri</code> got more expensive: +15.52 kHB; most changed: isDefEq unfolds <code>outParam</code> −4×</summary>
+<details><summary>why <code>Regress.lean tri</code> got more expensive: +15.52 kHB; top change: unfolded (count) <code>Nat.below</code> +11</summary>
 
 `Regress.lean:11`: 50.50 kHB → 66.03 kHB (elaboration +13.53 kHB, compiler +1.99 kHB)
 
 | what changed | | defined at | base | head | change |
 |---|---|---|---:|---:|---:|
 | isDefEq unfolds | `outParam` | `Init/Prelude.lean:733` | 9× | 5× | −4× |
-| unfolded (count) | `outParam` | `Init/Prelude.lean:733` | 27 | 15 | −12 |
 | unfolded (count) | `Nat.below` | `Init/Prelude.lean:1349` | 0 | 11 | +11 |
 | unfolded (count) | `Nat.rec` | `Init/Prelude.lean:1349` | 0 | 6 | +6 |
 | unfolded (count) | `Unit` | `Init/Prelude.lean:214` | 0 | 4 | +4 |
 | unfolded (count) | `OfNat.ofNat` | `Init/Prelude.lean:1393` | 0 | 3 | +3 |
+| unfolded (count) | `Nat.casesOn` | `Init/Prelude.lean:1349` | 0 | 2 | +2 |
 
 … and 12 more changed (`leanprof compare` lists them)
 
-- no constant is credited with more heartbeats (only how often each was used changed): the 15,521 heartbeats are in work not credited to a named constant (operations under 10,000 heartbeats are not timed: `--threshold` lowers it)
+- no constant is credited with more than 1,000 more heartbeats (what changed is how often each was used): the 15,521 heartbeats are in work not credited to a named constant (operations under 10,000 heartbeats are not timed: `--threshold` lowers it)
 
 </details>
 

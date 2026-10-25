@@ -94,7 +94,7 @@ def facts(md, ce, cr):
     if re.search(r"REGRESSION  Regress\.lean unchanged", ce):
         problems.append("`unchanged` reported as a regression")
     # the comment: one collapsed block per regressed declaration, the top cause in its summary
-    need(md, r"^<details><summary>why <code>Regress\.lean unfold_case</code> got more expensive: \+[0-9.]+ kHB; most changed: whnf reduces <code>tri</code> \+", "comment: unfold_case")
+    need(md, r"^<details><summary>why <code>Regress\.lean unfold_case</code> got more expensive: \+[0-9.]+ kHB; top change: whnf reduces <code>tri</code> \+", "comment: unfold_case")
     need(md, r"^<details><summary>why <code>Regress\.lean simp_case</code> got more expensive: .*step_eq", "comment: simp_case")
     # the copy: explain's cause, for the site that copies more
     need(cr, r"^  REGRESSION  collect .*\[Array\] in .*: 0 -> 299$", "run: collect copies 299 times")

@@ -363,7 +363,7 @@
    "lint_ns": 12785,
    "module": "Regress",
    "total_ns": 790920,
-   "wall_ns": 273552500
+   "wall_ns": 258587167
   }
  ],
  "kinds": [

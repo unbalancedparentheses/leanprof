@@ -23,19 +23,19 @@
    "allocs": 1,
    "bytes": 24,
    "est_ns": 3,
-   "function": "run_main",
+   "function": "collect (in Std.Legacy.Range.forIn'.loop)",
    "pct_run": 0.0,
    "scope": "-",
-   "where": ""
+   "where": "Main.lean:6"
   },
   {
    "allocs": 1,
    "bytes": 24,
    "est_ns": 3,
-   "function": "collect (in Std.Legacy.Range.forIn'.loop)",
+   "function": "run_main",
    "pct_run": 0.0,
    "scope": "-",
-   "where": "Main.lean:6"
+   "where": ""
   },
   {
    "allocs": 1,
@@ -70,34 +70,34 @@
  ],
  "dropped": 0,
  "light_overhead_by_path_ns": {
-  "auto": 6.1,
+  "auto": 6.5,
   "closure": 9.6,
-  "monadic": 6.1,
-  "pure": 6.1
+  "monadic": 6.3,
+  "pure": 6.3
  },
  "memory": {
   "end_commit": 6225920,
   "peak_commit": 6225920,
-  "peak_rss": 9076736,
-  "samples": 9,
+  "peak_rss": 9125888,
+  "samples": 10,
   "scopes": [],
   "start_commit": 4456448,
-  "sys_ns": 2865000,
-  "user_ns": 417000,
-  "wall_ns": 3264631
+  "sys_ns": 3146000,
+  "user_ns": 435000,
+  "wall_ns": 3594117
  },
  "overhead_by_path_ns": {
-  "auto": 8.0,
+  "auto": 8.1,
   "closure": 11.4,
-  "direct": 6.5,
+  "direct": 6.6,
   "monadic": 8.1,
-  "pure": 8.1
+  "pure": 8.4
  },
- "overhead_ns": 8.1,
+ "overhead_ns": 8.4,
  "probe_ns": 0,
  "resolution_ns": 1.0,
  "reuse": [],
- "run_ns": 11321271,
+ "run_ns": 11839405,
  "scopes": [],
  "self_check": {
   "checked": "Array.push, Array.set!, String.push, String.append, ByteArray.push, ByteArray.set!",
@@ -108,5 +108,5 @@
  "tasks": [],
  "version": 3,
  "waits": [],
- "wall_ns": 11321271
+ "wall_ns": 11839405
 }

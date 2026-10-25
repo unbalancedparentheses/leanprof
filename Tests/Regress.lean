@@ -58,7 +58,7 @@ def run (check' : String → Bool → String → StateT Nat IO Unit) : StateT Na
   check "regress: an old report is not attributed, and says why"
     (e.work.isEmpty && e.notes.any fun n => has n "base report does not record")
   -- most of the change not credited
-  let e := explainOf (report #[] #[] #[]) (report #[cause "f" "simp" 100 3] #[] #[] (total := 100000))
+  let e := explainOf (report #[] #[] #[]) (report #[cause "f" "simp" 5000 3] #[] #[] (total := 100000))
   check "regress: a small credited share says most of the change is not credited"
     (e.notes.any fun n => has n "most of the change is in work not credited")
   -- repeated operations: compared when both sides list them
@@ -71,6 +71,11 @@ def run (check' : String → Bool → String → StateT Nat IO Unit) : StateT Na
   let e := explainOf (two 0 0) (two 5000 4900)
   check' "regress: the headline names the profiled file's own constant"
     (e.headline.any (·.name == "d")) s!"{e.headline.map (·.name)}"
+  -- what went down is listed after what went up, and never the headline
+  let e := explainOf (report #[cause "down" "instance" 9000 3] #[] #[counter "up" "grind_instances" 2])
+    (report #[cause "down" "instance" 100 3] #[] #[counter "up" "grind_instances" 40] (total := 20000))
+  check' "regress: a decrease is not the headline; a counter that went up is"
+    (e.headline.any (·.name == "up") && e.work[0]!.name == "down") s!"{e.headline.map (·.name)}"
   -- explain's findings for a copy site
   let f := Json.arr #[Json.mkObj [("function", "f"), ("kind", "Array"), ("scope", "s"), ("symbol", "l_f"),
     ("cause", "stored-then-updated"), ("why", "it is stored"), ("file", "M.lean"), ("lines", Json.arr #[toJson (3 : Nat)]),

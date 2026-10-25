@@ -679,6 +679,7 @@ def whatLabel : String → String
   | "instances" => "instance used (count)"
   | "simp_used" => "simp lemma used (count)"
   | "simp_failed" => "simp lemma failed (count)"
+  | "grind_instances" => "grind instantiated (count)"
   | w => w
 
 def fmtKHB (x : Float) : String := s!"{fmt2 (x / 1000)} kHB"
@@ -801,7 +802,7 @@ def compare (argv : List String) : IO UInt32 := do
   if base.exact && new.exact && !slowerDecls.isEmpty then
     let bj ← IO.ofExcept (Json.parse (← IO.FS.readFile basePath))
     let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile newPath))
-    IO.println "why (what changed inside each declaration that got more expensive; heartbeats and counts are exact)"
+    IO.println "why (what changed inside each declaration that got more expensive; counts are exact, heartbeats nearly so)"
     for e in explainElab bj nj slowerDecls do
       for l in whyText e 8 do IO.println l
   IO.println "copies of shared or multi-threaded values (any increase is a regression)"
@@ -1689,7 +1690,7 @@ def shorten (s : String) (n : Nat) : String :=
 /-- What changed inside a regressed declaration, as a collapsed block of the comment. -/
 def whyMd (e : Leanprof.Regress.Explanation) (rowsEach : Nat := 5) : String := Id.run do
   let headline := match topCause e with
-    | some r => s!"; most changed: {whatLabel r.what} {htmlCode r.name} {rowChange r}"
+    | some r => s!"; top change: {whatLabel r.what} {htmlCode r.name} {rowChange r}"
     | none => "; cause not attributed"
   let mut l : Array String := #[
     s!"<details><summary>why {htmlCode e.key} got more expensive: {fmtSigned fmtHeartbeats (e.new - e.base)}{headline}</summary>", "",
@@ -1777,7 +1778,7 @@ def reportMd (argv : List String) : IO UInt32 := do
     out := out.push s!"| time (wall, noisy) | {fmtMs b.wall} | {fmtMs n.wall} | {fmtChange fmtMs b.wall n.wall} | noisy, not checked |"
   out := out.push ""
   let enforced := if o.failOn.isEmpty then "nothing (fail-on: none)" else ", ".intercalate o.failOn
-  out := out.push s!"Exact metrics (copies, allocations, calls, heartbeats) do not vary between runs; time does, so it is shown but never checked. Enforced: {enforced}."
+  out := out.push s!"Copies, allocations and calls do not vary between runs and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: {enforced}."
   let introEnd := out.size
   let row (m : MdMetric) (k : String) (x y : Float) : String :=
     let mark := if !m.bad.any (·.1 == k) then "" else if o.failOn.contains m.id then " ❌" else " ⚠️"

@@ -403,7 +403,7 @@
    "lint_ns": 12785,
    "module": "Regress",
    "total_ns": 667454,
-   "wall_ns": 226821959
+   "wall_ns": 230647000
   }
  ],
  "kinds": [

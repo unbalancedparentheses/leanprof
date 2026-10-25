@@ -124,7 +124,7 @@ structure Row where
   newTimes : Option Nat := none
   deriving Inhabited
 
-def Row.isCount (r : Row) : Bool := ["unfolds", "kernel", "instances", "simp_used", "simp_failed"].contains r.what
+def Row.isCount (r : Row) : Bool := ["unfolds", "kernel", "instances", "simp_used", "simp_failed", "grind_instances"].contains r.what
 
 /-- The change, when both sides are known. -/
 def Row.delta? (r : Row) : Option Float := do return (← r.new) - (← r.base)
@@ -134,18 +134,46 @@ def Row.timesDelta (r : Row) : Int :=
   | some b, some n => (n : Int) - b
   | _, _ => 0
 
-/-- How much the row says, for ordering: the change; rows with an unknown side
-(a list was cut) after those, by the known side. -/
-def Row.weight (r : Row) : Float × Float :=
+/-- Heartbeats credited to the same constant move by a few hundred between
+profiles of the same code (as a declaration's total does by up to about 1 in
+10,000): a change this small, with the same number of times, is not counted as
+a change, the threshold `compare` uses for a declaration. -/
+def hbNoise : Float := 1000
+
+/-- The heartbeats credited went up by more than `hbNoise`, or a count went up. -/
+def Row.grew (r : Row) : Bool := r.delta?.any fun d => d > (if r.isCount then 0 else hbNoise)
+
+/-- How the row is ordered: increases first (in heartbeats or counts, then in how
+many times), then rows with an unknown side (a list was cut), then changes of
+heartbeats within `hbNoise` at the same number of times, then decreases; larger
+changes first within each. -/
+def Row.weight (r : Row) : Nat × Float :=
   match r.delta? with
-  | some d => (1, d.abs)
-  | none => (0, max (r.new.getD 0) (r.base.getD 0))
+  | some d =>
+    let group :=
+      if r.grew || (d.abs ≤ hbNoise && r.timesDelta > 0) then 3
+      else if !r.isCount && d.abs ≤ hbNoise && r.timesDelta == 0 then 1
+      else 0
+    (group, d.abs)
+  | none => (2, max (r.new.getD 0) (r.base.getD 0))
+
+/-- The row says the declaration does more of it in head. -/
+def Row.up (r : Row) : Bool := r.weight.1 == 3
 
 def Row.before (x y : Row) : Bool :=
   let (a, b) := x.weight
   let (c, d) := y.weight
   a > c || (a == c && (b > d || (b == d && (x.timesDelta.natAbs > y.timesDelta.natAbs ||
     (x.timesDelta.natAbs == y.timesDelta.natAbs && (x.what < y.what || (x.what == y.what && x.name < y.name)))))))
+
+/-- The order counters are listed in. -/
+def counterRank : String → Nat
+  | "grind_instances" => 0
+  | "simp_used" => 1
+  | "simp_failed" => 2
+  | "instances" => 3
+  | "unfolds" => 4
+  | _ => 5
 
 structure Explanation where
   key : String
@@ -226,6 +254,12 @@ def explainDecl (bi ni : ElabInfo) (key : String) (b n : Decl) : Explanation := 
   let work := if both then work.qsort Row.before else #[]
   let counts := if !both then #[] else diffRows (·.1) (·.2) (countMap b) (countMap n)
     (fun k => b.countsCut.contains k.1) (fun k => n.countsCut.contains k.1)
+  -- what the elaborator chose to do (theorems grind instantiated, simp lemmas, instances)
+  -- before what it led to (definitions unfolded, by the kernel last): a kernel count is
+  -- usually large and a consequence
+  let counts := counts.qsort fun x y =>
+    x.weight.1 > y.weight.1 || (x.weight.1 == y.weight.1 &&
+      (counterRank x.what < counterRank y.what || (counterRank x.what == counterRank y.what && x.before y)))
   let d := n.total - b.total
   let mut notes : Array String := #[]
   if !b.recorded || !n.recorded then
@@ -239,13 +273,13 @@ def explainDecl (bi ni : ElabInfo) (key : String) (b n : Decl) : Explanation := 
     notes := notes.push (s!"cause not attributed: no definition unfolded, instance, simp lemma or repeated operation " ++
       s!"recorded for this declaration changed{below}{where_}")
   else if !work.isEmpty then
-    let up := work.filterMap fun r => r.delta?.filter (· > 0)
+    let up := (work.filter Row.grew).filterMap (·.delta?)
     let best := up.foldl max 0
     if best > 0 && d > 0 && best < d / 2 then
       notes := notes.push (s!"the largest credited increase is {fmtNum best} of the declaration's {fmtNum d} heartbeats: " ++
         "most of the change is in work not credited to a named constant")
     else if best == 0 then
-      notes := notes.push (s!"no constant is credited with more heartbeats (only how often each was used changed): " ++
+      notes := notes.push (s!"no constant is credited with more than {fmtNum hbNoise} more heartbeats (what changed is how often each was used): " ++
         s!"the {fmtNum d} heartbeats are in work not credited to a named constant" ++
         (if ni.threshold > 0 then s!" (operations under {fmtNum ni.threshold.toFloat} heartbeats are not timed: `--threshold` lowers it)" else ""))
     if up.size > 1 then
@@ -260,10 +294,12 @@ def explainDecl (bi ni : ElabInfo) (key : String) (b n : Decl) : Explanation := 
     match k.splitOn " " with
     | [_, d] => c == d || c.endsWith ("." ++ d)
     | _ => false
-  let headline := work[0]? <|> counts[0]?
+  -- more heartbeats credited, else a counter that went up, else more times credited
+  let grew := Row.grew
+  let headline := work.find? grew <|> counts.find? grew <|> work.find? Row.up
   let headline := match headline with
     | some top =>
-      let close (r : Row) : Bool := r.what == top.what && 2 * r.weight.2 ≥ top.weight.2 && isLocal r.name
+      let close (r : Row) : Bool := r.what == top.what && grew r == grew top && 2 * r.weight.2 ≥ top.weight.2 && isLocal r.name
       if isLocal top.name then some top else (work.find? close <|> counts.find? close) <|> some top
     | none => none
   return { key, pos := n.pos, base := b.total, new := n.total, parts, work, counts, notes, headline }
