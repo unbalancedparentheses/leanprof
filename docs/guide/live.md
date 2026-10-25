@@ -180,7 +180,7 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `measure_pair` | two prebuilt binaries run in alternating AB/BA order (no builds, no probes) into one paired session, for `judge` |
 | `report` | summary of a saved report or live snapshot |
 | `hot` | hottest scopes, copies, allocations, tasks or waits, with file:line |
-| `explain` | why each costly copy, scope, task group, failed reuse or closure call happens, and what usually fixes it |
+| `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted) |
 | `compare` | regressions between two reports (exact for copies and calls) |
 | `judge` | KEEP or DISCARD from two `measure` summaries (`base`, `new`) or one paired session (`pair`); `min_change` in percent |
 | `live` | a running program's current state, with rates over `seconds` (it must run with `LEANPROF_LIVE`) |

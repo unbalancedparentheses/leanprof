@@ -546,7 +546,8 @@ def summarize (j : Json) (limit : Nat := 5) : String := Id.run do
 /-- Why each of the costliest findings of a report happens and what usually
 fixes it, for an agent (or a person) deciding what to change. `filter`
 keeps only rows whose name, function or scope contains it. -/
-def explain (j : Json) (filter : String) (limit : Nat := 5) : String := Id.run do
+def explain (j : Json) (filter : String) (limit : Nat := 5) (copyLines : Option (Array String) := none) :
+    String := Id.run do
   let live := num j "leanprof_live" > 0
   let has (r : Json) := filter.isEmpty || ["name", "function", "scope", "spawned_by"].any fun k =>
     ((str r k).splitOn filter).length > 1
@@ -557,12 +558,14 @@ def explain (j : Json) (filter : String) (limit : Nat := 5) : String := Id.run d
   let scopes := (arr j "scopes").qsort fun a b => num a "total_ns" > num b "total_ns"
   let scopeTotal (name : String) : Float :=
     (scopes.find? (str · "name" == name)).map (num · "total_ns") |>.getD 0
-  -- copies
+  -- copies: in a report, `leanprof explain`'s diagnosis from the IR
+  -- (`copyLines`); in a live snapshot, which has no symbols, the usual causes
   let nc (c : Json) := if live then num c "copies" else num c "shared" + num c "multi_threaded"
   -- costliest first; copies of empty or tiny values (`tiny`) are not worth explaining
   let copies := ((arr j "copies").filter fun c => nc c > 0 && has c && !bool c "tiny").qsort fun a b =>
     num a "copy_ns" > num b "copy_ns"
-  for c in copies[0:min limit copies.size] do
+  if let some ls := copyLines then out := out ++ ls
+  for c in (if copyLines.isSome then #[] else copies[0:min limit copies.size].toArray) do
     let n := nc c
     let share := scopeTotal (str c "scope")
     let pct := if share > 0 then s!", {fixed (num c "copy_ns" / share * 100)}% of scope {str c "scope"}" else ""
@@ -616,6 +619,28 @@ def explain (j : Json) (filter : String) (limit : Nat := 5) : String := Id.run d
     out := out.push (if filter.isEmpty then "nothing notable in this report" else s!"nothing in this report matches {filter}")
   return "\n".intercalate out.toList
 
+/-- The findings of `leanprof explain --json` as text for the MCP `explain`
+tool: per copy site its cause, why, fix (with the program's names), lines and
+confidence. `filter` keeps findings whose function contains it. -/
+def explainFindings (ej : Json) (filter : String) (limit : Nat) : Array String := Id.run do
+  let fs := (arr ej "findings").filter fun f => filter.isEmpty || ((str f "function").splitOn filter).length > 1
+  let mut out : Array String := #[]
+  let mut sites : Array String := #[]
+  for f in fs do
+    let site := s!"{str f "function"}|{str f "where"}"
+    if !sites.contains site then
+      if sites.size ≥ limit then break
+      sites := sites.push site
+      out := out.push s!"COPY  {fmtCount (num f "copies")} copies of a shared {str f "kind"} in {str f "function"} ({str f "where"}): {fmtBytes (num f "bytes")}, {fmtTime (num f "copy_ns")} copying."
+    out := out.push s!"  cause ({str f "cause"}): {str f "why"}"
+    unless (str f "fix").isEmpty do out := out.push s!"  fix: {str f "fix"}"
+    for c in arr f "fix_code" do
+      for l in (c.getStr?.toOption.getD "").splitOn "\n" do out := out.push s!"      {l}"
+    let lines := (arr f "lines").filterMap (·.getNat?.toOption)
+    unless lines.isEmpty do out := out.push s!"  where: {str f "file"} lines {", ".intercalate (lines.toList.map toString)}"
+    out := out.push s!"  confidence: {str f "confidence"}"
+  return out
+
 /-! ## `leanprof mcp` -/
 
 def sProp (d : String) : Json := Json.mkObj [("type", Json.str "string"), ("description", Json.str d)]
@@ -659,9 +684,10 @@ def tools : Array Json := #[
     [("kind", sProp "scopes, copies, allocations, tasks or waits"),
      ("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"), ("limit", nProp "rows (default 10)")]
     ["kind"],
-  tool "explain" ("Explain the costliest findings of a report or live snapshot: why each copy of a shared value " ++
-    "happens and how to fix it, where a scope's time goes (own or nested), tail latency, allocations per call, " ++
-    "task granularity, failed reuse and closure calls.")
+  tool "explain" ("Explain the costliest findings of a run report or live snapshot: why each copy of a shared value " ++
+    "happens and how to fix it (for a report, `leanprof explain`'s diagnosis from the compiler's IR, with the fix " ++
+    "in the program's own names), where a scope's time goes (own or nested), tail latency, allocations per call, " ++
+    "task granularity, failed reuse and closure calls. Not for sampled reports (they count no copies or calls).")
     [("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
      ("name", sProp "only findings whose function, scope or name contains this"), ("limit", nProp "findings per kind (default 5)")] [],
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
@@ -774,8 +800,21 @@ def callTool (name : String) (a : Json) : IO Json := do
     | none => return textResult s!"cannot read a report at {path}" true
   | "explain" =>
     let path := argStr a "path" |>.getD ".lake/leanprof/report.json"
+    let filter := (argStr a "name").getD ""
+    let limit := (argNat a "limit").getD 5
     match ← readJson? (inDir cwd path) with
-    | some j => return textResult (explain j ((argStr a "name").getD "") ((argNat a "limit").getD 5))
+    | some j =>
+      -- as `leanprof explain`: a sampled report has no copies and no call counts
+      if bool j "sampled" then
+        return textResult (s!"{path} is from `leanprof sample`, which counts no copies or calls: " ++
+          "use the `run` tool, then explain its report") true
+      if num j "leanprof_live" > 0 then return textResult (explain j filter limit)
+      -- copies: the command's own diagnosis, from the IR next to the report
+      let (rc, out, err) ← runSelf #["explain", "--json", "--top", "1000", "--report", path] cwd
+      let copyLines ← match rc, Json.parse out with
+        | 0, .ok ej => pure (explainFindings ej filter limit)
+        | _, _ => pure #[s!"COPY  (leanprof explain failed: {tailText (out ++ err) 3})"]
+      return textResult (explain j filter limit (some copyLines))
     | none => return textResult s!"cannot read a report at {path}" true
   | "compare" =>
     let (some b, some n) := (argStr a "base", argStr a "new") | throw <| IO.userError "missing argument: base or new"

@@ -34,6 +34,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   On macOS a new binary's first launch is slow (1.1 s for `copybug`, 24 ms
   after; 2.3 s for concrete), and "including process start" counted it
   without saying so. That time also no longer includes `lake env`.
+- The MCP `explain` tool gives `leanprof explain`'s diagnosis of each copy
+  (cause from the IR, fix in the program's names, lines, confidence) instead
+  of a generic list of usual causes, which it keeps only for live snapshots
+  (no symbols). It refuses sampled reports as the command does; on one it
+  had listed scopes "in 0 calls".
 
 ### Smaller fixes and maintenance
 
