@@ -263,11 +263,6 @@ provenance and one complete experiment operation come first.
   in unfamiliar projects. Publish correctness, time to verified improvement,
   failed diagnoses and reproduction instructions next to current-version
   comparisons.
-- [ ] **Evaluate agents using leanprof.** Fixed tasks with known bottlenecks
-  plus unseen real projects; the same model and budget with ordinary tools
-  versus leanprof. Publish correct fixes, false KEEPs, missed issues, tool
-  failures, calls/tokens and elapsed time. A speedup with weakened tests,
-  proofs or changed required behavior counts as a failure.
 
 Claims about overhead and accuracy are only made after M2's head-to-head
 benchmark measures them.
