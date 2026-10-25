@@ -22,7 +22,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import LP, ROOT, WORK, Claim, build_leanprof, read_json, sh  # noqa: E402
+from lib import LP, ROOT, WORK, Claim, build_leanprof, read_json, sh, timing  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--timing", action="store_true", help="also the detection trials (~15 min, quiet machine)")
@@ -83,7 +83,8 @@ if a.timing:
         recs = []
         with tempfile.TemporaryDirectory() as tmp:
             for i in range(n):
-                r = run.trial(Args, variant, i, tmp)
+                with timing():
+                    r = run.trial(Args, variant, i, tmp)
                 print(f"   {variant} #{i}: LeanBench {r['lb']['delta_pct']:+.1f}%, leanprof "
                       f"{r['lp']['delta_pct']:+.1f}% {r['lp']['judge']['verdict']}", flush=True)
                 recs.append(r)

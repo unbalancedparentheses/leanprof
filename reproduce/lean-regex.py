@@ -12,7 +12,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import LEANPROF_URL, LP, Claim, build_leanprof, clone, lean_prefix, read_json, sh, timed  # noqa: E402
+from lib import LEANPROF_URL, LP, Claim, build_leanprof, clone, lean_prefix, read_json, sh, timed, timing  # noqa: E402
 
 COMMIT = "32af6f3"
 PUBLISHED_LEANPROF = "8caf3fd"  # the leanprof that measured the case study's heartbeats
@@ -38,9 +38,10 @@ c.exact("corpus size (MB, Lean 4.35.0 Init/Data/*/*.lean)", round(os.path.getsiz
 args = ["Bench", "--", "-e", PATTERN, "-n", "3", corpus]
 plain = os.path.join(rx, ".lake", "build", "bin", "Bench")
 times = []
-for _ in range(1 if a.exact_only else 3):
-    secs, p = timed([plain, "-e", PATTERN, "-n", "3", corpus], cwd=rx)
-    times.append(secs)
+with timing():
+    for _ in range(1 if a.exact_only else 3):
+        secs, p = timed([plain, "-e", PATTERN, "-n", "3", corpus], cwd=rx)
+        times.append(secs)
 c.note("Bench output", p.stdout.strip().splitlines()[-1] if p.stdout.strip() else "")
 c.exact("matches (per search)", "4878" in p.stdout.replace(",", ""), True)
 if not a.exact_only:

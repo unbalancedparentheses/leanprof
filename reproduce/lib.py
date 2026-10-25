@@ -44,9 +44,37 @@ def sh(args, cwd=ROOT, env=None, check=True, capture=True, stdin=None, timeout=N
 
 
 def timed(args, **kw):
-    t0 = time.monotonic()
-    p = sh(args, **kw)
-    return time.monotonic() - t0, p
+    """Run and time a command, holding the timing lock (see timing)."""
+    with timing():
+        t0 = time.monotonic()
+        p = sh(args, **kw)
+        return time.monotonic() - t0, p
+
+
+class timing:
+    """Hold an exclusive lock while timing, when LEANPROF_BENCH_LOCK names a lock
+    file, so that timing runs sharing a machine do not overlap (exact counts
+    and builds run outside it):  with timing(): ..."""
+
+    depth = 0  # reentrant: a nested timing() keeps the lock already held
+
+    def __enter__(self):
+        path = os.environ.get("LEANPROF_BENCH_LOCK")
+        self.f = None
+        timing.depth += 1
+        if path and timing.depth == 1:
+            import fcntl
+            self.f = open(os.path.expanduser(path), "w")
+            t0 = time.monotonic()
+            fcntl.flock(self.f, fcntl.LOCK_EX)
+            if time.monotonic() - t0 > 1:
+                log(f"reproduce: waited {time.monotonic() - t0:.0f} s for {path}")
+        return self
+
+    def __exit__(self, *exc):
+        timing.depth -= 1
+        if self.f:
+            self.f.close()
 
 
 def load():

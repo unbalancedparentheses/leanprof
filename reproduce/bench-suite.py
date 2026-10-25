@@ -24,7 +24,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import ROOT, WORK, Claim, build_leanprof, read_json, sh  # noqa: E402
+from lib import ROOT, WORK, Claim, build_leanprof, read_json, sh, timing  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--reps", type=int, default=7)
@@ -35,7 +35,8 @@ c = Claim("bench-suite", "Apple M5 Max, shared, load 7-17 (bench/RESULTS.md, ben
 build_leanprof()
 os.makedirs(WORK, exist_ok=True)
 md, js = os.path.join(WORK, "bench-RESULTS.md"), os.path.join(WORK, "bench-results.json")
-p = sh([sys.executable, os.path.join(ROOT, "bench", "run.py"), "--reps", str(a.reps), "--noisy",
+with timing():
+    p = sh([sys.executable, os.path.join(ROOT, "bench", "run.py"), "--reps", str(a.reps), "--noisy",
         "--check", "--md", md, "--json", js], check=False)
 if not os.path.exists(js):
     print(p.stdout[-3000:], file=sys.stderr)

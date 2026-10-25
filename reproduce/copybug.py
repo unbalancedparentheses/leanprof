@@ -11,13 +11,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import LP, ROOT, WORK, Claim, build_leanprof, read_json, sh  # noqa: E402
+from lib import LP, ROOT, WORK, Claim, build_leanprof, read_json, sh, timing  # noqa: E402
 
 c = Claim("copybug", "Apple M5 Max (README)", "leanprof run copybug; leanprof explain")
 build_leanprof(("leanprof", "copybug"))
 os.makedirs(WORK, exist_ok=True)
 out = os.path.join(WORK, "copybug.json")
-run = sh([LP, "run", "--json", out, "copybug"], env={"LEANPROF_QUIET": "1"})
+with timing():  # the copies are exact; their share of the scope's time is not
+    sh([LP, "run", "--json", out, "copybug"], env={"LEANPROF_QUIET": "1"})
 d = read_json(out)
 cp = [x for x in d["copies"] if x["scope"] == "buildWithHistory" and x["kind"] == "Array"]
 s = {x["name"]: x for x in d["scopes"]}

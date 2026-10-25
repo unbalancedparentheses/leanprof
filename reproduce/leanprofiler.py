@@ -25,7 +25,7 @@ import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import LP, ROOT, WORK, Claim, build_leanprof, read_json, sh  # noqa: E402
+from lib import LP, ROOT, WORK, Claim, build_leanprof, read_json, sh, timing  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--exact-only", action="store_true", help="only the copy counts (CI)")
@@ -62,10 +62,11 @@ for fn, where, n in [("LeanProfiler.Internal.reserveSpan (in Std.DHashMap.Intern
 if not a.exact_only:
     def per_action(tool, threads, n, record=False):
         vals = []
-        for _ in range(a.runs):
-            env = {"LEAN_PROFILE": "1"} if record else {}
-            p = sh([exe, tool, str(threads), str(n)], cwd=work, env=env)
-            vals.append(float(re.search(r": (-?[0-9.e+]+) ns per action", p.stdout).group(1)))
+        with timing():
+            for _ in range(a.runs):
+                env = {"LEAN_PROFILE": "1"} if record else {}
+                p = sh([exe, tool, str(threads), str(n)], cwd=work, env=env)
+                vals.append(float(re.search(r": (-?[0-9.e+]+) ns per action", p.stdout).group(1)))
         return vals
 
     def chk(what, vals, lo_pub, hi_pub, unit="ns", scale=1.0):

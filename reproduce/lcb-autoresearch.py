@@ -27,7 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lcb  # noqa: E402
-from lib import ROOT, WORK, Claim, build_leanprof, read_json, sh  # noqa: E402
+from lib import ROOT, WORK, Claim, build_leanprof, read_json, sh, timing  # noqa: E402
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--no-timing", action="store_true")
@@ -54,7 +54,8 @@ cmd = [sys.executable, os.path.join(ROOT, "research", "lcb", "compare.py"), "--b
        "--candidate", bins["candidate"], "--inputs", inp, "--out", out, "--runs", str(a.runs)]
 if a.no_timing:
     cmd.append("--identity-only")
-p = sh(cmd, check=False)
+with timing():  # the identity checks too, when timing: they are short
+    p = sh(cmd, check=False)
 if not os.path.exists(os.path.join(out, "results.json")):
     print(p.stdout[-3000:], file=sys.stderr)
     sys.exit(2)
