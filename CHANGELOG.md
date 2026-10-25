@@ -197,6 +197,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   among them wrote anywhere: files starting with `-` are refused (also
   `compare`'s and `judge`'s report paths). `scripts/mcp-check.py` checks
   all four; see the [security review](docs/reviews/security-review.md).
+- MCP: `measure_pair` checked `base_cwd` and `candidate_cwd` only when they
+  were given, not their default, the top-level `cwd`. With `cwd` outside
+  any project and absolute paths to Lake-built binaries, `check_output` was
+  deleted in that directory before the first run. Every directory it runs
+  in or writes to, defaults included, must now be a Lake project, and
+  `check_output` must be inside both run directories.
 
 ### Smaller fixes and maintenance
 

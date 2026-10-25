@@ -117,6 +117,22 @@ check("measure_pair refuses a binary Lake did not build", err and "not a binary 
 text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
                  base_cwd="/", runs=6)
 check("measure_pair refuses a working directory that is not a Lake project", err and "not a Lake project" in text, text)
+# the directories it runs in by default: `cwd` names a directory that is not
+# a project, the binaries are absolute, and `check_output` (deleted before
+# each run) is a file there
+outside_cwd = tempfile.mkdtemp(prefix="leanprof-mcp-cwd-")
+important = os.path.join(outside_cwd, "important.txt")
+with open(important, "w") as f:
+    f.write("keep me\n")
+copybug = os.path.abspath(".lake/build/bin/copybug")
+text, err = tool("measure_pair", cwd=outside_cwd, base=copybug, candidate=copybug, check_output="important.txt",
+                 runs=6, warmup=0, out="pair.json")
+check("measure_pair refuses a default working directory that is not a Lake project",
+      err and "not a Lake project" in text and os.path.exists(important), text)
+text, err = tool("measure_pair", cwd=outside_cwd, base=copybug, candidate=copybug, base_cwd=os.getcwd(),
+                 candidate_cwd=os.getcwd(), runs=6, warmup=0, out="pair.json")
+check("measure_pair refuses to write its session outside a Lake project",
+      err and "not a Lake project" in text and not os.path.exists(os.path.join(outside_cwd, "pair.json")), text)
 text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
                  check_output="../x", runs=6)
 check("measure_pair refuses an output file outside the project", err and "inside the project" in text, text)

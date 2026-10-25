@@ -860,10 +860,16 @@ def callTool (name : String) (a : Json) : IO Json := do
       let real ← try IO.FS.realPath (inDir cwd bin) catch _ => throw <| IO.userError s!"no such binary: {bin}"
       unless (real.toString.splitOn "/.lake/build/bin/").length > 1 do
         throw <| IO.userError s!"{bin} is not a binary built by Lake (.lake/build/bin/)"
-    for k in ["base_cwd", "candidate_cwd"] do
-      if let some d := argStr a k then
-        unless ← isLakeProject (inDir cwd d) do throw <| IO.userError s!"{k} is not a Lake project: {d}"
-    if let some f := argStr a "check_output" then discard <| projectPath cwd "check_output" f
+    -- the directories it really runs in: `base_cwd` and `candidate_cwd`
+    -- default to `cwd` (itself the server's directory when not given),
+    -- where the session is written too
+    let top := cwd.getD "."
+    let dirs := [("cwd", top)] ++ ["base_cwd", "candidate_cwd"].map fun k =>
+      (k, ((argStr a k).map fun d => (inDir cwd d).toString).getD top)
+    for (k, d) in dirs do
+      unless ← isLakeProject d do throw <| IO.userError s!"{k} is not a Lake project: {d}"
+    if let some f := argStr a "check_output" then
+      for (_, d) in dirs.drop 1 do discard <| projectPath (some d) "check_output" f
     let opt (k flag : String) := (argStr a k).map (#[flag, ·]) |>.getD #[]
     let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
     let (rc, out, err) ← runSelf (#["measure-pair", "--base", b, "--candidate", c, "--out", outFile] ++
