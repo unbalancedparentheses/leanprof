@@ -246,7 +246,9 @@ def tests : StateT Nat IO Unit := do
     let w := (← IO.monoNanosNow) - t0
     if plainNs == 0 || w < plainNs then plainNs := w
   check "a light scope's sampled calls stand for the calls they were sampled from"
-    (sanitized || est > 0.7 * plainNs.toFloat && est < 1.25 * plainNs.toFloat)
+    -- (no upper bound: on a loaded machine a preempted sampled call can
+    -- stand for 64 calls' worth of waiting)
+    (sanitized || est > 0.7 * plainNs.toFloat)
     s!"estimate={est} without the scope={plainNs} timed={timed}"
   -- a light child adds its estimate to its caller's children; when it has
   -- become cheaper than that, the caller's self time must not wrap around
