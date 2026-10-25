@@ -77,9 +77,12 @@ typedef struct {
      * calling another of the same declaration, such as `f___boxed` -> `f`). */
     uint64_t calls, total, self, sum, kids, desc_sum, desc_total, outer, fwd, min, max;
     /* Calls only counted, not timed (`light`): all of them, and outermost
-     * ones; `est`, ticks per call, is what each adds to its caller's time in
+     * ones; `est`, in 1/1024 ticks per call (a light call can take less than
+     * one tick of a 24 MHz clock), is what each adds to its caller's time in
      * children (the timed calls' mean), so the caller's self time does not
-     * take it in. `chk_*`: the totals at the last lpf_light_check. */
+     * take it in. `self` is a sum of differences that can be negative (a
+     * light child cheaper than its estimate): read it signed (lpf_signed).
+     * `chk_*`: the totals at the last lpf_light_check. */
     uint64_t lcalls, louter, est;
     uint64_t chk_total, chk_desc, chk_outer;
     /* allocations (LEANPROF_ALLOCS builds): made while this scope was the
@@ -111,7 +114,7 @@ typedef struct {
     const void *key;           /* the key it was entered with (an alias of scope's, for LP_FN) */
     const void *label;         /* the innermost `profile!` label from this frame down, or NULL */
     uint64_t start;
-    uint64_t child;            /* raw time in direct children */
+    uint64_t child;            /* raw time in direct children, in 1/1024 ticks (see `est`) */
     uint64_t kids, desc;       /* overhead of direct children and of all completed
                                 * descendants, in 1/1024 of a direct pair */
     uint8_t traced;            /* its begin event was recorded */
@@ -454,6 +457,8 @@ static double lpf_unit_ticks(void);
 static double lpf_scale(uint64_t timed, uint64_t light) {
     return timed > 0 ? (double)(timed + light) / (double)timed : 1.0;
 }
+/* A sum of differences kept modulo 2^64 (a scope's `self`), as a signed number. */
+static double lpf_signed(uint64_t v) { return (double)(int64_t)v; }
 /* Copy rows of empty or tiny values (lpf_tiny below; live snapshots mark
  * them the same way, against the time so far) */
 #define LP_TINY_BYTES 16
@@ -832,9 +837,9 @@ static __attribute__((noinline)) void lpf_light_check(lpf_scope *s) {
     double net = total - (double)n * lpf_inner_ticks(s) - desc * unit;
     if (s->light) {
         if (probes < LP_NEAR_PROBE / 2 * net) LP_ST(s->light, 0);
-        else s->est = net > 0 ? (uint64_t)(net / (double)n) : 0;
+        else s->est = net > 0 ? (uint64_t)(net * 1024.0 / (double)n) : 0;
     } else if (s->calls == s->outer && probes >= LP_NEAR_PROBE * net) { /* never recursive */
-        s->est = net > 0 ? (uint64_t)(net / (double)n) : 0;
+        s->est = net > 0 ? (uint64_t)(net * 1024.0 / (double)n) : 0;
         LP_ST(s->light, 1);
     }
 }
@@ -961,7 +966,7 @@ LP_HOT void lpf_exit(void) {
     if (d == 0 && (f->scope == NULL || f->scope->kind != LP_INTERNAL)) t->pairs += LP_LD(lpf_w_pair[f->path]) + f->desc;
     if (d > 0) {
         lpf_frame *p = &t->stack[d - 1];
-        p->child += raw;
+        p->child += raw << 10;
         p->kids += LP_LD(lpf_w_kid[f->path]);
         p->desc += LP_LD(lpf_w_pair[f->path]) + f->desc;
     }
@@ -970,7 +975,9 @@ LP_HOT void lpf_exit(void) {
     if (LEAN_UNLIKELY(f->counted)) lpf_exit_allocs(t, f, s, d);
     if (s == NULL) return;
     lpf_mem_on_exit(s, f->start, now);
-    LP_ADD(s->self, raw - f->child);
+    /* below 0 when light children were estimated at more than they took:
+     * wraps, and is read back signed */
+    LP_ADD(s->self, raw - ((f->child + 512) >> 10));
     LP_ADD(s->kids, f->kids);
     if (s->active == 0) {
         LP_ADD(s->total, raw);
@@ -3333,7 +3340,7 @@ static void lpf_report(void) {
              * which lands in its caller) */
             S[k].probes += so * ((double)s->outer * (double)LP_LD(lpf_pair_fp[s->path]) / 1024.0 + (double)s->desc_total * unit);
             S[k].total += lpf_clamp(so * ((double)s->total - (double)s->outer * inner - (double)s->desc_total * unit));
-            S[k].self += lpf_clamp(sc * ((double)s->self - (double)(s->calls + s->fwd) * inner - (double)s->kids * unit));
+            S[k].self += lpf_clamp(sc * (lpf_signed(s->self) - (double)(s->calls + s->fwd) * inner - (double)s->kids * unit));
             S[k].sum += lpf_clamp(sc * ((double)s->sum - (double)s->calls * inner - (double)s->desc_sum * unit));
             S[k].wait += s->wait;
             S[k].allocs_self += s->allocs_self;

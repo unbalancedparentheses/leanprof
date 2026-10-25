@@ -652,7 +652,7 @@ static void lpf_lv_collect(int final) {
             rw->calls += calls + lcalls;
             rw->total += lpf_clamp(lpf_scale(outer, LP_LD(s->louter)) *
                                    ((double)LP_LD(s->total) - (double)outer * inner - (double)LP_LD(s->desc_total) * pair));
-            rw->self += lpf_clamp(lpf_scale(calls, lcalls) * ((double)LP_LD(s->self) -
+            rw->self += lpf_clamp(lpf_scale(calls, lcalls) * (lpf_signed(LP_LD(s->self)) -
                                   (double)(calls + LP_LD(s->fwd)) * inner - (double)LP_LD(s->kids) * pair));
             uint64_t mx = LP_LD(s->max);
             if (mx > rw->max) rw->max = mx;

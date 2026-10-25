@@ -56,6 +56,20 @@ def tinyLoop (n : Nat) : UInt64 := Id.run do
   for i in [0:n] do
     acc := acc + tinyStep (acc + i.toUInt64)
   return acc
+/-- `k` rounds of a multiply-add, about a nanosecond each. -/
+@[noinline] def spin (k : Nat) (x : UInt64) : UInt64 := Id.run do
+  let mut a := x
+  for _ in [0:k] do a := a * 6364136223846793005 + 1442695040888963407
+  return a
+/-- A light scope whose calls change cost: `k` rounds each, `n` calls. -/
+@[noinline] def wrapStep (k : Nat) (i : UInt64) : UInt64 := profile! "test.wrapchild" (spin k i)
+def wrapLoop (k n : Nat) : UInt64 := Id.run do
+  let mut acc : UInt64 := 0
+  for i in [0:n] do
+    acc := acc + wrapStep k (acc + i.toUInt64)
+  return acc
+/-- A parent of the light scope above, which by then is cheaper than its estimate. -/
+@[noinline] def wrapParent (n : Nat) : UInt64 := profile! "test.wrapparent" (wrapLoop 0 n)
 def scopedFloat (x : Float) : Float := profile! "test.float" (x * 2.0)
 def scopedBool (n : Nat) : Bool := profile! "test.bool" (n % 2 == 0)
 
@@ -202,6 +216,22 @@ def tests : StateT Nat IO Unit := do
   check "a tiny scope is timed on a sample of its calls" (timed ≥ 1024 && timed < n / 4) s!"timed={timed} of {n}"
   check "a tiny scope's time stands for all its calls" ((← totalNs "test.tiny") ≥ 0)
   check "a scope with real work is timed on every call" ((← timedCalls "test.history") == 1)
+  -- a light child adds its estimate to its caller's children; when it has
+  -- become cheaper than that, the caller's self time must not wrap around
+  -- (the report then showed it as all of the caller's time, as it did when
+  -- the estimate was rounded down to whole ticks of a 24 MHz clock)
+  let app ← IO.appPath
+  let wrapEnv := #[("LEANPROF_JSON", some "light-wrap.json"), ("LEANPROF_QUIET", some "1")]
+  let child ← IO.Process.output { cmd := app.toString, args := #["--light-wrap"], env := wrapEnv }
+  let wrapJson ← try IO.FS.readFile "light-wrap.json" catch _ => pure ""
+  let parent := (Lean.Json.parse wrapJson).toOption.bind fun j =>
+    ((j.getObjVal? "scopes" >>= Lean.Json.getArr?).toOption.getD #[]).find? fun s =>
+      (s.getObjValAs? String "name").toOption == some "test.wrapparent"
+  let field (k : String) := (parent.bind fun s => (s.getObjValAs? Float k).toOption).getD (-1)
+  check "a caller of a light scope that got cheaper gets the estimate subtracted, without wrapping"
+    (child.exitCode == 0 && field "self_ns" ≥ 0 && field "self_ns" < 0.9 * field "total_ns")
+    s!"self={field "self_ns"} total={field "total_ns"} {child.stderr}"
+  try IO.FS.removeFile "light-wrap.json" catch _ => pure ()
   let u ← IO.lazyPure fun _ => scopedU64 n20.toUInt64
   let fl ← IO.lazyPure fun _ => scopedFloat n20.toFloat
   let bo ← IO.lazyPure fun _ => scopedBool n20
@@ -483,7 +513,15 @@ def tests : StateT Nat IO Unit := do
   -- why a declaration or copy site got worse (Tests/Regress.lean)
   Tests.Regress.run fun n ok d => check n ok d
 
-def main : IO UInt32 := do
+def main (args : List String) : IO UInt32 := do
+  -- a light scope (cheap calls) whose estimate is then raised by costlier
+  -- calls, called cheaply again from a parent; checked by the tests above
+  if args.head? == some "--light-wrap" then
+    let k := (args[1]? >>= String.toNat?).getD 32
+    let _ ← IO.lazyPure fun _ => wrapLoop 0 1024
+    let _ ← IO.lazyPure fun _ => wrapLoop k (2 * 65536)
+    let _ ← IO.lazyPure fun _ => wrapParent 60000
+    return 0
   let ((), failures) ← tests.run 0
   if failures == 0 then
     IO.println "all tests passed"

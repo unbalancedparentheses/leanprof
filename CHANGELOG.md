@@ -17,6 +17,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   are: the live thread reads them while the program runs (a C data race
   before). `scripts/stress.sh` runs again with live snapshots only, so that
   its tiny scopes go light under TSan in CI.
+- A light scope's estimate, which its callers subtract from their self time,
+  is kept in 1/1024 ticks (on Apple silicon's 24 MHz clock a call of under
+  42 ns came out at 0, and nothing was subtracted), and self time is a
+  signed sum: a caller of a light scope that has become cheaper than its
+  estimate wrapped around, and the report showed all of its time as self.
 
 ### Compile time: a project view and published profiles
 
