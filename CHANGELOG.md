@@ -15,6 +15,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   at a `private def operation` in `SSA.lean`, `Id.run` at a test's `def run`.
   Declarations in the source are now qualified with the namespace in effect
   on their line, and a name never matches by its last component alone.
+- `explain` after `sample`: `sample` writes `.lake/leanprof/report.json` (for
+  `#leanprof`) without copy counts, and `explain` then said "the report has no
+  copies of shared values". It now says the report is a sampled one and to
+  run `leanprof run` or pass `--report`.
 
 ### Fresh installs, more platforms
 

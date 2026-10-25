@@ -1467,6 +1467,10 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
   unless ← (o.report : FilePath).pathExists do
     throw <| IO.userError s!"no report at {o.report}: run `leanprof run EXE` first"
   let j ← IO.ofExcept (Json.parse (← IO.FS.readFile o.report))
+  -- `leanprof sample` writes the same file (for `#leanprof`) without counting copies
+  if (j.getObjValAs? Bool "sampled").toOption.getD false then
+    throw <| IO.userError (s!"the report at {o.report} is from `leanprof sample`, which counts no copies: " ++
+      "run `leanprof run EXE` again, or pass --report FILE with a report of `leanprof run`")
   let shares ← if o.run.isSome || (← (o.why : FilePath).pathExists) then loadWhy o.why else pure #[]
   -- costliest first (time copying, then bytes); copies of empty or tiny
   -- values (`tiny`) only with --all
