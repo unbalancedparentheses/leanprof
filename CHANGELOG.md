@@ -6,6 +6,16 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Dogfooding on lean-compiler-backend and concrete
+
+- `elab`: "definitions behind the work" placed a definition at any
+  declaration in the profiled files with the same last name component when
+  the project's Lean differs from leanprof's (its modules cannot be loaded,
+  so positions come from the source): `Optimize.Algebra.operation` was shown
+  at a `private def operation` in `SSA.lean`, `Id.run` at a test's `def run`.
+  Declarations in the source are now qualified with the namespace in effect
+  on their line, and a name never matches by its last component alone.
+
 ### Fresh installs, more platforms
 
 - Release archives for macOS x86-64 and Linux arm64, next to macOS arm64 and
