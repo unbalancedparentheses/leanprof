@@ -6,6 +6,15 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Programs that load Lean modules at run time
+
+- `run`, `stat`, `sample`, `measure` and `measure-pair` start the program
+  with the environment `lake exe` gives it (`LEAN_PATH`, `LEAN_SYSROOT`,
+  library paths, from `lake env`). Programs that import modules at run time
+  (`importModules`, `supportInterpreter`: import-graph, doc-gen4, linters)
+  failed with "unknown module prefix" under leanprof. Found by profiling
+  import-graph, a project leanprof had never been run on.
+
 ### Security review
 
 - [Review](docs/reviews/security-review.md) of the MCP server, the GitHub

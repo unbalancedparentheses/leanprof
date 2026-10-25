@@ -172,6 +172,21 @@ def removeWorkspaceObjects : IO Nat := do
       n := n + (← removeObjects (e.path / ".lake" / "build" / "ir"))
   return n
 
+/-- The environment `lake exe` runs a program with (`lake env` in `dir`): the
+workspace's `LEAN_PATH`, `LEAN_SYSROOT`, library paths and so on. Programs
+that load Lean modules at run time (`importModules`, `supportInterpreter`)
+fail without it. Empty outside a Lake project, or when `lake` is missing. -/
+def lakeRunEnv (dir : Option FilePath := none) : IO (Array (String × Option String)) := do
+  let out ← try IO.Process.output { cmd := "lake", args := #["env"], cwd := dir, stdin := .null }
+    catch _ => return #[]
+  if out.exitCode != 0 then return #[]
+  return out.stdout.splitOn "\n" |>.toArray |>.filterMap fun line =>
+    match line.splitOn "=" with
+    | k :: v :: rest =>
+      let v := "=".intercalate (v :: rest)
+      if k.isEmpty || v.isEmpty || k.startsWith "LEANPROF_" then none else some (k, some v)
+    | _ => none
+
 def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String))
     (cwd : Option FilePath := none) : IO UInt32 := do
   let child ← IO.Process.spawn { cmd, args, env, cwd }
@@ -401,7 +416,8 @@ programs that read their input from the current directory): paths become
 absolute, and LEANPROF_PROJECT tells the runtime where the `.ilean` files are. -/
 def runInstrumented (exe : String) (opts : RunOpts) (env : Array (String × Option String)) : IO UInt32 := do
   let fix (v : Option String) : IO (Option String) := v.mapM fun p => return (← absPath p).toString
-  let mut env' := #[]
+  -- as `lake exe` would run it, then leanprof's own variables
+  let mut env' ← lakeRunEnv
   for (k, v) in env do
     env' := env'.push (k, ← if k == "LEANPROF_JSON" || k == "LEANPROF_TRACE" then fix v else pure v)
   if opts.cwd.isSome then env' := env'.push ("LEANPROF_PROJECT", some (← IO.currentDir).toString)
@@ -723,7 +739,7 @@ def sample (argv : List String) : IO UInt32 := do
   if ← out.pathExists then IO.FS.removeFile out
   let samplyArgs := #["record", "--save-only", "--unstable-presymbolicate", "--rate", toString o.rate,
     "-o", (← absPath out).toString, (← absPath bin).toString] ++ o.args
-  let rc ← try spawnWait "samply" samplyArgs #[("LEANPROF_QUIET", some "1")] (o.cwd.map (·))
+  let rc ← try spawnWait "samply" samplyArgs ((← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1")]) (o.cwd.map (·))
     catch e =>
       IO.eprintln s!"leanprof: cannot run samply ({e}); install it: brew install samply / cargo install samply"
       return 1
@@ -979,7 +995,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
   let dir : FilePath := ".lake" / "leanprof"
   IO.FS.createDirAll dir
   let reportPath := dir / "report.json"  -- the last run's stays, for `#leanprof`
-  let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", some reportPath.toString)]
+  let env := (← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", some reportPath.toString)]
   let mut times : Array Nat := #[]
   let mut hashes : Array String := #[]
   let mut codes : Array UInt32 := #[]
@@ -1118,6 +1134,8 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let mut maxLoad := initialLoad
   let mut samples : Array Json := #[]
   let mut loads : Array Json := #[]
+  -- each side as `lake exe` would run it in its own directory
+  let lakeEnvs ← dirs.mapM fun d => lakeRunEnv (some d)
   let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none),
     ("LEANPROF_TRACE", none), ("LEANPROF_LIVE", none), ("LEANPROF_FLIGHT", none)]
   -- Warmups are a separate phase, so measured pair zero always starts AB.
@@ -1130,7 +1148,8 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
         if let some p := checked then
           if ← p.pathExists then IO.FS.removeFile p
         let t0 ← IO.monoNanosNow
-        let result ← IO.Process.output { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env }
+        let sideEnv := lakeEnvs[side]! ++ env
+        let result ← IO.Process.output { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env := sideEnv }
         let elapsed := (← IO.monoNanosNow) - t0
         if phase == 0 then
           if result.exitCode != 0 then throw <| IO.userError s!"warmup failed for {binaries[side]!}: {result.stderr}"
