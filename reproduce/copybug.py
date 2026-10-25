@@ -30,7 +30,7 @@ c.exact("buildWithHistory calls", s["buildWithHistory"]["calls"], 1)
 c.exact("fib calls", s["fib"]["calls"], 10945)
 pct_scope = 100 * sum(x["copy_ns"] for x in cp) / s["buildWithHistory"]["total_ns"]
 c.within("copy time as % of the scope (timing)", pct_scope, 90.0, 100.5, 99.1, "%")
-ex = " ".join(sh([LP, "explain"]).stdout.split())  # unwrap lines
+ex = " ".join(sh([LP, "explain", "--report", out]).stdout.split())  # unwrap lines
 c.exact("explain: stored in `history` at line 21",
         "`acc` is stored in `history` at line 21" in ex, True)
 c.exact("explain: updated afterwards at line 22", "is updated afterwards at line 22" in ex, True)

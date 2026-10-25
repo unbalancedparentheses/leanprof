@@ -56,9 +56,10 @@ mb, mc = measure("base"), measure("copy")
 c.exact("copies per `work` run, base", read_json(mb)["copies_total"], 0)
 c.exact("copies per `work` run, copy variant", read_json(mc)["copies_total"], 1980)
 j = sh([LP, "judge", mb, mc], cwd=PROJ, check=False)
-first = j.stdout.splitlines()[0] if j.stdout else ""
+# the verdict line (stderr is merged in: skip anything printed before it)
+first = next((ln for ln in j.stdout.splitlines() if ln.startswith(("KEEP", "DISCARD"))), "")
 c.exact("judge base -> copy: DISCARD, on copies",
-        first.startswith("DISCARD") and "copies" in j.stdout, True)
+        first.startswith("DISCARD") and "- copies: 0 -> 1,980" in j.stdout, True)
 ab, aa = allocs("base"), allocs("alloc")
 na = [sum(x["allocs"] for x in read_json(p)["allocations"]) for p in (ab, aa)]
 c.exact("allocations per `work` run, base", na[0], 46214)
