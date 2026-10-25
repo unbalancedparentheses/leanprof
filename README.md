@@ -181,6 +181,7 @@ of the run, to agents.
 
 | | command |
 |---|---|
+| Pick the workload (the executable, the tests, or compile time), profile it, top three findings and the commands that go deeper | `leanprof` |
 | CPU time per Lean declaration, no probes; flame graph with Lean names | `leanprof sample myapp` |
 | Exact time and calls per function or `profile!` scope, own cost subtracted (`--auto` leaves functions too small to time untimed; `--time-tiny` counts them) | `leanprof run [--auto] myapp` |
 | Copies of shared arrays and strings, with file:line, the reason and the fix | `leanprof run`, `leanprof explain` |
