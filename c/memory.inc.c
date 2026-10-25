@@ -90,7 +90,7 @@ static void lpf_mem_read(uint64_t *commit, uint64_t *rss, uint64_t *peak_commit,
 static inline lpf_mem_sample *lpf_mem_at(size_t i) { return &lpf_mem_chunks[i / LP_MEM_CHUNK]->s[i % LP_MEM_CHUNK]; }
 
 /* Take a sample now (at most one thread at a time; others skip). */
-static void lpf_mem_take(uint64_t now, int force) {
+static __attribute__((noinline)) void lpf_mem_take(uint64_t now, int force) {
     if (force) pthread_mutex_lock(&lpf_mem_lock);
     else if (pthread_mutex_trylock(&lpf_mem_lock) != 0) return;
     if (!force && now < __atomic_load_n(&lpf_mem_next, __ATOMIC_RELAXED)) {
@@ -222,11 +222,9 @@ static lpf_mem_thread *lpf_mem_thread_get(void) {
     return m;
 }
 
-/* Called from lpf_exit with the closing frame's scope and start tick. */
-static inline void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now) {
-    if (LEAN_UNLIKELY(now >= __atomic_load_n(&lpf_mem_next, __ATOMIC_RELAXED))) lpf_mem_take(now, 0);
-    if (LEAN_LIKELY(__atomic_load_n(&lpf_mem_last, __ATOMIC_ACQUIRE) < start) || s->kind == LP_INTERNAL) return;
-    /* a sample was taken while this call was active */
+/* A memory sample was taken while the call that just ended was active. */
+static __attribute__((noinline)) void lpf_mem_in_call(lpf_scope *s, uint64_t start, uint64_t now) {
+    if (s->kind == LP_INTERNAL) return;
     size_t n = __atomic_load_n(&lpf_mem_n, __ATOMIC_ACQUIRE);
     size_t a = lpf_mem_find(n, start), b = lpf_mem_find(n, now + 1);
     if (a >= b) return;
@@ -253,6 +251,12 @@ static inline void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now) {
         return;
     }
     m->dropped++;
+}
+
+/* Called from lpf_exit with the closing frame's scope and start tick. */
+static inline __attribute__((always_inline)) void lpf_mem_on_exit(lpf_scope *s, uint64_t start, uint64_t now) {
+    if (LEAN_UNLIKELY(now >= __atomic_load_n(&lpf_mem_next, __ATOMIC_RELAXED))) lpf_mem_take(now, 0);
+    if (LEAN_UNLIKELY(__atomic_load_n(&lpf_mem_last, __ATOMIC_ACQUIRE) >= start)) lpf_mem_in_call(s, start, now);
 }
 
 /* ---- frees ---- */
@@ -442,7 +446,7 @@ static void lpf_mem_init(void) {
 #ifdef __linux__
     lpf_statm = open("/proc/self/statm", O_RDONLY);
 #endif
-    double tick = lpf_ns_per_tick();
+    double tick = lpf_ns_per_tick_rough();
     lpf_mem_interval = (uint64_t)(1e6 / tick);
     lpf_free_slow_ticks = (uint64_t)(1e5 / tick); /* 100 µs */
     lpf_mem_take(lpf_start, 1);

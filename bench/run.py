@@ -56,10 +56,12 @@ CONFIGS = {
     "frees": ("`leanprof run --frees` (profile!)", "wlp", ["--frees"]),
     "sample": ("`leanprof sample` (samply, 4 kHz)", "wl", "sample"),
     "samply": ("`samply record` directly (1 kHz default)", "wl", "samply"),
+    "phases": ("`profile!` only where LeanProfiler has spans (phases and tasks)", "wlh", None),
     "leanprofiler": ("LeanProfiler spans (phases and tasks only)", "wls", "leanprofiler"),
 }
 LEANPROF_EXACT = ["profile", "run", "auto", "allocs", "counters", "frees"]
 LABEL_ONLY = {"taskStep"}
+SPANS_ONLY = {"phases", "leanprofiler"}  # scopes around phases and tasks only
 SHIMS = ["run", "auto", "allocs", "counters", "frees"]  # builds with copy shims
 
 # Tolerance for --check: the sum of leanprof's reported times for a workload's
@@ -114,7 +116,7 @@ def binpath(cfg, exe):
     return os.path.join(BINS, cfg, exe)
 
 
-def build(configs, project=BENCH, exes=("wl", "wlp", "wls"), bins=BINS, smoke=("tiny", "1")):
+def build(configs, project=BENCH, exes=("wl", "wlp", "wls", "wlh"), bins=BINS, smoke=("tiny", "1")):
     """Build every configuration once and keep its executable in `bins`."""
     sh(["lake", "build", "leanprof"], cwd=ROOT)
     remove_objects(project)
@@ -408,7 +410,7 @@ def analyse(runs, configs):
                     checked, wrong = 0, {}
                     for rep in reps:
                         for name, n in expected_calls.items():
-                            if cfg == "leanprofiler" and name not in rep["calls"]:
+                            if cfg in SPANS_ONLY and name not in rep["calls"]:
                                 continue  # only phases and tasks are spans
                             if cfg == "auto" and name in LABEL_ONLY:
                                 continue  # a `profile!` label inside a function, not a function
@@ -573,7 +575,7 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
                       "❌ " + ", ".join(f"{k} {g:,} of {n:,}" for k, (g, n) in o["calls_wrong"].items()))),
           "Every function or scope with a known call count (samplers have no counts; LeanProfiler only "
           "has phase and task spans).",
-          cfgs=[c for c in cols if c in LEANPROF_EXACT or c == "leanprofiler"])
+          cfgs=[c for c in cols if c in LEANPROF_EXACT or c in SPANS_ONLY])
 
     L.append("## Per component\n")
     L.append("Reported time of each component over its plain time (median of runs). `*`: leanprof "
@@ -659,7 +661,8 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
 
 
 HEAD_TOOLS = [("profile", "leanprof `profile!`"), ("auto", "leanprof `run --auto`"),
-              ("sample", "leanprof `sample`"), ("samply", "samply"), ("leanprofiler", "LeanProfiler")]
+              ("sample", "leanprof `sample`"), ("samply", "samply"),
+              ("phases", "leanprof `profile!` at LeanProfiler's spans"), ("leanprofiler", "LeanProfiler")]
 
 
 def headline(L, res, configs):
@@ -707,6 +710,20 @@ def headline(L, res, configs):
                  "; ".join(worse) + ".\n")
     elif "samply" in configs:
         L.append("leanprof is within 0.5 pp of samply, or better, on every workload.\n")
+    # like with like: leanprof's scopes exactly where LeanProfiler's spans are
+    if "phases" in configs and "leanprofiler" in configs:
+        worse = []
+        for w, wr in res.items():
+            ref = (wr["configs"].get("leanprofiler") or {}).get("share_mae_pp")
+            v = (wr["configs"].get("phases") or {}).get("share_mae_pp")
+            if ref is not None and v is not None and v > ref + 0.5:
+                worse.append(f"`{w}`: {v:.1f} pp against LeanProfiler's {ref:.1f} pp")
+        if worse:
+            L.append("**Where leanprof is less accurate than LeanProfiler with scopes in the same places** "
+                     "(by more than 0.5 pp): " + "; ".join(worse) + ".\n")
+        else:
+            L.append("With scopes in the same places as LeanProfiler's spans (phases and tasks), leanprof is "
+                     "within 0.5 pp of LeanProfiler, or better, on every workload.\n")
 
 
 def before_after(before_json, res, lcb_after=None):

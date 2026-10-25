@@ -425,11 +425,13 @@ def selfCheckProbe (root : FilePath) : IO (Except String (String × String)) := 
   let leanPrefix := (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
   let dir := (← IO.FS.createTempDir)
   let main := dir / "probe.c"
-  IO.FS.writeFile main <| "#include <lean/lean.h>\n#include <stdio.h>\n" ++
+  -- no libc headers: on Linux the wrapper compiles with Lean's own leanc,
+  -- whose sysroot has only what Lean's generated C includes
+  IO.FS.writeFile main <| "#include <lean/lean.h>\nint puts(const char *);\n" ++
     "const char *leanprof_self_check_message(void);\nconst char *leanprof_self_check_ops(void);\n" ++
     "void lean_initialize_runtime_module(void);\n" ++
     "int main(void) {\n  lean_initialize_runtime_module();\n" ++
-    "  printf(\"%s\\n%s\\n\", leanprof_self_check_ops(), leanprof_self_check_message());\n  return 0;\n}\n"
+    "  puts(leanprof_self_check_ops());\n  puts(leanprof_self_check_message());\n  return 0;\n}\n"
   let env := selfCheckEnv wrapper ++ #[("LEANPROF_QUIET", some "1")]
   let steps : List (String × Array String × Array (String × Option String)) := [
     ("cc", #["-O0", "-fPIC", "-I", leanPrefix ++ "/include", "-c", (root / "c" / "leanprof.c").toString,
@@ -943,8 +945,41 @@ def sample (argv : List String) : IO UInt32 := do
             if let some c := runtimeCategory raw then categories := categories.insert d c
           pure d
       frameName := frameName.push disp
+    -- Cut stacks. On Linux samply unwinds a copy of the top of the stack
+    -- (at most 64 KiB, perf's limit), so a sample deep in recursion loses
+    -- its outer frames: 10,000 calls deep, the phase that started the
+    -- recursion was missing from 90% of the samples. A stack is whole when
+    -- its outermost frame is one that is only ever outermost (`_start`,
+    -- `start_thread`); a cut one is completed with the frames outside it in
+    -- the thread's last whole stack, from the outermost call of the cut
+    -- stack's outermost function.
+    let nameAt (s : Nat) : String := frameName[(getNatAt frameOf s).getD 0]?.getD "?"
+    let mut rootOf : Array Nat := Array.mkEmpty parents.size
+    let mut inner : Std.HashSet String := {}
+    for s in [0:parents.size] do
+      match getNatAt parents s with
+      | some p =>
+        rootOf := rootOf.push (rootOf[p]?.getD p)
+        inner := inner.insert (nameAt s)
+      | none => rootOf := rootOf.push s
+    let mut whole : Option Nat := none            -- the thread's last whole stack
+    let mut outside : Std.HashMap String Nat := {} -- its frames: name ↦ parent of the outermost
     for i in [0:stacks.size] do
       let some s0 := getNatAt stacks i | continue
+      let root := nameAt (rootOf[s0]?.getD s0)
+      let mut stitch : Option Nat := none
+      if !inner.contains root then
+        if whole != some s0 then
+          whole := some s0
+          outside := {}
+          let mut c? := some s0
+          while true do
+            let some c := c? | break
+            let p := getNatAt parents c
+            if let some p := p then outside := outside.insert (nameAt c) p
+            c? := p
+      else
+        stitch := outside.get? root
       let w : Float := match deltas[i]? with
         | some (.num n) => n.toFloat
         | _ => 1000
@@ -956,6 +991,9 @@ def sample (argv : List String) : IO UInt32 := do
       let mut spec : Option String := none  -- the frame below, if a specialization
       let mut specSeen : Std.HashSet String := {}
       while true do
+        if s?.isNone then
+          s? := stitch
+          stitch := none
         let some s := s? | break
         let f := getNatAt frameOf s |>.getD 0
         let n := frameName[f]?.getD "?"

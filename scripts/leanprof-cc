@@ -1,13 +1,22 @@
 #!/bin/sh
 # C compiler wrapper for Lake: set LEAN_CC to this script and every package's
 # C code (dependencies too) is compiled with leanprof's copy and task shims.
-# It forwards to the system compiler (LEANPROF_REAL_CC overrides): with
-# LEAN_CC set, leanc no longer passes its bundled clang's sysroot.
+# On Linux it forwards to Lean's own leanc (with LEAN_CC unset, so that leanc
+# uses its bundled clang, sysroot and linker): the profiled program is then
+# compiled and linked like the one Lake builds. Built by the system's clang
+# and linker instead, the copy benchmark ran 18% faster with no probes at
+# all, which leanprof then reported as time its probes had taken.
+# Elsewhere, and for sanitizer builds (which need the system's sanitizer
+# runtimes), it forwards to the system compiler (LEANPROF_REAL_CC overrides
+# both): with LEAN_CC set, leanc no longer passes its bundled clang's sysroot.
 # clang is preferred (GCC lacks -finstrument-functions-after-inlining), but
 # not the toolchain's own, which Lake puts first on PATH and which has no
 # system headers.
 prefix="$(lean --print-prefix)"
 real="${LEANPROF_REAL_CC:-}"
+if [ -z "$real" ] && [ -z "${LEANPROF_SANITIZE:-}" ] && [ "$(uname -s)" = Linux ] && [ -x "$prefix/bin/leanc" ]; then
+  real=leanc_bundled
+fi
 if [ -z "$real" ]; then
   real=cc
   old_ifs=$IFS; IFS=:
@@ -108,4 +117,8 @@ case " $* " in
     fi
     set -- ${LEANPROF_CORE_LIB:+"-L$LEANPROF_CORE_LIB"} -rdynamic "-L$prefix/lib" "$@" ${runtime:+"$runtime"} ;;
 esac
+if [ "$real" = leanc_bundled ]; then
+  unset LEAN_CC
+  exec "$prefix/bin/leanc" "$@"
+fi
 exec "$real" "$@"

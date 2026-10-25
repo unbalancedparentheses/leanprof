@@ -34,5 +34,9 @@ name = "wls"
 root = "WlSpans"
 
 [[lean_exe]]
+name = "wlh"
+root = "WlPhases"
+
+[[lean_exe]]
 name = "demangle"
 root = "Demangle"

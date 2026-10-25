@@ -1,0 +1,12 @@
+host archlinux-latest-64-minimal
+commit 4b6d6a7
+2026-10-23T20:38:41Z
+CPU(s):                                  32
+Model name:                              AMD Ryzen 9 7950X3D 16-Core Processor
+CPU(s) scaling MHz:                      81%
+7.2.11-arch1-1
+/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor:performance
+/sys/devices/system/cpu/cpufreq/boost:0
+cores 0-7
+load before: 3.01 2.17 1.60
+load after: 1.18 1.71 1.54
