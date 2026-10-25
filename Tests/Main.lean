@@ -162,6 +162,15 @@ def tests : StateT Nat IO Unit := do
   check "pure scope counts every call" (v == 6765 && after - before == 10945) s!"calls={after - before}"
   let ov ← overheadNs
   check "calibrated overhead is plausible" (ov > 0.5 && ov < 1000) s!"overhead={ov}"
+  -- Apple clang outlines repeated instruction sequences on arm64 even at -O2:
+  -- the inlined probes the program ran became chains of calls that the
+  -- calibration's own copies did not make, so the report kept ~5 ns a scope
+  -- (the lakefile passes -mno-outline). Calibration must time the same code.
+  if System.Platform.isOSX then
+    let syms ← IO.Process.output { cmd := "nm", args := #[".lake/build/c/leanprof.o"] }
+    check "runtime has no outlined code (probes run what calibration measured)"
+      (syms.exitCode == 0 && (syms.stdout.splitOn "OUTLINED_FUNCTION").length == 1)
+      s!"nm exit {syms.exitCode}: {syms.stderr}"
   let tot ← totalNs "test.fib"
   -- fib's calls take a few ns each, about what their probes cost, so what is
   -- left after subtracting them can be 0 on a busy machine (the report flags

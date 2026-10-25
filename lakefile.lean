@@ -70,7 +70,15 @@ target leanprof_o pkg : FilePath := do
   let sanitize := (← IO.getEnv "LEANPROF_SANITIZE").getD ""
   let (cc, sanArgs) := if sanitize.isEmpty then ("cc", #[]) else
     ("clang", #[s!"-fsanitize={sanitize}", "-fno-omit-frame-pointer", "-g"])
-  buildO oFile srcJob weakArgs (#["-fPIC", "-O2", "-Wall"] ++ sanArgs) cc
+  -- Apple clang outlines repeated instruction sequences into shared
+  -- functions on arm64 even at -O2. With enter and exit inlined into every
+  -- probe, the probes the program runs became chains of calls to outlined
+  -- pieces (25 in `__cyg_profile_func_exit`) while calibration's copies,
+  -- specialized for its internal scopes, stayed straight-line: real probes
+  -- cost ~5 ns more than calibration measured, and that time stayed in the
+  -- report. Not outlining keeps the two the same code (and cheaper).
+  let noOutline := if System.Platform.isOSX then #["-mno-outline"] else #[]
+  buildO oFile srcJob weakArgs (#["-fPIC", "-O2", "-Wall"] ++ noOutline ++ sanArgs) cc
     (return ((((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain).mix live).mix selfcheck)
 
 /-- The runtime's self-check (`c/selfcheck.c`), compiled with `copyFlags` like

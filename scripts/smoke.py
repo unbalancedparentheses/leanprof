@@ -54,6 +54,10 @@ def other_project():
         out["smoke.copies"] = sorted((c["function"], c["where"], c["kind"], c["shared"], c["multi_threaded"])
                                      for c in r["copies"] if c["shared"] + c["multi_threaded"] > 0)
         out["smoke.self_check"] = [r["self_check"]["ok"], r["self_check"]["warning"]]
+        # the runtime `run` compiles for a project without leanprof: no outlined
+        # code (Apple clang's outliner made the probes differ from calibration's)
+        syms = sh("nm", os.path.join(work, ".lake", "leanprof", "runtime-core.o")).stdout
+        out["smoke.runtime_outlined"] = syms.count("OUTLINED_FUNCTION")
         sh(lp, "run", "--auto", "--json", "auto.json", "smoke", "--", "2000", cwd=work)
         out["smoke.auto"] = sorted((s["name"], s["pos"], s["calls"]) for s in report("auto.json")["scopes"]
                                    if s["name"] in ("main", "buildWithHistory", "strings", "fib"))

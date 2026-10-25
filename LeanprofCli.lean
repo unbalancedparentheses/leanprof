@@ -488,7 +488,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     let obj := cwd / ".lake" / "leanprof" / "runtime.o"
     let rt := cwd / ".lake" / "leanprof" / "runtime-core.o"
     let sc := cwd / ".lake" / "leanprof" / "runtime-selfcheck.o"
-    let inc := #["-O2", "-fPIC", "-I", leanPrefix ++ "/include", "-c"]
+    -- -mno-outline as in the lakefile: Apple clang's outliner made the
+    -- program's probes differ from (and cost more than) the calibrated ones
+    let inc := #["-O2", "-fPIC"] ++ (if System.Platform.isOSX then #["-mno-outline"] else #[]) ++
+      #["-I", leanPrefix ++ "/include", "-c"]
     -- the runtime, and its self-check compiled as Lake compiles the program's
     -- C (leanc with LEAN_CC set to the wrapper; copy flags only), in one object
     let steps : List (String × Array String × Array (String × Option String)) := [
