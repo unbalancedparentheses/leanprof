@@ -179,6 +179,15 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   worktree is removed and `fix` exits with 128 + the signal.
   `fix-check.sh` sends TERM during the candidate's tests and checks the
   checkout, the branches and the worktree list.
+- `fix`'s `git checkout` and `git commit` ran the repository's hooks: a
+  `pre-commit` hook could stage other contents after every check had
+  passed, and the commit then carried evidence for code that was never
+  measured. `fix` now runs git with `core.hooksPath=/dev/null`, DISCARDs an
+  edit whose file changed while it was checked, and refuses to report KEEP
+  unless the commit's parent is `HEAD`, it changes only that file, and the
+  file's committed content is the measured candidate. `fix-check.sh` installs
+  `pre-commit`, `post-checkout` and `post-commit` hooks for the KEEP run and
+  adds a test that rewrites the file.
 
 ### Smaller fixes and maintenance
 

@@ -4,10 +4,13 @@
 #
 #   a tree with uncommitted changes      -> refused, nothing touched
 #   --dry-run                            -> the diff, nothing touched
-#   buckets (nested-array-element)       -> KEEP, committed on a new branch
+#   buckets (nested-array-element)       -> KEEP, committed on a new branch;
+#                                           git hooks do not run, the commit is
+#                                           exactly the edit
 #   smooth (loop-over-updated-array)     -> refused: the body writes an element
 #                                           not visited yet, nothing touched
 #   buckets, a test the edit fails       -> DISCARD, no branch
+#   buckets, a test rewrites the file    -> DISCARD: not what was measured
 #   TERM while the candidate is checked  -> exit 143, worktree removed
 #
 # The checks run in a git worktree (.lake/leanprof/fix/worktree). After each,
@@ -61,8 +64,17 @@ clean "dry run"
 [ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "dry run created a branch"
 
 echo
-echo "== buckets: KEEP"
+echo "== buckets: KEEP (with git hooks that must not run)"
+# a pre-commit hook that changes what is committed, and hooks that leave a mark
+hooks=$(git rev-parse --git-path hooks)
+mkdir -p "$hooks"
+printf '#!/bin/sh\necho "-- added by a hook" >> Fix.lean\ngit add Fix.lean\ntouch "%s/hook-ran"\n' "$work" > "$hooks/pre-commit"
+printf '#!/bin/sh\ntouch "%s/hook-ran"\n' "$work" > "$hooks/post-checkout"
+cp "$hooks/post-checkout" "$hooks/post-commit"
+chmod +x "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/post-commit"
 if "$lp" fix $opts --exe buckets > keep.txt 2>&1; then :; else fail "buckets: exit code $?"; fi
+rm -f "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/post-commit"
+[ ! -e "$work/hook-ran" ] || fail "buckets: a git hook ran"
 cat keep.txt
 grep -q "^KEEP: committed" keep.txt || fail "buckets: not kept"
 clean "buckets"
@@ -78,6 +90,8 @@ grep -q "output: identical before and after" message.txt || fail "buckets: outpu
 grep -q "paired time: median change" message.txt || fail "buckets: no paired interval in the message"
 [ "$(git diff --name-only main "$branch")" = Fix.lean ] || fail "buckets: the commit changes more than Fix.lean"
 git diff main "$branch" | grep -q '^+    bs := bs.modify i (·.push v)$' || fail "buckets: the commit is not the edit"
+[ "$(git diff main "$branch" | grep -c '^[-+] ')" = 2 ] || fail "buckets: the commit has more than the edit"
+git show "$branch:Fix.lean" | grep -q "added by a hook" && fail "buckets: a hook changed the commit"
 
 echo
 echo "== smooth: refused (the loop rewrite could change what it computes)"
@@ -99,6 +113,16 @@ grep -q "the tests fail" discard.txt || fail "discard: the reason is not the tes
 clean "discard"
 [ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "discard: the branch was not deleted"
 git diff --quiet HEAD -- Fix.lean || fail "discard: Fix.lean changed"
+
+echo
+echo "== buckets with a test that rewrites the file: DISCARD (what was measured is not the edit)"
+if "$lp" fix $opts --exe buckets --test 'echo "-- by the test" >> Fix.lean' > rewritten.txt 2>&1; then
+  fail "rewritten: kept"
+fi
+sed -n '/^leanprof fix: alternative/,$p' rewritten.txt
+grep -q "changed while it was checked" rewritten.txt || fail "rewritten: the reason is not the changed file"
+clean "rewritten"
+[ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "rewritten: a branch was created"
 
 echo
 echo "== TERM while the candidate is checked: the worktree goes, the checkout is untouched"

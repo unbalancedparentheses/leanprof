@@ -48,7 +48,12 @@ leanprof fix --dry-run                    # the same from the last report
      small copies often saves less time than the noise.
 5. **KEEP**: the edit is committed in the worktree, with the evidence in
    the message, and your repository gets a new branch pointing at that
-   commit (`leanprof-fix/<function>-<cause>`, or `--branch NAME`).
+   commit (`leanprof-fix/<function>-<cause>`, or `--branch NAME`). Git
+   runs without hooks (`-c core.hooksPath=/dev/null`), so a `pre-commit`
+   hook cannot run other code or change what is committed. Before the
+   branch is created, `fix` checks that the file still holds the edit it
+   measured (a test may have rewritten it) and that the commit changes
+   that file only, with exactly that content.
    **DISCARD**: the next alternative is tried. When none is left, every
    reason is printed and no branch is created.
 

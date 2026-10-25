@@ -384,8 +384,14 @@ def capture (cmd : String) (args : Array String) (env : Array (String × Option 
   if stop then r.interrupted
   return out
 
+/-- Git without hooks: `fix` runs no code but the build, the tests and the
+program, and a hook (`pre-commit`, `post-checkout`, …) must not change what
+it commits after the checks. -/
+def gitRaw (args : Array String) (cwd : Option FilePath := none) (stop := true) : IO IO.Process.Output :=
+  capture "git" (#["-c", "core.hooksPath=/dev/null"] ++ args) (cwd := cwd) (stop := stop)
+
 def git (args : Array String) (cwd : Option FilePath := none) : IO String := do
-  let out ← capture "git" args (cwd := cwd)
+  let out ← gitRaw args cwd
   unless out.exitCode == 0 do
     throw <| IO.userError s!"git {" ".intercalate args.toList} failed: {trim out.stderr}"
   return trim out.stdout
@@ -501,7 +507,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
     h.putStr s!"== {title} (exit code {out.exitCode})\n{out.stdout}{out.stderr}\n"
   -- refuse before profiling, not after
   unless o.dryRun do
-    unless (← capture "git" #["rev-parse", "--is-inside-work-tree"]).exitCode == 0 do
+    unless (← gitRaw #["rev-parse", "--is-inside-work-tree"]).exitCode == 0 do
       throw <| IO.userError "not in a git repository: fix commits the change on a new branch (--dry-run only prints it)"
     if o.exe.isNone then
       throw <| IO.userError "--exe EXE is needed to build, test and measure the fix (--dry-run works from the last report)"
@@ -565,21 +571,21 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
   let top : FilePath := ← git #["rev-parse", "--show-toplevel"]
   let pre ← git #["rev-parse", "--show-prefix"]
   let head ← git #["rev-parse", "HEAD"]
-  unless (← capture "git" #["ls-files", "--error-unmatch", "--", file]).exitCode == 0 do
+  unless (← gitRaw #["ls-files", "--error-unmatch", "--", file]).exitCode == 0 do
     IO.eprintln s!"leanprof fix: {file} is not committed: fix checks the edit in a git worktree of HEAD"; return 2
   if let some why ← outsidePathDeps cwd top then
     IO.eprintln s!"leanprof fix: {why}"; return 2
   let wtRoot := absDir / "worktree"
   -- a worktree left by a run that was killed (SIGKILL cannot be caught)
-  discard <| capture "git" #["worktree", "remove", "--force", wtRoot.toString]
+  discard <| gitRaw #["worktree", "remove", "--force", wtRoot.toString]
   if ← wtRoot.pathExists then IO.FS.removeDirAll wtRoot
-  discard <| capture "git" #["worktree", "prune"]
+  discard <| gitRaw #["worktree", "prune"]
   let wt := if pre.isEmpty then wtRoot else wtRoot / pre
   let removeWorktree : IO Unit := do
-    let r ← capture "git" #["worktree", "remove", "--force", wtRoot.toString] (stop := false)
+    let r ← gitRaw #["worktree", "remove", "--force", wtRoot.toString] (stop := false)
     if r.exitCode != 0 then
       try IO.FS.removeDirAll wtRoot catch _ => pure ()
-      discard <| capture "git" #["worktree", "prune"] (stop := false)
+      discard <| gitRaw #["worktree", "prune"] (stop := false)
   -- a reference: `finally` does not see the updates of a `let mut` made in `try`
   let keptRef ← IO.mkRef (none : Option (String × String))
   let reasons ← IO.mkRef (#[] : Array String)
@@ -701,9 +707,20 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
         s!"- leanprof measure ({o.runs} runs of each, with probes), leanprof judge:\n{verdictLines exact}\n" ++
         s!"- leanprof measure-pair ({o.pairs} pairs of plain binaries, AB/BA order), leanprof judge:\n" ++
           s!"{verdictLines paired}\n"
+      -- what is committed must be what was measured: the file as written
+      -- (a test may have rewritten it), and nothing else
+      unless (← IO.FS.readFile wtFile) == candidate do
+        let why := s!"{file} changed while it was checked (by the tests?), so what was measured is not the edit"
+        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
       IO.FS.writeFile (absDir / "commit-message.txt") msg
       discard <| git #["commit", "-q", "-F", (absDir / "commit-message.txt").toString, "--", file] (cwd := wt)
       let sha ← git #["rev-parse", "HEAD"] (cwd := wt)
+      let parent ← git #["rev-parse", s!"{sha}^"] (cwd := wt)
+      let changed ← git #["diff", "--name-only", head, sha] (cwd := wt)
+      let blob ← gitRaw #["cat-file", "blob", s!"{sha}:{pre}{file}"] (cwd := wt)
+      unless parent == head && changed == pre ++ file && blob.exitCode == 0 && blob.stdout == candidate do
+        throw <| IO.userError (s!"the commit {sha} is not the measured edit (parent {parent}, files " ++
+          s!"{changed.replace "\n" ", "}): nothing was kept")
       keptRef.set (some (sha, plan.what))
       break
     -- the branch, in the user's repository, only for a kept commit
@@ -712,7 +729,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
       if o.branch.isNone then
         let stem := branch
         let mut n := 2
-        while (← capture "git" #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]).exitCode == 0 do
+        while (← gitRaw #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]).exitCode == 0 do
           branch := s!"{stem}-{n}"; n := n + 1
       discard <| git #["branch", branch, sha]
       keptRef.set (some (← git #["rev-parse", "--short", sha], branch))
