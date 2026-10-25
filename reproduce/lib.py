@@ -16,6 +16,7 @@ import time
 REPRO = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(REPRO)
 LP = os.path.join(ROOT, ".lake", "build", "bin", "leanprof")
+LEANPROF_URL = "https://github.com/unbalancedparentheses/leanprof.git"
 # clones and builds of other projects; outside the checkout with LEANPROF_REPRO_WORK
 WORK = os.path.abspath(os.environ.get("LEANPROF_REPRO_WORK", os.path.join(ROOT, ".lake", "reproduce")))
 ELAN_BIN = os.path.join(os.path.expanduser("~"), ".elan", "bin")
