@@ -2,12 +2,26 @@
 
 [Website and documentation](https://unbalancedparentheses.github.io/leanprof)
 
-> In Lean, `arr.push x` is fast only when nothing else refers to `arr`; if
-> something does, Lean silently copies the whole array first. One stray
-> reference turns a linear loop quadratic, and nothing in your code, your
-> types, or a normal profiler tells you. **leanprof is the only tool that shows
-> you those copies: the line, how many, how many bytes, how much time, and why
-> the value was shared, with the fix.**
+> **Find out why your Lean 4 code is slow, and how to fix it.**
+>
+> leanprof profiles Lean programs and proofs without changing your project. It
+> counts what makes Lean slow that no other profiler sees (copies of shared
+> arrays and strings, allocations, failed reuse, the unfolds and instance
+> searches behind compile time), names the line and the cause, and prints the
+> fix. In CI it fails a pull request on "+1 copy" and says what made it slower.
+
+- A compiler written in Lean: **22% faster**, from changes leanprof's loop
+  found and kept ([merged](docs/case-studies/autoresearch-lean-compiler-backend.md)).
+- Three of Mathlib's slowest files: **46–69% fewer heartbeats**, same terms
+  ([case study](docs/case-studies/mathlib.md)).
+- A **2.4% slowdown caught 4 times in 5** where LeanBench caught none
+  ([comparison](docs/case-studies/leanbench.md)).
+
+Why copies: `arr.push x` is fast only when nothing else refers to `arr`; if
+something does, Lean silently copies the whole array first. One stray
+reference turns a linear loop quadratic, and nothing in your code, your
+types, or a normal profiler tells you. leanprof shows each one: the line, how
+many, how many bytes, how much time, why the value was shared, and the fix.
 
 ## Why leanprof, and not the alternatives
 
