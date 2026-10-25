@@ -29,6 +29,43 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - Scope frames are one cache line (64 bytes, from 104): 10,000 levels of
   recursion with three functions each under `--auto` kept 3 MiB of frames.
 
+### Dogfooding on lean-compiler-backend and concrete
+
+- `elab`: "definitions behind the work" placed a definition at any
+  declaration in the profiled files with the same last name component when
+  the project's Lean differs from leanprof's (its modules cannot be loaded,
+  so positions come from the source): `Optimize.Algebra.operation` was shown
+  at a `private def operation` in `SSA.lean`, `Id.run` at a test's `def run`.
+  Declarations in the source are now qualified with the namespace in effect
+  on their line, and a name never matches by its last component alone.
+- `sample`: hot code outside the project (`List.reverseAux`, `hash_str`,
+  `free`, `lean_dec_ref_cold`) is listed with the project's functions it ran
+  under (the nearest project frame of each sample, up to three with at least
+  5%). On lean-compiler-backend, `List.reverseAux` at 3.9% of CPU was 98%
+  under `Assembly.emitData`, a `lines := lines ++ [line]` loop; fixing it made
+  compiling crc32 14.6% faster.
+- `judge --allow-overloaded PAIR.json` (and `allow_overloaded` for the MCP
+  `judge` tool): judges a paired session's time although the load average
+  exceeded the CPU count, and says so in the verdict. On the shared Mac the
+  load stayed at 18–20 on 18 CPUs, so no paired session could ever be
+  judged on time (one gave −5.2%, interval [−7.7%, −2.1%], "not judged").
+- `sample --out FILE` in a project where leanprof had not run before ended
+  with "no such file or directory (file: .lake/leanprof/report.json)" after
+  printing the report (concrete, with `--out` in a scratch
+  directory): the directory is now created.
+- MCP `hot copies` (and the copies in `run`'s summary) listed copies of
+  empty or tiny values first, which `leanprof run` summarizes in one line:
+  on lean-compiler-backend, 17,775 9-byte copies in `SSA.fresh`
+  (`prefix ++ toString n`) came second, above the copies worth looking at.
+  They are now left out and counted in one line.
+- `report-md`: each details section read "allocations: 3 changed
+  (regression: the total grew)" even when the total fell and the table said
+  pass. It now says whether anything regressed, then what a regression is.
+- `explain` after `sample`: `sample` writes `.lake/leanprof/report.json` (for
+  `#leanprof`) without copy counts, and `explain` then said "the report has no
+  copies of shared values". It now says the report is a sampled one and to
+  run `leanprof run` or pass `--report`.
+
 ### Fresh installs, more platforms
 
 - Release archives for macOS x86-64 and Linux arm64, next to macOS arm64 and

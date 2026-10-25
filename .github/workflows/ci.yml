@@ -209,6 +209,7 @@ jobs:
           cat worse.md
           grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ❌ fail |' worse.md
           grep -q '| calls | 10,948 | 10,948 | 0 | ✅ pass |' worse.md
+          grep -q 'copies: 1 changed, 1 regressed (a regression is any increase at a call site)' worse.md
           grep -q '`buildWithHistory (in Std.Legacy.Range.forIn.\{0,1\}.loop) \[Array\] in buildWithHistory`' worse.md
           lake exe leanprof report-md --fail-on none small.json large.json | grep -q '| copies | 999 | 1,999 | +1,000 (+100.10%) | ⚠️ worse (not enforced) |'
           if lake exe leanprof report-md --fail-on bogus small.json large.json; then echo "expected an error"; exit 1; fi
@@ -346,12 +347,19 @@ jobs:
           lake exe leanprof sample --top 5 copybug -- 15000 | tee sample.txt
           grep -q "copying non-exclusive values" sample.txt
           grep -q "buildWithHistory  (Examples/CopyBug.lean:17)" sample.txt
+          grep -q "of it under buildWithHistory" sample.txt
       - name: HTML report of the sampled run (macOS)
         if: runner.os == 'macOS'
         run: |
           lake exe leanprof html -o sample.html .lake/leanprof/report.json
           python3 scripts/check-html.py sample.html --expect '"flame"' --expect lean_copy_expand_array \
             --expect '"n":"buildWithHistory"' --expect 'def buildWithHistory'
+      - name: Sampling with --out, where leanprof has not run yet (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          rm -rf .lake/leanprof
+          lake exe leanprof sample --top 1 --out "$RUNNER_TEMP/s.json" copybug -- 100 > /dev/null
+          test -f .lake/leanprof/report.json
 
   # The runtime under sanitizers, and the stress test (Examples/Stress.lean,
   # scripts/stress.sh: many threads and tasks, deep recursion, millions of

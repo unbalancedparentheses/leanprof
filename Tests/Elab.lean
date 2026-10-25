@@ -182,6 +182,14 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   check "elab: digit groups" (groupDigits 10000 == "10,000" && groupDigits 1234567 == "1,234,567" && groupDigits 999 == "999") ""
   check "elab: leading constants" (leadingConst "@instFoo to X" == some "instFoo" && leadingConst "inst✝ to X" == none &&
     leadingConst "?m.1 x" == none && leadingConst "Size α" == some "Size") ""
+  -- declarations in the source are qualified with their namespace: a bare `def run`
+  -- or `private def operation` elsewhere is not `Id.run` or `Other.operation`
+  let ns := namespacesOf "import X\nnamespace A.B\ndef run := 1\nnoncomputable section\nprivate def op := 2\nend\nend A.B\ndef top := 3"
+  check "elab: namespaces by line" (ns == #["", "A.B", "A.B", "A.B", "A.B", "A.B", "", ""]) s!"{ns}"
+  let decls : Std.HashMap String Nat := ({} : Std.HashMap String Nat) |>.insert "A.B.run" 3 |>.insert "A.B.op" 5 |>.insert "top" 8
+  check "elab: declarations found by qualified name, not by their last component"
+    (findDecl? decls "A.B.run" == some 3 && findDecl? decls "Root.A.B.op" == some 5 && findDecl? decls "top" == some 8 &&
+      findDecl? decls "Id.run" == none && findDecl? decls "Other.op" == none && findDecl? decls "B.run" == none) ""
   -- Lean's `--json` output with a multi-megabyte message (one line), a diagnostics
   -- message, an error, a line that is not JSON and a last message without a newline:
   -- read as it streams in, the report is the one from parsing each line whole

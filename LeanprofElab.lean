@@ -514,6 +514,32 @@ def declName (text : String) : Option String := Id.run do
       return none
   return none
 
+/-- The namespace in effect on each line of `src` (entry `i` is line `i + 1`),
+from the `namespace`, `section` and `end` commands that start a line. Names of
+declarations in the profiled files are qualified with it, so `def run` in
+`namespace Foo` is `Foo.run` and not every `X.run` in the profile. -/
+def namespacesOf (src : String) : Array String := Id.run do
+  let modifiers := ["noncomputable", "public", "private", "protected", "meta"]
+  let mut stack : Array (Option String) := #[]  -- a namespace's name, or none for a section
+  let mut out : Array String := #[]
+  for line in src.splitOn "\n" do
+    let words := (line.splitOn " ").filter (· != "")
+    let words := words.dropWhile fun w => modifiers.contains w || w.startsWith "@["
+    match words with
+    | "namespace" :: n :: _ => stack := stack.push (some n)
+    | "section" :: _ => stack := stack.push none
+    | "end" :: _ => stack := stack.pop
+    | _ => pure ()
+    out := out.push (".".intercalate (stack.filterMap id).toList)
+  return out
+
+/-- `name` among declarations found in the source by their qualified names:
+exactly, or by a shorter qualified name it ends with (a namespace the source
+scan missed), never by its last component alone (`Id.run` is not `Foo.run`). -/
+def findDecl? (decls : Std.HashMap String α) (name : String) : Option α :=
+  let parts := name.splitOn "."
+  (List.range (max 1 (parts.length - 1))).findSome? fun i => decls.get? (".".intercalate (parts.drop i))
+
 /-- Fold one `lean --json` message of `file` into the accumulator: `m`
 without its `data`, which was read into `p`. -/
 def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Parsed) : Acc := Id.run do
@@ -1176,22 +1202,23 @@ def main (argv : List String) : IO UInt32 := do
   -- declarations of the profiled files, by line: for constants defined there (unbuilt
   -- files) and to name kernel and compiler lines
   let mut named : Std.HashMap String (Array (Nat × String)) := {}
-  let mut localDecls : Std.HashMap String (String × Bool) := {}  -- declared name ↦ (file:line, unfolds)
+  let mut localDecls : Std.HashMap String (String × Bool) := {}  -- qualified name ↦ (file:line, unfolds)
+  let mut spaces : Std.HashMap String (Array String) := {}  -- file ↦ namespace per line
   for (k, c) in acc.lines do
     if c.name.isEmpty then continue
     let (f, l) := splitPos k
     named := named.insert f ((named.getD f #[]).push (l, c.name))
     if let some d := declName c.name then
       let unfolds := ["def", "abbrev", "instance", "theorem", "lemma", "opaque"].any fun kw => (c.name.splitOn s!"{kw} ").length > 1
-      localDecls := localDecls.insert d (k, unfolds)
+      unless spaces.contains f do
+        spaces := spaces.insert f (namespacesOf ((← (try IO.FS.readFile f catch _ => pure ""))))
+      let ns := ((spaces.get? f).bind (·[l - 1]?)).getD ""
+      let full := if d.startsWith "_root_." then (d.drop 7).toString
+        else if ns.isEmpty then d else s!"{ns}.{d}"
+      localDecls := localDecls.insert full (k, unfolds)
   let locOf (s : String) : Option Loc := match locs.get? s with
     | some l => some l
-    | none =>
-      let u := userName s
-      let parts := u.splitOn "."
-      -- `Foo.bar` declared as `bar` in `namespace Foo`, or as `Foo.bar`
-      (List.range parts.length).findSome? fun i =>
-        (localDecls.get? (".".intercalate (parts.drop i))).map fun (k, u) => { pos := k, unfoldable := u }
+    | none => (findDecl? localDecls (userName s)).map fun (k, u) => { pos := k, unfoldable := u }
   -- `whnf` reduces applications of anything (structures, variables): keep only
   -- constants that unfold
   let keep (s : String) (c : ConstCost) : Bool :=
