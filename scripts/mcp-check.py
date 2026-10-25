@@ -68,6 +68,17 @@ text, err = tool("report", path=".lake/leanprof/mcp-small.json")
 check("report", not err and "wall" in text and "scopes:" in text, text)
 text, err = tool("hot", kind="copies", path=".lake/leanprof/mcp-large.json", limit=3)
 check("hot copies has file:line", not err and "Examples/CopyBug.lean:17" in text and "1,999 copies" in text, text)
+# copies of tiny values are summarized, as `leanprof run` does, not listed first
+tiny = {"copies": [
+    {"function": "Big.site", "where": "B.lean:1", "kind": "Array", "scope": "-", "shared": 10, "multi_threaded": 0,
+     "copies": 10, "bytes": 100000, "copy_ns": 1000},
+    {"function": "Tiny.site", "where": "T.lean:1", "kind": "String", "scope": "-", "shared": 9000, "multi_threaded": 0,
+     "copies": 9000, "bytes": 81000, "copy_ns": 90000, "tiny": True}]}
+with open(".lake/leanprof/mcp-tiny.json", "w") as f:
+    json.dump(tiny, f)
+text, err = tool("hot", kind="copies", path=".lake/leanprof/mcp-tiny.json")
+check("hot copies leaves out tiny values", not err and "Big.site" in text and "Tiny.site" not in text
+      and "1 sites that copied only empty or tiny values" in text, text)
 text, err = tool("hot", kind="scopes", path=".lake/leanprof/mcp-large.json")
 check("hot scopes", not err and "buildWithHistory" in text and "fib" in text, text)
 text, err = tool("explain", path=".lake/leanprof/mcp-large.json", name="buildWithHistory")

@@ -475,9 +475,15 @@ def hotLines (j : Json) (kind : String) (limit : Nat) : Array String := Id.run d
     xs.map fun s => s!"{rowTime s "total_ns"} total, {rowTime s "self_ns"} self, {fmtCount (num s "calls")} calls, p99 {rowTime s "p99_ns"}: {str s "name"}{w s}"
   | "copies" =>
     let n (c : Json) := if live then num c "copies" else num c "shared" + num c "multi_threaded"
-    let xs := take (((arr j "copies").filter (n · > 0)).qsort fun a b =>
+    -- copies of empty or tiny values (`tiny`: a first push, `prefix ++ s`), as `run`
+    -- summarizes them: listed, they pushed the copies worth fixing out of the top rows
+    let copied := (arr j "copies").filter (n · > 0)
+    let tiny := copied.filter (bool · "tiny")
+    let xs := take (((copied.filter (!bool · "tiny"))).qsort fun a b =>
       if num a "copy_ns" != num b "copy_ns" then num a "copy_ns" > num b "copy_ns" else num a "bytes" > num b "bytes")
-    xs.map fun c => s!"{fmtCount (n c)} copies, {fmtBytes (num c "bytes")}, {rowTime c "copy_ns" (tick := true)}{runShare c} [{str c "kind"}] in scope {str c "scope"}: {str c "function"}{str c (if live then "name" else "")}{w c}"
+    xs.map (fun c => s!"{fmtCount (n c)} copies, {fmtBytes (num c "bytes")}, {rowTime c "copy_ns" (tick := true)}{runShare c} [{str c "kind"}] in scope {str c "scope"}: {str c "function"}{str c (if live then "name" else "")}{w c}") ++
+      (if tiny.isEmpty then #[] else
+        #[s!"(and {tiny.size} sites that copied only empty or tiny values, {fmtCount (tiny.foldl (· + n ·) 0)} copies, not listed)"])
   | "allocations" =>
     -- costliest first: estimated time is the count times one allocation's cost
     let xs := take ((arr j "allocations").qsort fun a b =>

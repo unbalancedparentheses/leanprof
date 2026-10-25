@@ -30,6 +30,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   with "no such file or directory (file: .lake/leanprof/report.json)" after
   printing the report (concrete, with `--out` in a scratch
   directory): the directory is now created.
+- MCP `hot copies` (and the copies in `run`'s summary) listed copies of
+  empty or tiny values first, which `leanprof run` summarizes in one line:
+  on lean-compiler-backend, 17,775 9-byte copies in `SSA.fresh`
+  (`prefix ++ toString n`) came second, above the copies worth looking at.
+  They are now left out and counted in one line.
 - `explain` after `sample`: `sample` writes `.lake/leanprof/report.json` (for
   `#leanprof`) without copy counts, and `explain` then said "the report has no
   copies of shared values". It now says the report is a sampled one and to
