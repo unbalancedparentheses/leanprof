@@ -3,11 +3,14 @@
 # project that uses it (Tests/Smoke, profiled from outside by the command as
 # released, which is built with lean-toolchain's version).
 #
-# 4.34.x and 4.35.0 must pass. The newest release candidate and the latest
-# nightly may fail without failing the workflow, but a failure is reported as
-# a warning on the run and in its summary, so a Lean release that breaks
-# leanprof is noticed before users meet it. Runs daily as well as on pushes,
-# since a new nightly or release candidate changes nothing in this repository.
+# leanprof supports Lean 4.27 and later. The oldest (4.27.0), a middle one
+# (4.31.0) and the two newest releases (4.34.1, 4.35.0) must pass, on Linux and
+# macOS. The other supported minor versions (their latest patch, Linux only),
+# the newest release candidate and the latest nightly may fail without failing
+# the workflow, but a failure is reported as a warning on the run and in its
+# summary, so a Lean release that breaks leanprof is noticed before users meet
+# it. Runs daily as well as on pushes, since a new nightly or release candidate
+# changes nothing in this repository.
 name: Lean versions
 on:
   # Only pushes that can change behaviour across Lean versions: the runtime,
@@ -42,15 +45,22 @@ permissions:
   contents: read
 jobs:
   lean:
-    name: Lean ${{ matrix.lean }} (${{ matrix.os }})
+    name: Lean ${{ matrix.lean }} (${{ matrix.os }})${{ matrix.advisory && ' (advisory)' || '' }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15]
-        lean: ["v4.34.1", "v4.35.0", "newest-rc", "nightly"]
+        lean: ["v4.27.0", "v4.31.0", "v4.34.1", "v4.35.0", "newest-rc", "nightly"]
+        include:
+          # the other supported minor versions, Linux only, may fail
+          - { os: ubuntu-24.04, lean: "v4.28.1", advisory: true }
+          - { os: ubuntu-24.04, lean: "v4.29.1", advisory: true }
+          - { os: ubuntu-24.04, lean: "v4.30.0", advisory: true }
+          - { os: ubuntu-24.04, lean: "v4.32.2", advisory: true }
+          - { os: ubuntu-24.04, lean: "v4.33.1", advisory: true }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
-    continue-on-error: ${{ matrix.lean == 'newest-rc' || matrix.lean == 'nightly' }}
+    continue-on-error: ${{ matrix.lean == 'newest-rc' || matrix.lean == 'nightly' || matrix.advisory == true }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,7 +114,7 @@ jobs:
         if: always()
         env:
           OUTCOME: ${{ job.status }}
-          OPTIONAL: ${{ matrix.lean == 'newest-rc' || matrix.lean == 'nightly' }}
+          OPTIONAL: ${{ matrix.lean == 'newest-rc' || matrix.lean == 'nightly' || matrix.advisory == true }}
           OS: ${{ matrix.os }}
         run: |
           lean_version=$(cd Tests/Smoke && echo "$TOOLCHAIN" > lean-toolchain && lake env lean --version 2>/dev/null | head -1 || echo "$TOOLCHAIN")
@@ -112,5 +122,5 @@ jobs:
           if [ "$OUTCOME" = success ]; then mark="✅ passes"; else mark="❌ fails"; fi
           echo "| $TOOLCHAIN | $OS | $mark | $lean_version |" >> "$GITHUB_STEP_SUMMARY"
           if [ "$OUTCOME" != success ] && [ "$OPTIONAL" = true ]; then
-            echo "::warning title=leanprof fails on $TOOLCHAIN ($OS)::the test suite or the run/sample/elab smoke test fails on $lean_version; allowed for now, but this is what the next Lean release will break"
+            echo "::warning title=leanprof fails on $TOOLCHAIN ($OS)::the test suite or the run/sample/elab smoke test fails on $lean_version; allowed for now (an advisory version, or the next Lean release)"
           fi

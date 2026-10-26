@@ -59,11 +59,19 @@ For the editor, see also the [VS Code extension](vscode.md).
 | macOS x86-64, Linux arm64 | prebuilt command, smoke-tested on each release (run, allocations, `explain`, `elab`; `sample` on macOS) but not in the per-commit test matrix |
 | Windows | not supported; WSL 2 with Linux is the way to use it |
 
-Lean 4.34 and later. CI runs the test suite and `leanprof run`, `sample` and
-`elab` on a project for Lean 4.34.1 and 4.35.0 (required to pass), and for
-the newest release candidate and the latest nightly, daily, so a Lean
-release that breaks leanprof shows up before it is out
-([lean-versions.yml](../../.github/workflows/lean-versions.yml)).
+Lean 4.27 and later:
+
+| Lean | CI ([lean-versions.yml](../../.github/workflows/lean-versions.yml)) |
+|---|---|
+| 4.27.0, 4.31.0, 4.34.1, 4.35.0 | required to pass, Linux and macOS |
+| 4.28.1, 4.29.1, 4.30.0, 4.32.2, 4.33.1 | advisory, Linux |
+| newest release candidate, nightly | advisory, daily, Linux and macOS |
+| 4.26 and earlier | not supported |
+
+Each job builds the test suite with that Lean and runs `leanprof run`
+(copies, allocations, the self-check), `explain`, `elab` (with the driver
+built for that Lean) and, on macOS, `sample` on a project that uses it, so a
+Lean release that breaks leanprof shows up before it is out.
 `leanprof sample` is checked on macOS; on Linux, samply needs perf events
 (`sudo sysctl kernel.perf_event_paranoid=1`).
 
@@ -139,7 +147,7 @@ leanprof elab Main.lean Foo.lean   # compile time per declaration
 ```
 
 The project does not need to depend on leanprof: `run` compiles leanprof's
-runtime for the project's own Lean version (4.34 and later) and links it in,
+runtime for the project's own Lean version (4.27 and later) and links it in,
 and removes the instrumented objects afterwards so your normal builds stay
 clean.
 
