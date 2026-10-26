@@ -185,17 +185,28 @@ def inventory(project, timeout):
     return files
 
 
-def capture(project, modules, timeout):
+def source_path(module, subdir=""):
+    """A module's source file, relative to the checkout root (`subdir`: the Lake package's directory)."""
+    path = module.replace(".", "/") + ".lean"
+    return f"{subdir}/{path}" if subdir else path
+
+
+def capture(project, modules, timeout, subdir=""):
     before = inventory(project, timeout)
     for module in modules:
-        if module.replace(".", "/") + ".lean" not in before:
-            raise ValueError(f"Module {module} needs an inventoried source file at the project root; "
+        if source_path(module, subdir) not in before:
+            raise ValueError(f"Module {module} needs an inventoried source file at the package root; "
                              "custom srcDir and ignored module sources are unsupported")
     revision = run(["git", "rev-parse", "HEAD"], project, timeout).strip()
-    run(["lake", "build", *modules], project, timeout)
+    package = project / subdir if subdir else project
     driver = Path(__file__).with_name("Snapshot.lean").resolve()
-    output = run(["lake", "env", "lean", "--run", str(driver), *modules], project, timeout)
-    snapshot = json.loads(output)
+    if modules:
+        run(["lake", "build", *modules], package, timeout)
+        output = run(["lake", "env", "lean", "--run", str(driver), *modules], package, timeout)
+        snapshot = json.loads(output)
+    else:
+        # No module selected: only the file checks (protected and uncovered files) run.
+        output, snapshot = "", {}
     after = inventory(project, timeout)
     if before != after or revision != run(["git", "rev-parse", "HEAD"], project, timeout).strip():
         raise ValueError("Source or revision changed while building/collecting evidence; retry on a stable checkout")
@@ -207,16 +218,16 @@ def capture(project, modules, timeout):
     return snapshot, provenance
 
 
-def audit(base_path, candidate_path, modules, protected, timeout):
+def audit(base_path, candidate_path, modules, protected, timeout, subdir=""):
     if base_path == candidate_path:
         raise ValueError("Use separate baseline and candidate checkouts")
-    base, bp = capture(base_path, modules, timeout)
-    candidate, cp = capture(candidate_path, modules, timeout)
-    result = compare(base, candidate)
+    base, bp = capture(base_path, modules, timeout, subdir)
+    candidate, cp = capture(candidate_path, modules, timeout, subdir)
+    result = compare(base, candidate) if modules else report([], modules=[])
     findings = result["findings"]
     files = bp["files"].keys() | cp["files"].keys()
     changed = sorted(p for p in files if bp["files"].get(p) != cp["files"].get(p))
-    covered = {m.replace(".", "/") + ".lean" for m in modules}
+    covered = {source_path(m, subdir) for m in modules}
     for path in changed:
         if any(fnmatch.fnmatchcase(path, pattern) for pattern in protected):
             findings.append(finding("FAIL", "protected_file_changed", path,
@@ -232,14 +243,17 @@ def audit(base_path, candidate_path, modules, protected, timeout):
                                     "Source changed after evidence collection"))
     evidence = {k: v for k, v in result.items() if k not in ("status", "findings", "schema", "scope")}
     return report(findings, **evidence, base=bp, candidate=cp, changedFiles=changed,
-                  protectedPatterns=list(protected))
+                  protectedPatterns=list(protected), subdir=subdir)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, type=Path)
     parser.add_argument("--candidate", required=True, type=Path)
-    parser.add_argument("--module", required=True, action="append", dest="modules")
+    parser.add_argument("--module", action="append", dest="modules", default=[],
+                        help="changed module to audit (repeat); none: only the file checks run")
+    parser.add_argument("--subdir", default="",
+                        help="the Lake package's directory inside both checkouts (default: their root)")
     parser.add_argument("--protect", action="append", default=[], help="additional protected path glob")
     parser.add_argument("--timeout", type=float, default=300, help="seconds per subprocess")
     args = parser.parse_args()
@@ -247,8 +261,11 @@ def main():
         if args.timeout <= 0 or any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*(\.[A-Za-z_][A-Za-z_0-9]*)*", m)
                                     for m in args.modules):
             raise ValueError("Positive timeout and ordinary dotted module names required")
+        subdir = args.subdir.strip("/")
+        if subdir and (Path(subdir).is_absolute() or ".." in Path(subdir).parts):
+            raise ValueError("--subdir must be a relative path inside the checkouts")
         result = audit(args.base.resolve(), args.candidate.resolve(), sorted(set(args.modules)),
-                       DEFAULT_PROTECTED + tuple(args.protect), args.timeout)
+                       DEFAULT_PROTECTED + tuple(args.protect), args.timeout, subdir)
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         result = report([finding("INCONCLUSIVE", "collection_failed", "audit", str(e))])
     print(json.dumps(result, indent=2, sort_keys=True))

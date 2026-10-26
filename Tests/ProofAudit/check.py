@@ -147,6 +147,42 @@ class ProofAuditTests(unittest.TestCase):
         self.assertEqual(result["status"], "INCONCLUSIVE")
         self.assertIn("uncovered_source_change", {f["code"] for f in result["findings"]})
 
+    def test_files_only_without_modules(self):
+        # no module selected: a protected change fails, a Lean change is not covered
+        base, candidate = self.projects["base"], self.projects["good"]
+        result = audit.audit(base, candidate, [], audit.DEFAULT_PROTECTED, 60)
+        self.assertEqual(result["status"], "INCONCLUSIVE", result)
+        self.assertIn("uncovered_source_change", {f["code"] for f in result["findings"]})
+        (candidate / "tests").mkdir(exist_ok=True)
+        expected = candidate / "tests/expected.txt"
+        expected.write_text("weakened")
+        self.addCleanup(lambda: expected.unlink(missing_ok=True))
+        result = audit.audit(base, candidate, [], audit.DEFAULT_PROTECTED, 60)
+        self.assertEqual(result["status"], "FAIL", result)
+
+    def test_package_in_a_subdirectory(self):
+        # the Lake package below the checkout root (`--subdir`), as in lean-regex's regex/
+        pairs = {}
+        for label in ("base", "sorry"):
+            top = self.directory / f"nested-{label}"
+            package = top / "pkg"
+            package.mkdir(parents=True)
+            for name in ("lean-toolchain", "lakefile.toml", "Sample.lean"):
+                (package / name).write_text((self.projects[label] / name).read_text())
+            (top / ".gitignore").write_text(".lake/\n")
+            command(["git", "init", "-q"], top)
+            command(["lake", "build", "Sample"], package)
+            command(["git", "add", "."], top)
+            command(["git", "-c", "user.name=Audit Test", "-c", "user.email=audit@example.invalid",
+                     "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], top)
+            pairs[label] = top
+        result = audit.audit(pairs["base"], pairs["sorry"], ["Sample"], audit.DEFAULT_PROTECTED, 60, "pkg")
+        self.assertEqual(result["status"], "FAIL", result)
+        self.assertIn("sorry_dependency", {f["code"] for f in result["findings"]})
+        self.assertEqual(result["changedFiles"], ["pkg/Sample.lean"])
+        with self.assertRaisesRegex(ValueError, "package root"):
+            audit.audit(pairs["base"], pairs["sorry"], ["Sample"], audit.DEFAULT_PROTECTED, 60)
+
     def test_source_change_during_capture(self):
         actual = audit.inventory
         calls = 0
