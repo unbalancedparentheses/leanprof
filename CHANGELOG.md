@@ -39,6 +39,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   aside) is inside the region that puts the normal build back on a failure
   or a signal. A failed runtime compile (a missing compiler or header) left
   the project's executable deleted.
+- `run` and `measure` let Lake fetch missing dependencies (`lake env true`)
+  before choosing which packages' objects to set aside. In a fresh clone a
+  dependency downloaded during the instrumented build had no stash marker,
+  so its instrumented objects stayed after the run. (With `--no-deps`, a
+  dependency compiled for the first time during the run is still compiled
+  instrumented.)
 
 ### Compile time: a project view and published profiles
 

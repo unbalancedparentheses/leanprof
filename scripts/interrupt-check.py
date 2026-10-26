@@ -17,6 +17,9 @@ program that waits), `leanprof run` is stopped while the program runs:
 - by a failure while preparing the instrumented build (compiling leanprof's
   runtime): the executable and objects are as they were.
 
+And in a fresh project whose git dependency Lake has not downloaded yet,
+`leanprof run` leaves no instrumented object in that dependency.
+
 "Normal" is checked by running the program with LEANPROF_JSON set: an
 instrumented build writes a report, a normal one does not.
 """
@@ -125,5 +128,47 @@ try:
 finally:
     shutil.rmtree(work, ignore_errors=True)
 
+# A dependency Lake first downloads during `leanprof run` (a fresh clone of a
+# project) is set aside and put back like the others: no instrumented object
+# of it is left (they reference leanprof's shims).
+DEP = '''def collect (n : Nat) : Array Nat := Id.run do
+  let mut xs : Array Nat := #[]
+  for i in [0:n] do xs := xs.push i
+  return xs
+'''
+base = tempfile.mkdtemp(prefix="leanprof-freshdep-")
+try:
+    dep = os.path.join(base, "dep")
+    os.makedirs(dep)
+    with open(os.path.join(dep, "lakefile.toml"), "w") as f:
+        f.write('name = "dep"\n\n[[lean_lib]]\nname = "Dep"\n')
+    with open(os.path.join(dep, "Dep.lean"), "w") as f:
+        f.write(DEP)
+    shutil.copy(os.path.join(ROOT, "Tests", "Smoke", "lean-toolchain"), dep)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"]
+    subprocess.run(git + ["init", "-q"], cwd=dep, check=True)
+    subprocess.run(git + ["add", "."], cwd=dep, check=True)
+    subprocess.run(git + ["commit", "-qm", "dep"], cwd=dep, check=True)
+    proj = os.path.join(base, "proj")
+    os.makedirs(proj)
+    shutil.copy(os.path.join(ROOT, "Tests", "Smoke", "lean-toolchain"), proj)
+    with open(os.path.join(proj, "lakefile.toml"), "w") as f:
+        f.write(f'name = "proj"\ndefaultTargets = ["proj"]\n\n[[require]]\nname = "dep"\ngit = "{dep}"\nrev = "main"\n\n'
+                '[[lean_exe]]\nname = "proj"\nroot = "Main"\n')
+    with open(os.path.join(proj, "Main.lean"), "w") as f:
+        f.write('import Dep\ndef main : IO Unit := IO.println s!"{(collect 100).size}"\n')
+    p = subprocess.run([LP, "run", "proj"], cwd=proj, capture_output=True, text=True,
+                       env=dict(os.environ, LEANPROF_QUIET="1"))
+    ir = os.path.join(proj, ".lake", "packages", "dep", ".lake", "build", "ir")
+    objs = [os.path.join(d, f) for d, _, fs in os.walk(ir) for f in fs if f.endswith(".c.o") or ".c.o." in f
+            and not f.endswith((".trace", ".hash"))]
+    shims = [o for o in objs if "leanprof_" in subprocess.run(["nm", "-u", o], capture_output=True, text=True).stdout]
+    check("a dependency first downloaded during run: run works", p.returncode == 0 and "100" in p.stdout,
+          p.stderr[-800:])
+    check("a dependency first downloaded during run: no instrumented object of it is left",
+          not shims and not os.path.exists(os.path.join(proj, ".lake", "packages", "dep", ".lake", "leanprof",
+                                                        "normal-objects")), shims)
+finally:
+    shutil.rmtree(base, ignore_errors=True)
 print("all interrupt checks passed" if failures == 0 else f"{failures} failed")
 sys.exit(1 if failures else 0)

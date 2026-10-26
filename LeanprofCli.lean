@@ -608,6 +608,11 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
             throw <| IO.userError s!"compiling leanprof's runtime failed ({cmd}):\n{out.stderr}"
         runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
       checkInterrupted
+      -- dependencies Lake has not downloaded yet (a fresh clone) are fetched
+      -- first, so that they are set aside and put back like the others
+      -- (loading the workspace resolves them; their output stays visible)
+      if deps then discard <| spawnWait "lake" #["env", "true"] #[]
+      checkInterrupted
       -- Lake does not notice a new LEAN_CC, so objects built without it must go:
       -- they wait in .lake/leanprof/normal-objects and come back afterwards
       let (stashed, pkgs) ← stashObjects deps
