@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/fix.schema.json",
+  "title": "leanprof fix result",
+  "description": "What `leanprof fix` did (.lake/leanprof/fix/result.json, printed by --json). `status`: kept, discarded, dry_run, no_findings, no_mechanical_fix or error; a kept or discarded fix has a verdict and outcome, and `tried` lists each alternative with its own outcome.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.fix"
+        }
+      }
+    },
+    "leanprof": {
+      "const": "fix"
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "exe": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "enum": [
+        "kept",
+        "discarded",
+        "dry_run",
+        "no_findings",
+        "no_mechanical_fix",
+        "error"
+      ]
+    },
+    "report": {
+      "type": "string"
+    },
+    "tiny_sites": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "function": {
+            "type": "string"
+          },
+          "cause": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "copies": {
+            "type": "number"
+          },
+          "mechanical": {
+            "type": "boolean"
+          },
+          "alternatives": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "not_mechanical": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "n",
+          "function",
+          "cause",
+          "mechanical"
+        ]
+      }
+    },
+    "finding": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cause": {
+      "type": "string"
+    },
+    "function": {
+      "type": "string"
+    },
+    "file": {
+      "type": "string"
+    },
+    "plans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "what": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "diff": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "what",
+          "code",
+          "diff"
+        ]
+      }
+    },
+    "tried": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "what": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "common.schema.json#/$defs/outcome"
+          },
+          "measurement_valid": {
+            "type": "boolean"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "n",
+          "what",
+          "reason",
+          "outcome"
+        ]
+      }
+    },
+    "verdict": {
+      "enum": [
+        "KEEP",
+        "DISCARD"
+      ]
+    },
+    "outcome": {
+      "$ref": "common.schema.json#/$defs/outcome"
+    },
+    "measurement_valid": {
+      "type": "boolean"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "commit": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "log": {
+      "type": "string"
+    },
+    "stale_sources": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "leanprof",
+    "exit_code",
+    "dry_run",
+    "status"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": [
+              "kept",
+              "discarded"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "verdict",
+          "outcome",
+          "measurement_valid",
+          "tried"
+        ]
+      }
+    }
+  ]
+}

@@ -6,6 +6,25 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### For agents: stable machine-readable output
+
+- Every JSON document leanprof writes (run, sample and stat reports, live
+  snapshots, elab, measure, measure-pair, judge, explain, compare, the
+  experiment's evidence, finish and state, fix) carries a `schema` field,
+  `{"name": "leanprof.NAME", "version": N}`, described by
+  `schemas/NAME.schema.json` (JSON Schema 2020-12). Existing fields are
+  unchanged. `scripts/contract-check.py` validates real outputs against
+  the schemas in CI.
+- `judge --json`, `compare --json` and `fix --json` (the result is also
+  written to `.lake/leanprof/fix/result.json`); `explain --json` adds
+  `shown` and `tiny_sites`, so a cut list says so.
+- Verdicts carry an `outcome`: `improved`, `regression`, `no_improvement`,
+  `correctness_failure`, `insufficient_evidence`, `incompatible` or
+  `measurement_failed`, with `measurement_valid` and `retryable`. A valid
+  DISCARD (a regression, no improvement, changed behaviour) is told apart
+  from one that says nothing about the change (another command or scope
+  measured, an unstable output, a failed measurement).
+
 ## [0.1.0] - 2026-10-26
 
 The first release: a profiler for Lean 4 programs and their compile times,

@@ -217,6 +217,22 @@ def combine (exact : Judge.Verdict) (paired : Option Judge.Verdict) : Outcome ×
           "was not settled (more pairs, --pairs N, or a quieter machine may settle it)"])
       else (.discard, #["no measurable improvement: exact counts unchanged and paired time within the --min-change"])
 
+/-- What `combine`'s verdict means (`Contract.Outcome`). -/
+def combineOutcome (exact : Judge.Verdict) (paired : Option Judge.Verdict) : Contract.Outcome :=
+  if !exact.worse.isEmpty then exact.outcome
+  else match paired with
+    | none => .regression
+    | some p =>
+      if !p.worse.isEmpty then p.outcome
+      else if !exact.better.isEmpty || !p.better.isEmpty then .improved
+      else if p.unsettled then .insufficientEvidence
+      else .noImprovement
+
+/-- The outcome a verdict word means when nothing more specific is known. -/
+def Outcome.default : Outcome → Contract.Outcome
+  | .keep => .improved | .discard => .noImprovement | .inconclusive => .insufficientEvidence
+  | .error => .measurementFailed
+
 /-- A compile-time verdict: from two heartbeat summaries (`Judge.judge`'s
 heartbeat rule: the total must go down by more than 1% and 1,000). -/
 def heartbeatOutcome (v : Judge.Verdict) : Outcome × Array String :=
@@ -309,7 +325,7 @@ def under (root : FilePath) (pre : String) : FilePath :=
 def statePath (proj : FilePath) (id : String) : FilePath := experimentsDir proj / id / "experiment.json"
 
 def saveState (proj : FilePath) (s : State) : IO Unit :=
-  IO.FS.writeFile (statePath proj s.id) ((toJson s).pretty ++ "\n")
+  IO.FS.writeFile (statePath proj s.id) ((Contract.withSchema "experiment-status" (toJson s)).pretty ++ "\n")
 
 def loadState (proj : FilePath) (id? : Option String) : IO State := do
   let id ← match id? with
@@ -792,11 +808,13 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
   let changed := ((← git #["diff", "--name-only", "--no-renames", base, cand] (cwd := top)).splitOn "\n").filter (· != "") |>.toArray
   step "changed_files" (toJson changed)
   -- the verdict, the evidence file, the experiment's record and the summary
-  let finish (out : Outcome) (reasons : Array String) (committed : Option String := none) : IO UInt32 := do
+  let finish (out : Outcome) (reasons : Array String) (committed : Option String := none)
+      (cat : Option Contract.Outcome := none) : IO UInt32 := do
     let secs := ((← IO.monoNanosNow) - t0).toFloat / 1e9
-    let evidence := Json.mkObj ([("version", toJson (1 : Nat)), ("leanprof", Json.str "experiment-try"),
+    let cat := cat.getD out.default
+    let evidence := Json.mkObj ([("version", toJson (1 : Nat)), ("schema", Contract.schema "experiment-try"), ("leanprof", Json.str "experiment-try"),
       ("experiment", Json.str s.id), ("try", toJson n), ("verdict", Json.str out.name),
-      ("reasons", toJson reasons), ("mode", Json.str s.mode),
+      ("reasons", toJson reasons), ("mode", Json.str s.mode)] ++ cat.json ++ [
       ("base_commit", Json.str base), ("candidate_commit", Json.str cand), ("candidate_source", Json.str source),
       ("committed", match committed with | some x => Json.str x | none => Json.null),
       ("seconds", toJson secs)] ++ (← steps.get).toList)
@@ -846,7 +864,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     finish .keep reasons committed
   if changed.isEmpty then
     step "guard" (Json.mkObj [("status", "PASS"), ("note", "nothing changed")])
-    return ← finish .discard #["the candidate changes nothing against the base"]
+    return ← finish .discard #["the candidate changes nothing against the base"] (cat := some .noImprovement)
   -- inputs must be the ones recorded
   for i in s.inputs do
     if (← hashFile i.path) != i.hash then
@@ -860,7 +878,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
   unless config.isEmpty do
     step "guard" (Json.mkObj [("status", "INCONCLUSIVE"), ("changed_build_configuration", toJson config)])
     return ← finish .inconclusive #[s!"the candidate changes the build configuration ({", ".intercalate config.toList}); " ++
-      "an experiment compares code under one configuration (its worktrees share .lake/packages)"]
+      "an experiment compares code under one configuration (its worktrees share .lake/packages)"] (cat := some .incompatible)
   try
     -- the base as the experiment recorded it (an interrupted try may have
     -- left its worktree elsewhere), then the candidate from the base's build
@@ -875,7 +893,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     | .error e =>
       step "build" (Json.mkObj [("ok", Json.bool false), ("error", Json.str e)])
       say "build" "FAILED"
-      return ← finish .discard #[s!"it does not build:\n{e}"]
+      return ← finish .discard #[s!"it does not build:\n{e}"] (cat := some .correctnessFailure)
     | .ok t =>
       step "build" (Json.mkObj [("ok", Json.bool true), ("seconds", toJson t)])
       say "build" s!"ok ({fmtS t})"
@@ -892,7 +910,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
       if let .error e ← lakeBuild log cdir extra then
         step "build" (Json.mkObj [("ok", Json.bool false), ("modules", toJson extra), ("error", Json.str e)])
         say "build" s!"FAILED: the modules that import the change ({extra.size})"
-        return ← finish .discard #[s!"a module that imports the change does not build:\n{e}"]
+        return ← finish .discard #[s!"a module that imports the change does not build:\n{e}"] (cat := some .correctnessFailure)
     let adir := expDir c s / "audit"
     IO.FS.createDirAll adir
     IO.FS.writeFile (adir / "audit.py") auditScript
@@ -918,7 +936,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     match g.status with
     | "FAIL" =>
       say "guard" s!"FAIL ({audited.size} module(s) audited)"
-      return ← finish .discard (fewer (g.reasons.map ("guard: " ++ ·)) (tdir / "audit.json"))
+      return ← finish .discard (fewer (g.reasons.map ("guard: " ++ ·)) (tdir / "audit.json")) (cat := some .correctnessFailure)
     | "PASS" =>
       say "guard" (s!"PASS: {audited.size} module(s) audited ({thms} theorems): no sorry, new axiom, " ++
         "implemented_by, extern or protected file" ++ (if g.notes.isEmpty then "" else s!"; {g.notes[0]!}"))
@@ -929,7 +947,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     if let .error e ← runTests log s cdir then
       step "tests" (Json.mkObj [("command", toJson s.test), ("passed", Json.bool false)])
       say "tests" "FAILED"
-      return ← finish .discard #[s!"the tests fail (`{s.test.getD ""}`):\n{e}"]
+      return ← finish .discard #[s!"the tests fail (`{s.test.getD ""}`):\n{e}"] (cat := some .correctnessFailure)
     step "tests" (Json.mkObj [("command", toJson s.test), ("passed", Json.bool true)])
     say "tests" (match s.test with | some t => s!"pass (`{t}`)" | none => "none configured")
     -- the compile-time measure: heartbeats of the changed modules and their dependents
@@ -960,7 +978,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
           ("worse", toJson v.worse), ("better", toJson v.better),
           ("notes", toJson (v.notes.filter (!·.startsWith "time:")))])
         say "heartbeats" s!"{Judge.fmt2 (hbTotal bh / 1000)} -> {Judge.fmt2 (hbTotal nh / 1000)} kHB in {files.size} module(s) ({why})"
-        if out == .keep then keep reasons none none else finish out reasons
+        if out == .keep then keep reasons none none else finish out reasons (cat := some v.outcome)
     if s.mode != "exe" then return ← heartbeats "a library: the measure is compile heartbeats"
     -- 4. outputs, on every case
     let bin := cdir / ".lake" / "build" / "bin" / s.exe
@@ -979,6 +997,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     unless diffs.isEmpty do
       say "outputs" s!"DIFFER on {diffs.size} of {s.cases.size} cases"
       return ← finish .discard (#[s!"the behaviour changed on {diffs.size} of {s.cases.size} cases"] ++ diffs.extract 0 5)
+        (cat := some .correctnessFailure)
     say "outputs" (s!"identical on {s.cases.size} case(s) (stdout, stderr, exit code" ++
       (if s.check_outputs.isEmpty then ")" else s!", {", ".intercalate s.check_outputs.toList})"))
     -- 5. the compiled code: identical C means an identical run
@@ -1006,7 +1025,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     unless exact.worse.isEmpty do
       step "timing" (Json.mkObj [("skipped", Json.str "the exact counts got worse")])
       let (out, reasons) := combine exact none
-      return ← finish out reasons
+      return ← finish out reasons (cat := some (combineOutcome exact none))
     -- 7. paired timing of the plain binaries
     let paired := tdir / "paired.json"
     let args := s.cases[0]?.getD s.args
@@ -1022,7 +1041,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     say "time" timeLine
     let (out, reasons) := combine exact (some pv)
     if out == .keep then keep reasons (some (tdir / "new.json")) (some (tdir / "candidate-bin"))
-    else finish out reasons
+    else finish out reasons (cat := some (combineOutcome exact (some pv)))
   catch e =>
     finish .error #[toString e]
 
@@ -1074,7 +1093,7 @@ def finishCmd (c : Ctx) (argv : List String) : IO UInt32 := do
   let cur := experimentsDir c.proj / "current"
   if ← cur.pathExists then
     if trim (← IO.FS.readFile cur) == s.id then IO.FS.removeFile cur
-  let result := Json.mkObj [("version", toJson (1 : Nat)), ("leanprof", Json.str "experiment-finish"),
+  let result := Json.mkObj [("version", toJson (1 : Nat)), ("schema", Contract.schema "experiment-finish"), ("leanprof", Json.str "experiment-finish"),
     ("experiment", Json.str s.id), ("start_commit", Json.str s.start_commit), ("final_commit", Json.str s.base_commit),
     ("tries", toJson s.tries.size), ("kept", toJson (kept.map (·.n))),
     ("heldout_cases", toJson s.heldout.size), ("heldout_identical", Json.bool diffs.isEmpty),
@@ -1100,7 +1119,7 @@ def statusCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     | ["--id", i, "--json"] | ["--json", "--id", i] => pure (some i, true)
     | _ => throw <| IO.userError "usage: leanprof experiment status [--id ID] [--json]"
   let s ← loadState c.proj id
-  if json then IO.println (toJson s).pretty; return 0
+  if json then IO.println (Contract.withSchema "experiment-status" (toJson s)).pretty; return 0
   IO.println s!"experiment {s.id} ({s.mode}{if s.finished then ", finished" else ""}), started {s.created}"
   IO.println s!"  base {s.base_commit.take 12} (started at {s.start_commit.take 12}){if s.pkg_prefix.isEmpty then "" else s!", package in {s.pkg_prefix}"}"
   if s.mode == "exe" then

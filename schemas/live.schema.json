@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/live.schema.json",
+  "title": "leanprof live snapshot",
+  "description": "A running program's snapshot (LEANPROF_LIVE), rewritten every interval and once at exit.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.live"
+        }
+      }
+    },
+    "leanprof_live": {
+      "const": 1
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exited": {
+      "type": "boolean"
+    },
+    "interval_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ts_ns": {
+      "type": "number"
+    },
+    "overhead_ns": {
+      "type": "number"
+    },
+    "threads": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "name",
+          "calls"
+        ]
+      }
+    },
+    "copies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "copies": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "copies"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "leanprof_live",
+    "pid",
+    "seq",
+    "exited",
+    "scopes"
+  ]
+}

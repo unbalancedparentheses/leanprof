@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/explain.schema.json",
+  "title": "leanprof explain findings",
+  "description": "Why each of the costliest copy sites copied, ranked (`leanprof explain --json`). `sites` copy sites in the report, `shown` of them explained (`--top`), `tiny_sites` left out for copying only empty or tiny values (`--all`).",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.explain"
+        }
+      }
+    },
+    "report": {
+      "type": "string"
+    },
+    "sites": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "shown": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tiny_sites": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "function": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "where": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "kind": {
+            "type": "string"
+          },
+          "cause": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "fix_code": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "strength": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "copies": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "shared": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "multi_threaded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "copy_ns": {
+            "type": "number"
+          },
+          "estimated_cost_ns": {
+            "type": "number"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rank",
+          "function",
+          "where",
+          "kind",
+          "cause",
+          "why",
+          "confidence"
+        ]
+      }
+    },
+    "stale_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "reason"
+        ]
+      }
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    }
+  },
+  "required": [
+    "schema",
+    "report",
+    "sites",
+    "findings"
+  ]
+}

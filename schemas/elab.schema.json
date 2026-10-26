@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/elab.schema.json",
+  "title": "leanprof elab report",
+  "description": "Compile cost per line and declaration (`leanprof elab`): nanoseconds, or heartbeats when `unit` is `heartbeats`.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.elab"
+        }
+      }
+    },
+    "version": {
+      "const": 3
+    },
+    "elab": {
+      "const": true
+    },
+    "project": {
+      "type": "boolean"
+    },
+    "unit": {
+      "enum": [
+        "ns",
+        "heartbeats"
+      ]
+    },
+    "wall_ns": {
+      "type": "number"
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "total_ns": {
+            "type": "number"
+          },
+          "elab_ns": {
+            "type": "number"
+          },
+          "kernel_ns": {
+            "type": "number"
+          },
+          "compile_ns": {
+            "type": "number"
+          },
+          "lint_ns": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "pos",
+          "total_ns"
+        ]
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "module": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "total_ns": {
+            "type": "number"
+          },
+          "errors": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "file",
+          "total_ns"
+        ]
+      }
+    },
+    "repeated": {
+      "type": "array"
+    },
+    "constants": {
+      "type": "array"
+    },
+    "copies": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "kinds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "class",
+          "total"
+        ]
+      }
+    },
+    "tactics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pos": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "tactic": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "range": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pos",
+          "amount"
+        ]
+      }
+    },
+    "exact_ranges": {
+      "type": "boolean"
+    },
+    "compact": {
+      "type": "boolean"
+    },
+    "ranges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "range": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "term",
+              "tactic"
+            ]
+          },
+          "syntax": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "range",
+          "pos",
+          "kind",
+          "amount"
+        ]
+      }
+    },
+    "threshold": {
+      "type": "number"
+    },
+    "counts": {
+      "type": "boolean"
+    },
+    "timing": {
+      "type": "object",
+      "properties": {
+        "build_ns": {
+          "type": "number"
+        },
+        "profile_ns": {
+          "type": "number"
+        },
+        "report_ns": {
+          "type": "number"
+        },
+        "jobs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "elab",
+    "unit",
+    "wall_ns",
+    "scopes",
+    "files"
+  ]
+}

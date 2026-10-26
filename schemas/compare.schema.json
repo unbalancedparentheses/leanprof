@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/compare.schema.json",
+  "title": "leanprof compare result",
+  "description": "Two run or elab reports compared (`leanprof compare --json`): exact for copies, calls and heartbeats, thresholded for time.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.compare"
+        }
+      }
+    },
+    "leanprof": {
+      "const": "compare"
+    },
+    "base": {
+      "type": "string"
+    },
+    "new": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "run",
+        "elab"
+      ]
+    },
+    "unit": {
+      "enum": [
+        "ns",
+        "heartbeats"
+      ]
+    },
+    "threshold_pct": {
+      "type": "number"
+    },
+    "min_ms": {
+      "type": "number"
+    },
+    "regressions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "regressed": {
+      "type": "boolean"
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "regression": {
+            "type": "boolean"
+          },
+          "base": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "new": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "status",
+          "regression",
+          "base",
+          "new"
+        ]
+      }
+    },
+    "copies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "regression": {
+            "type": "boolean"
+          },
+          "base": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "new": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "status",
+          "regression",
+          "base",
+          "new"
+        ]
+      }
+    },
+    "allocations": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "regression": {
+                "type": "boolean"
+              },
+              "base": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "new": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "status",
+              "regression",
+              "base",
+              "new"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "total": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance_check"
+    }
+  },
+  "required": [
+    "schema",
+    "leanprof",
+    "base",
+    "new",
+    "kind",
+    "regressions",
+    "regressed",
+    "scopes",
+    "copies",
+    "notes"
+  ]
+}

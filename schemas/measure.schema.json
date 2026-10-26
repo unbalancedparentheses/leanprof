@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/measure.schema.json",
+  "title": "leanprof measure summary",
+  "description": "Several runs of an executable with probes in one summary (`leanprof measure`), for `judge`.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.measure"
+        }
+      }
+    },
+    "version": {
+      "const": 1
+    },
+    "leanprof": {
+      "const": "measure"
+    },
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "runs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "core": {
+      "type": "boolean"
+    },
+    "scope": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "stable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "hash",
+        "stable"
+      ]
+    },
+    "time_ns": {
+      "type": "object",
+      "properties": {
+        "median": {
+          "type": "number"
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "mean": {
+          "type": "number"
+        },
+        "stddev": {
+          "type": "number"
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "too_small_runs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "median",
+        "min",
+        "max",
+        "runs"
+      ]
+    },
+    "machine": {
+      "type": "object",
+      "properties": {
+        "load_avg_1m": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cpus": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "overloaded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "overloaded"
+      ]
+    },
+    "copies_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "copies_stable": {
+      "type": "boolean"
+    },
+    "self_check_warning": {
+      "type": "string"
+    },
+    "copies": {
+      "$ref": "common.schema.json#/$defs/keyed_counts"
+    },
+    "calls": {
+      "$ref": "common.schema.json#/$defs/keyed_counts"
+    },
+    "allocs_total": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "allocs_runs": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "allocs_stable": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "alloc_bytes_total": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "allocs": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/keyed_counts"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "heartbeats_total": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "heartbeats": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/keyed_counts"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "leanprof",
+    "command",
+    "runs",
+    "exit_code",
+    "output",
+    "time_ns",
+    "machine",
+    "copies_total",
+    "copies",
+    "calls"
+  ]
+}

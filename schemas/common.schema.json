@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/common.schema.json",
+  "title": "leanprof: shared definitions",
+  "description": "Definitions shared by leanprof's JSON schemas.",
+  "$defs": {
+    "schema_tag": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^leanprof\\.[a-z-]+$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "description": "Which schema a document follows. The version goes up only when a field is removed or changes meaning; new fields keep it."
+    },
+    "outcome": {
+      "enum": [
+        "improved",
+        "regression",
+        "no_improvement",
+        "insufficient_evidence",
+        "correctness_failure",
+        "incompatible",
+        "measurement_failed"
+      ],
+      "description": "What a verdict means: improved (KEEP); regression, no_improvement and correctness_failure (a valid DISCARD); insufficient_evidence (measure again or longer); incompatible and measurement_failed (no verdict on the change)."
+    },
+    "verdict_fields": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "measurement_valid": {
+          "type": "boolean"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "outcome",
+        "measurement_valid",
+        "retryable"
+      ]
+    },
+    "too_small": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "time fields too small to measure (written as 0, never a measured zero)"
+    },
+    "keyed_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ]
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {},
+      "description": "Where a document came from (filled in by a later version)."
+    },
+    "provenance_check": {
+      "type": "object",
+      "properties": {},
+      "description": "Whether two documents' provenance allows comparing them."
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "not_lake_project",
+            "build_failed",
+            "lean_not_found",
+            "samply_missing",
+            "overloaded",
+            "bad_argument",
+            "not_found",
+            "incompatible",
+            "timeout",
+            "cancelled",
+            "failed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "hint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "hint"
+      ],
+      "description": "A failure an agent can act on: its kind, whether trying again unchanged may succeed, and what to do."
+    }
+  }
+}

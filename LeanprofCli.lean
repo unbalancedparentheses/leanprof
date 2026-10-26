@@ -72,12 +72,13 @@ def commands : List (String × String × String) := [
     "(line:column); --compact times only those (close to plain lean). On another Lean than leanprof's,\n" ++
     "the first run builds its driver for that Lean (seconds, once; ~/.cache/leanprof/drivers).\n" ++
     "--no-driver elaborates with `lean --json` instead."),
-  ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] BASE.json NEW.json",
+  ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] [--json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
     "by more than PCT% (default 10) and MS ms (default 1). For each declaration that got more\n" ++
     "expensive, what changed inside it (definitions unfolded, instances, simp lemmas, repeated work,\n" ++
-    "`--counts` counters); --explain names explain's cause for each copy site that copies more."),
+    "`--counts` counters); --explain names explain's cause for each copy site that copies more.\n" ++
+    "--json prints the comparison as JSON instead (schemas/compare.schema.json); the exit code is the same."),
   ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--ignore-lines TEXT]... [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
@@ -97,12 +98,14 @@ def commands : List (String × String × String) := [
     "and build settings, and builds the candidate with `lake build NAME` in --candidate-cwd (default .).\n" ++
     "No probes are added. Saves every timing, exit status and output hash in one session,\n" ++
     "and prints `judge PAIR.json`'s verdict."),
-  ("judge", "[--min-change PCT] [--allow-overloaded] BASE.json NEW.json | PAIR.json",
+  ("judge", "[--min-change PCT] [--allow-overloaded] [--json] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, allocations, heartbeats or time got worse. Time counts only\n" ++
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
     "machine was overloaded while measuring (--allow-overloaded judges a paired session anyway, for a\n" ++
-    "machine that is always shared; the verdict says so)."),
+    "machine that is always shared; the verdict says so). --json prints the verdict as JSON (schemas/judge.schema.json):\n" ++
+    "its outcome tells a valid DISCARD (regression, no_improvement, correctness_failure) from too little evidence\n" ++
+    "(insufficient_evidence) and from a measurement that cannot be judged (incompatible, measurement_failed)."),
   ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] [--explain NEW_EXPLAIN.json] [--max-chars N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
@@ -116,7 +119,7 @@ def commands : List (String × String × String) := [
     "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
     "#leanprof hovers."),
-  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]",
+  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] [--json]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
     "inserted back, an index loop for a loop over the array it updates), then check it: on a new git\n" ++
@@ -127,7 +130,8 @@ def commands : List (String × String × String) := [
     "why. The checkout is left as it was; a tree with uncommitted changes is refused. --exe profiles\n" ++
     "EXE first (otherwise the last report is read); --finding N picks finding N of the list printed;\n" ++
     "--all also considers copy sites of only empty or tiny values (as explain --all); --dry-run\n" ++
-    "prints the findings and the diff only."),
+    "prints the findings and the diff only. The result is written to .lake/leanprof/fix/result.json\n" ++
+    "(schemas/fix.schema.json); --json prints it, with the steps on stderr."),
   ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
     "One experiment, from baseline to verdict. `start` records the base (HEAD, or --base REV) in a git\n" ++
     "worktree under .lake/leanprof/experiments/ID: the build (default targets and EXE), the tests (--test CMD,\n" ++
@@ -1013,6 +1017,8 @@ def loadFindings (path : Option String) : IO (Option (Array Leanprof.Regress.Fin
   return some (Leanprof.Regress.loadExplain (← IO.ofExcept (Json.parse (← IO.FS.readFile p))))
 
 def compare (argv : List String) : IO UInt32 := do
+  let json := argv.contains "--json"
+  let argv := argv.filter (· != "--json")
   let rec parse (thr minMs : Float) (ex : Option String) (files : List String) :
       List String → Except String (Float × Float × Option String × List String)
     | [] => .ok (thr, minMs, ex, files.reverse)
@@ -1021,13 +1027,20 @@ def compare (argv : List String) : IO UInt32 := do
     | "--explain" :: v :: rest => parse thr minMs (some v) files rest
     | a :: rest => parse thr minMs ex (a :: files) rest
   let (thr, minMs, explainPath, files) ← IO.ofExcept (parse 10 1 none [] argv)
+  -- --json: the same comparison as rows (schemas/compare.schema.json), no text
+  let say (l : String) : IO Unit := unless json do IO.println l
+  let scopeRows ← IO.mkRef (#[] : Array Json)
+  let copyRows ← IO.mkRef (#[] : Array Json)
+  let allocRows ← IO.mkRef (#[] : Array Json)
+  let notes ← IO.mkRef (#[] : Array String)
+  let optF (x : Option Float) : Json := match x with | some v => toJson v | none => Json.null
   let [basePath, newPath] := files | throw <| IO.userError (usageFor "compare")
   let base ← loadReport basePath
   let new ← loadReport newPath
   let findings ← loadFindings explainPath
   let mut regressions := 0
   let mut slowerDecls : Array String := #[]
-  IO.println s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
+  say s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
   let keys := (base.scopes.toList.map (·.1) ++ new.scopes.toList.map (·.1)).eraseDups
   let amt (x : Float) := if base.exact then s!"{fmt2 (x / 1000)} kHB" else fmtTime x
   -- the largest changes first (a project report has thousands of scopes)
@@ -1053,56 +1066,88 @@ def compare (argv : List String) : IO UInt32 := do
         if base.exact then s!"{fmt2 (x / 1000)} kHB" else time r x
       let change := if (small base || small new) && !base.exact then "" else s!" ({fmt2 pct}%)"
       let calls := if base.isElab then "" else s!", calls {bc} -> {nc}"
-      IO.println s!"  {mark}  {k}: {amt base bt} -> {amt new nt}{change}{calls}"
+      say s!"  {mark}  {k}: {amt base bt} -> {amt new nt}{change}{calls}"
+      scopeRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str (if slower then "slower" else if callsChanged then "calls_changed" else if pct < -thr then "faster" else "ok")),
+        ("regression", Json.bool (slower || callsChanged)), ("base", toJson bt), ("new", toJson nt), ("change_pct", toJson pct),
+        ("base_calls", toJson bc), ("new_calls", toJson nc), ("too_small", Json.bool (small base || small new))]))
     | none, some (nt, nc) =>
-      IO.println s!"  new  {k}: {if base.exact then s!"{fmt2 (nt / 1000)} kHB" else time new nt}{if base.isElab then "" else s!", calls {nc}"}"
-    | some (bt, _), none => IO.println s!"  gone {k}: was {if base.exact then s!"{fmt2 (bt / 1000)} kHB" else time base bt}"
+      scopeRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str "new"), ("regression", Json.bool false),
+        ("base", Json.null), ("new", toJson nt), ("new_calls", toJson nc)]))
+      say s!"  new  {k}: {if base.exact then s!"{fmt2 (nt / 1000)} kHB" else time new nt}{if base.isElab then "" else s!", calls {nc}"}"
+    | some (bt, bc), none =>
+      scopeRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str "gone"), ("regression", Json.bool false),
+        ("base", toJson bt), ("new", Json.null), ("base_calls", toJson bc)]))
+      say s!"  gone {k}: was {if base.exact then s!"{fmt2 (bt / 1000)} kHB" else time base bt}"
     | none, none => pure ()
   if base.isElab && new.isElab && base.total > 0 then
-    IO.println s!"total: {amt base.total} -> {amt new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
+    say s!"total: {amt base.total} -> {amt new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
   if base.exact && new.exact && !slowerDecls.isEmpty then
     let bj ← IO.ofExcept (Json.parse (← IO.FS.readFile basePath))
     let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile newPath))
-    IO.println "why (what changed inside each declaration that got more expensive; counts are exact, heartbeats nearly so)"
+    say "why (what changed inside each declaration that got more expensive; counts are exact, heartbeats nearly so)"
     for e in explainElab bj nj slowerDecls do
-      for l in whyText e 8 do IO.println l
-  IO.println "copies of shared or multi-threaded values (any increase is a regression)"
+      for l in whyText e 8 do say l
+  say "copies of shared or multi-threaded values (any increase is a regression)"
   let ckeys := (base.copies.toList.map (·.1) ++ new.copies.toList.map (·.1)).eraseDups
   for k in ckeys do
     let b := base.copies.getD k 0
     let n := new.copies.getD k 0
+    let cause := if n > b then copyCauseText findings k n else none
+    if n != b then
+      copyRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str (if n > b then "more" else "fewer")),
+        ("regression", Json.bool (n > b)), ("base", toJson b), ("new", toJson n),
+        ("why", match cause with | some c => Json.str c | none => Json.null)]))
     if n > b then
       regressions := regressions + 1
-      IO.println s!"  REGRESSION  {k}: {b} -> {n}"
-      if let some c := copyCauseText findings k n then IO.println s!"    why: {c}"
+      say s!"  REGRESSION  {k}: {b} -> {n}"
+      if let some c := cause then say s!"    why: {c}"
     else if n < b then
-      IO.println s!"  fewer  {k}: {b} -> {n}"
+      say s!"  fewer  {k}: {b} -> {n}"
   -- allocations: exact; judged on the total, since inlining and refactoring
   -- move them between sites
   if !base.allocs.isEmpty && !new.allocs.isEmpty then
     let total (r : Report) := r.allocs.fold (fun a _ n => a + n) 0
     let (b, n) := (total base, total new)
-    IO.println "allocations by compiled Lean code (an increase of the total is a regression)"
+    say "allocations by compiled Lean code (an increase of the total is a regression)"
     if n > b then
       regressions := regressions + 1
-      IO.println s!"  REGRESSION  total: {b} -> {n}"
-    else IO.println s!"  {if n < b then "fewer" else "ok"}  total: {b} -> {n}"
+      say s!"  REGRESSION  total: {b} -> {n}"
+    else say s!"  {if n < b then "fewer" else "ok"}  total: {b} -> {n}"
     let akeys := (base.allocs.toList.map (·.1) ++ new.allocs.toList.map (·.1)).eraseDups
     let changed := (akeys.filterMap fun k =>
       let (x, y) := (base.allocs.getD k 0, new.allocs.getD k 0)
       if x == y then none else some (k, x, y)).toArray.qsort fun (_, x1, y1) (_, x2, y2) =>
         (Int.ofNat y1 - x1).natAbs > (Int.ofNat y2 - x2).natAbs
+    allocRows.modify (·.push (Json.mkObj [("key", Json.str "total"), ("status", Json.str (if n > b then "more" else if n < b then "fewer" else "ok")),
+      ("regression", Json.bool (n > b)), ("base", toJson b), ("new", toJson n)]))
+    for (k, x, y) in changed do
+      allocRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str (if y > x then "more" else "fewer")),
+        ("regression", Json.bool false), ("base", toJson x), ("new", toJson y)]))
     for (k, x, y) in changed.toList.take 10 do
-      IO.println s!"  {if y > x then "more" else "fewer"}  {k}: {x} -> {y}"
+      say s!"  {if y > x then "more" else "fewer"}  {k}: {x} -> {y}"
       if y > x && findings.isSome then
-        IO.println "    why: cause not attributed: explain explains copies, not allocations"
-    if changed.size > 10 then IO.println s!"  ({changed.size - 10} more sites changed)"
+        say "    why: cause not attributed: explain explains copies, not allocations"
+    if changed.size > 10 then say s!"  ({changed.size - 10} more sites changed)"
   else if base.allocs.isEmpty != new.allocs.isEmpty then
-    IO.println "allocations counted in only one report (run --allocs); not compared"
+    notes.modify (·.push "allocations counted in only one report (run --allocs); not compared")
+    say "allocations counted in only one report (run --allocs); not compared"
+  if json then
+    let allocs ← allocRows.get
+    IO.println (Json.mkObj [("schema", Leanprof.Contract.schema "compare"), ("leanprof", Json.str "compare"),
+      ("base", Json.str basePath), ("new", Json.str newPath),
+      ("kind", Json.str (if base.isElab then "elab" else "run")),
+      ("unit", Json.str (if base.exact then "heartbeats" else "ns")),
+      ("threshold_pct", toJson thr), ("min_ms", toJson minMs),
+      ("regressions", toJson regressions), ("regressed", Json.bool (regressions > 0)),
+      ("scopes", Json.arr (← scopeRows.get)), ("copies", Json.arr (← copyRows.get)),
+      ("allocations", if base.allocs.isEmpty || new.allocs.isEmpty then Json.null else Json.arr allocs),
+      ("total", if base.isElab && new.isElab && base.total > 0 then
+          Json.mkObj [("base", toJson base.total), ("new", toJson new.total)] else Json.null),
+      ("notes", toJson (← notes.get))]).pretty
   if regressions == 0 then
-    IO.println "no regressions"
+    say "no regressions"
     return 0
-  IO.println s!"{regressions} regressions"
+  say s!"{regressions} regressions"
   return 1
 
 /-! ## sample -/
@@ -1478,7 +1523,7 @@ def sample (argv : List String) : IO UInt32 := do
   -- where the runtime's time went, for `leanprof` with no arguments' findings
   let runtime := (catT.toArray.qsort (fun a b => a.2 > b.2)).map fun (c, w) =>
     Json.mkObj [("category", Json.str c), ("self_ns", toJson (w * 1000))]
-  let report := Json.mkObj [("version", toJson (3 : Nat)), ("sampled", Json.bool true),
+  let report := Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "run"), ("sampled", Json.bool true),
     ("exe", Json.str exe), ("exit_code", toJson rc.toNat),
     ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[]),
     ("runtime", Json.arr runtime)]
@@ -1681,7 +1726,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
       (elabCmd (["--heartbeats", "--out", hbPath.toString] ++ o.hbFiles.toList))
     hb := some ((← loadReport hbPath.toString).scopes.toList.map fun (k, (t, _)) => (k, t))
   let summary := Json.mkObj [
-    ("version", toJson (1 : Nat)), ("leanprof", Json.str "measure"),
+    ("version", toJson (1 : Nat)), ("schema", Leanprof.Contract.schema "measure"), ("leanprof", Json.str "measure"),
     ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs), ("core", Json.bool o.core),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("exit_code", toJson codes.back!.toNat),
@@ -1961,7 +2006,7 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let overloaded := match maxLoad, cpus with | some l, some c => l > c.toFloat | _, _ => false
   let finalHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
   unless finalHashes == binaryHashes do throw <| IO.userError "a benchmark binary changed during measurement"
-  let j := Json.mkObj [("version", toJson (2 : Nat)), ("leanprof", "measure-pair"),
+  let j := Json.mkObj [("version", toJson (2 : Nat)), ("schema", Leanprof.Contract.schema "measure-pair"), ("leanprof", "measure-pair"),
     ("mode", "plain"), ("runs", toJson changes.size), ("warmup", toJson o.warmup),
     ("design", design.json), ("min_change", toJson o.minChange),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
@@ -1994,9 +2039,13 @@ rules are in `Leanprof.Judge`). Exits 0 for KEEP. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
   let mut minChange : Float := 1
   let mut allowOverloaded := false
+  let mut json := false
   let mut argv := argv
   repeat
     match argv with
+    | "--json" :: rest =>
+      json := true
+      argv := rest
     | "--min-change" :: v :: rest =>
       let some pct := parseDecimal? v | throw <| IO.userError "--min-change must be a percentage from 0 to 100"
       unless pct ≤ 100 do throw <| IO.userError "--min-change must be a percentage from 0 to 100"
@@ -2012,7 +2061,15 @@ def judgeCmd (argv : List String) : IO UInt32 := do
       IO.ofExcept (Leanprof.Judge.judgePaired j minChange allowOverloaded)
     | [basePath, newPath] => pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange)
     | _ => throw <| IO.userError (usageFor "judge")
-  IO.print v.render
+  if json then
+    let inputs := match argv with
+      | [p] => [("pair", Json.str p)]
+      | xs => [("base", Json.str (xs.headD "")), ("new", Json.str (xs.getLastD ""))]
+    IO.println (Json.mkObj ([("schema", Leanprof.Contract.schema "judge"), ("leanprof", Json.str "judge"),
+      ("kind", Json.str (if argv.length == 1 then "paired" else "summaries")),
+      ("inputs", Json.mkObj inputs), ("min_change", toJson minChange), ("allow_overloaded", Json.bool allowOverloaded)] ++
+      v.json)).pretty
+  else IO.print v.render
   return if v.keep then 0 else 1
 
 /-! ## report-md -/

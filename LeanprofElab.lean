@@ -4,6 +4,7 @@ import Lean.DeclarationRange
 import Lean.Elab.ParseImportsFast
 import Lean.Util.Path
 import LeanprofElabRange
+import Leanprof.Contract
 
 /-!
 # `leanprof elab`: compile cost per line, declaration, file and definition
@@ -1522,7 +1523,7 @@ def main (argv : List String) : IO UInt32 := do
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
   let tEnd ← IO.monoNanosNow
   IO.FS.writeFile o.out
-    (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true), ("project", Json.bool o.project),
+    (Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "elab"), ("elab", Json.bool true), ("project", Json.bool o.project),
       ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
       ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("constants", Json.arr constants),
       ("files", Json.arr fileJson), ("copies", Json.arr #[]),

@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import Leanprof.Contract
 
 /-!
 # `leanprof explain`: why a value was shared when it was copied
@@ -1563,7 +1564,7 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
   let shares ← if o.run.isSome || (← (o.why : FilePath).pathExists) then loadWhy o.why else pure #[]
   let (sites, tiny) := rankedSites j o.all
   if sites.isEmpty then
-    if o.json then IO.println (Json.mkObj [("report", o.report), ("sites", 0), ("findings", Json.arr #[])]).pretty
+    if o.json then IO.println (Json.mkObj [("schema", Contract.schema "explain"), ("report", o.report), ("sites", 0), ("findings", Json.arr #[]), ("tiny_sites", toJson tiny)]).pretty
     else IO.println ("leanprof explain: the report has no copies of shared values" ++
       (if tiny > 0 then s!" other than {tiny} site(s) of empty or tiny values (--all explains them)" else ""))
     return 0
@@ -1583,7 +1584,8 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
   IO.FS.createDirAll ((o.out : FilePath).parent.getD ".")
   IO.FS.writeFile o.out ((Json.arr entries).compress ++ "\n")
   if o.json then
-    IO.println (Json.mkObj [("report", o.report), ("sites", sites.size), ("findings", Json.arr entries)]).pretty
+    IO.println (Json.mkObj [("schema", Contract.schema "explain"), ("report", o.report), ("sites", sites.size),
+      ("shown", toJson (min o.top sites.size)), ("tiny_sites", toJson tiny), ("findings", Json.arr entries)]).pretty
   return 0
 
 end Leanprof.Explain

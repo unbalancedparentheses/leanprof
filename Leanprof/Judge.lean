@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import Leanprof.Contract
 
 /-!
 # `leanprof judge`: KEEP or DISCARD a change
@@ -129,6 +130,14 @@ structure Verdict where
   most pairs without a call, or not judged on an overloaded machine): an
   experiment says INCONCLUSIVE rather than DISCARD when nothing else improved -/
   unsettled : Bool := false
+  /-- the reasons in `worse` that are changed behaviour (exit code, output) -/
+  correctness : Array String := #[]
+  /-- the reasons in `worse` that make the two sides incomparable (another
+  command, scope or `--core`) -/
+  incompatible : Array String := #[]
+  /-- the reasons in `worse` that make the measurement unusable (an output
+  that differs between runs of the same code) -/
+  invalid : Array String := #[]
 
 /-- `x` with two decimals. -/
 def fmt2 (x : Float) : String :=
@@ -177,20 +186,26 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : 
   let mut worse : Array String := #[]
   let mut better : Array String := #[]
   let mut notes : Array String := #[]
+  let mut correctness : Array String := #[]
+  let mut incompatible : Array String := #[]
+  let mut invalid : Array String := #[]
   if b.command != n.command then
-    worse := worse.push s!"different commands measured: {b.command.compress} vs {n.command.compress}"
+    incompatible := incompatible.push s!"different commands measured: {b.command.compress} vs {n.command.compress}"
   if b.scope != n.scope then
     let what (s : String) := if s.isEmpty then "the whole process" else s!"scope {s}"
-    worse := worse.push s!"different times measured: {what b.scope} vs {what n.scope}"
+    incompatible := incompatible.push s!"different times measured: {what b.scope} vs {what n.scope}"
   if b.core != n.core then
-    worse := worse.push ("copies and allocations counted differently: only one summary was measured with --core " ++
+    incompatible := incompatible.push ("copies and allocations counted differently: only one summary was measured with --core " ++
       "(Lean's libraries included); measure both the same way")
   if b.exitCode != n.exitCode then
-    worse := worse.push s!"exit code changed: {b.exitCode} -> {n.exitCode}"
-  if b.outputSource != n.outputSource || b.outputHash != n.outputHash then
-    worse := worse.push s!"output changed ({n.outputSource}): {b.outputHash} -> {n.outputHash}"
+    correctness := correctness.push s!"exit code changed: {b.exitCode} -> {n.exitCode}"
+  if b.outputSource != n.outputSource then
+    incompatible := incompatible.push s!"output changed ({n.outputSource}): {b.outputHash} -> {n.outputHash} (different outputs checked: {b.outputSource} vs {n.outputSource})"
+  else if b.outputHash != n.outputHash then
+    correctness := correctness.push s!"output changed ({n.outputSource}): {b.outputHash} -> {n.outputHash}"
   if !b.outputStable || !n.outputStable then
-    worse := worse.push "output differs between runs, so changes to it cannot be detected (measure with --check-output)"
+    invalid := invalid.push "output differs between runs, so changes to it cannot be detected (measure with --check-output)"
+  worse := incompatible ++ correctness ++ invalid
   -- copies: exact
   if n.copies > b.copies then worse := worse.push s!"copies: {groupDigits b.copies} -> {groupDigits n.copies}"
   else if n.copies < b.copies then better := better.push s!"copies: {groupDigits b.copies} -> {groupDigits n.copies}"
@@ -251,7 +266,7 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : 
   else if n.max < b.min || n.min > b.max then
     notes := notes.push s!"{t} (runs do not overlap, but the change is below --min-change {fmt2 minChange}%)"
   else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
-  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes }
+  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, correctness, incompatible, invalid }
 
 /-! ## Paired sessions: a group-sequential sign test
 
@@ -415,6 +430,7 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
   let mut better : Array String := #[]
   let mut notes : Array String := #["plain binaries: copies, allocations and compile heartbeats were not measured"]
   let mut changes : Array Float := #[]
+  let mut correctness : Array String := #[]
   let mut expected : Option (String × String × String) := none
   for i in [:runs] do
     let mut times : Array Nat := #[]
@@ -427,19 +443,20 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
       unless elapsed > 0 && elapsed ≤ 18446744073709551615 do throw "invalid paired duration"
       times := times.push elapsed
       let code ← row.getObjValAs? Nat "exit_code"
-      if code != 0 then worse := worse.push s!"pair {i}, {side}: exit code {code}"
+      if code != 0 then correctness := correctness.push s!"pair {i}, {side}: exit code {code}"
       unless ← row.getObjValAs? Bool "output_present" do
-        worse := worse.push s!"pair {i}, {side}: checked output file missing"
+        correctness := correctness.push s!"pair {i}, {side}: checked output file missing"
       let stdout ← row.getObjValAs? String "stdout_hash"
       let stderr ← row.getObjValAs? String "stderr_hash"
       let output ← row.getObjValAs? String "output_hash"
       unless !stdout.isEmpty && !stderr.isEmpty && !output.isEmpty do throw "missing paired output hash"
       let signature := (stdout, stderr, output)
       if let some original := expected then
-        if signature != original then worse := worse.push s!"pair {i}, {side}: output or diagnostics changed"
+        if signature != original then correctness := correctness.push s!"pair {i}, {side}: output or diagnostics changed"
       else expected := some signature
     let (base, candidate) := if i % 2 == 0 then (times[0]!, times[1]!) else (times[1]!, times[0]!)
     changes := changes.push ((candidate.toFloat / base.toFloat - 1) * 100)
+  worse := worse ++ correctness
   let some (lo, hi) := seqInterval (seqBounds design).1 changes
     | throw "not enough pairs for a 95% median interval"
   let sorted := changes.qsort (· < ·)
@@ -463,7 +480,27 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
     | .unsettled =>
       notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
       unsettled := true
-  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, unsettled }
+  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, unsettled, correctness }
+
+/-- What the verdict means (`Contract.Outcome`): the first that applies of
+incompatible sides, an unusable measurement, changed behaviour, a cost that
+got worse, an improvement, an unsettled time, and no improvement. -/
+def Verdict.outcome (v : Verdict) : Contract.Outcome :=
+  if !v.incompatible.isEmpty then .incompatible
+  else if !v.invalid.isEmpty then .measurementFailed
+  else if !v.correctness.isEmpty then .correctnessFailure
+  else if !v.worse.isEmpty then .regression
+  else if v.keep then .improved
+  else if v.unsettled then .insufficientEvidence
+  else .noImprovement
+
+/-- The verdict as `judge --json` prints it (without the `schema` field). -/
+def Verdict.json (v : Verdict) : List (String × Json) :=
+  [("verdict", Json.str (if v.keep then "KEEP" else "DISCARD")), ("keep", Json.bool v.keep)] ++
+  v.outcome.json ++
+  [("worse", toJson v.worse), ("better", toJson v.better), ("notes", toJson v.notes),
+   ("correctness", toJson v.correctness), ("incompatible", toJson v.incompatible), ("invalid", toJson v.invalid),
+   ("unsettled", Json.bool v.unsettled)]
 
 /-- The verdict as `judge` prints it. -/
 def Verdict.render (v : Verdict) : String := Id.run do

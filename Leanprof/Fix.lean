@@ -335,6 +335,8 @@ structure Opts where
   allowOverloaded : Bool := false
   top : Nat := 20
   all : Bool := false
+  /-- print the result as JSON (schemas/fix.schema.json), the steps on stderr -/
+  json : Bool := false
 
 partial def parseOpts (o : Opts) : List String → Except String Opts
   | [] => .ok o
@@ -356,6 +358,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--allow-overloaded" :: rest => parseOpts { o with allowOverloaded := true } rest
   | "--top" :: n :: rest => parseOpts { o with top := n.toNat! } rest
   | "--all" :: rest => parseOpts { o with all := true } rest
+  | "--json" :: rest => parseOpts { o with json := true } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: _ => .error s!"unknown argument {a}"
 
@@ -496,8 +499,10 @@ def outsidePathDeps (cwd top : FilePath) : IO (Option String) := do
 (`run`, `measure`, `measure-pair`) in `cwd`, capturing its output. Exit
 code 0: KEEP (or `--dry-run` printed a fix); 1: DISCARD, or no finding has a
 mechanical fix. -/
-def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.Process.Output) : IO UInt32 := do
-  let o ← IO.ofExcept (parseOpts {} argv)
+def fixBody (o : Opts) (runSelf : Array String → FilePath → IO IO.Process.Output)
+    (result : IO.Ref (List (String × Json))) : IO UInt32 := do
+  let set (status : String) (fields : List (String × Json)) : IO Unit :=
+    result.modify fun r => r ++ [("status", Json.str status)] ++ fields
   let dir : FilePath := ".lake" / "leanprof" / "fix"
   IO.FS.createDirAll dir
   let logPath := dir / "log.txt"
@@ -520,6 +525,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
     log "leanprof run" out
     unless out.exitCode == 0 && (← (o.report : FilePath).pathExists) do
       IO.eprintln s!"leanprof fix: `leanprof run {exe}` failed (exit code {out.exitCode}):\n{tailOf (out.stdout ++ out.stderr)}"
+      set "error" [("error", Json.str s!"`leanprof run {exe}` failed (exit code {out.exitCode})")]
       return 2
   let (findings, tiny) ← Explain.findingsOf o.report o.top o.all
   -- with --all too: only sites that copied shared values (not only constants)
@@ -528,6 +534,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
       s!" ({tiny} site(s) that copied only empty or tiny values left out; --all considers them)" else ""
   if findings.isEmpty then
     IO.println s!"leanprof fix: no copies of shared values in {o.report}: nothing to fix{tinyNote}"
+    set "no_findings" [("tiny_sites", toJson tiny)]
     return 1
   let srcCache ← IO.mkRef ({} : Std.HashMap String (Array String))
   let readSrc (file : String) : IO (Array String) := do
@@ -536,6 +543,13 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
     srcCache.modify (·.insert file s)
     return s
   let listed ← listFindings findings readSrc
+  result.modify (· ++ [("report", Json.str o.report), ("tiny_sites", toJson tiny),
+    ("findings", Json.arr (listed.map fun (k, f, r) => Json.mkObj [("n", toJson k), ("rank", f.getObjValD "rank"),
+      ("function", Json.str (jstr f "function")), ("cause", Json.str (jstr f "cause")), ("file", Json.str (jstr f "file")),
+      ("lines", toJson (natsOf f "lines")), ("copies", toJson (jnum f "shared" + jnum f "multi_threaded")),
+      ("mechanical", Json.bool (r matches .ok _)),
+      ("alternatives", match r with | .ok ps => toJson ps.size | .error _ => toJson (0 : Nat)),
+      ("not_mechanical", match r with | .ok _ => Json.null | .error e => Json.str e)]))])
   IO.println s!"leanprof fix: {findings.size} finding(s) in {o.report}, costliest first{tinyNote}:"
   for (k, f, r) in listed do
     IO.println s!"  {describe k f}"
@@ -548,11 +562,15 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
   let some (k, f, .ok plans) := chosen
     | match o.finding, chosen with
       | some k, some (_, _, .error e) =>
-        IO.println s!"\nleanprof fix: finding {k} has no mechanical fix: {e}"; return 1
-      | some k, _ => IO.println s!"\nleanprof fix: there is no finding {k} (1 to {listed.size})"; return 1
+        IO.println s!"\nleanprof fix: finding {k} has no mechanical fix: {e}"
+        set "no_mechanical_fix" [("finding", toJson k), ("reason", Json.str e)]; return 1
+      | some k, _ =>
+        IO.println s!"\nleanprof fix: there is no finding {k} (1 to {listed.size})"
+        set "error" [("error", Json.str s!"there is no finding {k} (1 to {listed.size})")]; return 1
       | none, _ =>
         IO.println ("\nleanprof fix: none of these findings has a mechanical fix (reasons above); " ++
           "`leanprof explain` describes each")
+        set "no_mechanical_fix" []
         return 1
   let file := jstr f "file"
   let src ← readSrc file
@@ -561,7 +579,13 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
   for h : i in [0:plans.size] do
     IO.println s!"\nalternative {i + 1} of {plans.size}: {plans[i].what}"
     IO.print (unifiedDiff file src plans[i].edits)
-  if o.dryRun then return 0
+  result.modify (· ++ [("finding", toJson k), ("cause", Json.str (jstr f "cause")), ("function", Json.str (jstr f "function")),
+    ("file", Json.str file),
+    ("plans", Json.arr (plans.mapIdx fun i p => Json.mkObj [("n", toJson (i + 1)), ("what", Json.str p.what),
+      ("code", Json.str p.code), ("diff", Json.str (unifiedDiff file src p.edits))]))])
+  if o.dryRun then
+    set "dry_run" []
+    return 0
   let exe := o.exe.get!
   -- everything from here runs in a git worktree of HEAD, never in the
   -- user's checkout: an interruption, a crash or a test that writes files
@@ -572,9 +596,11 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
   let pre ← git #["rev-parse", "--show-prefix"]
   let head ← git #["rev-parse", "HEAD"]
   unless (← gitRaw #["ls-files", "--error-unmatch", "--", file]).exitCode == 0 do
-    IO.eprintln s!"leanprof fix: {file} is not committed: fix checks the edit in a git worktree of HEAD"; return 2
+    IO.eprintln s!"leanprof fix: {file} is not committed: fix checks the edit in a git worktree of HEAD"
+    set "error" [("error", Json.str s!"{file} is not committed")]; return 2
   if let some why ← outsidePathDeps cwd top then
-    IO.eprintln s!"leanprof fix: {why}"; return 2
+    IO.eprintln s!"leanprof fix: {why}"
+    set "error" [("error", Json.str why)]; return 2
   let wtRoot := absDir / "worktree"
   -- a worktree left by a run that was killed (SIGKILL cannot be caught)
   discard <| gitRaw #["worktree", "remove", "--force", wtRoot.toString]
@@ -589,6 +615,10 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
   -- a reference: `finally` does not see the updates of a `let mut` made in `try`
   let keptRef ← IO.mkRef (none : Option (String × String))
   let reasons ← IO.mkRef (#[] : Array String)
+  -- each alternative tried: what it is, its outcome (Contract.Outcome) and why
+  let tried ← IO.mkRef (#[] : Array Json)
+  let tryRecord (i : Nat) (what : String) (out : Contract.Outcome) (why : String) : IO Unit :=
+    tried.modify (·.push (Json.mkObj ([("n", toJson (i + 1)), ("what", Json.str what), ("reason", Json.str why)] ++ out.json)))
   let wtFile := wt / file
   try
     discard <| git #["worktree", "add", "--detach", "-q", wtRoot.toString, head]
@@ -654,44 +684,48 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
         IO.println (Explain.wrap s!"  DISCARD: {why}" "    ")
         IO.FS.writeFile wtFile original
       if let .error e := ← build then
-        fail s!"it does not build:\n{e}"; reasons.modify (·.push <| s!"{tag}: it does not build"); continue
+        fail s!"it does not build:\n{e}"; reasons.modify (·.push <| s!"{tag}: it does not build")
+        tryRecord i plan.what .correctnessFailure "it does not build"; continue
       IO.println "  builds"
       if let .error e := ← runTests then
-        fail s!"the tests fail ({testsText}):\n{e}"; reasons.modify (·.push <| s!"{tag}: the tests fail"); continue
+        fail s!"the tests fail ({testsText}):\n{e}"; reasons.modify (·.push <| s!"{tag}: the tests fail")
+        tryRecord i plan.what .correctnessFailure "the tests fail"; continue
       if testCmd.isSome then IO.println s!"  tests pass ({testsText})"
       let (code, out) ← plainRun wt exe o.args o.checkOutput
       if code != baseCode then
         let why := s!"the exit code changed: {baseCode} -> {code}"
-        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
+        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); tryRecord i plan.what .correctnessFailure why; continue
       if out != baseOut then
         let why := s!"the output changed ({o.checkOutput.getD "stdout"}), {firstDifference baseOut out}"
-        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
+        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); tryRecord i plan.what .correctnessFailure why; continue
       IO.println s!"  output identical ({o.checkOutput.getD "stdout"}, {out.utf8ByteSize} bytes)"
       keepBinary (absDir / "candidate-bin")
       let mut new : Judge.Summary := {}
       match ← measure (absDir / "new.json") with
       | .ok s => new := s
       | .error e =>
-        fail s!"measuring it failed:\n{e}"; reasons.modify (·.push <| s!"{tag}: measuring it failed"); continue
+        fail s!"measuring it failed:\n{e}"; reasons.modify (·.push <| s!"{tag}: measuring it failed")
+        tryRecord i plan.what .measurementFailed "measuring it failed"; continue
       let exact := Judge.judge base new
       IO.println s!"  leanprof judge (measure, {o.runs} runs each):\n{verdictLines exact}"
       unless exact.keep do
         let why := "`judge` of the two measure summaries says DISCARD: " ++
           (if exact.worse.isEmpty then "nothing improved beyond noise" else "; ".intercalate exact.worse.toList)
-        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
+        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); tryRecord i plan.what exact.outcome why; continue
       let pairOut ← runSelf (#["measure-pair", "--base", (absDir / "base-bin").toString,
         "--candidate", (absDir / "candidate-bin").toString, "--runs", toString o.pairs,
         "--out", (absDir / "paired.json").toString] ++ checkArgs ++ #["--"] ++ o.args) wt
       log "leanprof measure-pair" pairOut
       if pairOut.exitCode != 0 then
         fail s!"measure-pair failed:\n{tailOf (pairOut.stdout ++ pairOut.stderr)}"
-        reasons.modify (·.push <| s!"{tag}: measure-pair failed"); continue
+        reasons.modify (·.push <| s!"{tag}: measure-pair failed")
+        tryRecord i plan.what .measurementFailed "measure-pair failed"; continue
       let pj ← IO.ofExcept (Json.parse (← IO.FS.readFile (absDir / "paired.json")))
       let paired ← IO.ofExcept (Judge.judgePaired pj 1 o.allowOverloaded)
       IO.println s!"  leanprof judge (measure-pair, at most {o.pairs} pairs of plain binaries):\n{verdictLines paired}"
       unless paired.worse.isEmpty do
         let why := "the plain binaries: " ++ "; ".intercalate paired.worse.toList
-        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
+        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); tryRecord i plan.what paired.outcome why; continue
       -- KEEP: commit with the evidence
       let short := ((jstr f "function").splitOn " (in ").head!
       let argsText := if o.args.isEmpty then "" else " -- " ++ " ".intercalate (o.args.toList.map shellQuote)
@@ -711,7 +745,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
       -- (a test may have rewritten it), and nothing else
       unless (← IO.FS.readFile wtFile) == candidate do
         let why := s!"{file} changed while it was checked (by the tests?), so what was measured is not the edit"
-        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
+        fail why; reasons.modify (·.push <| s!"{tag}: {why}"); tryRecord i plan.what .measurementFailed why; continue
       IO.FS.writeFile (absDir / "commit-message.txt") msg
       discard <| git #["commit", "-q", "-F", (absDir / "commit-message.txt").toString, "--", file] (cwd := wt)
       let sha ← git #["rev-parse", "HEAD"] (cwd := wt)
@@ -722,6 +756,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
         throw <| IO.userError (s!"the commit {sha} is not the measured edit (parent {parent}, files " ++
           s!"{changed.replace "\n" ", "}): nothing was kept")
       keptRef.set (some (sha, plan.what))
+      tryRecord i plan.what .improved ("; ".intercalate (exact.better ++ paired.better).toList)
       break
     -- the branch, in the user's repository, only for a kept commit
     if let some (sha, _) ← keptRef.get then
@@ -735,16 +770,64 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
       keptRef.set (some (← git #["rev-parse", "--short", sha], branch))
   finally
     removeWorktree
+  let alts ← tried.get
+  result.modify (· ++ [("tried", Json.arr alts), ("log", Json.str logPath.toString)])
   match ← keptRef.get with
   | some (sha, branch) =>
+    set "kept" ([("verdict", Json.str "KEEP"), ("commit", Json.str sha), ("branch", Json.str branch)] ++
+      Contract.Outcome.improved.json)
     IO.println s!"\nKEEP: committed {sha} on branch {branch}; your checkout is unchanged (the checks ran in a git worktree)."
     IO.println s!"  see it: git show {branch}    take it: git merge {branch}"
     IO.println s!"  (the commit message holds the evidence; the steps' output is in {logPath})"
     return 0
   | none =>
+    -- the first alternative measured validly says what the DISCARD means
+    let outcomeOf (j : Json) : String := (j.getObjValAs? String "outcome").toOption.getD ""
+    let valid := alts.filter fun j => (j.getObjValAs? Bool "measurement_valid").toOption.getD false
+    let out : Contract.Outcome := match (valid[0]?.map outcomeOf) with
+      | some "regression" => .regression | some "no_improvement" => .noImprovement
+      | some "correctness_failure" => .correctnessFailure | some "insufficient_evidence" => .insufficientEvidence
+      | _ => .measurementFailed
+    set "discarded" ([("verdict", Json.str "DISCARD"), ("reasons", toJson (← reasons.get))] ++ out.json)
     IO.println s!"\nDISCARD: no alternative was kept and no branch was created; your checkout is unchanged."
     for r in ← reasons.get do IO.println (Explain.wrap s!"  - {r}" "    ")
     IO.println s!"  (the steps' output is in {logPath})"
     return 1
+
+/-- `leanprof fix`, with its result: written to `.lake/leanprof/fix/result.json`
+(schemas/fix.schema.json) also after an error, and printed by `--json`, with
+the steps on stderr. -/
+def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.Process.Output) : IO UInt32 := do
+  let o ← IO.ofExcept (parseOpts {} argv)
+  let result ← IO.mkRef ([] : List (String × Json))
+  let out ← IO.getStdout
+  if o.json then discard <| IO.setStdout (← IO.getStderr)
+  let rc ← try fixBody o runSelf result
+    catch e =>
+      result.modify (· ++ [("status", Json.str "error"), ("error", Json.str (toString e))])
+      if o.json then discard <| IO.setStdout out
+      let j := resultJson o (← result.get) 2
+      writeResult j
+      if o.json then IO.println j.pretty
+      throw e
+  if o.json then discard <| IO.setStdout out
+  let j := resultJson o (← result.get) rc
+  writeResult j
+  if o.json then IO.println j.pretty
+  return rc
+where
+  resultJson (o : Opts) (fields : List (String × Json)) (rc : UInt32) : Json :=
+    -- the last value of a field wins (`status` is set once, at the end)
+    let m := fields.foldl (fun (m : Std.HashMap String Json) (k, v) => m.insert k v) {}
+    Json.mkObj ([("schema", Contract.schema "fix"), ("leanprof", Json.str "fix"), ("exit_code", toJson rc.toNat),
+      ("dry_run", Json.bool o.dryRun),
+      ("exe", match o.exe with | some e => Json.str e | none => Json.null), ("args", toJson o.args)] ++
+      m.toList.filter (fun (k, _) => !["schema", "leanprof", "exit_code", "dry_run", "exe", "args"].contains k))
+  writeResult (j : Json) : IO Unit := do
+    let dir : FilePath := ".lake" / "leanprof" / "fix"
+    try
+      IO.FS.createDirAll dir
+      IO.FS.writeFile (dir / "result.json") (j.pretty ++ "\n")
+    catch _ => pure ()
 
 end Leanprof.Fix
