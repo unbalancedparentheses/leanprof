@@ -157,7 +157,13 @@ structure Guard where
   notes : Array String := #[]
   deriving Inhabited
 
-def findingText (f : Json) : String := s!"{jstr f "code"} {jstr f "subject"}: {jstr f "detail"}"
+def findingText (f : Json) : String :=
+  let t := s!"{jstr f "code"} {jstr f "subject"}: {jstr f "detail"}"
+  if t.length > 600 then String.ofList (t.toList.take 600) ++ " …" else t
+
+/-- At most `n` reasons, then how many more there are and where. -/
+def fewer (rs : Array String) (path : FilePath) (n : Nat := 8) : Array String :=
+  if rs.size ≤ n then rs else rs.extract 0 n |>.push s!"… and {rs.size - n} more findings, all in {path}"
 
 /-- The auditor's status, except that `no_theorems` alone is accepted: the
 audited modules state no theorem, so none can be weakened, and every other
@@ -169,7 +175,15 @@ def guardOf (audit : Json) : Guard := Id.run do
   let noTheorems := findings.any (jstr · "code" == "no_theorems")
   match jstr audit "status" with
   | "PASS" => return { status := "PASS" }
-  | "FAIL" => return { status := "FAIL", reasons := fails.map findingText }
+  | "FAIL" =>
+    -- what was written first (a sorry, a protected file), then what follows from it,
+    -- and declarations the user named before generated or private ones
+    let rank (f : Json) : Nat :=
+      (match jstr f "code" with
+        | "sorry_dependency" | "protected_file_changed" | "added_axiom" | "removed_declaration" => 0
+        | _ => 2) + (if ((jstr f "subject").splitOn ".").any (·.startsWith "_") then 1 else 0)
+    let sorted := (fails.toList.mergeSort fun a b => rank a ≤ rank b).toArray
+    return { status := "FAIL", reasons := sorted.map findingText }
   | "INCONCLUSIVE" =>
     if open_.isEmpty && noTheorems then
       return { status := "PASS", notes := #["the audited modules state no theorems, so none can be weakened " ++
@@ -680,7 +694,8 @@ def startCmd (c : Ctx) (argv : List String) : IO UInt32 := do
       let (a, _, _) ← runCase s bdir bin args
       held := held.push a
     s := { s with baseline, heldout_baseline := held, base_bin := (dir / "base-bin").toString }
-    IO.println (s!"  cases      {cases.size} ({if hasHole then "" else "the workload, "}{cases.size - (if hasHole then 0 else 1)} more), " ++
+    let first := if hasHole then "the first input is the timed workload" else s!"the workload and {cases.size - 1} more"
+    IO.println (s!"  cases      {cases.size} ({first}), " ++
       s!"each the same on two runs (stdout, stderr, exit code{if s.check_outputs.isEmpty then "" else ", " ++ ", ".intercalate s.check_outputs.toList})" ++
       (if heldout.isEmpty then "" else s!"; {heldout.size} held out (recorded as hashes, run by finish)"))
     match ← measure c log s bdir (dir / "base.json") with
@@ -870,6 +885,14 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     let mut audited := #[]
     for m in changedMods ++ deps do
       if (← built cdir m) && (← built bdir m) then audited := audited.push m
+    -- the modules that import the change must build too (a test module's
+    -- `#guard` fails there), before the auditor builds them for its evidence
+    let extra := audited.filter (!changedMods.contains ·)
+    unless extra.isEmpty do
+      if let .error e ← lakeBuild log cdir extra then
+        step "build" (Json.mkObj [("ok", Json.bool false), ("modules", toJson extra), ("error", Json.str e)])
+        say "build" s!"FAILED: the modules that import the change ({extra.size})"
+        return ← finish .discard #[s!"a module that imports the change does not build:\n{e}"]
     let adir := expDir c s / "audit"
     IO.FS.createDirAll adir
     IO.FS.writeFile (adir / "audit.py") auditScript
@@ -895,13 +918,13 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     match g.status with
     | "FAIL" =>
       say "guard" s!"FAIL ({audited.size} module(s) audited)"
-      return ← finish .discard (g.reasons.map ("guard: " ++ ·))
+      return ← finish .discard (fewer (g.reasons.map ("guard: " ++ ·)) (tdir / "audit.json"))
     | "PASS" =>
       say "guard" (s!"PASS: {audited.size} module(s) audited ({thms} theorems): no sorry, new axiom, " ++
         "implemented_by, extern or protected file" ++ (if g.notes.isEmpty then "" else s!"; {g.notes[0]!}"))
     | _ =>
       say "guard" s!"INCONCLUSIVE ({audited.size} module(s) audited)"
-      return ← finish .inconclusive (g.reasons.map ("guard: " ++ ·))
+      return ← finish .inconclusive (fewer (g.reasons.map ("guard: " ++ ·)) (tdir / "audit.json"))
     -- 3. tests
     if let .error e ← runTests log s cdir then
       step "tests" (Json.mkObj [("command", toJson s.test), ("passed", Json.bool false)])
