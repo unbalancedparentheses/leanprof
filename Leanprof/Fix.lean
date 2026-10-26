@@ -329,7 +329,7 @@ structure Opts where
   finding : Option Nat := none
   dryRun : Bool := false
   runs : Nat := 5
-  pairs : Nat := 20
+  pairs : Nat := 30
   deps : Bool := true
   branch : Option String := none
   allowOverloaded : Bool := false
@@ -688,7 +688,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
         reasons.modify (·.push <| s!"{tag}: measure-pair failed"); continue
       let pj ← IO.ofExcept (Json.parse (← IO.FS.readFile (absDir / "paired.json")))
       let paired ← IO.ofExcept (Judge.judgePaired pj 1 o.allowOverloaded)
-      IO.println s!"  leanprof judge (measure-pair, {o.pairs} pairs of plain binaries):\n{verdictLines paired}"
+      IO.println s!"  leanprof judge (measure-pair, at most {o.pairs} pairs of plain binaries):\n{verdictLines paired}"
       unless paired.worse.isEmpty do
         let why := "the plain binaries: " ++ "; ".intercalate paired.worse.toList
         fail why; reasons.modify (·.push <| s!"{tag}: {why}"); continue
@@ -705,7 +705,7 @@ def fixCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.P
         s!"- output: identical before and after ({o.checkOutput.getD "stdout"}, {out.utf8ByteSize} bytes, " ++
           s!"exit code {code})\n" ++
         s!"- leanprof measure ({o.runs} runs of each, with probes), leanprof judge:\n{verdictLines exact}\n" ++
-        s!"- leanprof measure-pair ({o.pairs} pairs of plain binaries, AB/BA order), leanprof judge:\n" ++
+        s!"- leanprof measure-pair (at most {o.pairs} pairs of plain binaries, AB/BA order, stopped when settled), leanprof judge:\n" ++
           s!"{verdictLines paired}\n"
       -- what is committed must be what was measured: the file as written
       -- (a test may have rewritten it), and nothing else

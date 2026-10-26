@@ -276,7 +276,14 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   against LeanBench's 0.74 s; `measure` + `judge` takes 5.0 s and no longer
   forces a rebuild afterwards. LeanBench times the action in process; for a
   plain binary the whole-process dilution was small (10.4% read as 10.0%),
-  and `measure --scope NAME` times one `profile!` scope.
+  and `measure --scope NAME` times one `profile!` scope. Since then
+  `measure-pair` stops once its verdict is settled (a group-sequential sign
+  test: each claim wrong at most 2.5% of the time) and `--scope` times one
+  `Leanprof.bench` region of a plain binary: on the same trials, at load
+  4–13, that took 0.89 s per verdict end to end (candidate build included)
+  against LeanBench's 1.09 s, with 0 false verdicts in 20 and the 2.4%
+  slowdown caught 4 of 5 (LeanBench at 5%: 0 of 5); at load up to 15 it
+  took 1.9–2.3 s against LeanBench's 1.06 s with its rebuild.
 - **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)**
   publishes profiles of all of Mathlib (8,556 files); leanprof's
   [published profiles](docs/profiles/README.md) cover all of Batteries and
@@ -314,7 +321,7 @@ reproduction.
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |
 | Seeded slowdowns caught, quiet machine ([case study](docs/case-studies/leanbench.md)) | 2%: 5/5, 5% and up: 5/5; never a false alarm in 20 | – | – | – | at a 5% threshold: 2%: 0/5, 4.8%: 2/5, 10% and up: 5/5; 0 false alarms in 20 |
-| Wall time per verdict | `measure-pair` 7.1 s (20 pairs; 2.9 s at 6), `measure` + `judge` 5.0 s; Mac, shared | – | – | – | 0.74 s on the same Mac (0.6 s on Linux) |
+| Wall time per verdict | sequential `measure-pair --scope` 0.89 s end to end at load 4–13 (1.9–2.3 s at load up to 15); 5.5 s timing whole 20-action processes; Mac, shared | – | – | – | 1.09 s in the same run (1.06 s with a rebuild at load up to 15; 0.74 s earlier, 0.6 s on Linux) |
 
 ## Documentation
 

@@ -37,6 +37,35 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   from the installer; Release installs samply the same way on all four
   platforms.
 
+### Faster time verdicts: sequential `measure-pair`, `--scope`, `Leanprof.bench`
+
+- `measure-pair` stops as soon as the time verdict is settled — slower or
+  faster by more than `--min-change` (default 1%), or within ±1% — looking
+  after 6, 8, 10, … pairs, at most `--runs` (now 30). The rule is a
+  group-sequential sign test with exact boundaries and linear alpha
+  spending, so each of the three claims is wrong at most 2.5% of the time
+  however the session stopped (Tests: exact spent error, and by simulation a
+  true +1% median called slower 2.1% and within ±1% 2.2% of the time).
+  `--fixed` measures exactly `--runs` pairs. Sessions are version 2 and
+  record the design; `judge` reads both versions.
+- `measure-pair --scope NAME` times one region of a plain build: the program
+  wraps it in `Leanprof.bench "NAME" fun _ => ...` (new, `import
+  Leanprof.Bench`: two clock reads and a line appended to
+  `$LEANPROF_BENCH_OUT`, no probes) or writes the same `NAME<TAB>NS` lines
+  itself without the dependency.
+- `measure-pair --base-rev REV --exe NAME` builds the base at a git revision
+  once, keeps it in `.lake/leanprof/base/` by commit and build settings, and
+  builds the candidate with `lake build NAME`, so a loop of verdicts against
+  one base pays only the candidate's incremental build. The MCP tool takes
+  `base_rev`, `exe`, `scope`, `min_change` and `fixed`.
+- Measured on the LeanBench case study's trials (shared Mac, load 4–13):
+  sequential `measure-pair --scope` took 0.89 s per verdict end to end
+  against LeanBench's 1.09 s (7.1 s for the old 20 fixed pairs), with 0
+  false verdicts in 20 and the 2.4% slowdown caught 4 of 5; at load up to
+  15 it took 1.9–2.3 s against LeanBench's 1.06 s.
+- One warmup pair instead of three; `lake env` for both sides at once, and
+  the load average read in process instead of two `sysctl` per pair.
+
 ### Compile time: a project view and published profiles
 
 - `leanprof html` on a compile-time report opens on a project view: project,

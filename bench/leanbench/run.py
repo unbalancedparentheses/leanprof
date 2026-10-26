@@ -41,6 +41,23 @@ the same session (what `--runs 6` or `--runs 10` would have measured). No
 trial is rerun. On a shared machine, LB_MAX_LOAD=L makes every trial wait
 until the 1-minute load average is below L (the load is still recorded
 before every measurement).
+`fast` (fixed before it was first run, 2026-10-25): the same trials as
+`pair` (unchanged code 20, then slow2, slow5 and slow10 5 each) for the
+defaults of the fast-verdict branch. Every trial runs, tools in rotating order:
+  lb      LeanBench, 20 samples, as in `pair`;
+  seq     measure-pair defaults on `work` (whole process, 20 actions per run):
+          sequential, at most 30 pairs, 1 warmup pair;
+  bench   measure-pair defaults with --scope work on `workbench` (one action
+          per run, its time reported through LEANPROF_BENCH_OUT, no
+          dependency on leanprof): sequential, at most 30 pairs;
+  fixed20 measure-pair --fixed --runs 20 --warmup 3 on `work`: the old
+          default, as a control.
+Each takes the base from `--base-rev HEAD --exe NAME` in a git copy of the
+project (base committed; each trial writes the variant into Work.lean, plus a
+comment naming the trial, uncommitted), so its wall time is end to end: the
+candidate's `lake build` (a no-op when another tool of the trial built the
+same executable first), the base from the cache (built once per executable,
+in the first trial), and the session. No trial is rerun.
 LB_WRAP="flock ~/bench.lock taskset -c 0-7" prefixes every measured command
 (the load average is then read before the lock is taken).
 Options: --samples S (LeanBench, default 20), --runs R (leanprof, default 5),
@@ -144,6 +161,7 @@ def mp_parse(stdout):
         return {"verdict": "?", "time": "?", "line": stdout[-300:]}
     t = next((l.strip() for l in lines[i + 1:] if "paired time" in l), "")
     kind = ("not judged" if "not judged" in t else "inconclusive" if "inconclusive" in t
+            else "same" if "no change beyond" in t
             else "faster" if t.startswith("+") else "slower" if t.startswith("-") else "?")
     return {"verdict": lines[i], "time": kind, "line": t}
 
@@ -198,6 +216,68 @@ def mp_trial(lp, dirs, variant, i, runs, tmp):
     return rec
 
 
+def fast_setup(tmp):
+    """A git copy of the built project: base committed, candidate = working tree."""
+    d = os.path.join(tmp, "fast-git")
+    subprocess.run(["cp", "-R", PROJ, d], check=True)
+    open(os.path.join(d, ".gitignore"), "w").write(".lake\n")
+    g = lambda *a: subprocess.run(["git", "-c", "user.name=lb", "-c", "user.email=lb@example.com", *a],
+                                  cwd=d, check=True, capture_output=True)
+    g("init", "-q"); g("add", "-A"); g("commit", "-qm", "base")
+    return d
+
+
+def fast_session(lp, cmd, tmp, tag):
+    """One measure-pair session; its verdict, pairs, changes and wall time."""
+    out = os.path.join(tmp, f"fast-{tag}-{time.monotonic_ns()}.json")
+    env = {k: v for k, v in os.environ.items() if k != "LB_VARIANT"}
+    la = load()
+    t0 = time.monotonic()
+    p = subprocess.run(WRAP + [lp, "measure-pair", "--out", out] + cmd, env=env, capture_output=True, text=True)
+    wall = round(time.monotonic() - t0, 3)
+    if p.returncode != 0:
+        sys.exit(f"measure-pair failed: {p.stderr[-2000:]}")
+    j = json.load(open(out))
+    ch = []
+    for k in range(j["runs"]):
+        t = {r["side"]: r["time_ns"] for r in j["samples"][2 * k:2 * k + 2]}
+        ch.append(round((t["candidate"] / t["base"] - 1) * 100, 3))
+    return {"load": la, "pair_loads": j["machine"]["pair_loads"], "overloaded": j["machine"]["overloaded"],
+            "wall_s": wall, "pairs": j["runs"], "changes_pct": ch, "delta_pct": round(statistics.median(ch), 3),
+            "builds": j.get("builds"),
+            "verdict": mp_parse(p.stdout)}
+
+
+def fast_trial(args, variant, i, tmp, rec, tools):
+    d = args.fast_dir
+    src = open(os.path.join(PROJ, "Work.lean")).read()
+    old = '(← IO.getEnv "LB_VARIANT").getD "base"'
+    assert old in src
+    with open(os.path.join(d, "Work.lean"), "w") as f:
+        f.write(src.replace(old, f'"{variant}"') + f"\n-- fast trial {variant} {i}\n")
+    for tool in tools:
+        if tool == "seq":
+            rec["seq"] = fast_session(args.leanprof, ["--base-rev", "HEAD", "--exe", "work", "--candidate-cwd", d], tmp, "seq")
+        elif tool == "bench":
+            rec["bench"] = fast_session(args.leanprof, ["--base-rev", "HEAD", "--exe", "workbench", "--candidate-cwd", d,
+                                                         "--scope", "work"], tmp, "bench")
+        elif tool == "fixed20":
+            rec["fixed20"] = fast_session(args.leanprof, ["--base-rev", "HEAD", "--exe", "work", "--candidate-cwd", d,
+                                                          "--fixed", "--runs", "20", "--warmup", "3"], tmp, "fixed20")
+        elif tool == "lb":
+            base_first = (i // 2) % 2 == 0
+            if base_first:
+                b = lb_measure("base", args.samples, tmp)
+                n = lb_measure(variant, args.samples, tmp, baseline=b["path"])
+            else:
+                n = lb_measure(variant, args.samples, tmp)
+                b = lb_measure("base", args.samples, tmp)
+            ratio = n["mean_ns"] / b["mean_ns"]
+            rec["lb"] = {"base": b, "new": n, "delta_pct": round((ratio - 1) * 100, 3),
+                         "fail_at_10pct": lb_verdict((ratio - 1) * 100, 10)}
+    return rec
+
+
 def trial(args, variant, i, tmp):
     """One A/B trial of `variant` against base with each selected tool."""
     rec = {"variant": variant, "trial": i, "samples": args.samples, "runs": args.runs,
@@ -209,6 +289,8 @@ def trial(args, variant, i, tmp):
     elif i % 2 == 1:
         tools = tools[::-1]
     base_first = (i // 2) % 2 == 0   # base/new order flips every two trials
+    if args.mode == "fast":
+        return fast_trial(args, variant, i, tmp, rec, tools)
     for tool in tools:
         if tool == "mp":
             rec["mp"] = mp_trial(args.leanprof, args.mp_dirs, variant, i, args.pairs, tmp)
@@ -282,7 +364,8 @@ def summarize():
     if not rows:
         return print("no results")
     pair = [r for r in rows if r["mode"] == "pair"]
-    rows = [r for r in rows if r["mode"] != "pair"]
+    fast = [r for r in rows if r["mode"] == "fast"]
+    rows = [r for r in rows if r["mode"] not in ("pair", "fast")]
     groups = {}
     for r in rows:
         host = "linux" if "linux" in r.get("host", "") or r.get("wrap") else "mac"
@@ -331,6 +414,11 @@ def summarize():
         print(f"\n`pair{'-' + tag if tag else ''}.jsonl` ({pair[0]['host']}, LB_WRAP: "
               f"{next(r['wrap'] for r in pair if r['_tag'] == tag) or 'none'})")
         pair_summary([r for r in pair if r["_tag"] == tag])
+    for tag in sorted({r["_tag"] for r in fast}):
+        g = [r for r in fast if r["_tag"] == tag]
+        print(f"\n`fast{'-' + tag if tag else ''}.jsonl` ({g[0]['host']}, LB_WRAP: {g[0]['wrap'] or 'none'}, "
+              f"{g[0]['time']}..{g[-1]['time']})")
+        fast_summary(g)
 
 
 def pair_summary(rows):
@@ -374,9 +462,44 @@ def pair_summary(rows):
         print("| " + " | ".join(cells) + " |")
 
 
+def fast_summary(rows):
+    """`fast` mode: LeanBench and three measure-pair configurations on the same
+    trials. Seconds per verdict are medians: LeanBench's two measurements; for
+    measure-pair, the whole command (candidate build, cached base, session)."""
+    med = statistics.median
+    tools = [("seq", "seq: work, sequential"), ("bench", "bench: --scope, 1 action/run"),
+             ("fixed20", "fixed20: work, 20 pairs")]
+    print("\n| variant | trials | load 1m (min-max) | LeanBench delta % | LB >=5% / >=10% | " +
+          " | ".join(f"{n} delta % | slower / faster / same / inconclusive / not judged | pairs (median, range)"
+                     for _, n in tools) +
+          " | s per verdict: LB / " + " / ".join(t for t, _ in tools) + " | candidate build s (median) |")
+    print("|---|---:|---|---|---|" + "---|---|---|" * len(tools) + "---|---|")
+    order = ["base", "slow2", "slow5", "slow10"]
+    for v in sorted({r["variant"] for r in rows}, key=lambda x: order.index(x) if x in order else 9):
+        g = [r for r in rows if r["variant"] == v]
+        loads = [x["lb"][s]["load"] for x in g for s in ("base", "new")]
+        loads += [l for x in g for t, _ in tools if t in x for l in [x[t]["load"]] + x[t]["pair_loads"] if l is not None]
+        rng = lambda d: f"{med(d):+.1f} ({min(d):+.1f}..{max(d):+.1f})"
+        d = [x["lb"]["delta_pct"] for x in g]
+        cells = [v, str(len(g)), f"{min(loads):.1f}-{max(loads):.1f}", rng(d),
+                 f"{sum(x >= 5 for x in d)} / {sum(x >= 10 for x in d)}"]
+        walls = [f"{med(x['lb']['base']['wall_s'] + x['lb']['new']['wall_s'] for x in g):.2f}"]
+        for t, _ in tools:
+            xs = [x[t] for x in g if t in x]
+            ts = [x["verdict"]["time"] for x in xs]
+            ps = [x["pairs"] for x in xs]
+            cells += [rng([x["delta_pct"] for x in xs]),
+                      " / ".join(str(ts.count(c)) for c in ("slower", "faster", "same", "inconclusive", "not judged")),
+                      f"{med(ps):g} ({min(ps)}..{max(ps)})"]
+            walls.append(f"{med(x['wall_s'] for x in xs):.2f}")
+        cb = [x[t]["builds"]["candidate_build_s"] for x in g for t in ("seq", "bench") if t in x]
+        cells += [" / ".join(walls), f"{med(cb):.2f}"]
+        print("| " + " | ".join(cells) + " |")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["noise", "detect", "sweep", "pair", "summary"])
+    ap.add_argument("mode", choices=["noise", "detect", "sweep", "pair", "fast", "summary"])
     ap.add_argument("--pairs", type=int, default=20, help="measure-pair --runs (pair mode)")
     ap.add_argument("--trials", type=int, default=5)
     ap.add_argument("--samples", type=int, default=20)
@@ -386,6 +509,7 @@ def main():
     ap.add_argument("--leanprof", default=LP_DEFAULT)
     ap.add_argument("--tag", default="", help="suffix of the results file, e.g. -linux")
     ap.add_argument("--append", action="store_true")
+    ap.add_argument("--dry", action="store_true", help="fast: one trial per variant, to check the script")
     a = ap.parse_args()
     if a.mode == "summary":
         return summarize()
@@ -403,6 +527,14 @@ def main():
             a.tools = "lb,lp,mp,lps"
         subprocess.run(["lake", "build", "workscope"], cwd=SCOPED, check=True, capture_output=True)
         plan = [("base", a.samples, a.runs, 20)] + [(v, a.samples, a.runs, 5) for v in ("slow2", "slow5", "slow10")]
+    elif a.mode == "fast":  # the protocol in the docstring
+        a.allocs = False
+        if a.tools == "lb,lp":
+            a.tools = "lb,seq,bench,fixed20"
+        subprocess.run(["lake", "build", "workbench"], cwd=PROJ, check=True, capture_output=True)
+        plan = [("base", a.samples, a.runs, 20)] + [(v, a.samples, a.runs, 5) for v in ("slow2", "slow5", "slow10")]
+        if a.dry:  # one trial of each, to check the script (results not used)
+            plan = [(v, s, r, 1) for v, s, r, _ in plan]
     else:  # sweep: fewer and more samples/runs than the defaults
         a.allocs = False
         plan = [(v, s, r, a.trials) for (s, r) in [(5, 3), (100, 10)] for v in ("base", "slow5", "slow10")]
@@ -412,6 +544,8 @@ def main():
     with tempfile.TemporaryDirectory() as tmp, open(out, "a") as f:
         if "mp" in a.tools.split(","):
             a.mp_dirs = mp_setup(tmp)
+        if a.mode == "fast":
+            a.fast_dir = fast_setup(tmp)
         for v, s, r, trials in plan:
             a.samples, a.runs = s, r
             for i in range(trials):
@@ -431,6 +565,11 @@ def main():
                             rec["lp"]["allocs"][side].pop("path", None)
                 f.write(json.dumps(rec) + "\n")
                 f.flush()
+                if a.mode == "fast":
+                    print(f"fast {v} #{i} load={load()} LB {rec['lb']['delta_pct']}% | " + " | ".join(
+                        f"{t} {rec[t]['delta_pct']}% {rec[t]['verdict']['time']} {rec[t]['pairs']}p {rec[t]['wall_s']}s"
+                        for t in ("seq", "bench", "fixed20") if t in rec), flush=True)
+                    continue
                 lb = rec.get("lb", {}); lp = rec.get("lp", {}); mp = rec.get("mp", {})
                 print(f"{a.mode} {v} s={s} r={r} #{i} load={load()} "
                       f"LB {lb.get('delta_pct', '-')}% fail10={lb.get('fail_at_10pct', '-')} | "
