@@ -60,7 +60,7 @@ static lpf_ctr *lpf_ctr_get(void *pc, void *fun, uint8_t kind) {
         lpf_ctr *c = t->slots[i];
         if (LEAN_LIKELY(c != NULL && c->pc == pc && c->fun == fun && c->kind == kind)) return c;
         if (c == NULL) {
-            /* a full table used to cost a scan of every slot per call */
+            /* stop at 7/8: a full table costs a scan of every slot per call */
             if (t->n >= LPC_TABLE / 8 * 7) break;
             c = calloc(1, sizeof(lpf_ctr));
             if (c == NULL) abort();

@@ -11,7 +11,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import LP, ROOT, WORK, Claim, build_leanprof, read_json, sh, timing  # noqa: E402
+from lib import LP, WORK, Claim, build_leanprof, read_json, sh, timing  # noqa: E402
 
 c = Claim("copybug", "Apple M5 Max (README)", "leanprof run copybug; leanprof explain")
 build_leanprof(("leanprof", "copybug"))

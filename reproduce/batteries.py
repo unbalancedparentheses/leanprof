@@ -159,6 +159,6 @@ if a.lsp:
         c.note(f"  lean-source-profiler's last line ({mode})", (p.stdout.strip().splitlines() or [""])[-1][:100])
         c.within(f"lean-source-profiler {LSP_VERSION} --mode {mode}, whole project (timing)",
                  secs, pubs / 2, pubs * 2, pubs, " s")
-        c.within(f"  its time over leanprof's elab --project", secs / cur["time_s"], 3.0, 1e9,
+        c.within("  its time over leanprof's elab --project", secs / cur["time_s"], 3.0, 1e9,
                  pubs / 16.8, "x")
 c.finish()

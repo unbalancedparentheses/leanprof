@@ -122,8 +122,8 @@ typedef struct {
 } lpf_copy;
 
 /* An open scope: one cache line (frames are 64-byte aligned). Deep
- * recursion keeps a frame per level, and at 104 bytes over two lines the
- * frames of 10,000 levels under `--auto` no longer fitted a 1 MiB L2. */
+ * recursion keeps a frame per level, and frames of two lines (104 bytes)
+ * for 10,000 levels under `--auto` do not fit a 1 MiB L2. */
 typedef struct {
     lpf_scope *scope;
     const void *key;           /* the key it was entered with (an alias of scope's, for LP_FN) */
@@ -1082,7 +1082,8 @@ LP_HOT void lpf_exit(void) {
     if (LEAN_UNLIKELY(s->active == 0 && (s->outer & (LP_LIGHT_WINDOW - 1)) == 0)) lpf_light_check(s);
 }
 
-/* `profile!` on a pure term: time `f ()`. `kind` is LP_INTERNAL when
+/* `Leanprof.scope` (and `profile!` on a pure term it cannot compile to
+ * `enterPure`/`exitPure`): time `f ()`. `kind` is LP_INTERNAL when
  * calibration runs this same code. */
 LP_HOT lean_obj_res lpf_scope_run(b_lean_obj_arg site, lean_obj_arg f,
                                                                                 uint8_t kind) {
@@ -1109,14 +1110,14 @@ __attribute__((no_instrument_function)) LEAN_EXPORT void __cyg_profile_func_exit
 
 /* ---------- calibration ----------
  * Each way of entering a scope is measured through the same code the
- * program runs: the hooks, `leanprof_enter`/`leanprof_exit`, and for a pure
- * `profile!` the closure it builds (allocated, applied and freed). The
- * calibration used to measure only the inlined enter/exit pair, which a pure
- * `profile!` exceeds by its closure and `--auto` by the call to the hook, so
- * tiny scopes were reported several times too slow. What remains unmeasured
- * depends on the program: boxing the scoped term's result or captured
- * scalars (a `UInt64` is allocated when it crosses the closure), and the
- * extra work around a hook call in an instrumented function. */
+ * program runs: the hooks, `leanprof_enter`/`leanprof_exit`, the pair a pure
+ * `profile!` compiles to, and `Leanprof.scope` with its closure (allocated,
+ * applied and freed). Measuring only the inlined enter/exit pair would miss
+ * the closure and the call to the hook, and report tiny scopes several
+ * times too slow. What remains unmeasured depends on the program: boxing a
+ * closure's result or captured scalars (a `UInt64` is allocated when it
+ * crosses the closure), and the extra work around a hook call in an
+ * instrumented function. */
 
 static char lpf_calibration_key[1 + LP_PATHS];
 
@@ -1176,7 +1177,7 @@ static __attribute__((noinline)) void lpf_cal_batch(int path, int n, void *k) {
         break;
     case LP_PATH_SCOPE:
         for (int i = 0; i < n; i++) {
-            /* what `profile!` builds: a closure capturing one value */
+            /* what `Leanprof.scope` is given: a closure capturing one value */
             lean_object *c = lean_alloc_closure((void *)lpf_cal_noop, 2, 1);
             lean_closure_set(c, 0, lean_box(0));
             lean_dec(lpf_cal_scope((lean_object *)k, c));
