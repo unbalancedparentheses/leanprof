@@ -49,6 +49,12 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   to measure (`time_ns.too_small_runs`; the run's 0 used to be recorded as
   a time) and says so, and `judge` gives no time verdict on such a summary:
   a 0 against a nonzero base was a KEEP.
+- The HTML project view matches a term or tactic with the base's by its
+  declaration and which occurrence of the same text it is there. Matched by
+  text alone, two unchanged `simp`s of 10,000 heartbeats were each compared
+  with 20,000 and shown as faster, and the same text in other declarations
+  of the file was added in too. `scripts/check-html-ranges.py` (CI) compares
+  such a report with itself.
 
 ### Compile time: a project view and published profiles
 
@@ -58,7 +64,8 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   definitions behind the work done there, terms and tactics nested by the
   range that contains them, and the source. Given a base report, every level
   shows the base, the change and what regressed (modules by name,
-  declarations by name, terms and tactics by text). The place is in the
+  declarations by name, terms and tactics by text, declaration and
+  occurrence). The place is in the
   address, so links and the back button work. `--ranges N` and `--keep N`
   bound the page for large projects; the page says what it left out.
 - `elab.json`: each module lists its 10 costliest repeated operations (with

@@ -706,8 +706,22 @@ const PV = elab ? (function () {
       let lo = 0, hi = ss.length;
       while (lo < hi) { const m = (lo + hi) >> 1; if (ss[m]._line <= p.l1) lo = m + 1; else hi = m; }
       r._decl = lo > 0 ? ss[lo - 1]._group.pos : null;
+      r._dkey = lo > 0 ? ss[lo - 1]._group.key : "";
       if (!ranges.has(p.file)) ranges.set(p.file, []);
       ranges.get(p.file).push(r);
+    }
+    // A range's identity across two reports: its declaration (by key, as
+    // declarations are matched) and which occurrence of the same text it is
+    // there, in source order. By text alone, two identical `simp`s, or ones in
+    // different declarations, were one row, each compared with their sum.
+    for (const rs of ranges.values()) {
+      const seen = new Map();
+      rs.slice().sort((a, b) => a._p.l1 - b._p.l1 || a._p.c1 - b._p.c1 || a._p.l2 - b._p.l2 || a._p.c2 - b._p.c2)
+        .forEach((r) => {
+          const k = r._dkey + "|" + r.kind + "|" + r.syntax + "|" + r.text;
+          r._occ = seen.get(k) || 0;
+          seen.set(k, r._occ + 1);
+        });
     }
     return { d, files, decls, ranges };
   }
@@ -722,7 +736,7 @@ const PV = elab ? (function () {
     for (const x of xs) { o.total_ns += num(x, "total_ns"); o.errors += num(x, "errors") > 0 ? 1 : 0; for (const [, k] of PARTS) o[k] += num(x, k); }
     return o;
   }
-  const rangeKey = (r) => (r._p ? r._p.file : "") + "|" + r.kind + "|" + r.syntax + "|" + r.text;
+  const rangeKey = (r) => (r._p ? r._p.file : "") + "|" + r._dkey + "|" + r.kind + "|" + r.syntax + "|" + r.text + "|" + r._occ;
   const opKey = (o) => o.class + "|" + o.op;
   const constKey = (c) => c.kind + "|" + c.name;
   // rows of the new report with the base's amount of the same key (`_b`), and the base's rows that are gone
