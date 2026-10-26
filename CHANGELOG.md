@@ -6,6 +6,33 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Feedback on every save
+
+- `leanprof elab --since-last FILE`, `leanprof run --since-last EXE` and
+  `leanprof stat --since-last EXE` compare the profile with the previous
+  one of the same file or program (kept under `.lake/leanprof/onsave/`) and
+  write the difference next to it (`NAME.delta.json`, [format](docs/guide/reference.md#difference-file)):
+  declarations whose heartbeats moved by more than 1,000, each with what
+  changed inside it (the unfolds, instances and simp lemmas `compare`
+  explains a regression with), and copy and allocation sites whose counts
+  changed. `--keep-base` compares with a fixed base. `compare --json OUT`
+  writes the same difference for any two reports.
+- `elab --since-last` reuses `lake env`'s paths and the setup of a module
+  that is not built while the package's configuration, manifest, toolchain
+  and the file's imports are unchanged: about 0.3 s less per run, 0.7 s for
+  a file outside the package's libraries.
+- `#leanprof` shows those differences as hints (`Δ +25.0 kHB since the last
+  profile`, `Δ +2,000 copies since the last run`), with the cause in the
+  hover.
+- VS Code: opt-in on-save profiling (`leanprof.onSave.compileTime`, and
+  `leanprof.onSave.workload` for a program's copies and allocations). The
+  changes appear at the end of each line, colored by size, with the cause
+  in the hover; saves are debounced and a new save stops a running
+  profile. **leanprof: Why is this file slow?** and the **slowest
+  declarations** view list a file's costliest declarations. The logic that
+  needs no VS Code (`lib.js`) has unit tests (`npm run test:unit`), run in
+  CI and the release dry run.
+
 ## [0.1.0] - 2026-10-26
 
 The first release: a profiler for Lean 4 programs and their compile times,

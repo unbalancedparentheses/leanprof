@@ -59,7 +59,7 @@ function signed(d, fmt) {
 function declName(d) {
   const key = d.key || "";
   const i = key.indexOf(" ");
-  if (i > 0 && !key.slice(i + 1).startsWith("#")) return key.slice(i + 1);
+  if (i > 0 && !key.slice(i + 1).startsWith("#")) return key.slice(i + 1).replace(/ #\d+$/, "");
   return (d.name || key).slice(0, 60);
 }
 
@@ -96,7 +96,8 @@ function deltaItems(delta, rel, opts = {}) {
     const hover = [`**${code(declName(d))}**: ${amount(d.base || 0)} → ${amount(d.new || 0)} to compile (${signed(change, amount)} ${since})`];
     const why = d.why;
     if (why) {
-      if (why.headline) hover.push(`top change: ${why.headline}`);
+      if (why.headline) hover.push("", `top change: ${why.headline}`);
+      if ((why.parts || []).length) hover.push("");
       for (const p of why.parts || []) hover.push(`- ${p.part}: ${amount(p.base)} → ${amount(p.new)}`);
       if ((why.rows || []).length) {
         hover.push("", "what changed inside it:", "", "| change | what | name | before | after |", "|---|---|---|---|---|");
@@ -185,7 +186,8 @@ function slowest(report, rel, n = 10) {
   }
   decls.sort((a, b) => b.total - a.total || a.line - b.line);
   const f = (report.files || []).find((x) => sameFile(x.file, rel)) || {};
-  return { decls: decls.slice(0, n), total, wallNs: f.wall_ns || 0, errors: f.errors || 0, unit: report.unit || "" };
+  // what is left of a command after its declaration (a few heartbeats on the last line) is not a row
+  return { decls: decls.filter((d) => d.share >= 0.005).slice(0, n), total, wallNs: f.wall_ns || 0, errors: f.errors || 0, unit: report.unit || "" };
 }
 
 /**

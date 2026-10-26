@@ -336,6 +336,7 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
 | Everything next to the code, or in one shareable page | `#leanprof`, [VS Code](docs/guide/vscode.md), `leanprof html` |
+| What changed on each save, at the line: heartbeats per declaration with the unfold, instance or simp lemma behind the change, and copies and allocations per call site | [VS Code on save](docs/guide/vscode.md#on-save), `leanprof elab --since-last`, `leanprof run --since-last` |
 
 ![leanprof html: sampled flame graph of the example, with compile-time tiles](docs/images/html-report.png)
 
@@ -458,7 +459,7 @@ reproduction.
 | Exact regression checks, PR comments | ✅, with the cause of each ([example](docs/guide/ci-and-regressions.md#worked-example-batteries)) | thresholded time | – | – | mean against a saved baseline, fixed threshold |
 | Checked experiments (proofs preserved, outputs identical, held-out inputs) | ✅ `leanprof experiment` | – | – | – | – |
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
-| In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |
+| In the editor | run time, copies, compile time; what changed on each save, with the cause | – | compile time | – | a visualizer extension (not evaluated) |
 | Seeded slowdowns caught, quiet machine ([case study](docs/case-studies/leanbench.md)) | 2%: 5/5, 5% and up: 5/5; never a false alarm in 20 | – | – | – | at a 5% threshold: 2%: 0/5, 4.8%: 2/5, 10% and up: 5/5; 0 false alarms in 20 |
 | Wall time per verdict | sequential `measure-pair --scope` 0.89 s end to end at load 4–13 (1.9–2.3 s at load up to 15); 5.5 s timing whole 20-action processes; Mac, shared | – | – | – | 1.09 s in the same run (1.06 s with a rebuild at load up to 15; 0.74 s earlier, 0.6 s on Linux) |
 

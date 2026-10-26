@@ -1128,7 +1128,10 @@ def locate (le : LeanEnv) (modules : Array Name) (names : Array String) : IO (St
   initSearchPath le.sysroot (SearchPath.parse le.path)
   let mut built : Array Import := #[]
   for m in modules.toList.eraseDups do
-    if (← (try some <$> findOLean m catch _ => pure none)).isSome then
+    -- a module of the package edited and not built yet has no `.olean`: its own definitions are found
+    -- in the profiled file instead (`localDecls`)
+    if let some p ← (try some <$> findOLean m catch _ => pure none) then
+      unless ← p.pathExists do continue
       built := built.push { module := m }
   if built.isEmpty then return {}
   let cwd ← IO.currentDir

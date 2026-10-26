@@ -54,7 +54,7 @@ test("compile-time differences land on their declaration's line, worded and colo
   ]);
   const hover = items[1].hover;
   assert.match(hover, /\*\*`t2`\*\*: 20\.0 kHB → 45\.0 kHB to compile/);
-  assert.match(hover, /top change: whnf reduces Foo\.f/);
+  assert.match(hover, /to compile \(\+25\.0 kHB since the last save\)\n\ntop change: whnf reduces Foo\.f/);
   assert.match(hover, /\| \+20\.00 kHB \| whnf reduces \| `Foo\.f` \(Foo\/Bar\.lean:1\) \| 0\.00 kHB, 0× \| 20\.00 kHB, 30× \|/);
   assert.match(hover, /2 more changed/);
   assert.match(hover, /note: exact unfold/);
@@ -105,10 +105,13 @@ test("the costliest declarations of a file, lines merged at the first", () => {
       { name: "theorem big : x", key: "Foo/Bar.lean big", pos: "Foo/Bar.lean:14", total_ns: 20000, kernel_ns: 20000 },
       { name: "def small", key: "Foo/Bar.lean small", pos: "Foo/Bar.lean:3", total_ns: 20000, compile_ns: 20000 },
       { name: "def elsewhere", key: "Other.lean e", pos: "Other.lean:3", total_ns: 1e9 },
+      // what `elab` leaves on the last line of a command: below 0.5% of the file, not a row
+      { name: "example : x", key: "Foo/Bar.lean example : x #2", pos: "Foo/Bar.lean:20", total_ns: 32 },
     ],
   };
   const s = lib.slowest(report, "Foo/Bar.lean", 5);
-  assert.strictEqual(s.total, 100000);
+  assert.strictEqual(s.total, 100032);
+  for (const d of s.decls) d.share = Math.round(d.share * 100) / 100;
   assert.strictEqual(s.wallNs, 3.1e8);
   assert.deepStrictEqual(s.decls.map((d) => [d.name, d.line, d.total, d.share]), [["big", 9, 80000, 0.8], ["small", 2, 20000, 0.2]]);
   assert.deepStrictEqual(s.decls[0].parts, { elab: 60000, kernel: 20000, compiler: 0, linters: 0 });
@@ -129,6 +132,8 @@ test("formatting", () => {
   assert.strictEqual(lib.fmtNs(2.5e6), "2.5 ms");
   assert.deepStrictEqual(lib.parsePos("A/B.lean:12"), { file: "A/B.lean", line: 12 });
   assert.strictEqual(lib.declName({ key: "F.lean #leanprof #1", name: "#leanprof" }), "#leanprof");
+  assert.strictEqual(lib.declName({ key: "F.lean example : 1 = 1 := #1" }), "example : 1 = 1 :=");
+  assert.strictEqual(lib.declName({ key: "F.lean Foo.bar" }), "Foo.bar");
 });
 
 const tick = (ms) => new Promise((r) => setTimeout(r, ms));

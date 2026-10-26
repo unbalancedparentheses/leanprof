@@ -138,14 +138,25 @@ Ranked; the open ones are planned after v0.2.0.
   --heartbeats --counts` at base and head, and explain's cause for each
   copy site that copies more (`compare`, `report-md`, `Tests/Regress`;
   [guide](docs/guide/ci-and-regressions.md#why-it-got-worse)).
-- [ ] **Feedback on every save.** In the editor, re-profile what changed and
+- [x] **Feedback on every save.** In the editor, re-profile what changed and
   show the difference inline ("this edit added 2,000 copies", "+30%
-  heartbeats in this lemma"); with static copy detection (above), warn
-  before anything runs.
+  heartbeats in this lemma"). Done: `elab|run|stat --since-last` write the
+  difference from the previous profile, with the cause of each compile-time
+  change; the VS Code extension runs them on save and shows the changes at
+  their lines, `#leanprof` as hints ([editor](docs/guide/editor.md#what-changed-since-the-last-profile),
+  [VS Code](docs/guide/vscode.md#on-save)). Still open: with static copy
+  detection (above), warn before anything runs; re-elaborate only the
+  declarations that changed (each save elaborates the whole file and loads
+  its imports).
 - [ ] **Retained memory.** Which allocation site holds the memory at peak,
   and what keeps it alive; for long-running programs and servers.
-- [ ] **Why a file is slow in the editor.** Profile the language server
-  re-elaborating a file and attribute the delay to declarations.
+- [x] **Why a file is slow in the editor.** Profile the language server
+  re-elaborating a file and attribute the delay to declarations. Done by
+  elaborating the file as Lake (and so the server) does, with its setup:
+  **Why is this file slow?** in VS Code lists its costliest declarations
+  ([guide](docs/guide/vscode.md#why-is-this-file-slow)). Still open:
+  measuring inside the language server itself, which re-elaborates only
+  from the first edited command and keeps imports loaded.
 - [ ] **A heartbeat budget.** `elab --max-heartbeats N` in CI flags any
   declaration above N, so slow lemmas do not accumulate.
 
@@ -452,6 +463,8 @@ keeps only improvements ([research/program.md](research/program.md)).
 - [x] `#leanprof`: inlay hints with time per scope/function and copies per
   declaration, from the last report; tooltips with details; checked against
   the language server in CI.
+- [x] What changed since the last profile, on save: VS Code decorations
+  with the cause in the hover, `#leanprof` hints for other editors.
 - [ ] Infoview widget with a flame graph of the run.
 
 ## M9: compile time
