@@ -180,6 +180,8 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `measure` | repeated runs into one summary, for `judge` |
 | `measure_pair` | two prebuilt binaries run in alternating AB/BA order (no builds, no probes) into one paired session, for `judge` |
 | `report` | summary of a saved report or live snapshot |
+| `findings` | the findings of a report, compile-time report or live snapshot, costliest first, each with a stable id; filter by `kind`, `module` (and its submodules), `declaration` or `file`, page with `offset` and `limit` |
+| `finding` | one finding in full by its `id`: the report's row, the source lines, the cause with its confidence (for a copy, `leanprof explain`'s diagnosis and fix), and with `base` the value before and after |
 | `hot` | hottest scopes, copies, allocations, tasks or waits, with file:line |
 | `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted) |
 | `compare` | regressions between two reports (exact for copies and calls) |
@@ -200,6 +202,39 @@ whole of `compare --json`; `judge` and `measure_pair` the verdict of
 ([verdict outcomes](reference.md#verdict-outcomes)); `experiment_try` the
 evidence; `hot` the section's rows as the report has them, with `total`
 and `truncated`. Agents do not need to parse the text.
+
+### Findings: a small answer first
+
+`run` and `report` return the five costliest findings of the report (and
+`report` `top` of them), `findings` returns a page of them, and `finding`
+one in full, so an agent never has to read a whole report. Each finding
+has an `id` made of its kind and a hash of what names the site (a scope's
+name and position; a copy site's function, kind, scope and position; a
+declaration's key), not of its numbers: the same site has the same id in
+the next report of the same code, which is how `finding` with `base`
+finds the value before a change.
+
+```json
+{"id": "copy-31d8f61864", "rank": 1, "kind": "copy",
+ "title": "1,999 copies of a shared Array (15.3 MiB, 3.2 ms) in buildWithHistory (in Std.Legacy.Range.forIn'.loop)",
+ "metric": "copies", "value": 1999, "unit": "copies", "cost_ns": 3176842,
+ "pos": "Examples/CopyBug.lean:17", "file": "Examples/CopyBug.lean", "line": 17,
+ "module": "Examples.CopyBug", "name": "buildWithHistory (in Std.Legacy.Range.forIn'.loop)", "scope": "buildWithHistory"}
+```
+
+Findings are ranked by time across kinds (a scope's own time, a copy
+site's time copying, an allocation site's estimated time, blocked time,
+time tasks waited to start); counts without a time (failed reuse,
+closure calls, heartbeats) come after, by count. Kinds: `scope`, `copy`,
+`allocation`, `wait`, `task`, `reuse`, `closure` in run reports and live
+snapshots, `declaration`, `term` and `tactic` in compile-time reports.
+Copies of empty or tiny values are left out, as in `run`'s report.
+
+A page says what it left out: `total` findings matched, `returned`,
+`truncated` and `next_offset`. When a tool's text is cut at 30,000
+characters, `text_truncated` says so; the structured content is not cut.
+`finding` warns (`stale_source`) when the source file changed after the
+report was written, since its lines may then not be the ones measured.
 
 A call that fails has `isError: true`, `ok: false` and an `error`:
 

@@ -92,7 +92,7 @@ output_schemas.update({t["name"]: t.get("outputSchema", {}) for t in listed})
 check("every tool has an outputSchema (an object with ok, tool and error)",
       all(t.get("outputSchema", {}).get("type") == "object" and {"ok", "tool"} <= set(t["outputSchema"].get("required", []))
           and "error" in t["outputSchema"].get("properties", {}) for t in listed), [t["name"] for t in listed])
-want = {"doctor", "run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge",
+want = {"doctor", "findings", "finding", "run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge",
         "live", "dump",
         "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
@@ -114,6 +114,55 @@ check("run: structured", last.get("ok") is True and last.get("exit_code") == 0 a
       and last.get("report") == ".lake/leanprof/mcp-small.json", last)
 text, err = tool("run", executable="copybug", args=["2000"], json=".lake/leanprof/mcp-large.json")
 check("run (second report)", not err and "1,999 copies" in text, text)
+
+check("run: the top findings first, with ids", last.get("findings") and last["findings"][0]["rank"] == 1
+      and all(f["id"].split("-")[0] in ("scope", "copy", "alloc", "wait", "task", "reuse", "closure") for f in last["findings"])
+      and last["total"] >= len(last["findings"]) and last["truncated"] == (last["total"] > len(last["findings"])), last)
+
+# compact, queryable evidence: pages, filters, stable ids, one finding in full
+small, large = ".lake/leanprof/mcp-small.json", ".lake/leanprof/mcp-large.json"
+text, err = tool("findings", path=large, limit=2)
+check("findings: the first page says it is not all", not err and last["returned"] == 2 and last["total"] > 2
+      and last["truncated"] is True and last["next_offset"] == 2 and "more: offset 2" in text, last)
+first_two = [f["id"] for f in last["findings"]]
+text, err = tool("findings", path=large, offset=2, limit=2)
+check("findings: the next page", not err and last["findings"][0]["rank"] == 3
+      and not set(first_two) & {f["id"] for f in last["findings"]}, last)
+text, err = tool("findings", path=large, kind="copy")
+copy = last["findings"][0] if last.get("findings") else {}
+check("findings: by kind", not err and last["total"] >= 1 and all(f["kind"] == "copy" for f in last["findings"])
+      and copy.get("pos") == "Examples/CopyBug.lean:17" and copy.get("value") == 1999, last)
+text, err = tool("findings", path=small, kind="copy")
+check("findings: the same site has the same id in another report", not err and last["findings"]
+      and last["findings"][0]["id"] == copy.get("id") and last["findings"][0]["value"] == 999, last)
+text, err = tool("findings", path=large, module="Examples.CopyBug", declaration="fib")
+check("findings: by module and declaration", not err and last["total"] >= 1
+      and all(f["module"] == "Examples.CopyBug" and "fib" in (f["name"] + f["scope"]) for f in last["findings"]), last)
+text, err = tool("findings", path=large, module="No.Such.Module")
+check("findings: an empty match is not an error", not err and last["total"] == 0 and last["truncated"] is False, last)
+text, err = tool("finding", id=copy.get("id", "?"), path=large, base=small)
+cause = (last.get("cause") or [{}])[0]
+check("finding: a copy with explain's cause, source, confidence and before/after",
+      not err and cause.get("cause") == "stored-then-updated" and cause.get("confidence", "").startswith("high")
+      and cause.get("fix") and any(l["line"] == 21 and "history.push acc" in l["text"] for l in last["source"]["lines"])
+      and last["before_after"] == {"status": "changed", "before": 999, "after": 1999, "change": 1000,
+                                   "change_pct": last["before_after"]["change_pct"], "unit": "copies"}
+      and last["row"]["shared"] == 1999 and last["stale"] is False and "stored-then-updated" in text, last)
+text, err = tool("findings", path=large, kind="scope", declaration="buildWithHistory")
+scope_id = last["findings"][0]["id"] if last.get("findings") else "?"
+text, err = tool("finding", id=scope_id, path=large)
+check("finding: a scope, with where its time goes", not err and last["finding"]["kind"] == "scope"
+      and last["cause"] and all(c["confidence"] == "measured" for c in last["cause"]) and last["before_after"] is None, last)
+text, err = tool("finding", id="copy-0000000000", path=large)
+check("finding: an unknown id is not_found", err and code() == "not_found", last)
+text, err = tool("elab", files=["Examples/CopyBug.lean"], heartbeats=True)
+text, err = tool("findings", path=".lake/leanprof/elab.json", kind="declaration", limit=3)
+decl = last["findings"][0] if last.get("findings") else {}
+check("findings of a compile-time report: declarations in heartbeats", not err and decl.get("unit") == "heartbeats"
+      and decl.get("module") == "Examples.CopyBug", last)
+text, err = tool("finding", id=decl.get("id", "?"), path=".lake/leanprof/elab.json")
+check("finding: a declaration, with what its compile time went to", not err and last["cause"]
+      and "phases" in last["cause"][0], last)
 
 text, err = tool("report", path=".lake/leanprof/mcp-small.json")
 check("report", not err and "wall" in text and "scopes:" in text, text)

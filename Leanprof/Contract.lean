@@ -113,6 +113,8 @@ def errorKinds : List (String × Bool × String) := [
   ("not_found", false, "the file does not exist: run the command that writes it first (run, elab, measure), or give its path"),
   ("incompatible", false,
     "the two inputs were measured differently (Lean version, platform, flags or workload): measure both the same way, or pass --allow-incompatible"),
+  ("stale_source", true,
+    "the source changed after the report was written, so its lines may not be the ones measured: profile again"),
   ("timeout", true, "the job ran out of time: call again with a larger timeout, or a smaller workload"),
   ("cancelled", true, "the job was cancelled: start it again if it is still needed"),
   ("failed", false, "see the message and the command's output; `leanprof doctor` checks the setup")]

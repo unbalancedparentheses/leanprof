@@ -97,6 +97,7 @@
             "bad_argument",
             "not_found",
             "incompatible",
+            "stale_source",
             "timeout",
             "cancelled",
             "failed"
