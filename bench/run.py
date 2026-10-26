@@ -185,13 +185,16 @@ def short(name):
 
 def leanprof_report(path):
     d = json.load(open(path))
-    times, calls, allocs, near = {}, {}, {}, {}
+    times, calls, allocs, near, probes, holds = {}, {}, {}, {}, {}, {}
     for s in d.get("scopes", []):
         n = short(s["name"])
         if n is None:
             continue
         times[n] = times.get(n, 0) + s["total_ns"]
+        probes[n] = probes.get(n, 0) + s.get("probes_ns", 0)
         near[n] = near.get(n, False) or s.get("near_probe_cost", False)
+        if s.get("holds_tiny"):
+            holds[n] = True
         calls[n] = calls.get(n, 0) + s["calls"]
         if "allocs" in s:
             allocs[n] = allocs.get(n, 0) + s["allocs"]
@@ -203,7 +206,8 @@ def leanprof_report(path):
         copies[n] = copies.get(n, 0) + c.get("shared", c["copies"])
     # functions `--auto` left untimed as too small to time: no row, no count
     untimed = sorted({short(n) for n in d.get("untimed", []) if short(n)})
-    return {"times": times, "calls": calls, "allocs": allocs, "copies": copies, "near": near,
+    return {"times": times, "calls": calls, "allocs": allocs, "copies": copies, "near": near, "probes": probes,
+            "holds": holds,
             "untimed": untimed, "overhead_ns": d.get("overhead_ns"), "dropped": d.get("dropped", 0)}
 
 
@@ -376,7 +380,7 @@ def analyse(runs, configs):
                 out["ns_per_scope"] = (med(walls) - plain_wall) / total_scopes
             reps = [r["report"] for r in rs if r["report"]]
             if cfg != "plain" and reps:
-                maes, maxes, ratios, per_comp, per_near = [], [], [], {}, {}
+                maes, maxes, ratios, per_comp, per_near, per_probe, per_holds = [], [], [], {}, {}, {}, {}
                 for rep in reps:
                     got = {c: rep["times"].get(c) for c in truth}
                     if any(v is None for v in got.values()):
@@ -392,6 +396,11 @@ def analyse(runs, configs):
                         per_comp.setdefault(c, []).append(got[c] / truth[c])
                         if "near" in rep:
                             per_near.setdefault(c, []).append(bool(rep["near"].get(c)))
+                        if "holds" in rep:
+                            per_holds.setdefault(c, []).append(bool(rep["holds"].get(c)))
+                        if rep.get("probes", {}).get(c):
+                            # what the report got wrong, as a share of the probes it subtracted
+                            per_probe.setdefault(c, []).append((got[c] - truth[c]) / rep["probes"][c])
                 if maes:
                     out["share_mae_pp"] = med(maes)
                     out["share_mae_pp_max"] = max(maes)
@@ -403,9 +412,14 @@ def analyse(runs, configs):
                     out["total_ratio_min"] = min(ratios)
                     out["total_ratio_max"] = max(ratios)
                     out["component_ratio"] = {c: med(v) for c, v in per_comp.items()}
+                    if per_probe:
+                        out["component_probe_err"] = {c: med(v) for c, v in per_probe.items()}
                     if per_near:
                         # flagged "near the probe cost" in most runs
                         out["component_near"] = {c: sum(v) * 2 > len(v) for c, v in per_near.items()}
+                    if any(any(v) for v in per_holds.values()):
+                        # marked as calling scopes too small to time (`holds_tiny`), in most runs
+                        out["component_holds"] = {c: sum(v) * 2 > len(v) for c, v in per_holds.items()}
                 else:
                     out["share_note"] = "components missing from the report"
                 # call counts
@@ -590,8 +604,9 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
     L.append("## Per component\n")
     L.append("Reported time of each component over its plain time (median of runs). `*`: leanprof "
              "flagged the row as near the probe cost (in most runs), telling the reader to take its time "
-             "from `leanprof sample`.\n")
-    flagged, clean = [], []
+             "from `leanprof sample`; `†`: it also marked the row as calling scopes too small to time "
+             "(`holds_tiny`), whose probes change its code, telling the reader to remove them and sample.\n")
+    flagged, clean, holding = [], [], []
     for w, wr in res.items():
         for c in [c for c in cols if c in ("profile", "run", "auto")]:  # the others add costs they do not subtract
             o = wr["configs"].get(c) or {}
@@ -599,6 +614,8 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
                 if r is None or "component_near" not in o:
                     continue
                 (flagged if o["component_near"].get(comp) else clean).append((abs(r - 1), f"`{w}`/`{comp}` `{c}`"))
+                if (o.get("component_holds") or {}).get(comp):
+                    holding.append(abs(r - 1))
     if flagged or clean:
         flagged.sort()
         clean.sort()
@@ -611,6 +628,9 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
         if fe:
             line += (f" Flagged: median error {med(fe) * 100:.0f}%, "
                      f"{sum(e > 0.1 for e in fe)} of {len(fe)} off by more than 10%.")
+        if holding:
+            line += (f" Of those, {len(holding)} also marked as calling scopes too small to time (†, "
+                     f"`holds_tiny`): median error {med(holding) * 100:.0f}%, largest {max(holding) * 100:.0f}%.")
         L.append(line + "\n")
     for w, wr in res.items():
         L.append(f"**{w}**\n")
@@ -621,7 +641,8 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
             for c in cols:
                 o = wr["configs"].get(c) or {}
                 row.append(fx((o.get("component_ratio") or {}).get(comp)) +
-                           ("*" if (o.get("component_near") or {}).get(comp) else ""))
+                           ("*" if (o.get("component_near") or {}).get(comp) else "") +
+                           ("†" if (o.get("component_holds") or {}).get(comp) else ""))
             L.append(f"| `{comp}` | {ns / 1e6:.2f} ms | " + " | ".join(row) + " |")
         L.append("")
 

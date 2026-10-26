@@ -95,6 +95,13 @@ def explanations : CommandElabM (Array Json) := do
 /-- What a row marked `near_probe_cost` means. -/
 def nearProbeNote : String := "near the probe cost: use `leanprof sample` for this function's time"
 
+/-- What a row with `holds_tiny` means: it calls scopes too small to time,
+whose probes change its code by more than any subtraction can undo. -/
+def holdsTinyNote (names : List String) : String :=
+  s!"calls scopes too small to time ({", ".intercalate names}): the calls around them change this code, " ++
+    "so its time is off whatever leanprof subtracts, and so is a sample of this build; remove those " ++
+    "profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`"
+
 /-- How a time too small to measure is shown, never as 0: what is left of a
 scope after subtracting the probes' cost, or a copy shorter than one clock
 tick. -/
@@ -147,7 +154,9 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
       else if sampled then s!"{str s "name"}: {fmtNs total} CPU inclusive, {fmtNs (num s "self_ns")} self (sampled)"
       else s!"{str s "name"}: {calls} calls, total {t "total_ns"}, self {t "self_ns"}, " ++
         s!"mean {t "mean_ns"}, p50 {t "p50_ns"}, p99 {t "p99_ns"}" ++
-        (if near then s!"\n* {nearProbeNote}" else "")
+        (if near then s!"\n* {nearProbeNote}" else "") ++
+        (let held := (arr s "holds_tiny").toList.filterMap (·.getStr?.toOption)
+         if held.isEmpty then "" else s!"\n* {holdsTinyNote held}")
     if (best.get? line).all (·.1 < total) then best := best.insert line (total, label, tip)
     lines := lines.push s!"{file}:{line}  {label}  ({str s "name"})"
   -- tactic steps inside proofs (`elab`), on lines no declaration starts on

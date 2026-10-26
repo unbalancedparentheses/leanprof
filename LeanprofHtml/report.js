@@ -78,6 +78,10 @@ const sources = D.sources || {};
 // ---------- hints, as the editor shows them ----------
 const hints = new Map(); // "file:line" -> [{label, tip, cls}]
 const NEAR_PROBE = "near the probe cost: use `leanprof sample` for this function's time";
+// a row that calls scopes too small to time (`holds_tiny`): their probes change its code
+const holdsTiny = (s) => Array.isArray(s.holds_tiny) && s.holds_tiny.length
+  ? "calls scopes too small to time (" + s.holds_tiny.join(", ") + "): the calls around them change this code, so its time is off whatever leanprof subtracts, and so is a sample of this build; remove those profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`"
+  : "";
 function addHint(pos, label, tip, cls) {
   if (!isPos(pos)) return;
   if (!hints.has(pos)) hints.set(pos, []);
@@ -94,7 +98,7 @@ if (run) {
     const tip = sampled ? s.name + ": " + fNs(t) + " CPU inclusive (sampled)"
       : s.name + ": " + fN(num(s, "calls")) + " calls, total " + tScope(s, "total_ns") + ", self " + tScope(s, "self_ns") +
         ", mean " + tScope(s, "mean_ns") + ", p50 " + tScope(s, "p50_ns") + ", p99 " + tScope(s, "p99_ns") +
-        (near ? "\n* " + NEAR_PROBE : "");
+        (near ? "\n* " + NEAR_PROBE : "") + (holdsTiny(s) ? "\n* " + holdsTiny(s) : "");
     const b = best.get(s.pos);
     if (!b || b.t < t) best.set(s.pos, { t, label, tip });
   }
@@ -544,7 +548,7 @@ if (run) {
   if (arr(d, "scopes").length) addTab("scopes", sampled ? "Declarations" : "Scopes", arr(d, "scopes").length, () => panel(null,
     sampled ? "Sampled CPU time per Lean declaration, inclusive of what it calls." : "Exact time and calls per scope (profile! labels and, with --auto, functions), leanprof's own cost subtracted. * " + NEAR_PROBE + ".",
     table(arr(d, "scopes"), sampled ? [col("declaration", "name"), pcol("where", "pos"), ncol("CPU (incl.)", "total_ns", fNs, { bar: true }), { t: "% CPU", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }]
-      : [col("scope", "name"), pcol("where", "pos"), { t: "kind", v: (r) => (r.auto ? "function" : "profile!") }, ncol("calls", "calls"), ncol("total", "total_ns", (v, r) => r && r.near_probe_cost === true ? h("span", { title: NEAR_PROBE }, tScope(r, "total_ns") + "*") : fScope("total_ns")(v, r), { bar: true }), ncol("self", "self_ns", fScope("self_ns")),
+      : [col("scope", "name"), pcol("where", "pos"), { t: "kind", v: (r) => (r.auto ? "function" : "profile!") }, ncol("calls", "calls"), ncol("total", "total_ns", (v, r) => r && r.near_probe_cost === true ? h("span", { title: NEAR_PROBE + (holdsTiny(r) ? "\n" + holdsTiny(r) : "") }, tScope(r, "total_ns") + "*") : fScope("total_ns")(v, r), { bar: true }), ncol("self", "self_ns", fScope("self_ns")),
         { t: "% wall", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }, ncol("mean", "mean_ns", fScope("mean_ns")), ncol("p50", "p50_ns", fScope("p50_ns")), ncol("p99", "p99_ns", fScope("p99_ns")), ncol("max", "max_ns", fNs),
         ncol("allocs", "allocs"), ncol("alloc bytes", "alloc_bytes", fBytes)], { what: "scopes" })));
   if (sampled && run.flame) addTab("self", "Self time", null, () => {

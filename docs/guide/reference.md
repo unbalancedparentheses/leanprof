@@ -109,7 +109,11 @@ copies may be undercounted; see
   `probes_ns` (the probes' cost in and around its outermost calls, which
   was subtracted from `total_ns`) and `near_probe_cost` (true when
   `probes_ns` is at least 0.3 of `total_ns`: take this row's time from
-  `leanprof sample`, see [run time](run-time.md#overhead-and-accuracy));
+  `leanprof sample`, see [run time](run-time.md#overhead-and-accuracy)),
+  `timed_calls` (a light scope: the calls actually timed) and `holds_tiny`
+  (the light scopes it calls, when their probes cost at least 0.3 of its
+  `total_ns`: those probes change its code, so its time is off whatever is
+  subtracted; remove them and use `leanprof sample`);
 - `copies`: `function`, `symbol`, `scope`, `where`, `kind`, `copies`,
   `bytes`, `copy_ns`, `shared`, `multi_threaded`, `persistent`, `pct_run`
   (`copy_ns` as a percentage of `run_ns`), `tiny` (true when the copies

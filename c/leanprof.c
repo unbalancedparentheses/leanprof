@@ -89,6 +89,11 @@ typedef struct {
      * a sample of about one call in LP_LIGHT_EVERY, kept apart from the calls
      * timed before it went light, which were all timed (lpf_light_est). */
     uint64_t st_total, st_desc_total, st_outer, st_self, st_kids, st_calls, st_fwd, st_sum, st_desc_sum;
+    /* The scope it was first called from in a sampled light call (an
+     * lpf_scope; lpf_exit_sampled), whose row the report marks as holding it;
+     * and this scope's row in the report (1-based, 0 when it has none). */
+    const void *lparent;
+    uint32_t row;
     /* allocations (LEANPROF_ALLOCS builds): made while this scope was the
      * innermost (self), and including children over outermost calls (total) */
     uint64_t allocs_self, bytes_self, allocs_total, bytes_total;
@@ -997,8 +1002,11 @@ LP_HOT void lpf_exit_light(lpf_thread *t, lpf_frame *f, uint32_t d) {
 }
 
 /* A call timed while its scope was light: its part of the sums, kept apart
- * (lpf_light_est). */
-static __attribute__((noinline)) void lpf_exit_sampled(lpf_scope *s, const lpf_frame *f, uint64_t raw) {
+ * (lpf_light_est); and the first scope it was sampled under, its caller
+ * (`lparent`). */
+static __attribute__((noinline)) void lpf_exit_sampled(lpf_scope *s, const lpf_frame *f, uint64_t raw,
+                                                       const lpf_scope *caller) {
+    if (LEAN_UNLIKELY(s->lparent == NULL) && caller != NULL && caller != s) LP_ST(s->lparent, caller);
     LP_ADD(s->st_self, raw - ((f->child + 512) >> 10));
     LP_ADD(s->st_kids, f->kids);
     if (s->active == 0) {
@@ -1042,7 +1050,7 @@ LP_HOT void lpf_exit(void) {
     if (LEAN_UNLIKELY(f->counted)) lpf_exit_allocs(t, f, s, d);
     if (s == NULL) return;
     lpf_mem_on_exit(s, f->start, now);
-    if (LEAN_UNLIKELY(f->sampled)) lpf_exit_sampled(s, f, raw);
+    if (LEAN_UNLIKELY(f->sampled)) lpf_exit_sampled(s, f, raw, d > 0 ? t->stack[d - 1].scope : NULL);
     /* below 0 when light children were estimated at more than they took:
      * wraps, and is read back signed */
     LP_ADD(s->self, raw - ((f->child + 512) >> 10));
@@ -2652,6 +2660,8 @@ typedef struct {
     uint64_t timed;            /* calls timed: all but a light scope's untimed ones (lpf_light_check) */
     uint8_t light;             /* some calls were only counted: the times are the timed ones' scaled up */
     double probes;             /* ticks: probe cost in and around its outermost calls */
+    char holds[256];           /* light scopes called from it, separated by LP_HOLDS_SEP (lpf_holds_add) */
+    double lprobes;            /* ticks: what their only counted calls' probes cost (calibrated) */
     uint64_t hist[LP_BUCKETS];
 } lpf_scope_sum;
 
@@ -2672,6 +2682,30 @@ typedef struct {
     uint8_t kind;
     uint64_t count[LP_REASONS], bytes, total, ticks;
 } lpf_copy_sum;
+
+/* A scope too small to time, called from row `r`: its probes change the code
+ * of that row's scope (two calls around a nanosecond of work: in the benchmark
+ * an empty pair cost 2.1 ns a call in one loop and 1.5 ns in another), by an
+ * amount no calibration sees, so the row's time is off whatever is subtracted,
+ * and a sample of the same build is off too (bench/README.md). */
+#define LP_HOLDS_SEP '\x1e'
+static void lpf_holds_add(lpf_scope_sum *r, const char *name) {
+    size_t n = strlen(name), len = strlen(r->holds);
+    for (const char *p = r->holds; *p;) { /* already listed (another thread's scope of the same name) */
+        const char *e = strchr(p, LP_HOLDS_SEP);
+        size_t m = e ? (size_t)(e - p) : strlen(p);
+        if (m == n && strncmp(p, name, n) == 0) return;
+        p += m + (e != NULL);
+    }
+    if (len + n + 2 > sizeof r->holds) return;
+    if (len > 0) r->holds[len++] = LP_HOLDS_SEP;
+    memcpy(r->holds + len, name, n + 1);
+}
+/* The row is marked when those probes are a large part of its time (like
+ * lpf_near_probe): a row with real work around a few tiny calls is not. */
+static int lpf_holds_tiny(const lpf_scope_sum *s) {
+    return !s->is_task && s->holds[0] && s->lprobes >= LP_NEAR_PROBE * (double)s->total;
+}
 
 static int lpf_by_total(const void *a, const void *b) {
     const lpf_scope_sum *x = a, *y = b;
@@ -2912,6 +2946,29 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
         }
         if (nnear > 0)
             fprintf(f, "* near the probe cost: use `leanprof sample` for this function's time\n");
+        /* rows holding scopes too small to time (lpf_holds_add), the largest three */
+        char rows[400] = "", held[400] = "";
+        size_t nholds = 0;
+        for (size_t k = 0; k < ns; k++) {
+            if (!lpf_holds_tiny(&S[k])) continue;
+            if (nholds++ >= 3) continue;
+            size_t m = strcspn(S[k].holds, "\x1e");
+            size_t lr = strlen(rows), lh = strlen(held);
+            snprintf(rows + lr, sizeof rows - lr, "%s%s", lr ? ", " : "", S[k].name);
+            char one[130];
+            snprintf(one, sizeof one, "%.*s", (int)(m < 128 ? m : 128), S[k].holds);
+            int dup = 0; /* the same scope under several rows (one per thread, say) is named once */
+            for (const char *p = held; *p && !dup; p += strcspn(p, ",") + (p[strcspn(p, ",")] ? 2 : 0))
+                dup = strncmp(p, one, strlen(one)) == 0 && (p[strlen(one)] == ',' || p[strlen(one)] == 0);
+            if (!dup) snprintf(held + lh, sizeof held - lh, "%s%s", lh ? ", " : "", one);
+        }
+        if (nholds > 0)
+            fprintf(f,
+                    "%s%s call%s scopes too small to time (%s): the calls around them change the code they sit in, "
+                    "so %s time is off whatever leanprof subtracts, and so is a sample of this build; remove "
+                    "those profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`\n",
+                    rows, nholds > 3 ? " and others" : "", nholds == 1 ? "s" : "", held,
+                    nholds == 1 ? "its" : "their");
         /* self time also holds what runs inside a scope without probes: Lean's
            precompiled libraries, the C runtime, system calls */
         const lpf_scope_sum *big = NULL;
@@ -3113,6 +3170,21 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
                 (unsigned long long)S[k].bytes_total, (unsigned long long)S[k].allocs_self,
                 (unsigned long long)S[k].bytes_self, S[k].probes * tick, lpf_near_probe(&S[k]) ? "true" : "false");
         if (S[k].light) fprintf(f, ",\"timed_calls\":%llu", (unsigned long long)S[k].timed);
+        if (lpf_holds_tiny(&S[k])) {
+            fprintf(f, ",\"holds_tiny\":[");
+            char buf[sizeof S[k].holds];
+            memcpy(buf, S[k].holds, sizeof buf);
+            int one = 1;
+            for (char *p = buf; p != NULL;) {
+                char *e = strchr(p, LP_HOLDS_SEP);
+                if (e != NULL) *e = 0;
+                if (!one) fputc(',', f);
+                one = 0;
+                lpf_json_str(f, p);
+                p = e ? e + 1 : NULL;
+            }
+            fputc(']', f);
+        }
         static const char *const tn[] = {"total_ns", "self_ns", "mean_ns", "p50_ns", "p99_ns"};
         double tv[] = {(double)S[k].total * tick, (double)S[k].self * tick, (double)S[k].sum * tick / (double)S[k].calls,
                        (double)lpf_percentile(S[k].hist, 0.50) * tick,
@@ -3338,6 +3410,7 @@ static void lpf_report(void) {
         dropped += t->dropped;
         for (size_t i = 0; i < LP_TABLE; i++) {
             lpf_scope *s = t->scopes[i];
+            if (s != NULL) s->row = 0;
             /* skip a declaration's other functions: they share its scope */
             if (s == NULL || t->keys[i] != s->key || s->calls == 0 || s->kind == LP_INTERNAL) continue;
             char fn[256] = "", fnkey[260];
@@ -3394,6 +3467,7 @@ static void lpf_report(void) {
                 S[k].min = UINT64_MAX;
                 ns++;
             }
+            s->row = (uint32_t)k + 1;
             /* leanprof's own cost removed (see calibration); a light scope's
              * timed calls stand for all of them */
             S[k].calls += s->calls + s->lcalls;
@@ -3450,6 +3524,17 @@ static void lpf_report(void) {
             C[k].ticks += c->ticks;
         }
     }
+    /* the rows that call scopes too small to time (all rows are numbered now) */
+    for (lpf_thread *t = lpf_threads; t != NULL; t = t->next)
+        for (size_t i = 0; i < LP_TABLE; i++) {
+            lpf_scope *s = t->scopes[i];
+            const lpf_scope *up = s != NULL ? LP_LD(s->lparent) : NULL;
+            if (s == NULL || t->keys[i] != s->key || s->row == 0 || s->lcalls == 0 || up == NULL || up->row == 0 ||
+                up->row == s->row)
+                continue;
+            lpf_holds_add(&S[up->row - 1], S[s->row - 1].name);
+            S[up->row - 1].lprobes += (double)s->lcalls * (double)LP_LD(lpf_light_fp[s->path]) / 1024.0;
+        }
     pthread_mutex_unlock(&lpf_lock);
 
     /* Self is total minus the children. When the children run for about what
