@@ -161,12 +161,15 @@ leanprof's own Lean. The driver source builds on every supported Lean
 (4.34.x, 4.35.x, the newest release candidate and the nightly: the Lean
 versions workflow checks `"exact_ranges":true` on each, daily).
 
-Building takes 3 to 7 s once per Lean (lean4-cli at `v4.34.0`, 5 builds,
-Apple M5 Max under load 6 to 48; 26 s once at load 57); after that,
-finding the driver is one file check. A driver built this way elaborates as fast as the one built
-with leanprof: on lean4-cli's `Cli/Basic.lean` with Lean 4.35.0, 5.90 to
-6.22 s of CPU time per profile against 5.84 to 5.99 s (10 runs each, the
-same 373 ranges).
+Building takes 2.1 to 6.9 s once per Lean (lean4-cli at `v4.34.0`, 5
+builds, Apple M5 Max at load 5 to 15; 26 s once with the machine at load
+57); after that, finding the driver is one file check. On lean4-cli's
+`Cli/Basic.lean` with Lean 4.34.0 (10 runs each), a profile through the
+cached driver takes 1.79 s (1.89 s with the definitions located), against
+1.76 s through `lean --json` and 1.64 s for plain `lean`. A driver built
+this way elaborates as fast as the one built with leanprof: with Lean
+4.35.0, 1.776 and 1.779 s against 1.778 and 1.744 s, with the same 373
+ranges.
 
 Only when that build fails (no `leanc` in the toolchain, an unwritable
 cache, a Lean the source does not build on), or the driver cannot load a
