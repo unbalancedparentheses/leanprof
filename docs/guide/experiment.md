@@ -75,7 +75,9 @@ The candidate is checked out in a worktree of its own
 tries and starts from the base's: each try rebuilds only what the candidate
 changed. Each step runs only if the one before passed:
 
-1. **Build**: `lake build` and `lake build EXE`. A failure is a DISCARD.
+1. **Build**: `lake build` and `lake build EXE`, then every built module of
+   the package that imports a changed one (a test module whose `#guard`s now
+   fail). A failure is a DISCARD.
 2. **Guard**: the [proof-preservation audit](proof-audit.md) of the changed
    modules and of every module of the package that imports them (see below).
 3. **Tests**: they must pass.
@@ -164,6 +166,37 @@ worktrees (`--keep-worktrees` keeps them) and writes `finish.json`.
 `leanprof experiment status [--json]` prints the experiment and its tries.
 Several experiments may exist; the last one started is the current one,
 `--id ID` picks another.
+
+## On a real project: lean-regex
+
+[lean-regex](https://github.com/pandaman64/lean-regex) at `32af6f3` (the
+commit CI pins), a verified library with its Lake package in `regex/` and a
+`Bench` executable that prints its own timings, on a fresh clone (Apple M-series,
+2026-10-26):
+
+```
+cd regex
+leanprof experiment start --id regex2 --exe Bench --inputs ../inputs --cases ../cases.txt \
+  --heldout ../heldout --ignore-lines "Ran " --ignore-lines "Average time" -- -e '\w+' '{}'
+```
+
+Eight cases: `\w+` on three files (1.5 MB of Lean's `Init/Data`, `Prelude.lean`,
+a tiny file), and five more lines of `cases.txt` (`_lt`/`_le` names, numbers,
+declarations, `x*` with empty matches, and the malformed pattern `(`); one
+held-out file. `start` took 12 s. The candidates, each a local commit:
+
+| candidate | verdict | why | time |
+|---|---|---|---:|
+| `Regex.count` counts the matches instead of building `findAll`'s array | INCONCLUSIVE | guard PASS (5 modules, 144 theorems), tests pass, outputs identical on 8 cases, exact counts unchanged; paired time −1.61%, 95% interval [−2.10%, −0.72%] after 30 pairs: faster, but not settled beyond the 1% `--min-change` | 34 s |
+| the same, skipping empty matches | DISCARD | the test module that imports `Regex.count` no longer builds (four `#guard`s on `empty.count`) | 4 s |
+| the same, with a `sorry` in `Matches.lt_next?_some` | DISCARD | guard: `sorry_dependency` on the theorem and on `count`, `findAll`, `split`, … (44 findings) | 11 s |
+| a comment only | DISCARD | the 50 generated C files are the base's: nothing timed; heartbeats unchanged | 29 s |
+
+An earlier run of the same `count` candidate gave −2.44%, [−4.44%, −1.01%] after
+20 pairs, a KEEP: the effect is about 2%, close to the 1% floor, and two runs on
+one shared machine landed on either side of it. That is what INCONCLUSIVE is
+for; a quiet machine, more pairs, or a larger effect decides it. Candidate
+builds took 1–2 s, since the base's build is kept.
 
 ## Limits
 

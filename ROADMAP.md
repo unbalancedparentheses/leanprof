@@ -167,7 +167,7 @@ provenance and one complete experiment operation come first.
   measurement settings to every summary and experiment. Check compatibility
   and source freshness before comparing or advising; link source ranges to the
   exact snapshot measured. (Replaces the earlier "run manifest" item.)
-- [ ] **One complete experiment operation.** Baseline capture, candidate
+- [x] **One complete experiment operation.** Baseline capture, candidate
   measurement, correctness checks and the verdict under one experiment ID;
   timing (`measure-pair`) and instrumented counts (`measure`) kept separate but
   linked. Correctness beyond one output file: base and candidate run on many
@@ -175,21 +175,35 @@ provenance and one complete experiment operation come first.
   lean-compiler-backend), several workload sizes, held-out inputs for the
   final check, configured tests and proofs required before KEEP. Returns KEEP,
   DISCARD or an explicit inconclusive/error reason with its evidence.
-- [ ] **No KEEP for a change that weakens what it must preserve.** Refuse
+  Done: `leanprof experiment start|try|finish` ([guide](docs/guide/experiment.md)),
+  also over MCP; cases from `--inputs`, `--cases` (sizes, options, malformed
+  inputs) and `--heldout`, compared on stdout, stderr, exit code and output
+  files; `scripts/experiment-check.sh` in CI; run on lean-regex.
+- [x] **No KEEP for a change that weakens what it must preserve.** Refuse
   a candidate whose diff touches tests, theorem statements or expected
   outputs, adds `sorry`, an `axiom`, `@[implemented_by]` or `@[extern]`,
   turns a `decide` or a proof into something weaker, or changes the
   project's axioms (`#print axioms` on the declarations it touches). In Lean
   the cheapest "speedup" is deleting a proof obligation; lean-compiler-backend
   needed its own proof-axiom audit to catch that.
-- [ ] **Cheaper iterations.** In the lean-compiler-backend run most of each
+  Done: `experiment try` runs the proof-preservation auditor on the changed
+  modules and their dependents (DISCARD for tests, expected outputs, inputs,
+  `sorry`, new axioms, `implemented_by`, `extern`, `unsafe`, `partial`, removed
+  theorems; INCONCLUSIVE for a changed statement). Open: an equivalence check,
+  so that optimizing a function its theorems mention can pass.
+- [x] **Cheaper iterations.** In the lean-compiler-backend run most of each
   experiment was the rebuild (about 90 s), not the measurement: keep the
   base build, rebuild only the candidate's changed modules, and use the
   exact counts as a first filter (if copies, allocations and calls did not
   change, say so before spending seconds on timing).
-- [ ] **A compile-time loop for libraries.** For Mathlib-style code with no
+  Done: the base and candidate worktrees keep their builds (lean-regex
+  candidates built in 1–2 s); worse exact counts skip timing; generated C
+  identical to the base's skips counting and timing.
+- [x] **A compile-time loop for libraries.** For Mathlib-style code with no
   executable, the experiment's measure is `elab --heartbeats` on the
   modules the change touches and their dependents: exact, no timing noise.
+  Done: `experiment start` without `--exe`; heartbeats of the base cached by
+  commit. Not yet run on Mathlib.
 - [x] Interleaved plain-binary timing: `measure-pair` alternates AB/BA and
   `judge PAIR.json` uses a paired 95% median interval. Exact allocation
   checks remain in the existing instrumented `measure` workflow.
