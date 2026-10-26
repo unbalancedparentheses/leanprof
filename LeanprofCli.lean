@@ -1264,7 +1264,7 @@ def sample (argv : List String) : IO UInt32 := do
   let rc ← try spawnWait samply samplyArgs ((← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1")]) (o.cwd.map (·))
     catch e =>
       IO.eprintln s!"leanprof: cannot run {samply} ({e}); get samply with: {← samplyInstallCmd}"
-      return 1
+      return (1 : UInt32)
   -- samply exits with the program's exit code: a failing program still has a profile
   unless ← out.pathExists do
     IO.eprintln s!"leanprof: samply exited with {rc} and wrote no profile"
@@ -2729,57 +2729,61 @@ def startCmd (pick : Option String) (args : Array String) : IO UInt32 := do
       IO.println s!"\n`{exe}` exited with code {code}{if args.isEmpty then s!"; if it needs arguments: {startCommand exe} -- ARGS" else ""}"
     return code
 
+/-- The command `argv` names. (Its own definition: Lean before 4.28 types a `try`
+around this `match` by its first `return`, as a `Nat`.) -/
+def dispatchCmd (argv : List String) : IO UInt32 := do
+  match argv with
+  | [] => startCmd none #[]
+  | "--" :: rest => startCmd none rest.toArray
+  | ["help"] | ["--help"] | ["-h"] =>
+    IO.println usage
+    return 0
+  | ["help", c] | [c, "--help"] | [c, "-h"] =>
+    match commandHelp c with
+    | some h => IO.println h; return 0
+    | none => IO.eprintln usage; return 2
+  | ["doctor"] => doctor
+  | "run" :: rest => run rest
+  | "stat" :: rest => statCmd rest
+  | "measure" :: rest => measureCmd rest
+  | "measure-pair" :: rest => measurePairCmd rest
+  | "judge" :: rest => judgeCmd rest
+  | "compare" :: rest => compare rest
+  | "report-md" :: rest => reportMd rest
+  | "sample" :: rest => sample rest
+  | "elab" :: rest => elabCmd rest
+  | "explain" :: rest =>
+    Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
+  | "fix" :: rest =>
+    -- a signal ends the current step; `fix` then removes its worktree
+    guardSignals 0
+    Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+    Leanprof.Fix.fixCmd rest fun args cwd => do
+      Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
+  | "experiment" :: rest =>
+    -- a signal ends the current step; the worktrees stay for the next try
+    guardSignals 0
+    Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+    Leanprof.Experiment.experimentCmd rest fun args cwd => do
+      Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
+  | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
+  | "top" :: rest => LeanprofLive.topCmd rest
+  | "dump" :: rest => LeanprofLive.dumpCmd rest
+  | "mcp" :: rest => LeanprofLive.mcpCmd rest
+  | name :: rest =>
+    -- `leanprof EXE [-- ARGS]`: the no-argument flow for an executable of this project
+    let exes := ((← projectTargets).map (·.exes)).getD #[]
+    if !name.startsWith "-" && exes.contains name then
+      startCmd (some name) (match rest with | "--" :: r => r.toArray | r => r.toArray)
+    else if name.startsWith "-" then
+      IO.eprintln usage
+      return 2
+    else
+      IO.eprintln s!"leanprof: `{name}` is neither a command nor an executable of this project{if exes.isEmpty then "" else s!" ({", ".intercalate exes.toList})"}; `leanprof help` lists the commands"
+      return 2
+
 def dispatch (argv : List String) : IO UInt32 := do
-  try
-    match argv with
-    | [] => startCmd none #[]
-    | "--" :: rest => startCmd none rest.toArray
-    | ["help"] | ["--help"] | ["-h"] =>
-      IO.println usage
-      return 0
-    | ["help", c] | [c, "--help"] | [c, "-h"] =>
-      match commandHelp c with
-      | some h => IO.println h; return 0
-      | none => IO.eprintln usage; return 2
-    | ["doctor"] => doctor
-    | "run" :: rest => run rest
-    | "stat" :: rest => statCmd rest
-    | "measure" :: rest => measureCmd rest
-    | "measure-pair" :: rest => measurePairCmd rest
-    | "judge" :: rest => judgeCmd rest
-    | "compare" :: rest => compare rest
-    | "report-md" :: rest => reportMd rest
-    | "sample" :: rest => sample rest
-    | "elab" :: rest => elabCmd rest
-    | "explain" :: rest =>
-      Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
-    | "fix" :: rest =>
-      -- a signal ends the current step; `fix` then removes its worktree
-      guardSignals 0
-      Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
-      Leanprof.Fix.fixCmd rest fun args cwd => do
-        Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
-    | "experiment" :: rest =>
-      -- a signal ends the current step; the worktrees stay for the next try
-      guardSignals 0
-      Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
-      Leanprof.Experiment.experimentCmd rest fun args cwd => do
-        Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
-    | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
-    | "top" :: rest => LeanprofLive.topCmd rest
-    | "dump" :: rest => LeanprofLive.dumpCmd rest
-    | "mcp" :: rest => LeanprofLive.mcpCmd rest
-    | name :: rest =>
-      -- `leanprof EXE [-- ARGS]`: the no-argument flow for an executable of this project
-      let exes := ((← projectTargets).map (·.exes)).getD #[]
-      if !name.startsWith "-" && exes.contains name then
-        startCmd (some name) (match rest with | "--" :: r => r.toArray | r => r.toArray)
-      else if name.startsWith "-" then
-        IO.eprintln usage
-        return 2
-      else
-        IO.eprintln s!"leanprof: `{name}` is neither a command nor an executable of this project{if exes.isEmpty then "" else s!" ({", ".intercalate exes.toList})"}; `leanprof help` lists the commands"
-        return 2
+  try dispatchCmd argv
   catch e =>
     let s ← caughtSignal
     if s != 0 then return 128 + s  -- said by `main`

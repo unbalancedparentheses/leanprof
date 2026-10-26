@@ -250,8 +250,8 @@ provenance and one complete experiment operation come first.
     to its timings. Link each finding to its before/after experiment, and
     report setup, collection and analysis cost separately.
   - [ ] Radar JSONL output.
-  - [ ] Support Lean versions before 4.34 where the runtime allows
-    (LeanBench, plain Lean, runs from 4.27 to 4.35).
+  - [x] Support Lean versions before 4.34 where the runtime allows
+    (LeanBench, plain Lean, runs from 4.27 to 4.35): 4.27 and later.
 
 ## After v0.2.0
 

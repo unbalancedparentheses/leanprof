@@ -32,7 +32,69 @@ Output: Lean's messages as `lean --json` prints them, then the traces. Exit code
 
 open Lean Elab
 
+/-! ## Lean versions
+
+The driver is built by the project's Lean (4.27 or later), so the parts of Lean's
+API that changed are written once per version range:
+`#lean_since 29 COMMANDS #lean_else COMMANDS #lean_end` elaborates the first
+commands with Lean 4.29 or later, the others before (both must parse on every
+version). -/
+
+syntax "#lean_since " num ppLine command* "#lean_else" ppLine command* "#lean_end" : command
+
+macro_rules
+  | `(#lean_since $n $newer* #lean_else $older* #lean_end) =>
+    let since := Lean.version.major > 4 || (Lean.version.major == 4 && Lean.version.minor >= n.getNat)
+    return mkNullNode (if since then newer else older)
+
 namespace Leanprof.ElabDriver
+
+#lean_since 29
+/-- How an operation ended, kept in its trace node. -/
+def nodeData (cls : Name) (start stop : Float) (r : TraceResult) (tag : String) : TraceData :=
+  { cls, startTime := start, stopTime := stop, result? := some r, tag }
+def nodeBody (_ : TraceResult) : MessageData := .nil
+/-- The status mark of a timed node, when the node keeps it. -/
+def storedMark (d : TraceData) : Option String := some (d.result?.getD .success).toEmoji
+def toResult [ExceptToTraceResult ε α] (r : Except ε α) : TraceResult := r.toTraceResult
+#lean_else
+/-! Before Lean 4.29 a trace node kept no result: its status mark (when it has one)
+starts its message, as written by the operation. -/
+inductive TraceResult where
+  | success | failure | error
+def TraceResult.toEmoji : TraceResult → String
+  | .success => checkEmoji
+  | .failure => crossEmoji
+  | .error => bombEmoji
+class ExceptToTraceResult (ε α : Type) where
+  toTraceResult : Except ε α → TraceResult
+instance (priority := low) : ExceptToTraceResult ε α where
+  toTraceResult | .error _ => .error | .ok _ => .success
+def nodeData (cls : Name) (start stop : Float) (_ : TraceResult) (tag : String) : TraceData :=
+  { cls, startTime := start, stopTime := stop, tag }
+/-- The mark in the message, where `render` finds it. -/
+def nodeBody (r : TraceResult) : MessageData := .ofFormat (format r.toEmoji)
+def storedMark (_ : TraceData) : Option String := none
+def toResult [ExceptToTraceResult ε α] (r : Except ε α) : TraceResult := ExceptToTraceResult.toTraceResult r
+#lean_end
+
+#lean_since 31
+def loadHeader (header : HeaderSyntax) (imports : Array Import) (isModule : Bool) (opts : Options)
+    (msgs : MessageLog) (inputCtx : Parser.InputContext) (trustLevel : UInt32) (setup? : Option ModuleSetup)
+    (mainModule : Name) : IO (Environment × MessageLog) :=
+  processHeaderCore header.startPos imports isModule opts msgs inputCtx (trustLevel := trustLevel)
+    (plugins := setup?.map (·.plugins) |>.getD #[]) (leakEnv := true) (mainModule := mainModule)
+    (package? := setup?.bind (·.package?)) (arts := setup?.map (·.importArts) |>.getD {})
+    (headerStx? := some header)
+#lean_else
+/-- Before Lean 4.31 the header's syntax was not passed on. -/
+def loadHeader (header : HeaderSyntax) (imports : Array Import) (isModule : Bool) (opts : Options)
+    (msgs : MessageLog) (inputCtx : Parser.InputContext) (trustLevel : UInt32) (setup? : Option ModuleSetup)
+    (mainModule : Name) : IO (Environment × MessageLog) :=
+  processHeaderCore header.startPos imports isModule opts msgs inputCtx (trustLevel := trustLevel)
+    (plugins := setup?.map (·.plugins) |>.getD #[]) (leakEnv := true) (mainModule := mainModule)
+    (package? := setup?.bind (·.package?)) (arts := setup?.map (·.importArts) |>.getD {})
+#lean_end
 
 /-- Set (in compact mode) where `trace.profiler` is off but source nodes are still recorded. -/
 def compactOpt : Name := `leanprof.compact
@@ -66,10 +128,10 @@ node around it. -/
     withOptions (·.setBool `trace.profiler false) k else k)
   let stop ← if hb then pure (← IO.getNumHeartbeats).toFloat else pure ((← IO.monoNanosNow).toFloat / 1e9)
   if stop - start > trace.profiler.threshold.unitAdjusted opts then
-    let data : TraceData := { cls, startTime := start, stopTime := stop, result? := some res.toTraceResult,
-                              tag := s!"{s.byteIdx}:{e.byteIdx}:{stx.getKind}" }
+    let r := toResult res
+    let data := nodeData cls start stop r s!"{s.byteIdx}:{e.byteIdx}:{stx.getKind}"
     let children := (← getTraces).toArray.map (·.msg)
-    modifyTraces fun _ => old.push { ref := stx, msg := .trace data .nil children }
+    modifyTraces fun _ => old.push { ref := stx, msg := .trace data (nodeBody r) children }
   else
     modifyTraces (old ++ ·)
   MonadExcept.ofExcept res
@@ -188,12 +250,23 @@ partial def render (c : Ctx) (root : Option String) (depth : Nat) (wrap : Messag
         out := out.push s!"{indent}[{data.cls}] {← describe c.fullNames (wrap body)}"
       for ch in children do out ← render c none depth wrap out ch
       return out
+    let source := data.cls == tacticCls || data.cls == termCls
     let text ←
-      if data.cls == tacticCls || data.cls == termCls then pure (rangeText c data.tag)
+      if source then pure (rangeText c data.tag)
       else if let some r := root then pure r
       else if depth == 0 || (!c.compact && keepsText data.cls) then describe c.fullNames (wrap body)
       else pure ""
-    let mark := (data.result?.getD .success).toEmoji
+    -- before Lean 4.29: the mark that starts the message, if it has one (`leanprof elab`
+    -- reads a node only with a mark)
+    let (mark, text) ← match storedMark data with
+      | some m => pure (m, text)
+      | none => do
+        let fromMsg (s : String) : Option (String × String) := match s.toList with
+          | m :: '️' :: ' ' :: t => some (String.ofList [m, '️'], String.ofList t)
+          | [m, '️'] => some (String.ofList [m, '️'], "")
+          | _ => none
+        if source then pure ((fromMsg (← describe false body)).map (·.1) |>.getD checkEmoji, text)
+        else pure ((fromMsg text).getD (checkEmoji, text))
     out := out.push s!"{indent}[{data.cls}] [{fmtAmount c.hb (data.stopTime - data.startTime)}] {mark} {text}"
     for ch in children do out ← render c none (depth + 1) wrap out ch
     return out
@@ -275,11 +348,8 @@ def run (a : Args) : IO UInt32 := do
   if let some s := setup? then s.dynlibs.forM Lean.loadDynlib
   let (header, parserState, msgs) ← Parser.parseHeader inputCtx
   let header : HeaderSyntax := header
-  let (env, msgs) ← processHeaderCore header.startPos (setup?.bind (·.imports?) |>.getD header.imports)
-    (setup?.any (·.isModule) || header.isModule) opts msgs inputCtx (trustLevel := believerTrustLevel () + 1)
-    (plugins := setup?.map (·.plugins) |>.getD #[]) (leakEnv := true) (mainModule := mainModule)
-    (package? := setup?.bind (·.package?)) (arts := setup?.map (·.importArts) |>.getD {})
-    (headerStx? := some header)
+  let (env, msgs) ← loadHeader header (setup?.bind (·.imports?) |>.getD header.imports)
+    (setup?.any (·.isModule) || header.isModule) opts msgs inputCtx (believerTrustLevel () + 1) setup? mainModule
   printMessages msgs
   if msgs.hasErrors then return 3
   let mut opts' ← Language.Lean.reparseOptions opts

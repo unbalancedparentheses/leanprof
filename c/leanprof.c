@@ -7,6 +7,12 @@
 #define _GNU_SOURCE /* dladdr on glibc */
 #include <lean/lean.h>
 
+/* Lean 4.33 added lean_internal_get_rc (an atomic load under TSan); before,
+ * the count was read from the field. */
+#if LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR < 33
+static inline int lean_internal_get_rc(lean_object *o) { return o->m_rc; }
+#endif
+
 #include <dirent.h>
 #include <dlfcn.h>
 #include <pthread.h>
@@ -1428,8 +1434,17 @@ static inline size_t lpf_sarray_bytes(lean_object *a) {
         LP_COPY(kind, obj, bytes, call);                      \
     } while (0)
 
+/* Lean 4.28 added lean_copy_expand_array_nonlinear, behind Array.set! and the
+ * other in-place updates. Before, lean.h's lean_copy_array called
+ * lean_copy_expand_array itself (lean.h of later versions does not). */
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 28)
 LEAN_EXPORT lean_obj_res leanprof_copy_expand_array_nonlinear(lean_obj_arg a, bool expand) {
     LP_COPY(LP_ARRAY, a, lean_array_size(a) * sizeof(void *), lean_copy_expand_array_nonlinear(a, expand));
+}
+#endif
+
+LEAN_EXPORT lean_obj_res leanprof_copy_expand_array(lean_obj_arg a, bool expand) {
+    LP_COPY(LP_ARRAY, a, lean_array_size(a) * sizeof(void *), lean_copy_expand_array(a, expand));
 }
 
 /* Lean 4.35 added non-linear copy gadgets for scalar arrays and strings. */
@@ -1440,6 +1455,16 @@ LEAN_EXPORT lean_obj_res leanprof_copy_sarray_nonlinear(lean_obj_arg a, size_t c
 
 LEAN_EXPORT lean_obj_res leanprof_copy_string_nonlinear(lean_obj_arg s, size_t cap) {
     LP_COPY(LP_STRING, s, lean_string_size(s), lean_copy_string_nonlinear(s, cap));
+}
+#else
+/* Before, lean.h's ByteArray.set! and FloatArray.set! (lean_byte_array_uset,
+ * lean_float_array_uset) copied with these. */
+LEAN_EXPORT lean_obj_res leanprof_copy_byte_array(lean_obj_arg a) {
+    LP_COPY(LP_SCALAR_ARRAY, a, lpf_sarray_bytes(a), lean_copy_byte_array(a));
+}
+
+LEAN_EXPORT lean_obj_res leanprof_copy_float_array(lean_obj_arg a) {
+    LP_COPY(LP_SCALAR_ARRAY, a, lpf_sarray_bytes(a), lean_copy_float_array(a));
 }
 #endif
 
@@ -1496,7 +1521,11 @@ static const struct {
     const char *op, *call;
 } lpf_sc_ops[LPS_OPS] = {
     [LPS_ARRAY_PUSH] = {LP_ARRAY, "Array.push", "lean_array_push"},
+#if LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR < 28
+    [LPS_ARRAY_SET] = {LP_ARRAY, "Array.set!", "lean_copy_expand_array"},
+#else
     [LPS_ARRAY_SET] = {LP_ARRAY, "Array.set!", "lean_copy_expand_array_nonlinear"},
+#endif
 #if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 36)
     [LPS_STRING_PUSH] = {LP_STRING, "String.push", "lean_string_push_cold"},
 #else
@@ -1504,7 +1533,11 @@ static const struct {
 #endif
     [LPS_STRING_APPEND] = {LP_STRING, "String.append", "lean_string_append"},
     [LPS_BYTE_ARRAY_PUSH] = {LP_SCALAR_ARRAY, "ByteArray.push", "lean_byte_array_push"},
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 35)
     [LPS_BYTE_ARRAY_SET] = {LP_SCALAR_ARRAY, "ByteArray.set!", "lean_copy_sarray_nonlinear"},
+#else
+    [LPS_BYTE_ARRAY_SET] = {LP_SCALAR_ARRAY, "ByteArray.set!", "lean_copy_byte_array"},
+#endif
 };
 
 static int lpf_sc_done;
@@ -2633,8 +2666,9 @@ LEAN_EXPORT lean_obj_res leanprof_demangle(b_lean_obj_arg sym) {
 
 /* ---------- report ---------- */
 
-/* `profile!` labels are "name\x1fFile.lean:line"; older or hand-written ones
- * have no position. */
+/* `profile!` labels are "name\x1fFile.lean:line" ("name\x1f./File.lean:line"
+ * with Lean before 4.31, see labelWithPos); older or hand-written ones have no
+ * position. */
 #define LP_POS_SEP '\x1f'
 
 static void lpf_label_name(const char *label, char *out, size_t cap) {
@@ -2647,7 +2681,8 @@ static void lpf_label_name(const char *label, char *out, size_t cap) {
 
 static const char *lpf_label_pos(const char *label) {
     const char *sep = strchr(label, LP_POS_SEP);
-    return sep ? sep + 1 : "";
+    if (!sep) return "";
+    return sep[1] == '.' && sep[2] == '/' ? sep + 3 : sep + 1;
 }
 
 typedef struct {

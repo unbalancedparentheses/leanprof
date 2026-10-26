@@ -201,7 +201,7 @@ def render (label : String) (prev? : Option Json) (cur : Json) (width height : N
   let cores := match prev? with
     | some p => if r.hasPrev then (cpuNs cur - cpuNs p) / (r.dt * 1e9) else (cpuNs cur) / (up + 1)
     | none => (num cpu "user_ns" + num cpu "sys_ns") / (up + 1)
-  let rssRate := match prev? with
+  let rssRate : Float := match prev? with
     | some p => if r.hasPrev then (num mem "rss" - num (obj p "memory") "rss") / r.dt else 0
     | none => 0
   let sign := if rssRate >= 0 then "+" else "-"

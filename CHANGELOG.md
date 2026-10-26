@@ -6,6 +6,44 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Lean 4.27 to 4.33
+
+- leanprof supports projects on Lean 4.27 and later (4.34 before): `run`,
+  `stat`, `sample`, `measure`/`judge`, `explain`, `elab` and the library
+  (`profile!`, `#leanprof`). CI requires 4.27.0 and 4.31.0 besides 4.34.1
+  and 4.35.0, on Linux and macOS, and runs 4.28.1, 4.29.1, 4.30.0, 4.32.2
+  and 4.33.1 on Linux as advisory jobs.
+- Copies: before Lean 4.28, `Array.set!` and the other in-place updates copy
+  through `lean_copy_expand_array` (no `_nonlinear` gadget yet), and before
+  4.35 `ByteArray.set!`/`FloatArray.set!` through `lean_copy_byte_array`/
+  `lean_copy_float_array`: both are shimmed (`scripts/leanprof-cc` and
+  `copyFlags`). The `ByteArray.set!` copies were not counted on 4.34 either;
+  the self-check now runs all six operations on every version.
+- The runtime reads reference counts from the field before Lean 4.33 (no
+  `lean_internal_get_rc`).
+- `profile!` labels compile on Lean before 4.31, whose C backend wrote their
+  `\x1f` separator as a hex escape that swallowed a following hex digit
+  (`Examples/...` failed to compile): there the position is written after
+  `./`, which the runtime drops.
+- `leanprof-elab-driver` builds on each of these versions: the API that
+  changed (trace results from 4.29, `processHeaderCore`'s header syntax from
+  4.31) is written once per version range with `#lean_since N ... #lean_else
+  ... #lean_end`. Before 4.29 a trace node has no stored result; its status
+  mark is read from its message, and a node without one is marked ✅️ (the
+  traces `lean --json` prints on those versions lack it, which is why
+  `elab` without the driver saw only a few operations there).
+- `explain` on Lean before 4.30, whose C has no source variable names
+  (`x_12`, not `v_buckets_12_`): an element read out of an array is matched
+  to its source line again (a placeholder such as "a temporary" was taken
+  for a variable name, and `nested-array-element` had no fix), and an array
+  updated inside `for x in xs` is reported as `loop-over-updated-array`
+  when the compiler keeps the loop's variables in one tuple (it was
+  `field-of-kept-structure`).
+- Small source changes so that the library, the command and the test suite
+  build with Lean 4.27 (types that older elaborators did not infer, an import
+  for `String.splitOn`, the hardware thread count through the runtime
+  function directly).
+
 ### Callers of tiny `profile!` scopes are marked
 
 - A row that calls a light scope (one too small to time, timed on a sample

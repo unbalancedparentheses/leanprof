@@ -158,8 +158,10 @@ failed or concurrent build leaves nothing broken behind. On that Lean the
 driver also looks up the definitions behind the work (leanprof cannot
 read that Lean's `.olean` files itself), so the report has what it has on
 leanprof's own Lean. The driver source builds on every supported Lean
-(4.34.x, 4.35.x, the newest release candidate and the nightly: the Lean
-versions workflow checks `"exact_ranges":true` on each, daily).
+(4.27 and later, the newest release candidate and the nightly: the Lean
+versions workflow checks `"exact_ranges":true` on each, daily); the parts of
+Lean's API that changed in between are written once per version range
+(`#lean_since`).
 
 Building takes 2.1 to 6.9 s once per Lean (lean4-cli at `v4.34.0`, 5
 builds, Apple M5 Max at load 5 to 15; 26 s once with the machine at load

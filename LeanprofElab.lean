@@ -1265,6 +1265,11 @@ def kindLabel : String → String
 
 /-! ## The command -/
 
+/-- Hardware threads, or 0 (`System.Platform.Internal.getHardwareConcurrency`, which
+Lean before 4.28 does not declare; the runtime has the function). -/
+@[extern "lean_internal_get_hardware_concurrency"]
+opaque hardwareConcurrency : Unit → UInt32
+
 def main (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
   if o.files.isEmpty && !o.project then
@@ -1295,7 +1300,7 @@ def main (argv : List String) : IO UInt32 := do
     files := files ++ sel.filter fun (f, _) => !files.any (·.1 == f)
     if files.isEmpty then
       throw <| IO.userError "no modules to profile (none built under .lake/build/lib/lean, or none matches --module-glob)"
-  let cores := (System.Platform.Internal.getHardwareConcurrency ()).toNat
+  let cores := (hardwareConcurrency ()).toNat
   -- each `lean` elaborates with several threads of its own
   let jobs := if o.jobs > 0 then o.jobs else max 1 (cores / 2)
   if files.size > 1 then
