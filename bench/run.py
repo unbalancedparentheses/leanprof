@@ -702,7 +702,9 @@ def headline(L, res, configs):
     L.append("## Headline\n")
     L.append("Error in each function's share of time against the ground truth, in percentage points "
              "(mean over the workload's functions, median of runs; lower is better), and whether "
-             "leanprof's call counts are exact in every mode. Samplers report no counts; LeanProfiler "
+             "leanprof's call counts are exact in every mode (for the functions it instruments: those "
+             "`run --auto` leaves untimed have no count, see \"Exact call counts\"). Samplers report "
+             "no counts; LeanProfiler "
              "only has phase and task spans.\n")
     L.append("| workload | " + " | ".join(n for _, n in tools) + " | leanprof calls |")
     L.append("|---|" + "---|" * (len(tools) + 1))

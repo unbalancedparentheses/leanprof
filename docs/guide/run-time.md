@@ -7,8 +7,8 @@ see [memory](memory.md)):
 | | command | cost | gives |
 |---|---|---|---|
 | Sampling | `leanprof sample EXE` | near zero, no probes | CPU per Lean declaration, runtime breakdown, flame graph |
-| Every function | `leanprof run --auto EXE` | ~8 ns per call (M5 Max), ~23 ns (Ryzen 7950X3D) | exact calls and time of every function |
-| Marked scopes | `profile!` in your code | ~8 ns per scope (M5 Max), ~23 ns (Ryzen 7950X3D) | exact time, p50/p99 of what you mark |
+| Every function | `leanprof run --auto EXE` | ~8 ns per call (M5 Max), ~23 ns (Ryzen 7950X3D) | exact calls and calibrated time of every function (tiny ones untimed) |
+| Marked scopes | `profile!` in your code | ~8 ns per scope (M5 Max), ~23 ns (Ryzen 7950X3D) | exact calls, calibrated time and p50/p99 of what you mark |
 | Timeline | `--trace FILE` / `LEANPROF_TRACE` | one event per scope | Perfetto timeline per thread, with copies as markers |
 
 Start with sampling to find where to look, then use exact counts.
@@ -176,7 +176,8 @@ clock, boost off; see [bench/README.md](../../bench/README.md)):
   ns on 2 to 8 threads at 1.2–1.5 times.
 - **`--auto` leaves tiny functions untimed.** Straight-line functions of
   a few operations (no loop, no call but O(1) runtime operations and other
-  such functions, nothing freed but boxed scalars) get no probes; the report
+  such functions, nothing freed but boxed scalars; `lean_ctor_release` and
+  `Nat` arithmetic do not count as O(1)) get no probes; the report
   lists them under "too small to time left untimed" (`untimed` in the
   JSON), and their time is in their callers'. On the `tiny` benchmark that
   takes `--auto` from 9.5–10.2 to 0.6–1.2 points off and from 8× to 0.98×

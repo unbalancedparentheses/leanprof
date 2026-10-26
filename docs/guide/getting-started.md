@@ -27,7 +27,8 @@ and `leanprof` with no arguments rebuilds with probes instead.
 
 It puts `leanprof` in `~/.local/bin`: the prebuilt command of the latest
 [release](https://github.com/unbalancedparentheses/leanprof/releases) for
-macOS arm64 or Linux x86-64, checked against the release's `SHA256SUMS`, or,
+macOS arm64, macOS x86-64, Linux x86-64 or Linux arm64, checked against the
+release's `SHA256SUMS`, or,
 when there is no release for your platform yet, the command built from
 source (in `~/.local/share/leanprof/src`). Options go after `sh -s --`:
 
@@ -125,7 +126,7 @@ next steps
   leanprof run smoke -- 30000             exact: copies of shared values, tasks, waits (rebuilds with probes, puts your build back)
   leanprof explain                        after run: why each copy happened, and the fix in Lean
   leanprof fix --exe smoke -- 30000       apply that fix on a git branch, test, measure, commit it only if it helps
-  leanprof run --auto smoke -- 30000      every function's exact time and call count
+  leanprof run --auto smoke -- 30000      every function's time and exact call count
   samply load .lake/leanprof/smoke.json   flame graph with Lean names
 ```
 

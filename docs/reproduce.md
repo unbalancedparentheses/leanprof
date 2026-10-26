@@ -205,16 +205,17 @@ reduction is checked.
 
 `scripts/reproduce.sh bench-suite` (about 5 minutes). `bench/run.py --reps 7
 --check`, reports written under `.lake/reproduce/`, compared with
-`bench/results.json` (the Mac, load 2.3–2.8, leanprof `4bdc762`, after the
-outliner fix below; the results further down were checked against the
-earlier table, load 7–17, leanprof `575ba1c`).
+`bench/results.json`: the Mac, 2026-10-26, load 3.1–3.9, leanprof `043ebf0`
+(the run [bench/RESULTS.md](../bench/RESULTS.md) shows; its "before" column
+is `38205d5`, load 3.6–5.1). The results further down were checked against
+earlier tables (leanprof `575ba1c`, then `4bdc762` after the outliner fix).
 
 | | published | kind |
 |---|---|---|
-| call and copy counts exact in every leanprof mode and workload | | exact |
+| call and copy counts exact in every leanprof mode and workload, for the functions it instruments (those `run --auto` leaves untimed have no count, and the check skips them) | | exact |
 | reported totals within 0.75–1.35 of plain where scopes do real work | | range |
-| each headline cell, share error for `profile!`, `--auto`, `sample`, samply, LeanProfiler (README: `sample` 0.2–3.3 pp, samply 0.3–4.4) | RESULTS.md headline | range: up to max(2×, +1 pp) |
-| cost per scope, `tiny`, `profile!` (README: "about 6–7 ns") | 6.3 ns (accept 4–17 ns) | range |
+| each headline cell, share error for `profile!`, `--auto`, `sample`, samply, LeanProfiler (README: `sample` 0.1–1.9 pp, samply 0.1–2.0; `tiny` under `profile!` 6.1, `--auto` 0.7) | RESULTS.md headline | range: up to max(2×, +1 pp) |
+| cost per scope, `tiny`, `profile!` (README: "about 5–8 ns", 4.7 ns on `tiny`) | 4.7 ns (accept 4–17 ns) | range |
 
 The Linux accuracy figures (README "Sampling deep recursion on Linux",
 "`--auto` on Linux", "Like-for-like with LeanProfiler") need the dedicated
@@ -279,6 +280,7 @@ What did not reproduce:
   nine pairs here (3.1 in the final run), so the README's "compile
   heartbeats are the same on every run" holds per declaration only to a few
   hundred heartbeats, and the case study's "2 in a million" is not a bound.
+  The README now says "nearly the same", with the 5 per million.
 - **The four-file 108.5M total** of the lean-regex case study: the files are
   not named, and no fourth file of lean-regex makes the total with the three
   named ones (checked with leanprof `8caf3fd` on every file), so only the
@@ -308,4 +310,7 @@ the reproduction of `copybug` part-way) left the instrumented objects of the
 leanprof package in `.lake/build`, with the normal ones still in
 `.lake/leanprof/normal-objects`; `lake build` did not rebuild them, and the
 leanprof command itself then printed a runtime report on stderr at exit.
-Removing `.lake/build` and `.lake/leanprof` fixed it.
+Removing `.lake/build` and `.lake/leanprof` fixed it. This is fixed since:
+INT, TERM and HUP put the normal build back, after `kill -9` the next
+`lake build` recompiles the instrumented objects, and `leanprof doctor`
+restores a stashed build ([CHANGELOG](../CHANGELOG.md)).

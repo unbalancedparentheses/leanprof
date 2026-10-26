@@ -489,7 +489,8 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   code (no loop or join point) that calls only O(1) `lean.h` operations and
   other such functions of its file, and frees nothing but boxed scalars
   (`scripts/leanprof-tiny.awk`, run by the compiler wrapper on the C Lean
-  emits). Their probes cost several times their work, in their own time and
+  emits; narrowed by the review fixes above, `lean_ctor_release` and `Nat`
+  arithmetic are not O(1)). Their probes cost several times their work, in their own time and
   in every function's around them. The report lists them ("too small to
   time left untimed"; `untimed` in the JSON); their time is in their
   callers'. `--time-tiny` times and counts them as before. Mac, `tiny`

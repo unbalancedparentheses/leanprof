@@ -43,7 +43,8 @@ Action's comment) also says what changed inside it, from what the two
   instantiated.
 
 Each comes with its `file:line` and its base and head values, increases
-first. Counts do not vary between runs; heartbeats nearly so (in the
+first. Counts do not vary between runs (unless the program's threads race
+and change what runs); heartbeats nearly so (in the
 Batteries example below, four profiles of the same commit gave the
 regressed declaration totals up to 370 heartbeats apart, in about 876,000),
 so a constant credited with less than 1,000 heartbeats more, as often as
