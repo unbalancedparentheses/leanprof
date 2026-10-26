@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Examples.Retained
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -269,6 +269,70 @@ def lightScopeTests (sanitized : Bool) : StateT Nat IO Unit := do
 
 -- a long `do` block: Lean before 4.28 elaborates it past the default depth
 set_option maxRecDepth 2048 in
+/-- Retained memory (`run --retained`): the scenario of Examples/Retained.lean
+runs as a child with LEANPROF_RETAINED=1, and its report must say exactly
+what it keeps, where, and what holds it. -/
+def retainedTests (sanitized : Bool) : StateT Nat IO Unit := do
+  let app ← IO.appPath
+  let env := #[("LEANPROF_JSON", some "retained-test.json"), ("LEANPROF_QUIET", some "1"),
+    ("LEANPROF_RETAINED", some "1"), ("LEANPROF_RETAINED_SAMPLE_MS", some "2")]
+  let child ← IO.Process.output { cmd := app.toString, args := #["--retained"], env }
+  let text ← try IO.FS.readFile "retained-test.json" catch _ => pure ""
+  try IO.FS.removeFile "retained-test.json" catch _ => pure ()
+  let r := ((Lean.Json.parse text).toOption.bind fun j => (j.getObjVal? "retained").toOption).getD .null
+  check "retained: the child ran and reported" (child.exitCode == 0 && r != .null) child.stderr
+  let arr (j : Lean.Json) (k : String) := ((j.getObjVal? k >>= Lean.Json.getArr?).toOption.getD #[])
+  let str (j : Lean.Json) (k : String) := ((j.getObjValAs? String k).toOption.getD "")
+  let nat (j : Lean.Json) (k : String) := ((j.getObjValAs? Nat k).toOption.getD 0)
+  let flag (j : Lean.Json) (k : String) := (j.getObjValAs? Bool k).toOption
+  let site (fn : String) := (arr r "sites").find? (str · "function" == s!"RetainedTest.{fn}") |>.getD .null
+  let siteIs (fn : String) (exitN exitB : Nat) :=
+    nat (site fn) "exit_objects" == exitN && nat (site fn) "exit_bytes" == exitB
+  -- live at exit, per site: pairs and list cells are 24 bytes
+  check "retained: list cells a closure captured, live at exit" (siteIs "hookCells" 300 7200) (toString (site "hookCells"))
+  check "retained: list cells a forced thunk keeps, live at exit" (siteIs "lazyCells" 200 4800) (toString (site "lazyCells"))
+  check "retained: 100 pairs and their array in a global IO.Ref, live at exit"
+    (nat (site "keepPairs") "exit_objects" == 101) (toString (site "keepPairs"))
+  check "retained: the global log's 40000 pairs and 40000 cells, live at exit"
+    (siteIs "logPairs" 80000 1920000) (toString (site "logPairs"))
+  check "retained: a temporary list is gone at exit, and its largest size is kept"
+    (siteIs "tempPairs" 0 0 && nat (site "tempPairs") "max_bytes" == 240000) (toString (site "tempPairs"))
+  check "retained: the log grows over the run, the others do not"
+    (flag (site "logPairs") "growing" == some true &&
+      ["hookCells", "lazyCells", "keepPairs", "tempPairs"].all fun f => flag (site f) "growing" == some false)
+    (toString (site "logPairs"))
+  check "retained: frees were seen, and peak and exit are consistent"
+    (flag r "frees_seen" == some true && nat r "peak_bytes" ≥ nat r "exit_bytes" &&
+      nat r "exit_objects" ≥ 80000 + 300 + 200 + 101) s!"{(r.getObjVal? "peak_bytes").toOption} {(r.getObjVal? "exit_objects").toOption}"
+  -- what holds them: the walk at exit, and the snapshot taken while the temporary list was alive
+  let walk (w : String) := (arr r "walks").find? (str · "when" == w) |>.getD .null
+  let row (w fn kind : String) := (arr (walk w) "paths").find? (fun p =>
+    str p "function" == s!"RetainedTest.{fn}" && str p "kind" == kind) |>.getD .null
+  let heldBy (p : Lean.Json) := (arr p "held_by").map (str · "kind")
+  let rootOf (p : Lean.Json) := (p.getObjVal? "root").toOption.getD .null
+  let held (w fn kind : String) (n : Nat) (by_ : Array String) (glob : String) :=
+    let p := row w fn kind
+    nat p "objects" == n && heldBy p == by_ && str (rootOf p) "kind" == "global" &&
+      str (rootOf p) "name" == s!"RetainedTest.{glob}"
+  check "retained: pairs held by an Array in a global IO.Ref"
+    (held "exit" "keepPairs" "constructor" 100 #["Array", "IO.Ref"] "cache") (toString (row "exit" "keepPairs" "constructor"))
+  check "retained: list cells held by a closure in a global IO.Ref"
+    (held "exit" "hookCells" "constructor" 300 #["closure", "IO.Ref"] "hook") (toString (row "exit" "hookCells" "constructor"))
+  check "retained: list cells held by a Thunk in a global IO.Ref"
+    (held "exit" "lazyCells" "constructor" 200 #["Thunk", "IO.Ref"] "lazy") (toString (row "exit" "lazyCells" "constructor"))
+  check "retained: the log held by its global IO.Ref"
+    (held "exit" "logPairs" "constructor" 80000 #["IO.Ref"] "log") (toString (row "exit" "logPairs" "constructor"))
+  let hint (w fn : String) := str (row w fn "constructor") "hint"
+  check "retained: fixes name the closure, the thunk and the global IO.Ref"
+    ((hint "exit" "hookCells").startsWith "Captured by a closure" && (hint "exit" "lazyCells").startsWith "Held by a Thunk" &&
+      ((hint "exit" "keepPairs").splitOn "global IO.Ref").length > 1) s!"{hint "exit" "hookCells"} | {hint "exit" "lazyCells"}"
+  let tmp := row "snapshot" "tempPairs" "constructor"
+  -- the stack is scanned conservatively; under ASan locals can live off the stack
+  check "retained: the snapshot sees the temporary list, held by a local"
+    (nat tmp "objects" == 10000 && nat tmp "bytes" == 240000 && (sanitized || str (rootOf tmp) "kind" == "stack"))
+    (toString tmp)
+  check "retained: a heap walk near the peak" (sanitized || str r "peak_walk" == "taken") (str r "peak_walk")
+
 def tests : StateT Nat IO Unit := do
   let n500 ← opaqueNat 500
   let n300 ← opaqueNat 300
@@ -418,6 +482,7 @@ def tests : StateT Nat IO Unit := do
   let big ← IO.lazyPure fun _ => Array.replicate (n500 * 5000) (0 : Nat)
   let p1 ← peakMemory
   check "peak memory includes a large array" (p1 ≥ p0 && p1 ≥ big.size * 8) s!"peak={p1} size={big.size}"
+  retainedTests sanitized
   -- ===== end of frees and memory =====
   -- >>> task continuations (Task.map/bind, IO.mapTask/bindTask); `run --core` is tested in CI
   let v ← opaqueNat 7
@@ -792,6 +857,10 @@ def experimentTests : StateT Nat IO Unit := do
       | .error _ => false) ""
 
 def main (args : List String) : IO UInt32 := do
+  -- the retained-memory scenario, run as a child with LEANPROF_RETAINED=1
+  if args.head? == some "--retained" then
+    RetainedTest.scenario ((args[1]? >>= String.toNat?).getD 1)
+    return 0
   -- a light scope (cheap calls) whose estimate is then raised by costlier
   -- calls, called cheaply again from a parent; checked by the tests above
   if args.head? == some "--light-wrap" then

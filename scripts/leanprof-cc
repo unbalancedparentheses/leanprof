@@ -70,6 +70,22 @@ fi
 if [ "${LEANPROF_FREES:-}" = 1 ]; then
   set -- -Dlean_dec_ref_cold=leanprof_dec_ref_cold "$@"
 fi
+# LEANPROF_RETAINED=1 (`run --retained`, with LEANPROF_ALLOCS=1 and
+# LEANPROF_FREES=1) also routes the runtime calls that make or free objects
+# for compiled code through leanprof, which follows each object to its free.
+if [ "${LEANPROF_RETAINED:-}" = 1 ]; then
+  set -- \
+    -Dlean_free_object=leanprof_free_object \
+    -Dlean_st_mk_ref=leanprof_st_mk_ref \
+    -Dlean_st_ref_set=leanprof_st_ref_set \
+    -Dlean_st_ref_put=leanprof_st_ref_put \
+    -Dlean_mk_array=leanprof_mk_array \
+    -Dlean_array_mk=leanprof_array_mk \
+    -Dlean_array_to_list=leanprof_array_to_list \
+    -Dlean_string_mk=leanprof_string_mk \
+    -Dlean_string_data=leanprof_string_data \
+    "$@"
+fi
 # LEANPROF_WHY=1 also records where Arrays and Strings become shared, for
 # `leanprof explain` (c/leanprof_why.h wraps lean_inc after lean.h).
 if [ "${LEANPROF_WHY:-}" = 1 ]; then
