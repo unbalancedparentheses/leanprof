@@ -1012,8 +1012,24 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
   let op := fd.opName
   let opLines (pred : Recv → Bool) : Array Nat :=
     (codeLines decl).filterMap fun (n, l) => if (receivers op l).any pred then some n else none
-  let named (n : String) := !genericNames.contains n
+  -- `display`'s placeholders ("a temporary": no source names in the C of Lean before 4.30) are not names
+  let named (n : String) := !genericNames.contains n && !n.contains ' '
   let base : Explained := { why := "", fix := "", lines := #[], matched := true, strength := fd.strength, cline := fd.op.cline }
+  let loop := has fnText "forIn" || has fnText "foldl" || has fnText "fold" || has fnText ".loop"
+  -- `for x in xs` over the array the loop updates (in a loop's code)
+  let loopFinding? : Option Explained := do
+    guard loop
+    let (fl, _, x, c, ul) ← loopOverUpdated decl op
+    let i := freshIndex decl
+    return { base with
+      why := s!"`for {x} in {c}` (line {fl}) holds the array the loop started with until the loop ends, so " ++
+        s!"the first {op} of `{c}` inside it (line {ul}, {code decl ul}) finds `{c}` shared and copies all of " ++
+        "it, once each time the loop runs.",
+      fix := s!"Loop over the indices instead: the loop then holds a range, not `{c}`, and every update is in " ++
+        s!"place. `{c}[{i}]!` reads the current array, which gives the same values when the body only " ++
+        "changes elements it has already visited, or appends.",
+      code := #[s!"for {i} in [0:{c}.size] do\n  let {x} := {c}[{i}]!"],
+      lines := #[fl, ul], cause := "loop-over-updated-array" }
   match fd.holder with
   | .storedBy u =>
     let target :=
@@ -1129,6 +1145,9 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
           "the result back.",
         lines := #[], matched := false, cause := "map-value-reinserted" }
   | .inParent p k kept =>
+    -- Lean before 4.30 keeps a loop's variables in one tuple, which the array is then a field of
+    if sourceName fd.var |>.isNone then
+      if let some e := loopFinding? then return e
     let fname := match sourceName fd.var with
       | some n => n
       | none => s!"field {k}"
@@ -1186,19 +1205,7 @@ def explainFinding (f : CFun) (fd : Finding) (kind : String) (avgBytes : Float)
         fix := "Usually fine: one copy costs about as much as building the new array. To map in place, take the " ++
           "array out of its structure first (`let items := s.items; let s := { s with items := #[] }`).",
         lines := ls, matched := !ls.isEmpty, cause := "map-over-shared-array" }
-    let loop := has fnText "forIn" || has fnText "foldl" || has fnText "fold" || has fnText ".loop"
-    if loop then
-      if let some (fl, _, x, c, ul) := loopOverUpdated decl op then
-        let i := freshIndex decl
-        return { base with
-          why := s!"`for {x} in {c}` (line {fl}) holds the array the loop started with until the loop ends, so " ++
-            s!"the first {op} of `{c}` inside it (line {ul}, {code decl ul}) finds `{c}` shared and copies all of " ++
-            "it, once each time the loop runs.",
-          fix := s!"Loop over the indices instead: the loop then holds a range, not `{c}`, and every update is in " ++
-            s!"place. `{c}[{i}]!` reads the current array, which gives the same values when the body only " ++
-            "changes elements it has already visited, or appends.",
-          code := #[s!"for {i} in [0:{c}.size] do\n  let {x} := {c}[{i}]!"],
-          lines := #[fl, ul], cause := "loop-over-updated-array" }
+    if let some e := loopFinding? then return e
     let ls := opLines fun r => match r with
       | .name n => n == pn || lastComponent n == pn
       | _ => false
