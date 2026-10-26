@@ -712,6 +712,31 @@ def tools : Array Json := #[
      ("pair", sProp "measure_pair session, instead of base and new"),
      ("min_change", sProp "smallest time change in percent that counts (default 1)"),
      ("allow_overloaded", bProp "judge a paired session's time even though the machine was overloaded")] [],
+  tool "experiment_start" ("Start an experiment: record the base (HEAD) in a git worktree: build, tests (the " ++
+    "Lake test driver), behaviour on every case (stdout, stderr, exit code, output files; the workload args, plus " ++
+    "one case per file of inputs) and exact counts. Without executable, the measure is compile heartbeats.")
+    (exeProps ++ [("inputs", sProp "directory of input files, each a case: args with {} replaced by the file, or the file appended"),
+      ("cases", sProp "file with one argument list per line, each a case"),
+      ("heldout", sProp "directory of held-out inputs, run only by experiment_finish"),
+      ("check_output", aProp "output files compared after every run (relative to the project)"),
+      ("ignore_lines", aProp "lines of stdout and stderr containing any of these are not compared (the program's own timings)"),
+      ("protect", aProp "more path globs no candidate may change (tests/, Tests/, expected/ always are)"),
+      ("no_test", bProp "run no tests even if the project has a Lake test driver"),
+      ("runs", nProp "measure runs (default 3)"), ("pairs", nProp "most measure-pair pairs (default 30)"),
+      ("min_change", sProp "smallest time change in percent that counts (default 1)"),
+      ("base", sProp "the base revision (default HEAD)"), ("id", sProp "experiment id (default: the time)")]) [],
+  tool "experiment_try" ("Try one candidate in its own git worktree: build, proof-preservation guard (sorry, axioms, " ++
+    "implemented_by, extern, changed theorem statements, tests or expected outputs), tests, identical behaviour on every " ++
+    "case, then exact counts and paired timing (or compile heartbeats). Returns KEEP, DISCARD, INCONCLUSIVE or ERROR " ++
+    "with the evidence JSON. A KEEP becomes the base; from the working tree it is committed with the evidence.")
+    [("rev", sProp "commit to try (default HEAD)"), ("working_tree", bProp "try the working tree instead of a commit"),
+     ("time", bProp "time it even when the generated code is the base's"),
+     ("no_commit", bProp "do not commit a kept working tree"), ("message", sProp "subject of that commit"),
+     ("allow_overloaded", bProp "judge time on an overloaded machine"), ("id", sProp "experiment id (default: the current one)")] [],
+  tool "experiment_finish" "Finish an experiment: run the held-out inputs on the final base, compare with the baseline, remove the worktrees."
+    [("keep_worktrees", bProp "keep the base and candidate worktrees"), ("id", sProp "experiment id (default: the current one)")] [],
+  tool "experiment_status" "The experiment's configuration, base and tries so far (JSON)."
+    [("id", sProp "experiment id (default: the current one)")] [],
   tool "live" ("What a running program is doing now: its latest live snapshot (it must run with LEANPROF_LIVE), " ++
     "with rates over a short interval and the scopes each thread is inside.")
     [("pid", sProp "process id (snapshot in $TMPDIR/leanprof-PID.live.json, from LEANPROF_LIVE=1)"),
@@ -898,6 +923,52 @@ def callTool (name : String) (a : Json) : IO Json := do
     let allow := if argBool a "allow_overloaded" then #["--allow-overloaded"] else #[]
     let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ allow ++ files) cwd
     return textResult s!"{out}{err}" (rc > 1)
+  | "experiment_start" | "experiment_try" | "experiment_finish" | "experiment_status" =>
+    -- paths inside the project only (check_output files are deleted before
+    -- each run); no shell command for tests: the project's Lake test driver
+    let inside (k : String) : IO (Option String) := do
+      match argStr a k with
+      | some p => return some (← projectPath cwd k p)
+      | none => return none
+    let flag (k f : String) := if argBool a k then #[f] else #[]
+    let opt (k f : String) : IO (Array String) := do
+      match argStr a k with
+      | some v =>
+        if v.startsWith "-" then throw <| IO.userError s!"{k} cannot start with -: {v}"
+        return #[f, v]
+      | none => return #[]
+    let num (k f : String) := (argNat a k).map (#[f, toString ·]) |>.getD #[]
+    let args ← match name with
+      | "experiment_start" => do
+        let mut xs := #["start"]
+        if let some exe := argStr a "executable" then
+          if exe.startsWith "-" then throw <| IO.userError s!"not an executable name: {exe}"
+          xs := xs ++ #["--exe", exe]
+        for k in ["inputs", "cases", "heldout"] do
+          if let some p ← inside k then xs := xs ++ #[s!"--{k}", p]
+        for f in argStrs a "check_output" do xs := xs ++ #["--check-output", ← projectPath cwd "check_output" f]
+        for g in argStrs a "protect" do xs := xs ++ #["--protect", g]
+        for t in argStrs a "ignore_lines" do xs := xs ++ #["--ignore-lines", t]
+        xs := xs ++ flag "no_test" "--no-test" ++ num "runs" "--runs" ++ num "pairs" "--pairs" ++
+          (← opt "min_change" "--min-change") ++ (← opt "base" "--base") ++ (← opt "id" "--id")
+        pure (xs ++ #["--"] ++ argStrs a "args")
+      | "experiment_try" => do
+        let rev ← match argStr a "rev" with
+          | some r => do
+            if r.startsWith "-" then throw <| IO.userError s!"not a revision: {r}"
+            pure #[r]
+          | none => pure #[]
+        pure (#["try", "--json"] ++ rev ++ flag "working_tree" "--working-tree" ++ flag "time" "--time" ++
+          flag "no_commit" "--no-commit" ++ flag "allow_overloaded" "--allow-overloaded" ++
+          (match argStr a "message" with | some m => #["--message", m] | none => #[]) ++ (← opt "id" "--id"))
+      | "experiment_finish" => pure (#["finish", "--json"] ++ flag "keep_worktrees" "--keep-worktrees" ++ (← opt "id" "--id"))
+      | _ => pure (#["status", "--json"] ++ (← opt "id" "--id"))
+    let (rc, out, err) ← runSelf (#["experiment"] ++ args) cwd
+    let verdict := match name, rc with
+      | "experiment_try", 0 => "KEEP\n" | "experiment_try", 1 => "DISCARD\n"
+      | "experiment_try", 3 => "INCONCLUSIVE\n" | "experiment_try", _ => "ERROR\n"
+      | _, _ => ""
+    return textResult s!"{verdict}{out}\n{tailText err 10}" (rc == 2 || (name != "experiment_try" && rc != 0 && out.isEmpty))
   | "live" =>
     let path ← match argStr a "path", argStr a "pid" with
       | some p, _ => pure (inDir cwd p)

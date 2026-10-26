@@ -7,10 +7,12 @@ copybug server`:
 
 It runs copybug twice through the `run` tool and checks the answers of
 initialize, tools/list, run, report, hot, explain, compare, judge, live,
+the experiment tools (on a copy of Tests/Experiment),
 dump, ping, an unknown tool, an unknown method and a malformed line.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -57,7 +59,8 @@ check("initialize", r["result"]["protocolVersion"] == "2025-06-18" and "tools" i
 send({"jsonrpc": "2.0", "method": "notifications/initialized"})  # no reply expected
 
 names = {t["name"] for t in call("tools/list")["result"]["tools"]}
-want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump"}
+want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
+        "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
 
 text, err = tool("run", executable="copybug", args=["1000"], json=".lake/leanprof/mcp-small.json")
@@ -207,6 +210,47 @@ for all_copies in ("0", "1"):
     else:
         check("LEANPROF_ALL_COPIES=1 lists tiny copies live", not err and rows and not any(r["tiny"] for r in rows)
               and "Examples/Server.lean:26" in copies, text)
+
+# experiments, on a copy of Tests/Experiment in a fresh git repository; without
+# an executable the measure is compile heartbeats (no instrumented build)
+exp = tempfile.mkdtemp(prefix="leanprof-mcp-experiment-")
+shutil.copytree("Tests/Experiment", exp, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".lake", "result.txt"))
+genv = dict(os.environ, GIT_AUTHOR_NAME="mcp-check", GIT_AUTHOR_EMAIL="mcp@example.invalid",
+            GIT_COMMITTER_NAME="mcp-check", GIT_COMMITTER_EMAIL="mcp@example.invalid")
+
+
+def git(*args):
+    subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=exp, env=genv, check=True, capture_output=True)
+
+
+with open(os.path.join(exp, ".gitignore"), "w") as f:
+    f.write(".lake\n")
+git("init", "-q", "-b", "main")
+git("add", "-A")
+git("commit", "-q", "-m", "fixture")
+git("checkout", "-q", "-b", "fast")
+spec = os.path.join(exp, "Exp", "Spec.lean")
+src = open(spec).read()
+open(spec, "w").write(src.replace(":= by\n  intro v hv\n  unfold bucketOf\n  omega", ":=\n  fun v _ => Nat.mod_lt _ (by decide)"))
+git("commit", "-q", "-am", "a cheaper proof")
+git("checkout", "-q", "main")
+text, err = tool("experiment_start", cwd=exp, id="mcp", no_test=True)
+check("experiment_start (compile heartbeats)", not err and "recorded in" in text, text)
+text, err = tool("experiment_try", cwd=exp, rev="fast")
+evidence = json.loads(text.split("\n", 1)[1].rsplit("\n\n", 1)[0]) if text.startswith("KEEP\n") else {}
+check("experiment_try: KEEP with the evidence", not err and evidence.get("verdict") == "KEEP"
+      and evidence.get("guard", {}).get("status") == "PASS" and "heartbeats" in evidence, text)
+text, err = tool("experiment_status", cwd=exp)
+check("experiment_status", not err and len(json.loads(text.split("\n\n")[0])["tries"]) == 1, text)
+text, err = tool("experiment_try", cwd=exp, rev="--working-tree")
+check("experiment_try refuses an option as the revision", err and "not a revision" in text, text)
+text, err = tool("experiment_status", cwd=exp, id="../../x")
+check("experiment_status refuses an id that is a path", err and "not an experiment id" in text, text)
+text, err = tool("experiment_start", cwd=exp, executable="bench", check_output=["../outside.txt"])
+check("experiment_start refuses an output file outside the project", err and "inside the project" in text, text)
+text, err = tool("experiment_finish", cwd=exp)
+check("experiment_finish", not err and '"experiment-finish"' in text, text)
+shutil.rmtree(exp, ignore_errors=True)
 
 check("ping", call("ping")["result"] == {})
 r = call("tools/call", {"name": "nope", "arguments": {}})
