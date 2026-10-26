@@ -23,8 +23,21 @@ json.dump({"body": marker + "\n" + open(report, encoding="utf-8").read()}, open(
 PY
 
 repo="repos/$GITHUB_REPOSITORY"
-id=$(gh api --paginate "$repo/issues/$LP_PR/comments" \
-  --jq ".[] | select(.body | startswith(\"$marker\")) | .id" 2>/dev/null | head -n 1)
+# the jq program is fixed text: the marker (from the comment-tag input) is
+# compared as data, in Python, never pasted into a program
+id=$(gh api --paginate "$repo/issues/$LP_PR/comments" --jq '.[] | [.id, .body] | @json' 2>/dev/null |
+  python3 -c '
+import json, sys
+marker = sys.argv[1]
+for line in sys.stdin:
+    try:
+        cid, body = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(body, str) and body.startswith(marker):
+        print(cid)
+        break
+' "$marker")
 if [ -n "$id" ]; then
   gh api -X PATCH "$repo/issues/comments/$id" --input "$payload" --jq .html_url && exit 0
 else

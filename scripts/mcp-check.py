@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 
 exe = sys.argv[1] if len(sys.argv) > 1 else ".lake/build/bin/leanprof"
@@ -116,6 +117,22 @@ check("measure_pair refuses a binary Lake did not build", err and "not a binary 
 text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
                  base_cwd="/", runs=6)
 check("measure_pair refuses a working directory that is not a Lake project", err and "not a Lake project" in text, text)
+# the directories it runs in by default: `cwd` names a directory that is not
+# a project, the binaries are absolute, and `check_output` (deleted before
+# each run) is a file there
+outside_cwd = tempfile.mkdtemp(prefix="leanprof-mcp-cwd-")
+important = os.path.join(outside_cwd, "important.txt")
+with open(important, "w") as f:
+    f.write("keep me\n")
+copybug = os.path.abspath(".lake/build/bin/copybug")
+text, err = tool("measure_pair", cwd=outside_cwd, base=copybug, candidate=copybug, check_output="important.txt",
+                 runs=6, warmup=0, out="pair.json")
+check("measure_pair refuses a default working directory that is not a Lake project",
+      err and "not a Lake project" in text and os.path.exists(important), text)
+text, err = tool("measure_pair", cwd=outside_cwd, base=copybug, candidate=copybug, base_cwd=os.getcwd(),
+                 candidate_cwd=os.getcwd(), runs=6, warmup=0, out="pair.json")
+check("measure_pair refuses to write its session outside a Lake project",
+      err and "not a Lake project" in text and not os.path.exists(os.path.join(outside_cwd, "pair.json")), text)
 text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
                  check_output="../x", runs=6)
 check("measure_pair refuses an output file outside the project", err and "inside the project" in text, text)
@@ -123,6 +140,30 @@ text, err = tool("run", executable="copybug", json="/tmp/leanprof-mcp-outside.js
 check("run refuses a report path outside the project", err and "inside the project" in text, text)
 text, err = tool("measure", executable="copybug", out="../outside.json")
 check("measure refuses a summary path outside the project", err and "inside the project" in text, text)
+# through a symbolic link: a directory in the project pointing out of it, and
+# the file itself a link
+outside_dir = tempfile.mkdtemp(prefix="leanprof-mcp-outside-")
+os.makedirs(".lake/leanprof", exist_ok=True)
+links = [".lake/leanprof/mcp-external", ".lake/leanprof/mcp-link.json"]
+for l in links:
+    if os.path.lexists(l):
+        os.remove(l)
+os.symlink(outside_dir, links[0])
+os.symlink(os.path.join(outside_dir, "link-target.json"), links[1])
+text, err = tool("run", executable="copybug", args=["10"], json=".lake/leanprof/mcp-external/result.json")
+check("run refuses a report path through a symbolic link out of the project",
+      err and "inside the project" in text and not os.path.exists(os.path.join(outside_dir, "result.json")), text)
+text, err = tool("measure", executable="copybug", args=["10"], runs=1, out=".lake/leanprof/mcp-link.json")
+check("measure refuses a summary path that is a symbolic link",
+      err and "inside the project" in text and not os.path.exists(os.path.join(outside_dir, "link-target.json")), text)
+# options among elab's files (`--out FILE` would write anywhere)
+text, err = tool("elab", files=["--out", os.path.join(outside_dir, "elab.json"), "Examples/CopyBug.lean"])
+check("elab refuses an option among its files",
+      err and "not a file name" in text and not os.path.exists(os.path.join(outside_dir, "elab.json")), text)
+text, err = tool("compare", base="--explain", new=".lake/leanprof/mcp-small.json")
+check("compare refuses an option as a report", err and "not a file name" in text, text)
+for l in links:
+    os.remove(l)
 text, err = tool("run", executable="--core")
 check("run refuses an option as the executable", err and "not an executable name" in text, text)
 for pid in ["-1", "0", "../../etc/x"]:

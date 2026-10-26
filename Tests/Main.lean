@@ -382,6 +382,37 @@ def tests : StateT Nat IO Unit := do
         "    pred := pred.modify t (·.push i)"] && ps[1]!.edits.size == 1 && ps[2]!.edits.size == 1)
       s!"{ps.map (·.what)} {ps.map (Fix.applyEdits twoSrc ·.edits)}"
   | .error e => check "fix: two rewrites of one site are applied together, then alone" false e
+  -- rewrites only when they compute the same values on every input
+  check "fix: `set! i (xs[j]!…)` (another element) has no Array.modify rewrite"
+    (Explain.modifyRewrite "  xs := xs.set! i (xs[j]!.push t)" == none &&
+      Explain.modifyRewrite "  xs := xs.set! i (xs[i + 1]!.push t)" == none &&
+      Explain.modifyRewrite "  xs := xs.set! (i + 1) (xs[(i + 1)]!.push t)" == some "xs := xs.modify (i + 1) (·.push t)") ""
+  let otherIdx := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", "X.lean"), ("where", "X.lean:1"),
+    ("lines", Lean.toJson #[2]), ("fix_code", Lean.toJson #["xs := xs.modify i (·.push v)"])]
+  check "fix: a nested update reading another index is refused"
+    (match Fix.plansFor otherIdx #["def f := Id.run do", "    xs := xs.set! i (xs[j]!.push v)"] with
+      | .error _ => true | .ok _ => false) ""
+  let loopF := Lean.Json.mkObj [("cause", "loop-over-updated-array"), ("file", "L.lean"), ("where", "L.lean:1"),
+    ("lines", Lean.toJson #[5, 6]), ("fix_code", Lean.toJson #["for i in [0:xs.size] do\n  let x := xs[i]!"])]
+  let loopSrc (body : List String) (counter := "    let mut j := 0") : Array String :=
+    #["def f (xs : Array Nat) := Id.run do", "  let mut xs := xs", "  for _ in [0:3] do", counter, "    for x in xs do"] ++
+      body.toArray ++ #["  return xs", ""]
+  let loopOk (body : List String) (counter := "    let mut j := 0") : Bool :=
+    match Fix.plansFor loopF (loopSrc body counter) with | .ok _ => true | .error _ => false
+  check "fix: a loop updating only the element it visits (and appending) is rewritten"
+    (loopOk ["      xs := xs.set! j (x + 1)", "      j := j + 1"] &&
+      loopOk ["      let y := xs.size", "      xs := xs.modify j (· + y)", "      xs := xs.push x", "      j := j + 1"]) ""
+  check "fix: a loop that may change an element not visited yet is refused"
+    (!loopOk ["      xs := xs.set! ((j + 1) % xs.size) (x + j % 3)", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! (j + 1) x", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      xs := xs.pop", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      xs := xs.reverse", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      j := j + 2"] &&
+      !loopOk ["      xs := xs.set! j x", "      if x > 0 then", "        j := j + 1", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      if x > 0 then continue", "      j := j + 1"] &&
+      !loopOk ["      let mut j := 5", "      xs := xs.set! j x", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j (x + 1)", "      j := j + 1"] (counter := "    let mut j := 1") &&
+      !loopOk ["      xs := xs.set! k x", "      j := j + 1"]) ""
   check "fix: branch names from the function and cause"
     (Fix.branchName "Foo.groupBy (in Std.Legacy.Range.forIn'.loop)" "map-value-reinserted" ==
       "leanprof-fix/groupBy-map-value-reinserted") (Fix.branchName "Foo.groupBy (in x)" "c")

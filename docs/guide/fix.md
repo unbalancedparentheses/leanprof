@@ -23,15 +23,18 @@ leanprof fix --dry-run                    # the same from the last report
    them (time spent copying, costliest first). It lists each one with
    either the edit it would make or the reason it has none. Then it picks
    the first finding that has an edit, or finding N with `--finding N`.
-3. **Check the original.** It builds EXE and runs the tests, which are
+3. **Check the original, in a git worktree.** Everything from here runs in
+   a git worktree of `HEAD` in `.lake/leanprof/fix/worktree`, never in your
+   checkout. The worktree uses your project's `.lake/packages` (a symbolic
+   link: no download, no rebuild of dependencies) and starts from a copy of
+   its `.lake/build`. In it, `fix` builds EXE and runs the tests, which are
    `--test CMD` (run with `sh -c`) or `lake test` when the project has a
    test driver. It records the output (stdout, or the file given with
    `--check-output FILE`) and runs `leanprof measure` (5 runs, `--runs N`).
    If the original fails to build or its tests fail, `fix` stops: nothing
    could be checked.
-4. **Try each alternative on a new branch**
-   (`leanprof-fix/<function>-<cause>`, or `--branch NAME`). Each step
-   below must pass before the next one runs:
+4. **Try each alternative** in the worktree. Each step below must pass
+   before the next one runs:
    - the program builds;
    - the tests pass;
    - the exit code and output are byte for byte the original's;
@@ -43,13 +46,27 @@ leanprof fix --dry-run                    # the same from the last report
      order, `--pairs N`) finds them no slower and with the same output. A
      significant speedup is reported. One is not required, because removing
      small copies often saves less time than the noise.
-5. **KEEP**: the edit is committed on the branch, with the evidence in the
-   message. **DISCARD**: the next alternative is tried. When none is left,
-   the branch is deleted and every reason is printed.
+5. **KEEP**: the edit is committed in the worktree, with the evidence in
+   the message, and your repository gets a new branch pointing at that
+   commit (`leanprof-fix/<function>-<cause>`, or `--branch NAME`). Git
+   runs without hooks (`-c core.hooksPath=/dev/null`), so a `pre-commit`
+   hook cannot run other code or change what is committed. Before the
+   branch is created, `fix` checks that the file still holds the edit it
+   measured (a test may have rewritten it) and that the commit changes
+   that file only, with exactly that content.
+   **DISCARD**: the next alternative is tried. When none is left, every
+   reason is printed and no branch is created.
 
-Either way, your checkout ends where it started: the same branch, the same
-files. A working tree with uncommitted changes to tracked files is refused
-before anything runs (untracked files are allowed). The output of every step
+Either way the worktree is removed, and your checkout is never touched: the
+same branch, the same files, also when `fix` is interrupted. INT, TERM and
+HUP are passed on to the step that is running; `fix` then removes the
+worktree and exits with 128 + the signal's number. Only a signal that
+cannot be caught (`kill -9`) leaves the worktree behind, and the next `fix`
+removes it. A working tree with uncommitted changes to tracked files is
+refused before anything runs. Untracked files are allowed, but they are not
+in the worktree, so the file to fix must be committed. A path dependency
+given relative to the project that leads out of the git repository is
+refused, since the worktree's copy of the path would not reach it. The output of every step
 is saved in `.lake/leanprof/fix/log.txt`. Exit code: 0 for KEEP (or a dry
 run that printed a fix), 1 for DISCARD or when no finding has an edit, and
 2 for an error.
@@ -63,16 +80,26 @@ declaration line for line, and that version must make no copies.
 
 | cause | before | after |
 |---|---|---|
-| `nested-array-element` | `xs := xs.set! i (xs[i]!.push v)` | `xs := xs.modify i (·.push v)`. When one site has several such lines, they are tried together first, then one at a time |
+| `nested-array-element` | `xs := xs.set! i (xs[i]!.push v)` | `xs := xs.modify i (·.push v)`, only when the element read is at the same index, written the same way (`xs.set! i (xs[j]!.push v)` is refused). When one site has several such lines, they are tried together first, then one at a time |
 | `map-value-reinserted` (`getD`) | `let a := m.getD k d` … `m := m.insert k (a.push v)` | `m := m.alter k fun a? => some ((a?.getD d).push v)`, with the read line removed (only when `a` is not used anywhere else); or `m := (m.erase k).insert k (a.push v)` |
 | `map-value-reinserted` (`get!`) | `let a := m[k]!` … `m := m.insert k { a with … }` | `m := m.modify k fun a => { a with … }`; or erase before inserting |
 | `map-value-reinserted` (`get?`, `match`) | `\| some a => m := m.insert k (a.push v)` | `\| some a => m := (m.erase k).insert k (a.push v)` |
-| `loop-over-updated-array` | `for x in xs do` | `for i in [0:xs.size] do` followed by `let x := xs[i]!` |
+| `loop-over-updated-array` | `let mut j := 0`, `for x in xs do`, a body that ends with `j := j + 1` | `for i in [0:xs.size] do` followed by `let x := xs[i]!` |
+
+`fix` must not commit a change that alters what the program computes, and
+the checks below run one workload: identical output on it is evidence, not
+proof. So each rewrite is applied only when the code shows it computes the
+same values on every input.
 
 The loop rewrite changes what the body reads: `xs[i]!` is the current
 array, not the one the loop started with. The two give the same values only
-when the body changes elements it has already visited, or appends. The
-output comparison is what catches the other case.
+when the body changes no element it has not visited yet and never shrinks
+`xs`. `fix` applies it only in the shape where that is visible in the text:
+the line before the loop is `let mut j := 0`, the body is flat (no nested
+blocks, no `continue`), ends with `j := j + 1` and assigns `j` nowhere else,
+and the only assignments to `xs` are `xs := xs.set! j …`, `xs := xs.modify j …`
+(the element just visited) and `xs := xs.push …`. Any other loop is refused
+with the reason, even if its output would not change on your workload.
 
 These causes are refused, with a reason:
 
@@ -86,7 +113,9 @@ These causes are refused, with a reason:
 
 `fix` also refuses code in a dependency (`.lake/packages`), a source line
 that no longer matches the report, an insert that continues onto the next
-line, and a loop that binds a membership proof (`for h : x in xs`).
+line, a loop that binds a membership proof (`for h : x in xs`), and the
+loops and nested updates above whose rewrite it cannot show to be the same
+computation.
 
 Copy sites that copied only empty or tiny values are left out, as in
 `explain`. `fix` prints how many it left out, and `--all` includes them.
@@ -95,15 +124,16 @@ Copy sites that copied only empty or tiny values are left out, as in
 
 `scripts/fix-check.sh`, run in CI, copies `Tests/Fix` into a fresh git
 repository. It is a small project with no dependency on leanprof. The script
-runs `fix` four ways: on a tree with uncommitted changes (refused), with
-`--dry-run`, on `buckets` and on `smooth`. The numbers below are from one
+runs `fix` six ways: on a tree with uncommitted changes (refused), with
+`--dry-run`, on `buckets` (KEEP), on `smooth` (refused) and on `buckets`
+with a test the edit fails (DISCARD), and interrupted by TERM. The numbers below are from one
 run on an Apple M5 Max (`--runs 3 --pairs 10`).
 
 `buckets` pushes onto `bs[i]!` while `bs` still holds it, so every push
 copies:
 
 ```
-leanprof fix: alternative 1 (Array.modify) on branch leanprof-fix/buckets-nested-array-element
+leanprof fix: alternative 1 (Array.modify)
   builds
   tests pass (`lake test`)
   output identical (stdout, 118 bytes)
@@ -116,22 +146,27 @@ leanprof fix: alternative 1 (Array.modify) on branch leanprof-fix/buckets-nested
   KEEP
     + paired time: median change -57.67%, 95% median interval [-59.09%, -56.14%] (10 pairs)
 
-KEEP: committed 99be65f on branch leanprof-fix/buckets-nested-array-element; your checkout is back on main, unchanged.
+KEEP: committed 99be65f on branch leanprof-fix/buckets-nested-array-element; your checkout is unchanged (the checks ran in a git worktree).
 ```
 
 The remaining copy is in `main`, a single `Array.map`.
 
-`smooth` loops over the array it updates. The loop rewrite builds, and the
-tests pass, because they check only sizes. The output changes, though: the
-body writes the element the next pass reads.
+`smooth` loops over the array it updates, and the body writes the element
+the *next* pass reads (`xs.set! ((j + 1) % xs.size) …`). The loop rewrite
+would build and pass the tests, which check only sizes, but compute other
+values. `fix` refuses it from the code, before changing anything:
 
 ```
-  tests pass (`lake test`)
-  DISCARD: the output changed (stdout), line 1: `smooth sum 2098950, first 1999, last 1999` became
-    `smooth sum 197901666, first 99950, last 99949`
-
-DISCARD: no alternative was kept, branch leanprof-fix/smooth-loop-over-updated-array deleted; your checkout is back on main, unchanged.
+     not mechanical: reading `xs[i]!` instead of the elements the loop started with gives the same
+       values only when the body changes no element it has not visited yet, which fix cannot show
+       here (`xs := xs.set! ((j + 1) % xs.size) (x + j % 3)` uses `j` other than as the index of an
+       update of `xs`): apply the fix by hand if it holds
 ```
+
+With `--test 'grep -q "bs.set!" Fix.lean'`, a test the edit fails, `buckets`
+shows a DISCARD: no branch is created and every reason is printed. The
+script also sends TERM while the candidate is being checked: `fix` exits
+with 143, the worktree is gone and the checkout is untouched.
 
 ## On real projects
 
