@@ -170,6 +170,39 @@ LeanProfiler's 1.0–1.05×: leanprof calibrates its probes for 10–15 ms
 at the first scope, inside the first phase, which these 40–120 ms
 workloads see.
 
+### Review fixes: tiny classifier and light scopes (Apple M5 Max, 2026-10-25)
+
+After the 2026-10-25 code review, `--auto` times again the functions that
+use `lean_ctor_release` or `Nat` arithmetic (`scripts/leanprof-tiny.awk`),
+and a light scope keeps its fully timed calls apart from its sample, carries
+its estimate in 1/1024 ticks and reads self time signed (`c/leanprof.c`).
+`alloc`, `rec` and `tiny` under `profile!` and `--auto`, `main` (`0c16f45`)
+against the branch (`a9c3dc0`), three interleaved pairs under the shared
+lock, load average 2–6 on 18 CPUs (7 runs a cell; each value is one suite's
+median, the three pairs in order):
+
+| | `main` | branch |
+|---|---|---|
+| `alloc` `profile!` share error | 0.2 / 0.6 / 0.3 pp | 0.5 / 0.2 / 0.4 pp |
+| `alloc` `--auto` share error | 3.9 / 3.4 / 4.0 pp | 3.2 / 3.9 / 3.7 pp |
+| `alloc` `--auto` reported/plain | 1.06 / 1.04 / 1.04 | 1.08 / 1.07 / 1.05 |
+| `rec` `profile!` share error | 2.8 / 1.9 / 2.8 pp | 3.4 / 2.7 / 2.9 pp |
+| `rec` `profile!` cost per scope | 7.4 / 7.2 / 7.3 ns | 7.9 / 7.9 / 8.0 ns |
+| `rec` `--auto` share error | 1.7 / 1.7 / 1.9 pp | 1.4 / 1.3 / 0.9 pp |
+| `rec` `--auto` reported/plain | 1.24 / 1.20 / 1.23 | 1.27 / 1.26 / 1.25 |
+| `tiny` `profile!` share error | 11.0 / 10.3 / 10.6 pp | 9.2 / 8.6 / 9.5 pp |
+| `tiny` `profile!` reported/plain | 0.61 / 0.78 / 0.59 | 0.82 / 0.64 / 0.64 |
+| `tiny` `--auto` share error | 1.1 / 1.1 / 0.9 pp | 0.6 / 1.1 / 0.3 pp |
+
+Counts are exact in every cell. The costs: a timed scope pays about half a
+nanosecond more (`rec` under `profile!`, where no scope is light: the frame
+records whether it is a sample, and children's time is kept in 1/1024
+ticks), and `--auto` reports a little more of its own cost on `rec` and
+`alloc`, where functions that were left untimed are timed again. `tiny`
+`profile!` stays the inaccurate case (its phases are 0.5–0.7 of their time:
+the light pairs' cost subtracted from them is overestimated, which the
+estimator change does not touch). An earlier pair at load 7–10 agreed.
+
 ### Third round: tiny functions (Apple M5 Max, 2026-10-25)
 
 These numbers were measured before the outliner fix in the next section,
