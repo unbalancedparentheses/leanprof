@@ -1229,10 +1229,6 @@ def owner (named : Std.HashMap String (Array (Nat × String))) (key : String) : 
       name := n
   return (best, name)
 
-/-- Name of the declaration that starts closest above `key` in its file. -/
-def ownerName (named : Std.HashMap String (Array (Nat × String))) (key : String) : String :=
-  (owner named key).2
-
 /-- `diagnostics` counters Lean reports at a tactic (`simp`'s), on a line with no
 cost of its own: moved to the declaration that starts closest above, so that
 they count for it. -/

@@ -1133,36 +1133,7 @@ partial def parseSample (o : SampleOpts) : List String → Except String SampleO
 def getArr (j : Json) (k : String) : Array Json := (j.getObjVal? k >>= Json.getArr?).toOption.getD #[]
 def getNatAt (a : Array Json) (i : Nat) : Option Nat := (a[i]? >>= fun x => x.getNat?.toOption)
 
-/-- Symbols defined in `bin`, as `nm` lists them (Mach-O's leading `_` removed). -/
-def binarySymbols (bin : FilePath) : IO (Array String) := do
-  let out ← IO.Process.output { cmd := "nm", args := #[bin.toString] }
-  let mut syms := #[]
-  for line in out.stdout.splitOn "\n" do
-    match (line.splitOn " ").filter (· != "") with
-    | [_, _, name] | [_, name] =>
-      syms := syms.push (if System.Platform.isOSX && name.startsWith "_" then (name.drop 1).toString else name)
-    | _ => pure ()
-  return syms
-
-/-- One library's symbols from samply's sidecar: sorted (start, end, name). -/
-def libSymbols (lib : Json) (strings : Array String) : Array (Nat × Nat × String) := Id.run do
-  let mut v := #[]
-  for e in getArr lib "symbol_table" do
-    let rva := (e.getObjVal? "rva" >>= Json.getNat?).toOption.getD 0
-    let size := (e.getObjVal? "size" >>= Json.getNat?).toOption.getD 0
-    let sym := (e.getObjVal? "symbol" >>= Json.getNat?).toOption.getD 0
-    v := v.push (rva, rva + size, strings[sym]?.getD "?")
-  return v.qsort (·.1 < ·.1)
-
-def lookupSym (tbl : Array (Nat × Nat × String)) (addr : Nat) : Option String := Id.run do
-  let mut lo := 0
-  let mut hi := tbl.size
-  while lo < hi do
-    let mid := (lo + hi) / 2
-    if tbl[mid]!.1 ≤ addr then lo := mid + 1 else hi := mid
-  if lo == 0 then return none
-  let (s, e, n) := tbl[lo - 1]!
-  if s ≤ addr && addr < e then some n else none
+open LeanprofHtml (binarySymbols libSymbols lookupSym)
 
 /-- What a runtime (non-Lean) function is spending time on, for the
 breakdown; `none` for code that is neither the Lean runtime nor leanprof. -/

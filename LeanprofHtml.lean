@@ -90,6 +90,7 @@ def binarySymbols (bin : FilePath) : IO (Array String) := do
     | _ => pure ()
   return syms
 
+/-- One library's symbols from samply's sidecar: sorted (start, end, name). -/
 def libSymbols (lib : Json) (strings : Array String) : Array (Nat × Nat × String) := Id.run do
   let mut v := #[]
   for e in arr lib "symbol_table" do
