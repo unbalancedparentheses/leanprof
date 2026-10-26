@@ -479,6 +479,21 @@ def tests : StateT Nat IO Unit := do
     (!v.keep && v.worse.contains "different times measured: the whole process vs scope build") v.render
   let v := Judge.judge { base with scope := "build" } { summary 2999 1000000 [1000000] [40, 41, 42] with scope := "build" }
   check "judge: the same scope, every run faster, is KEEP" v.keep v.render
+  -- a scope whose time was too small to measure (`measure --scope` writes
+  -- time_ns.too_small_runs) gives no time verdict, though its runs read 0
+  let tiny := Judge.Summary.ofJson (Lean.Json.mkObj [("leanprof", "measure"), ("scope", "build"),
+    ("command", Lean.toJson #["demo"]),
+    ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
+    ("time_ns", Lean.Json.mkObj [("median", Lean.toJson (0 : Nat)), ("min", Lean.toJson (0 : Nat)),
+      ("max", Lean.toJson (0 : Nat)), ("too_small_runs", Lean.toJson (3 : Nat))]),
+    ("copies_total", Lean.toJson (2999 : Nat)), ("allocs_total", Lean.toJson (1000000 : Nat)),
+    ("allocs_runs", Lean.toJson [1000000]),
+    ("allocs", Lean.toJson #[Lean.Json.mkObj [("key", "CFG.build in -"), ("allocs", Lean.toJson (1000000 : Nat))]])])
+  let v := match tiny with
+    | .ok t => Judge.judge { base with scope := "build" } t
+    | .error e => { keep := true, worse := #[], better := #[e], notes := #[] }
+  check "judge: a scope too small to measure gives no time verdict"
+    (!v.keep && v.better.isEmpty && v.notes.any (·.contains "too small to measure")) v.render
   let v := Judge.judge base { summary 2999 0 [] [50, 51, 52] with allocs := none }
   check "judge: allocations counted in one summary only are not compared" (v.worse.isEmpty) v.render
   let v := Judge.judge base { summary 2999 1200000 [1200000] [40, 41, 42] with core := true }

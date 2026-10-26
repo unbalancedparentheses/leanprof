@@ -172,7 +172,9 @@ Compile reports also have `kinds`: self cost per operation kind (`class`,
 `measure.json` (`"leanprof": "measure"`, version 1), what `judge` reads:
 `command`, `runs`, `scope` (the `--scope` name, or null: `time_ns` is the
 whole process), `exit_code`, `output` (`source`, `hash`, `stable`),
-`time_ns` (`median`, `min`, `max`, `runs`), `copies_total`,
+`time_ns` (`median`, `min`, `max`, `runs`; with `--scope`, `too_small_runs`:
+runs whose scope time was too small to measure, which `judge` does not
+judge on time), `copies_total`,
 `copies_stable`, `copies` (`key`, `copies` per site), `calls` (`key`,
 `calls` per scope), `allocs_total` (the last run's allocations by compiled
 Lean code), `allocs_runs` (each run's total), `allocs_stable`,

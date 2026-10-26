@@ -45,6 +45,10 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   so its instrumented objects stayed after the run. (With `--no-deps`, a
   dependency compiled for the first time during the run is still compiled
   instrumented.)
+- `measure --scope` counts the runs in which the scope's time was too small
+  to measure (`time_ns.too_small_runs`; the run's 0 used to be recorded as
+  a time) and says so, and `judge` gives no time verdict on such a summary:
+  a 0 against a nonzero base was a KEEP.
 
 ### Compile time: a project view and published profiles
 

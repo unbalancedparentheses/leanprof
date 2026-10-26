@@ -724,6 +724,8 @@ structure Report where
   named : Std.HashMap String Float := {}
   /-- time fields too small to measure, per scope key (`too_small` in the JSON) -/
   tooSmall : Std.HashMap String (Array String) := {}
+  /-- scope names with a position whose total was too small to measure -/
+  smallNamed : Array String := #[]
 
 def num (j : Json) (k : String) : Float :=
   match j.getObjVal? k with
@@ -747,6 +749,7 @@ def loadReport (path : String) : IO Report := do
                   named := r.named.insert (str s "name") (r.named.getD (str s "name") 0 + num s "total_ns") }
     let small := ((s.getObjVal? "too_small" >>= Json.getArr?).toOption.getD #[]).filterMap (·.getStr?.toOption)
     if !small.isEmpty then r := { r with tooSmall := r.tooSmall.insert key small }
+    if small.contains "total_ns" then r := { r with smallNamed := r.smallNamed.push (str s "name") }
   -- project reports (`elab --project`): each module's total, as `module M`
   if (j.getObjVal? "project" >>= Json.getBool?).toOption.getD false then
     for f in (j.getObjVal? "files" >>= Json.getArr?).toOption.getD #[] do
@@ -1472,6 +1475,8 @@ def measureCmd (argv : List String) : IO UInt32 := do
   let mut hashes : Array String := #[]
   let mut codes : Array UInt32 := #[]
   let mut reports : Array Report := #[]
+  -- runs whose --scope time was too small to measure: a 0 there is no time
+  let mut smallRuns := 0
   let (load0, cpus) ← machineLoad
   try
     for i in [0:o.warmup + o.runs] do
@@ -1494,6 +1499,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
           | some ns => pure ns.toUInt64.toNat
           | none => throw <| IO.userError (s!"scope {s} is not in the report of {exe} " ++
               s!"(mark it with profile! \"{s}\"; its scopes: {report.named.toList.map (·.1)})")
+      if o.scope.any report.smallNamed.contains then smallRuns := smallRuns + 1
       codes := codes.push out.exitCode
       if out.exitCode != 0 && codes.size == 1 then
         IO.eprintln s!"leanprof: {exe} exited with {out.exitCode}:\n{out.stderr}"
@@ -1540,9 +1546,9 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("exit_code", toJson codes.back!.toNat),
     ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD "stdout")),
       ("hash", Json.str hashes.back!), ("stable", Json.bool outputStable)]),
-    ("time_ns", Json.mkObj [("median", toJson (median times)), ("min", toJson (times.foldl min times[0]!)),
+    ("time_ns", Json.mkObj ([("median", toJson (median times)), ("min", toJson (times.foldl min times[0]!)),
       ("max", toJson (times.foldl max 0)), ("mean", toJson mean.round), ("stddev", toJson stddev.round),
-      ("runs", toJson times)]),
+      ("runs", toJson times)] ++ (if o.scope.isSome then [("too_small_runs", toJson smallRuns)] else []))),
     ("machine", Json.mkObj [("load_avg_1m", match loadMax with | some l => toJson l | none => Json.null),
       ("cpus", match cpus with | some c => toJson c | none => Json.null), ("overloaded", Json.bool overloaded)]),
     ("copies_total", toJson (copyTotal last)), ("copies_stable", Json.bool copiesStable),
@@ -1565,6 +1571,8 @@ def measureCmd (argv : List String) : IO UInt32 := do
   IO.FS.writeFile o.out (summary.pretty ++ "\n")
   IO.println s!"\nleanprof measure: {exe}, {o.runs} runs"
   IO.println s!"  time     {match o.scope with | some s => s!"scope {s}: " | none => ""}median {fmtMs (median times).toFloat}, min {fmtMs (times.foldl min times[0]!).toFloat}, max {fmtMs (times.foldl max 0).toFloat}, mean {fmtMs mean} ± {fmtMs stddev}"
+  if smallRuns > 0 then
+    IO.println s!"  warning  the scope's time was too small to measure (below leanprof's probe cost) in {smallRuns} of {o.runs} runs: judge will not use time"
   if let (some l, some c) := (loadMax, cpus) then
     IO.println s!"  machine  load average {fmt2 l} on {c} CPUs{if overloaded then " (overloaded: judge will not use time)" else ""}"
   IO.println s!"  copies   {copyTotal last} (shared + multi-threaded)"

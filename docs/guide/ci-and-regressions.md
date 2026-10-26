@@ -305,7 +305,10 @@ process: each run's time is that scope's total from the run's report (over
 every position with that name), so start-up and setup do not dilute a
 change. The project must depend on leanprof for `profile!`; a name that is
 not in the report is an error, and `judge` discards a comparison of
-summaries that timed different things (the process, or another scope).
+summaries that timed different things (the process, or another scope). A scope
+whose time was too small to measure in a run (what is left after
+subtracting leanprof's probes, `< probe cost` in reports) is counted in
+`time_ns.too_small_runs`, and `judge` then gives no time verdict.
 
 ### Interleaved timing of ordinary binaries
 

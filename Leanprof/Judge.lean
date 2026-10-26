@@ -17,7 +17,8 @@ DISCARD when any of these hold:
   when every new run allocated more than every base run);
 * compile heartbeats of the measured files went up by more than 1% and 1,000;
 * every new run was slower than every base run, by at least `minChange`
-  percent of the median.
+  percent of the median (time is not judged when a `--scope` time was too
+  small to measure in any run).
 
 Otherwise KEEP when copies went down, allocations went down by at least 1%
 and 100, heartbeats went down by more than 1% and 1,000, or every new run was
@@ -58,6 +59,9 @@ structure Summary where
   loadAvg : Option Float := none
   /-- measured with `--core`: copies and allocations inside Lean's libraries counted too -/
   core : Bool := false
+  /-- runs whose `--scope` time was too small to measure (what was left after
+  subtracting the probes' cost came out at or below 0) -/
+  tooSmallRuns : Nat := 0
 
 def num (j : Json) (k : String) : Float :=
   match j.getObjVal? k with
@@ -97,7 +101,8 @@ def Summary.ofJson (j : Json) : Except String Summary := do
     heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats")
     overloaded := ((field "machine").getObjValAs? Bool "overloaded").toOption.getD false
     loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption
-    core := (j.getObjValAs? Bool "core").toOption.getD false }
+    core := (j.getObjValAs? Bool "core").toOption.getD false
+    tooSmallRuns := toNat (num time "too_small_runs") }
 
 /-- The verdict and its reasons. -/
 structure Verdict where
@@ -213,7 +218,11 @@ def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
   -- least minChange percent, and never on an overloaded machine
   let pct := if b.median > 0 then (n.median - b.median) / b.median * 100 else 0
   let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median} ({if pct > 0 then "+" else ""}{fmt2 pct}%)"
-  if b.overloaded || n.overloaded then
+  if b.tooSmallRuns > 0 || n.tooSmallRuns > 0 then
+    -- the scope's time was what is left after subtracting leanprof's probes,
+    -- 0 or less in some runs: no time to compare
+    notes := notes.push s!"{t} (not judged: the scope's time was too small to measure in {b.tooSmallRuns} base and {n.tooSmallRuns} new runs)"
+  else if b.overloaded || n.overloaded then
     -- on a machine running more jobs than CPUs, load drifts between the two
     -- summaries and whole runs shift together; non-overlap proves nothing
     let la (x : Summary) := match x.loadAvg with | some l => fmt2 l | none => "?"
