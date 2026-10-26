@@ -2387,7 +2387,7 @@ def statFindings (exe : String) (args : Array String) : IO (Array String × Arra
   for c in copies.toList.take 3 do
     let n := num c "shared" + num c "multi_threaded"
     let pos := str c "where"
-    findings := findings.push (s!"{withCommas n.toUInt64.toNat} copies of a shared {str c "kind"} in {str c "function"}" ++
+    findings := findings.push (s!"{withCommas n.toUInt64.toNat} {if n == 1 then "copy" else "copies"} of a shared {str c "kind"} in {str c "function"}" ++
       s!"{if pos.isEmpty then "" else s!" ({pos})"}, {fmtTime (num c "copy_ns")}" ++
       s!"{if run > 0 then s!" ({fmt2 (num c "copy_ns" / run * 100)}% of the run)" else ""}")
   let allocs := getArr j "allocations"
@@ -2399,10 +2399,11 @@ def statFindings (exe : String) (args : Array String) : IO (Array String × Arra
   if findings.size < 3 && run > 0 && est / run ≥ 0.1 then
     findings := findings.push s!"allocation takes about {fmt2 (est / run * 100)}% of the run: `leanprof run --allocs {exe}{a}` lists it per function"
   return (findings, #[
+    (s!"leanprof run {exe}{a}", "the same counts with every copy site, task and wait listed"),
     ("leanprof explain", if copies.isEmpty then "why each copy happened (none in this run)" else "why each copy happened, and the fix in Lean"),
     (s!"leanprof fix --exe {exe}{a}", "apply that fix on a git branch, test, measure, commit it only if it helps"),
     (s!"leanprof run --auto {exe}{a}", "every function's exact time and call count"),
-    ("leanprof doctor", "samply lets `leanprof` sample instead, with no rebuild")])
+    ("leanprof doctor", "what `leanprof` needs to sample instead, with no rebuild")])
 
 /-- Findings of a compile-time report: the costliest declarations. -/
 def elabFindings : IO (Array String × Array (String × String)) := do

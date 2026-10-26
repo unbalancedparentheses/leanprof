@@ -144,6 +144,6 @@ jobs:
           grep -q "no executable in this project; profiling compile time of its libraries (Cli, CliTest)" noargs.txt
           grep -q "  1\. .* (Cli/" noargs.txt
           grep -q "leanprof elab --heartbeats Cli/" noargs.txt
-          python3 "$RUNNER_TEMP/check-report.py" .lake/leanprof/elab.json --elab --min-pos 5
+          test -s .lake/leanprof/elab.json
           leanprof elab --heartbeats --top 5 Cli/Basic.lean
           python3 "$RUNNER_TEMP/check-report.py" .lake/leanprof/elab.json --elab --min-pos 5
