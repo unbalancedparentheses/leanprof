@@ -50,7 +50,9 @@ ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 PROJ = os.path.join(ROOT, "bench", "leanbench", "project")
 RES = os.path.join(HERE, "results")
 WORK = os.path.join(HERE, ".work")
-LP = os.path.join(ROOT, ".lake", "build", "bin", "leanprof")
+# LEANPROF_BIN: a copy of the binary to measure, so that rebuilding the
+# checkout during a long run does not change it
+LP = os.environ.get("LEANPROF_BIN", os.path.join(ROOT, ".lake", "build", "bin", "leanprof"))
 LOCK = os.path.expanduser("~/.leanprof-bench.lock")
 VARIANTS = {"base": 60, "pct1": 30, "pct2": 30, "pct5": 30}
 CONFIGS = ["auto", "r1", "lb"]
@@ -207,6 +209,10 @@ def cmd_trials(a):
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp)
     cpus = os.cpu_count()
+    import hashlib
+    version = {"commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
+                                        text=True).stdout.strip(),
+               "sha256": hashlib.sha256(open(LP, "rb").read()).hexdigest()[:16]}
     out = open(path, "a")
     yes = []
     outer = Lock().__enter__() if a.condition == "loaded" else None
@@ -227,7 +233,7 @@ def cmd_trials(a):
             with (Lock() if outer is None else open(os.devnull)) as lk:
                 rec = trial(g, b, "base" if i == 0 else variant, f"{a.condition}-{i}", i, CONFIGS, tmp)
             rec.update(condition=a.condition, yes=a.yes if a.condition == "loaded" else 0, cpus=cpus,
-                       host=os.uname().nodename, warmup=i == 0)
+                       host=os.uname().nodename, warmup=i == 0, leanprof=version)
             if i > 0:
                 out.write(json.dumps(rec) + "\n")
                 out.flush()
