@@ -45,6 +45,7 @@ For programs that link leanprof:
 | variable | effect |
 |---|---|
 | `LEANPROF_JSON=path` | also write the report as JSON |
+| `LEANPROF_ERROR_JSON=path` | a command that fails writes its error there: `code` (`not_lake_project`, `build_failed`, `lean_not_found`, `samply_missing`, `bad_argument`, `not_found`, `failed`, ...), `retryable`, `hint` ([MCP errors](live.md#structured-results)) |
 | `LEANPROF_QUIET=1` | no table on stderr |
 | `LEANPROF_ALL=1` | include copies of compile-time constants and non-Lean functions |
 | `LEANPROF_ALL_COPIES=1` | list copies of compile-time constants and of empty or tiny values row by row (set by `run --all-copies`) |
@@ -109,6 +110,7 @@ describes it:
 | `compare` | `compare --json` |
 | `experiment-try`, `experiment-finish`, `experiment-status` | `experiment try --json` (`tries/N/evidence.json`), `experiment finish --json` (`finish.json`), `experiment status --json` (`experiment.json`) |
 | `fix` | `fix --json` (`.lake/leanprof/fix/result.json`) |
+| `error` | a command that fails, to the file `LEANPROF_ERROR_JSON` names (`code`, `message`, `retryable`, `hint`; the MCP server's `error`) |
 
 A schema's version goes up only when a field is removed or changes meaning.
 New fields are added without a new version, so readers should ignore fields

@@ -138,6 +138,8 @@ structure Verdict where
   /-- the reasons in `worse` that make the measurement unusable (an output
   that differs between runs of the same code) -/
   invalid : Array String := #[]
+  /-- time was not judged because the machine was overloaded while measuring -/
+  overloaded : Bool := false
 
 /-- `x` with two decimals. -/
 def fmt2 (x : Float) : String :=
@@ -189,6 +191,7 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : 
   let mut correctness : Array String := #[]
   let mut incompatible : Array String := #[]
   let mut invalid : Array String := #[]
+  let mut overloadedNotJudged := false
   if b.command != n.command then
     incompatible := incompatible.push s!"different commands measured: {b.command.compress} vs {n.command.compress}"
   if b.scope != n.scope then
@@ -261,12 +264,14 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : 
     -- summaries and whole runs shift together; non-overlap proves nothing
     let la (x : Summary) := match x.loadAvg with | some l => fmt2 l | none => "?"
     notes := notes.push s!"{t} (not judged: machine overloaded while measuring, load average {la b} and {la n})"
+    overloadedNotJudged := true
   else if n.max < b.min && -pct >= minChange then better := better.push s!"{t} (every new run faster than every base run)"
   else if n.min > b.max && pct >= minChange then worse := worse.push s!"{t} (every new run slower than every base run)"
   else if n.max < b.min || n.min > b.max then
     notes := notes.push s!"{t} (runs do not overlap, but the change is below --min-change {fmt2 minChange}%)"
   else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
-  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, correctness, incompatible, invalid }
+  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, correctness, incompatible, invalid,
+           overloaded := overloadedNotJudged, unsettled := overloadedNotJudged }
 
 /-! ## Paired sessions: a group-sequential sign test
 
@@ -480,7 +485,8 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
     | .unsettled =>
       notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
       unsettled := true
-  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, unsettled, correctness }
+  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, unsettled, correctness,
+           overloaded := overloaded && !allowOverloaded }
 
 /-- What the verdict means (`Contract.Outcome`): the first that applies of
 incompatible sides, an unusable measurement, changed behaviour, a cost that
@@ -500,7 +506,7 @@ def Verdict.json (v : Verdict) : List (String × Json) :=
   v.outcome.json ++
   [("worse", toJson v.worse), ("better", toJson v.better), ("notes", toJson v.notes),
    ("correctness", toJson v.correctness), ("incompatible", toJson v.incompatible), ("invalid", toJson v.invalid),
-   ("unsettled", Json.bool v.unsettled)]
+   ("unsettled", Json.bool v.unsettled), ("overloaded", Json.bool v.overloaded)]
 
 /-- The verdict as `judge` prints it. -/
 def Verdict.render (v : Verdict) : String := Id.run do

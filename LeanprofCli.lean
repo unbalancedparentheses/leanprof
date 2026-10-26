@@ -423,7 +423,10 @@ def checkInterrupted : IO Unit := do
 
 def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String))
     (cwd : Option FilePath := none) : IO UInt32 := do
-  let child ← IO.Process.spawn { cmd, args, env, cwd }
+  let child ← try IO.Process.spawn { cmd, args, env, cwd } catch e =>
+    if cmd == "lake" || cmd == "lean" then
+      Leanprof.Contract.reportError "lean_not_found" s!"cannot run `{cmd}` ({e}): is elan's bin directory on PATH?"
+    throw e
   guardSignals child.pid
   try child.wait finally guardSignals 0
 
@@ -694,8 +697,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
   let leanOk ← try pure ((← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).exitCode == 0)
     catch _ => pure false
   unless leanOk do
-    throw <| IO.userError ("`lean` was not found on PATH: add elan's bin directory " ++
-      "(export PATH=$HOME/.elan/bin:$PATH); `leanprof doctor` checks the setup")
+    let msg := "`lean` was not found on PATH: add elan's bin directory " ++
+      "(export PATH=$HOME/.elan/bin:$PATH); `leanprof doctor` checks the setup"
+    Leanprof.Contract.reportError "lean_not_found" msg
+    throw <| IO.userError msg
   -- a normal executable kept aside by an interrupted or `--keep` run comes back first
   restoreExe exe (removeUnsaved := false)
   -- From here every step changes the build (the executable is kept aside and
@@ -766,7 +771,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     undo
     checkInterrupted
     -- the probes are compiled by the system's C compiler: say so when it is the cause
-    if let some p ← ccProblem then IO.eprintln s!"leanprof: {p}"
+    let cc ← ccProblem
+    if let some p := cc then IO.eprintln s!"leanprof: {p}"
+    Leanprof.Contract.reportError "build_failed" s!"`lake build {exe}` with leanprof's probes failed (exit code {rc})"
+      (cc.map (s!"the C compiler cannot build leanprof's runtime: " ++ ·) |>.getD "")
   else
     discard <| dropBuildRecords deps exe
   return rc
@@ -1267,7 +1275,9 @@ def sample (argv : List String) : IO UInt32 := do
     unless ← bin.pathExists do throw <| IO.userError s!"{target}: no such file"
   else
     let rc ← spawnWait "lake" #["build", target] #[]
-    if rc != 0 then return rc
+    if rc != 0 then
+      Leanprof.Contract.reportError "build_failed" s!"`lake build {target}` failed (exit code {rc})"
+      return rc
   clearReports o.json
   let out : FilePath := o.out.getD s!".lake/leanprof/{exe}.json"
   if let some dir := out.parent then IO.FS.createDirAll dir
@@ -1276,6 +1286,8 @@ def sample (argv : List String) : IO UInt32 := do
     "-o", (← absPath out).toString, (← absPath bin).toString] ++ o.args
   let some samply ← findSamply | do
     IO.eprintln s!"leanprof: `leanprof sample` needs samply, which is not installed; get it with:\n  {← samplyInstallCmd}\n(or brew install samply / cargo install samply)"
+    Leanprof.Contract.reportError "samply_missing" "`leanprof sample` needs samply, which is not installed"
+      s!"install it with: {← samplyInstallCmd} (or brew install samply / cargo install samply), or use `run` or `stat`"
     return 1
   let rc ← try spawnWait samply samplyArgs ((← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1")]) (o.cwd.map (·))
     catch e =>
@@ -2814,8 +2826,11 @@ def dispatch (argv : List String) : IO UInt32 := do
   try dispatchCmd argv
   catch e =>
     let s ← caughtSignal
-    if s != 0 then return 128 + s  -- said by `main`
+    if s != 0 then
+      Leanprof.Contract.reportError "cancelled" s!"interrupted by signal {s}"
+      return 128 + s  -- said by `main`
     IO.eprintln s!"leanprof: {e}"
+    Leanprof.Contract.reportError (Leanprof.Contract.classifyError (toString e)) (toString e)
     return 2
 
 def main (argv : List String) : IO UInt32 := do

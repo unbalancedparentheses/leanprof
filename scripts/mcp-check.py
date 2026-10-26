@@ -9,7 +9,10 @@ It runs copybug twice through the `run` tool and checks the answers of
 initialize, tools/list, run, report, hot, explain, compare, judge, live,
 the experiment tools (on a copy of Tests/Experiment),
 dump, ping, an unknown tool, an unknown method and a malformed line.
+Every tool result must carry `structuredContent` that follows the tool's
+`outputSchema`, and failures a typed `error` (code, retryable, hint).
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -39,10 +42,35 @@ def call(method, params=None):
     return reply
 
 
+spec = importlib.util.spec_from_file_location("contract", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                         "contract-check.py"))
+contract = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(contract)
+output_schemas = {}
+last = {}
+
+
 def tool(tool_name, **args):
+    """A tool call's text and isError; its structured result is checked against
+    the tool's outputSchema and kept in `last`."""
     r = call("tools/call", {"name": tool_name, "arguments": args})
     res = r["result"]
+    sc = res.get("structuredContent")
+    last.clear()
+    last.update(sc or {})
+    errs = ["no structuredContent"] if sc is None else contract.errors(sc, output_schemas.get(tool_name, {}), "")
+    if sc is not None and sc.get("ok") == res["isError"]:
+        errs.append("ok and isError disagree")
+    if sc is not None and not sc.get("ok") and "error" not in sc:
+        errs.append("a failure without an error")
+    if errs:
+        check(f"{tool_name}: structuredContent follows its outputSchema", False, errs[:10])
     return res["content"][0]["text"], res["isError"]
+
+
+def code():
+    """The error code of the last tool result, or None."""
+    return (last.get("error") or {}).get("code")
 
 
 def check(name, ok, detail=""):
@@ -58,13 +86,20 @@ r = call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
 check("initialize", r["result"]["protocolVersion"] == "2025-06-18" and "tools" in r["result"]["capabilities"], r)
 send({"jsonrpc": "2.0", "method": "notifications/initialized"})  # no reply expected
 
-names = {t["name"] for t in call("tools/list")["result"]["tools"]}
+listed = call("tools/list")["result"]["tools"]
+names = {t["name"] for t in listed}
+output_schemas.update({t["name"]: t.get("outputSchema", {}) for t in listed})
+check("every tool has an outputSchema (an object with ok, tool and error)",
+      all(t.get("outputSchema", {}).get("type") == "object" and {"ok", "tool"} <= set(t["outputSchema"].get("required", []))
+          and "error" in t["outputSchema"].get("properties", {}) for t in listed), [t["name"] for t in listed])
 want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
         "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
 
 text, err = tool("run", executable="copybug", args=["1000"], json=".lake/leanprof/mcp-small.json")
 check("run", not err and "exit code 0" in text and "buildWithHistory" in text and "copies" in text, text)
+check("run: structured", last.get("ok") is True and last.get("exit_code") == 0 and last.get("copies") == 999
+      and last.get("report") == ".lake/leanprof/mcp-small.json", last)
 text, err = tool("run", executable="copybug", args=["2000"], json=".lake/leanprof/mcp-large.json")
 check("run (second report)", not err and "1,999 copies" in text, text)
 
@@ -94,11 +129,19 @@ with open(".lake/leanprof/mcp-sampled.json", "w") as f:
                "scopes": [{"name": "f", "pos": "F.lean:1", "total_ns": 1e6, "self_ns": 1e6, "calls": 0}]}, f)
 text, err = tool("explain", path=".lake/leanprof/mcp-sampled.json")
 check("explain refuses a sampled report", err and "leanprof sample" in text and "0 calls" not in text, text)
+check("explain: a sampled report is a bad_argument", code() == "bad_argument", last)
+text, err = tool("report", path=".lake/leanprof/no-such-report.json")
+check("report: a missing report is not_found, with a hint", err and code() == "not_found"
+      and last["error"]["hint"] and last["error"]["retryable"] is False, last)
+text, err = tool("run", executable="nosuchexe")
+check("run: an executable the project does not have is build_failed", err and code() == "build_failed", last)
 
 text, err = tool("compare", base=".lake/leanprof/mcp-small.json", new=".lake/leanprof/mcp-small.json")
 check("compare (same)", not err and text.startswith("no regressions"), text)
 text, err = tool("compare", base=".lake/leanprof/mcp-small.json", new=".lake/leanprof/mcp-large.json")
 check("compare (regression)", not err and text.startswith("REGRESSION"), text)
+check("compare: structured", last.get("regressed") is True and last["comparison"]["schema"]["name"] == "leanprof.compare"
+      and last["comparison"]["copies"][0]["regression"] is True, last)
 
 # judge takes measure summaries: two of the same program agree
 text, err = tool("measure", executable="copybug", args=["500"], runs=2, out=".lake/leanprof/mcp-m1.json")
@@ -106,6 +149,16 @@ check("measure", not err, text)
 text, err = tool("measure", executable="copybug", args=["500"], runs=2, out=".lake/leanprof/mcp-m2.json")
 text, err = tool("judge", base=".lake/leanprof/mcp-m1.json", new=".lake/leanprof/mcp-m2.json")
 check("judge", not err and ("KEEP" in text or "DISCARD" in text), text)
+check("judge: structured verdict with an outcome", last.get("verdict") in ("KEEP", "DISCARD")
+      and last.get("outcome") in ("improved", "no_improvement", "insufficient_evidence") and last.get("measurement_valid") is True,
+      last)
+m2 = json.load(open(".lake/leanprof/mcp-m2.json"))
+m2["output"]["hash"] = "fnv1a64:0000000000000000"
+json.dump(m2, open(".lake/leanprof/mcp-m-wrong.json", "w"))
+text, err = tool("judge", base=".lake/leanprof/mcp-m1.json", new=".lake/leanprof/mcp-m-wrong.json")
+check("judge: changed output is a valid DISCARD of kind correctness_failure",
+      not err and last.get("verdict") == "DISCARD" and last.get("outcome") == "correctness_failure"
+      and last.get("measurement_valid") is True, last)
 
 # a paired session of two prebuilt binaries, judged from one file
 text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
@@ -113,13 +166,24 @@ text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lak
 check("measure_pair", not err and "6 pairs" in text, text)
 text, err = tool("judge", pair=".lake/leanprof/mcp-pair.json", min_change="1")
 check("judge (paired)", not err and "paired time" in text, text)
+pair = json.load(open(".lake/leanprof/mcp-pair.json"))
+pair["machine"]["overloaded"] = True
+json.dump(pair, open(".lake/leanprof/mcp-pair-loaded.json", "w"))
+text, err = tool("judge", pair=".lake/leanprof/mcp-pair-loaded.json")
+check("judge: an overloaded session is insufficient evidence, with a retryable overloaded warning",
+      not err and last.get("outcome") == "insufficient_evidence" and last.get("retryable") is True
+      and [w["code"] for w in last.get("warnings", [])] == ["overloaded"] and last["warnings"][0]["retryable"] is True, last)
 
 # refused: arbitrary programs, writes outside the project, signals to every process
 text, err = tool("measure_pair", base="/bin/echo", candidate="/bin/echo", runs=6)
 check("measure_pair refuses a binary Lake did not build", err and "not a binary built by Lake" in text, text)
+check("measure_pair: that refusal is a bad_argument", code() == "bad_argument", last)
 text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lake/build/bin/copybug",
                  base_cwd="/", runs=6)
 check("measure_pair refuses a working directory that is not a Lake project", err and "not a Lake project" in text, text)
+check("measure_pair: that refusal is not_lake_project", code() == "not_lake_project", last)
+text, err = tool("run", cwd=tempfile.mkdtemp(prefix="leanprof-mcp-noproject-"), executable="x")
+check("run outside a Lake project: not_lake_project", err and code() == "not_lake_project", last)
 # the directories it runs in by default: `cwd` names a directory that is not
 # a project, the binaries are absolute, and `check_output` (deleted before
 # each run) is a file there
@@ -141,6 +205,7 @@ text, err = tool("measure_pair", base=".lake/build/bin/copybug", candidate=".lak
 check("measure_pair refuses an output file outside the project", err and "inside the project" in text, text)
 text, err = tool("run", executable="copybug", json="/tmp/leanprof-mcp-outside.json")
 check("run refuses a report path outside the project", err and "inside the project" in text, text)
+check("run: a path outside the project is a bad_argument", code() == "bad_argument", last)
 text, err = tool("measure", executable="copybug", out="../outside.json")
 check("measure refuses a summary path outside the project", err and "inside the project" in text, text)
 # through a symbolic link: a directory in the project pointing out of it, and
@@ -251,6 +316,21 @@ check("experiment_start refuses an output file outside the project", err and "in
 text, err = tool("experiment_finish", cwd=exp)
 check("experiment_finish", not err and '"experiment-finish"' in text, text)
 shutil.rmtree(exp, ignore_errors=True)
+
+# a server whose PATH has no Lean: lean_not_found, before anything runs
+bare = subprocess.Popen([os.path.abspath(exe), "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                        env=dict(os.environ, PATH="/usr/bin:/bin"))
+bare.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                             "params": {"name": "run", "arguments": {"executable": "copybug"}}}) + "\n")
+bare.stdin.flush()
+r = json.loads(bare.stdout.readline())["result"]
+bare.stdin.close()
+bare.wait(timeout=10)
+check("run without lake on PATH: lean_not_found", r["isError"] and r["structuredContent"]["error"]["code"] == "lean_not_found",
+      r)
+# sample: samply_missing when there is no samply (else a result)
+text, err = tool("sample", executable="copybug", args=["300"])
+check("sample: a result, or samply_missing", (not err) or code() == "samply_missing", last)
 
 check("ping", call("ping")["result"] == {})
 r = call("tools/call", {"name": "nope", "arguments": {}})

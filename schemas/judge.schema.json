@@ -99,6 +99,10 @@
     "unsettled": {
       "type": "boolean"
     },
+    "overloaded": {
+      "type": "boolean",
+      "description": "time was not judged because the machine was overloaded while measuring"
+    },
     "provenance": {
       "$ref": "common.schema.json#/$defs/provenance_check"
     }

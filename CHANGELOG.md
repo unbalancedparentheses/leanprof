@@ -24,6 +24,13 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   DISCARD (a regression, no improvement, changed behaviour) is told apart
   from one that says nothing about the change (another command or scope
   measured, an unstable output, a failed measurement).
+- MCP: every tool result has `structuredContent` that follows the
+  `outputSchema` the tool declares, next to the text. Failures carry a
+  typed `error`: `code` (`not_lake_project`, `build_failed`,
+  `lean_not_found`, `samply_missing`, `overloaded`, `bad_argument`,
+  `not_found`, `failed`), `retryable` and a `hint`; an overloaded machine
+  is a retryable warning next to an `insufficient_evidence` verdict.
+  Commands record the same errors in `LEANPROF_ERROR_JSON`.
 
 ## [0.1.0] - 2026-10-26
 

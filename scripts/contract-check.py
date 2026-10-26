@@ -241,6 +241,15 @@ def full(lp):
     check_doc("compare --json (elab reports)", "compare",
               stdout_json("compare", run([lp, "compare", "--json", f"{d}/elab.json", f"{d}/elab.json"])))
 
+    # an error recorded for the caller (LEANPROF_ERROR_JSON)
+    for args, want in [(["judge", f"{d}/no-such.json"], "not_found"), (["measure", "--bogus", "copybug"], "bad_argument")]:
+        ef = os.path.abspath(f"{d}/error.json")
+        if os.path.exists(ef):
+            os.remove(ef)
+        run([lp, *args], env={"LEANPROF_ERROR_JSON": ef}, ok_codes=(2,))
+        e = check_file(f"the error of `leanprof {' '.join(args)}`", "error", ef)
+        check(f"`leanprof {' '.join(args)}`: {want}", e.get("code") == want, e)
+
     # a live snapshot
     snap = f"{d}/live.json"
     subprocess.run([".lake/build/bin/server", "5", "5"], env=dict(os.environ, LEANPROF_LIVE=snap, LEANPROF_QUIET="1"),

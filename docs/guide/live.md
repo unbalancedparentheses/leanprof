@@ -187,10 +187,48 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `live` | a running program's current state, with rates over `seconds` (it must run with `LEANPROF_LIVE`) |
 | `dump` | a running program's flight recorder as a Perfetto trace |
 
+### Structured results
+
+Every tool result has the text above for people and `structuredContent`
+for agents, which follows the `outputSchema` each tool declares in
+`tools/list`. It always has `ok` and `tool`; the rest is the tool's own:
+`run` the report's path, exit code, wall time and copies; `measure` the
+summary's path and its time, copy and allocation totals; `compare` the
+whole of `compare --json`; `judge` and `measure_pair` the verdict of
+`judge --json`, with its `outcome`, `measurement_valid` and `retryable`
+([verdict outcomes](reference.md#verdict-outcomes)); `experiment_try` the
+evidence; `hot` the section's rows as the report has them, with `total`
+and `truncated`. Agents do not need to parse the text.
+
+A call that fails has `isError: true`, `ok: false` and an `error`:
+
+```json
+{"ok": false, "tool": "run",
+ "error": {"code": "build_failed", "retryable": false,
+           "message": "`lake build nosuchexe` with leanprof's probes failed (exit code 1)",
+           "hint": "the project does not build: fix the error in the message (`lake build EXE` shows it), then call again"}}
+```
+
+| `code` | when | retryable |
+|---|---|---|
+| `not_lake_project` | `cwd` (or a working directory) has no `lakefile.lean` or `lakefile.toml` | no |
+| `build_failed` | the project, or the instrumented build, does not build | no |
+| `lean_not_found` | `lake` or `lean` is not on the server's `PATH` | no |
+| `samply_missing` | `sample` without samply | no |
+| `overloaded` | the machine ran more jobs than CPUs while measuring: time not judged (a warning in `warnings`, with the verdict's outcome `insufficient_evidence`) | yes |
+| `bad_argument` | an argument is missing, malformed, outside the project, or an option where a file belongs | no |
+| `not_found` | a report, summary or snapshot that does not exist | no |
+| `failed` | anything else; the message has the command's last output | no |
+
+The commands report these too: with `LEANPROF_ERROR_JSON=FILE`, a command
+that fails writes its error to FILE (`schemas/error.schema.json`).
+
 CI runs a scripted session against it ([`scripts/mcp-check.py`](../../scripts/mcp-check.py)):
 two `run`s of `copybug`, `report`, `hot`, `explain`, `compare` both ways,
 `measure` and `judge`, `measure_pair` and a paired `judge`, `live` and `dump` on a running `server`, an
-experiment on a copy of `Tests/Experiment` (start, a KEEP, status, finish), and the error cases.
+experiment on a copy of `Tests/Experiment` (start, a KEEP, status, finish), and the error cases. Every
+result is validated against its tool's `outputSchema`, and each error kind above except `failed` is
+produced and checked.
 
 ## Overhead
 
