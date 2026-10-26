@@ -1,4 +1,5 @@
 import Leanprof.Regress
+import Leanprof.Delta
 
 /-! Tests of `Leanprof.Regress` (why a declaration or copy site got worse), run
 by `Tests/Main.lean`. The end-to-end check, from real Lean files through
@@ -93,5 +94,47 @@ def run (check' : String → Bool → String → StateT Nat IO Unit) : StateT Na
     (!has p "<img" && !has p "@user" && !has p "#12" && !has p "[l]" && !has p "*b*" && has p "`x\\|y`") p
   let c := htmlCode "a<b>&\"c"
   check' "regress: htmlCode escapes HTML" (c == "<code>a&lt;b&gt;&amp;&quot;c</code>") c
+  -- the difference per declaration and call site (`compare --json`, `--since-last`)
+  let d := Leanprof.Delta.compute (report #[cause "g" "whnf" 10 1] #[] #[])
+    (report #[cause "f" "whnf" 5000 30, cause "g" "whnf" 10 1] #[] #[] (total := 7000))
+  let decls := jarr d "decls"
+  check' "delta: a declaration that costs more is listed at its line, with the change"
+    (decls.size == 1 && jstr decls[0]! "pos" == "F.lean:1" && jnum decls[0]! "change" == 6000 &&
+      (decls[0]!.getObjValAs? Bool "regression").toOption == some true) d.compress
+  let why := (decls[0]!.getObjVal? "why").toOption.getD Json.null
+  check' "delta: what changed inside it, from compare's explanation"
+    ((jarr why "rows").any (fun r => jstr r "name" == "f" && jstr r "change" == "+5.00 kHB") &&
+      (jstr why "headline").startsWith "whnf reduces f") why.compress
+  check "delta: a change within 1,000 heartbeats is not listed"
+    (jarr (Leanprof.Delta.compute (report #[] #[] #[]) (report #[] #[] #[] (total := 1900))) "decls").isEmpty
+  let down := Leanprof.Delta.compute (report #[cause "f" "whnf" 9000 3] #[] #[] (total := 20000))
+    (report #[cause "f" "whnf" 100 3] #[] #[] (total := 2000))
+  let w := ((jarr down "decls")[0]!.getObjVal? "why").toOption.getD Json.null
+  check' "delta: a cheaper declaration names what fell, without the notes for increases"
+    ((jstr w "headline").startsWith "whnf reduces f" && (jarr w "notes").isEmpty) w.compress
+  let withFile (j : Json) (errors : Nat) : Json :=
+    j.setObjVal! "files" (Json.arr #[Json.mkObj [("file", "F.lean"), ("errors", toJson errors)]])
+  let other := Json.mkObj [("key", "F.lean e"), ("pos", "F.lean:9"), ("name", "theorem e"), ("total_ns", toJson (50000 : Nat))]
+  let twoDecls := (report #[] #[] #[]).setObjVal! "scopes" (Json.arr ((jarr (report #[] #[] #[]) "scopes").push other))
+  check "delta: a declaration after an error is not reported gone"
+    (jarr (Leanprof.Delta.compute (withFile twoDecls 0) (withFile (report #[] #[] #[]) 1)) "decls").isEmpty
+  check "delta: a declaration removed from a file without errors is reported gone"
+    ((jarr (Leanprof.Delta.compute (withFile twoDecls 0) (withFile (report #[] #[] #[]) 0)) "decls").any
+      (jstr · "status" == "gone"))
+  let runReport (n : Nat) : Json := Json.mkObj [("scopes", Json.arr #[]),
+    ("copies", Json.arr #[Json.mkObj [("function", "build"), ("kind", "Array"), ("scope", "build"), ("where", "M.lean:17"),
+      ("shared", toJson n), ("multi_threaded", toJson (0 : Nat)), ("bytes", toJson (n * 8))]]),
+    ("allocations", Json.arr #[Json.mkObj [("function", "0x1234"), ("scope", "-"), ("where", ""), ("allocs", toJson (3 : Nat)),
+      ("bytes", toJson (48 : Nat))]])]
+  let r := Leanprof.Delta.compute (runReport 1) (runReport 2001)
+  let cs := jarr r "copies"
+  check' "delta: copies per call site, with the site's line"
+    (jstr r "kind" == "run" && cs.size == 1 && jnum cs[0]! "change" == 2000 && jstr cs[0]! "where" == "M.lean:17" &&
+      (jarr r "allocations").isEmpty) r.compress
+  check "delta: reports of different kinds are not compared"
+    (((Leanprof.Delta.compute (runReport 1) (report #[] #[] #[])).getObjValAs? Bool "comparable").toOption == some false)
+  check' "delta: the summary names the change"
+    ((Leanprof.Delta.summary r).any (has · "+2,000  build [Array] in build (M.lean:17)"))
+    (toString (Leanprof.Delta.summary r))
 
 end Tests.Regress

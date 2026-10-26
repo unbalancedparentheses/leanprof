@@ -157,6 +157,7 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
         run: |
           npm ci
+          npm run test:unit
           npm run package -- -o "../../leanprof-${TAG#v}.vsix"
       - uses: actions/upload-artifact@v4
         with:

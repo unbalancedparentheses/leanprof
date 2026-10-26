@@ -219,6 +219,57 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     lines := lines.push s!"{file}:{line}  {label}  ({str c "function"})"
   return lines
 
+/-- `n` with thousands separators. -/
+def groupDigits (n : Nat) : String :=
+  let cs := (toString n).toList.reverse
+  String.ofList (cs.zipIdx.foldl (fun acc (c, i) => if i > 0 && i % 3 == 0 then c :: ',' :: acc else c :: acc) [])
+
+/-- `+x` or `−x`. -/
+def signed (d : Float) (f : Float → String) : String :=
+  if d > 0 then s!"+{f d}" else if d < 0 then s!"−{f d.abs}" else "±0"
+
+/-- The differences written by `--since-last` (`elab`, `run`, `stat`; editors run it on
+save) that concern `file`: `.lake/leanprof/onsave/FILE.delta.json` and every
+`run-EXE.delta.json` there. Hints `Δ +12.3 kHB since the last profile`, `Δ +2,000 copies`;
+the hover says what changed inside the declaration. -/
+def showDeltas (file : String) (fm : FileMap) : CommandElabM (Array String) := do
+  let dir : System.FilePath := ".lake/leanprof/onsave"
+  unless ← dir.pathExists do return #[]
+  let mut paths : Array System.FilePath := #[dir / s!"{file}.delta.json"]
+  for e in ← (dir.readDir : IO _) do
+    if e.fileName.startsWith "run-" && e.fileName.endsWith ".delta.json" then paths := paths.push e.path
+  let mut lines : Array String := #[]
+  for path in paths do
+    unless ← path.pathExists do continue
+    let .ok j := Json.parse (← (IO.FS.readFile path : IO String)) | continue
+    if (j.getObjValAs? Bool "first").toOption == some true then continue
+    let hb := str j "unit" == "heartbeats"
+    let amount (x : Float) := if hb then s!"{fmt1 (x / 1000)} kHB" else fmtNs x
+    for d in arr j "decls" do
+      let some line := lineIn file (str d "pos") | continue
+      let change := num d "change"
+      let status := str d "status"
+      let label := s!"Δ {signed change amount}{if status == "new" then " (new)" else ""} since the last profile"
+      let w := (d.getObjVal? "why").toOption.getD Json.null
+      let rows := (arr w "rows").toList.map fun r =>
+        s!"\n  {str r "change"}  {str r "label"} `{str r "name"}`" ++
+          (if (str r "where").isEmpty then "" else s!" ({str r "where"})") ++ s!": {str r "base"} → {str r "new"}"
+      let notes := (arr w "notes").toList.filterMap (·.getStr?.toOption) |>.map (s!"\nnote: {·}")
+      let tip := s!"{amount (num d "base")} → {amount (num d "new")} to compile" ++
+        (if rows.isEmpty then "" else "\nwhat changed inside it:" ++ String.join rows) ++ String.join notes
+      hint (endOfLine fm line) label tip
+      lines := lines.push s!"{file}:{line}  {label}  ({str d "key"})"
+    for (field, what) in [("copies", "copies"), ("allocations", "allocations")] do
+      for c in arr j field do
+        let some line := lineIn file (str c "where") | continue
+        let change := num c "change"
+        let label := s!"Δ {signed change (fun x => groupDigits x.toUInt64.toNat)} {what} since the last run"
+        let tip := s!"{str c "key"}: {groupDigits (num c "base").toUInt64.toNat} → {groupDigits (num c "new").toUInt64.toNat} {what} " ++
+          s!"({fmtBytes (num c "base_bytes")} → {fmtBytes (num c "new_bytes")}); counts are exact"
+        hint (endOfLine fm line) label tip
+        lines := lines.push s!"{file}:{line}  {label}  ({str c "key"})"
+  return lines
+
 @[command_elab leanprofCmd] def elabLeanprof : CommandElab := fun stx => do
   -- this file, relative to the project (where the reports' positions start)
   let cwd ← (IO.currentDir : IO System.FilePath)
@@ -237,6 +288,11 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     unless ← System.FilePath.pathExists path do continue
     found := true
     lines := lines ++ (← showReport path file fm)
+  -- what changed since the previous `--since-last` profile (an editor's on-save run)
+  let deltas ← if stx[1].getOptional?.isSome then pure #[] else showDeltas file fm
+  if !deltas.isEmpty then
+    found := true
+    lines := lines ++ #["since the last profile:"] ++ deltas
   if !found then
     logInfo m!"no leanprof report: run `lake exe leanprof run EXE`, `lake exe leanprof sample EXE` or `lake exe leanprof elab FILE`"
   else if lines.isEmpty then

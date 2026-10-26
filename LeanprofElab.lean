@@ -790,7 +790,38 @@ def leanEnv : IO LeanEnv := do
   | some lean, some sysroot, some path => return { lean, sysroot, path, srcPath := (get "LEAN_SRC_PATH").getD "" }
   | _, _, _ => throw <| IO.userError s!"`lake env` did not give Lean's paths (run leanprof in a Lake project):\n{out.stderr}"
 
+/-- What decides `lake env`'s paths and a module's setup: the modification times of the
+package's configuration, manifest and toolchain file. -/
+def lakeKey : IO String := do
+  let mut parts : Array String := #[]
+  for f in ["lakefile.lean", "lakefile.toml", "lake-manifest.json", "lean-toolchain"] do
+    let t ← try some <$> (f : FilePath).metadata catch _ => pure none
+    parts := parts.push s!"{f}={(t.map fun m => s!"{m.modified.sec}.{m.modified.nsec}").getD "-"}"
+  return ";".intercalate parts.toList
+
+/-- `leanEnv`, kept in `.lake/leanprof/lake-env.json` while `lakeKey` is the same and its
+`lean` exists. -/
+def cachedLeanEnv : IO LeanEnv := do
+  let file : FilePath := ".lake" / "leanprof" / "lake-env.json"
+  let key ← lakeKey
+  if let some j ← (try pure (Json.parse (← IO.FS.readFile file)).toOption catch _ => pure none) then
+    let lean := str j "lean"
+    if str j "key" == key && !lean.isEmpty && (← (lean : FilePath).pathExists) then
+      return { lean, sysroot := str j "sysroot", path := str j "path", srcPath := str j "src_path" }
+  let le ← leanEnv
+  IO.FS.createDirAll (".lake" / "leanprof")
+  IO.FS.writeFile file (Json.mkObj [("key", Json.str key), ("lean", Json.str le.lean),
+    ("sysroot", Json.str le.sysroot.toString), ("path", Json.str le.path), ("src_path", Json.str le.srcPath)]).compress
+  return le
+
 structure Opts where
+  /-- `--since-last` (`leanprof elab --since-last`, run by an editor on every save): the
+  report is compared with the previous one by the command (LeanprofCli.lean); here,
+  `lake env`'s paths and the setup of a module that is not built are reused while the
+  files that decide them are unchanged (`cachedLeanEnv`, `setupFile`), which saves
+  0.3-0.7 s a run. -/
+  sinceLast : Bool := false
+  keepBase : Bool := false
   heartbeats : Bool := false
   top : Nat := 15
   out : String := ".lake/leanprof/elab.json"
@@ -930,17 +961,37 @@ the one `lake setup-file` prints, saved under `.lake/leanprof/setup`. Without
 it Lean would run without the package's `leanOptions` (Mathlib's
 `maxSynthPendingDepth 3` and its linters), so proofs fail and the costs are
 not the build's. None for a file that is not a module of the package. -/
-def setupFile (file module : String) : IO (Option FilePath) := do
+def setupFile (file module : String) (reuse : Bool := false) : IO (Option FilePath) := do
   let built : FilePath := ".lake" / "build" / "ir" / (module.replace "." "/" ++ ".setup.json")
   if ← built.pathExists then return some built
+  let saved : FilePath := ".lake" / "leanprof" / "setup" / (module ++ ".setup.json")
+  -- `reuse` (`--since-last`): the one saved before, while the file's imports and `lakeKey` are
+  -- the same (`.key` next to it)
+  let keyFile : FilePath := saved.toString ++ ".key"
+  let key ← if reuse then do
+      let src ← try IO.FS.readFile file catch _ => pure ""
+      let header := (src.splitOn "\n").filter fun l =>
+        let l := l.trimAscii.toString
+        l.startsWith "import " || l.startsWith "public import " || l.startsWith "meta import " ||
+          l == "module" || l == "prelude"
+      pure s!"{← lakeKey}\n{"\n".intercalate header}"
+    else pure ""
+  -- (no setup file next to the key: the file is not a module of the package)
+  if reuse && (← (try IO.FS.readFile keyFile catch _ => pure "")) == key then
+    return if ← saved.pathExists then some saved else none
   let out ← try IO.Process.output { cmd := "lake", args := #["setup-file", file] }
     catch _ => return none
   let some j := (Json.parse out.stdout).toOption | return none
   -- a file outside the package's libraries gets a default setup named `_unknown`
-  if out.exitCode != 0 || str j "name" == "_unknown" then return none
-  let saved : FilePath := ".lake" / "leanprof" / "setup" / (module ++ ".setup.json")
+  if out.exitCode != 0 || str j "name" == "_unknown" then
+    if reuse && out.exitCode == 0 then
+      IO.FS.createDirAll (".lake" / "leanprof" / "setup")
+      if ← saved.pathExists then IO.FS.removeFile saved
+      IO.FS.writeFile keyFile key
+    return none
   IO.FS.createDirAll (".lake" / "leanprof" / "setup")
   IO.FS.writeFile saved out.stdout
+  if reuse then IO.FS.writeFile keyFile key
   return some saved
 
 /-- Elaborate one file and fold its trace into a fresh accumulator; its
@@ -951,7 +1002,7 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
   let scale : Float := if o.heartbeats then 1 else 1e9
   -- a built module is elaborated as Lake does: with its setup (module name, the package's
   -- `leanOptions`, the exact imported files)
-  let setup ← if o.setup then setupFile file module else pure none
+  let setup ← if o.setup then setupFile file module (reuse := o.sinceLast) else pure none
   let setupArgs := match setup with | some s => #["--setup", s.toString] | none => #[]
   -- the driver when it can (exact ranges), else `lean`, with the same options
   let exact := o.driver && !le.driver.isEmpty
@@ -1198,6 +1249,8 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | [] => .ok o
   | "--top" :: v :: rest => parseOpts { o with top := v.toNat! } rest
   | "--heartbeats" :: rest => parseOpts { o with heartbeats := true } rest
+  | "--since-last" :: rest => parseOpts { o with sinceLast := true } rest
+  | "--keep-base" :: rest => parseOpts { o with keepBase := true } rest
   | "--out" :: f :: rest => parseOpts { o with out := f } rest
   | "--project" :: rest => parseOpts { o with project := true } rest
   | "--module-glob" :: g :: rest => parseOpts { o with project := true, globs := o.globs ++ (g.splitOn ",").toArray } rest
@@ -1280,7 +1333,7 @@ def main (argv : List String) : IO UInt32 := do
       IO.eprintln out.stderr
       throw <| IO.userError "lake build failed; leanprof elab --project needs the package built"
   let tBuilt ← IO.monoNanosNow
-  let le ← leanEnv
+  let le ← if o.sinceLast then cachedLeanEnv else leanEnv
   -- exact source ranges need leanprof's own frontend, built with the project's Lean
   let le ← if !o.driver then pure le else match ← findDriver le.lean le.sysroot with
     | .ok d => pure { le with driver := d }

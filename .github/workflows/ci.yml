@@ -751,10 +751,14 @@ jobs:
           node-version: 22
       - name: Build leanprof and the examples the tests profile
         run: lake build leanprof copybug server
-      - name: Extension tests (Run, Compile cost, Open report, Live view in VS Code)
+      - name: Extension unit tests (on-save differences, why a file is slow, debouncing)
         working-directory: editors/vscode
         run: |
           npm ci
+          npm run test:unit
+      - name: Extension tests (Run, Compile cost, on save, Open report, Live view in VS Code)
+        working-directory: editors/vscode
+        run: |
           command -v xvfb-run || { sudo apt-get update && sudo apt-get install -y xvfb; }
           LEANPROF=$GITHUB_WORKSPACE/.lake/build/bin/leanprof xvfb-run -a npm test
       - name: Package
