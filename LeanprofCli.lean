@@ -6,6 +6,8 @@ import Leanprof.Experiment
 import Leanprof.Judge
 import Leanprof.Regress
 import Leanprof.Workload
+import Leanprof.ElabWhy
+import Leanprof.FixElab
 import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
@@ -2700,6 +2702,19 @@ def startCmd (pick : Option String) (args : Array String) : IO UInt32 := do
       IO.println s!"\n`{exe}` exited with code {code}{if args.isEmpty then s!"; if it needs arguments: {startCommand exe} -- ARGS" else ""}"
     return code
 
+/-- `explain` on an `elab` report (`--elab`, or `--report` naming one): why the costliest
+declarations are slow and what to try (`Leanprof.ElabWhy`); none for a run report. -/
+def explainElabReport (argv : List String) : IO (Option UInt32) := do
+  let some o := (Leanprof.Explain.parseOpts {} argv).toOption | return none
+  unless ← (o.report : System.FilePath).pathExists do return none
+  let some j := (Lean.Json.parse (← IO.FS.readFile o.report)).toOption | return none
+  unless (j.getObjValAs? Bool "elab").toOption.getD false do return none
+  if o.json then IO.println (Leanprof.ElabWhy.whyJson j o.top |>.setObjVal! "report" (Lean.Json.str o.report)).pretty
+  else
+    IO.println s!"leanprof explain: {o.report} is a compile-time report (leanprof elab)"
+    IO.print (Leanprof.ElabWhy.text j o.top)
+  return some 0
+
 /-- The command `argv` names. (Its own definition: Lean before 4.28 types a `try`
 around this `match` by its first `return`, as a `Nat`.) -/
 def dispatchCmd (argv : List String) : IO UInt32 := do
@@ -2724,11 +2739,15 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
   | "sample" :: rest => sample rest
   | "elab" :: rest => elabCmd rest
   | "explain" :: rest =>
+    if let some rc ← explainElabReport rest then return rc
     Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
   | "fix" :: rest =>
     -- a signal ends the current step; `fix` then removes its worktree
     guardSignals 0
     Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+    if rest.contains "--elab" then
+      return ← Leanprof.FixElab.fixElabCmd (rest.filter (· != "--elab")) fun args cwd => do
+        Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
     Leanprof.Fix.fixCmd rest fun args cwd => do
       Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
   | "experiment" :: rest =>

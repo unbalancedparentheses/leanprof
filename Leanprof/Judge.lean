@@ -21,7 +21,10 @@ DISCARD when any of these hold:
   small to measure in any run).
 
 Otherwise KEEP when copies went down, allocations went down by at least 1%
-and 100, heartbeats went down by more than 1% and 1,000, or every new run was
+and 100, heartbeats went down by more than 1% and 1,000 (in total, or, for a
+change to a few declarations of a large module, per declaration: some went
+down by that much, none went up by that much, none appeared or disappeared,
+and the total went down by more than 1,000), or every new run was
 faster than every base run by at least `minChange` percent (default 1).
 Independent runs would not overlap by chance 1 time in 252 with 5 runs each,
 but base and new are measured one after the other and a quiet machine drifts
@@ -219,6 +222,19 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : 
     let margin := max (x * 0.01) 1000
     if y - x > margin then worse := worse.push s!"compile heartbeats: {kHB x} -> {kHB y}"
     else if x - y > margin then better := better.push s!"compile heartbeats: {kHB x} -> {kHB y}"
+    else if x - y > 1000 then
+      -- one declaration of a large module made cheaper: 1% of the module can be more than
+      -- the whole declaration. Heartbeats are exact, so judged per declaration, with the
+      -- same margin: some cheaper, none dearer, the same declarations
+      let keys := (bh.toList.map (·.1) ++ nh.toList.map (·.1)).eraseDups
+      let moved (up : Bool) := keys.filter fun k => match bh.get? k, nh.get? k with
+        | some a, some b => (if up then b - a else a - b) > max (a * 0.01) 1000
+        | _, _ => false
+      let same := keys.all fun k => (bh.get? k).isSome == (nh.get? k).isSome
+      let downs := moved false
+      if same && (moved true).isEmpty && !downs.isEmpty then
+        better := better.push (s!"compile heartbeats: {kHB x} -> {kHB y}: {downs.length} " ++
+          s!"{if downs.length == 1 then "declaration" else "declarations"} cheaper by more than 1% and 1,000, none dearer")
     for k in (bh.toList.map (·.1) ++ nh.toList.map (·.1)).eraseDups do
       match bh.get? k, nh.get? k with
       | some x, some y =>

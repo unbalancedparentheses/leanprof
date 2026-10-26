@@ -1308,6 +1308,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--out" :: f :: rest => parseOpts { o with out := f } rest
   | "--all" :: rest => parseOpts { o with all := true } rest
   | "--json" :: rest => parseOpts { o with json := true } rest
+  | "--elab" :: rest => parseOpts { o with report := ".lake/leanprof/elab.json" } rest
   | "--why" :: exe :: rest => parseOpts { o with run := some exe } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: _ => .error s!"unknown argument {a}"

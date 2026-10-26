@@ -136,7 +136,23 @@ node around it. -/
     modifyTraces (old ++ ·)
   MonadExcept.ofExcept res
 
-def wrapTactic (t : Tactic.Tactic) : Tactic.Tactic := fun stx => withSource tacticCls stx (t stx)
+/-- The tactics whose `Try this: … only […]` suggestion (`tactic.simp.trace`) `leanprof elab
+--why` reads: their whole source range is recorded, since the suggestion's message
+covers only the first word. -/
+def simpKinds : List Name :=
+  [`Lean.Parser.Tactic.simp, `Lean.Parser.Tactic.simpAll, `Lean.Parser.Tactic.simpa, `Lean.Parser.Tactic.dsimp]
+
+/-- Set (with `--why`) where the source ranges of `simpKinds` tactics are recorded. -/
+def whyOpt : Name := `leanprof.why
+
+/-- The source ranges recorded for `--why`: start and end byte, syntax kind. -/
+abbrev Ranges := IO.Ref (Array (Nat × Nat × Name))
+
+def wrapTactic (ranges : Ranges) (t : Tactic.Tactic) : Tactic.Tactic := fun stx => do
+  if simpKinds.contains stx.getKind && (← getOptions).getBool whyOpt then
+    if let (some s, some e) := (stx.getPos? (canonicalOnly := true), stx.getTailPos? (canonicalOnly := true)) then
+      ranges.modify (·.push (s.byteIdx, e.byteIdx, stx.getKind))
+  withSource tacticCls stx (t stx)
 
 def wrapTerm (t : Term.TermElab) : Term.TermElab := fun stx ty => withSource termCls stx (t stx ty)
 
@@ -151,9 +167,9 @@ def wrapMacro (mac : Macro) : Macro := fun stx => do
   | _, _ => return out
 
 /-- The environment with every term and tactic elaborator and every macro wrapped. -/
-def instrument (env : Environment) : Environment :=
+def instrument (ranges : Ranges) (env : Environment) : Environment :=
   let env := Tactic.tacticElabAttribute.ext.modifyState env fun s =>
-    { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTactic e.value }) }
+    { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTactic ranges e.value }) }
   let env := Term.termElabAttribute.ext.modifyState env fun s =>
     { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTerm e.value }) }
   macroAttribute.ext.modifyState env fun s =>
@@ -299,6 +315,7 @@ structure Args where
   threshold : Nat := 1
   defs : Bool := false
   counts : Bool := false
+  why : Bool := false
   setup : Option String := none
   file : String := ""
 
@@ -308,6 +325,7 @@ partial def parseArgs (a : Args) : List String → Except String Args
   | "--heartbeats" :: r => parseArgs { a with heartbeats := true } r
   | "--defs" :: r => parseArgs { a with defs := true } r
   | "--counts" :: r => parseArgs { a with counts := true } r
+  | "--why" :: r => parseArgs { a with why := true } r
   | "--threshold" :: v :: r => parseArgs { a with threshold := v.toNat! } r
   | "--setup" :: f :: r => parseArgs { a with setup := some f } r
   | f :: r => if f.startsWith "--" then .error s!"unknown option {f}" else parseArgs { a with file := f } r
@@ -342,6 +360,8 @@ def run (a : Args) : IO UInt32 := do
               `Meta.isDefEq.delta.unfoldLeftRight, `Meta.Tactic.simp.rewrite] do
       opts := opts.setBool (`trace ++ c) true
     if a.counts then opts := opts.setBool `diagnostics true |>.set `diagnostics.threshold (0 : Nat)
+  -- `--why`: every `simp` says which lemmas it used, as `Try this: simp only [...]`
+  if a.why then opts := opts.setBool `tactic.simp.trace true
   if let some s := setup? then opts := opts.mergeBy (fun _ _ v => v) s.options.toOptions
   opts := Elab.async.setIfNotSet opts true
   opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
@@ -355,7 +375,9 @@ def run (a : Args) : IO UInt32 := do
   let mut opts' ← Language.Lean.reparseOptions opts
   -- not a registered option: set after Lean checks them
   if a.compact then opts' := opts'.setBool compactOpt true
-  let cmdState := Command.mkState (instrument env) {} opts'
+  if a.why then opts' := opts'.setBool whyOpt true
+  let ranges : Ranges ← IO.mkRef #[]
+  let cmdState := Command.mkState (instrument ranges env) {} opts'
   let cmdState := { cmdState with infoState.enabled := true }
   let first ← Language.Lean.processCommands inputCtx parserState cmdState
   let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact }
@@ -372,6 +394,14 @@ def run (a : Args) : IO UInt32 := do
       emitTrace c pos t
   -- the kernel's work on the last declarations
   let _ ← IO.wait (lastCmd first.get).elabSnap.resultSnap.get.cmdState.env.checked
+  -- `--why`: the whole range of each `simp` (its suggestion's message covers its first word)
+  for (s, e, kind) in ← ranges.get do
+    let p := c.fm.toPosition ⟨s⟩
+    let q := c.fm.toPosition ⟨e⟩
+    IO.println (Json.mkObj [("severity", "information"),
+      ("pos", Json.mkObj [("line", p.line), ("column", p.column)]),
+      ("endPos", Json.mkObj [("line", q.line), ("column", q.column)]),
+      ("data", Json.str s!"leanprof-range {kind}")]).compress
   return if ← errors.get then 1 else 0
 
 /-! ## Where constants are declared
@@ -451,6 +481,6 @@ def main (args : List String) : IO UInt32 := do
     return ← Leanprof.ElabDriver.locate request
   match Leanprof.ElabDriver.parseArgs {} args with
   | .error e =>
-    IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--threshold N] [--setup FILE] FILE.lean"
+    IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--why] [--threshold N] [--setup FILE] FILE.lean"
     return 2
   | .ok a => Leanprof.ElabDriver.run a
