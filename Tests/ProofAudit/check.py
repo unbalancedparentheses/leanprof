@@ -17,6 +17,9 @@ audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)
 
 
+TACTIC = "\ntheorem small_range : ∀ v, v < 24 → obligation v := by\n  intro v hv\n  unfold obligation\n  omega\n"
+
+
 def command(args, cwd):
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
     if result.returncode:
@@ -46,6 +49,10 @@ class ProofAuditTests(unittest.TestCase):
             "implemented_by": base.replace("def compute", "def alternate (n : Nat) : Nat := n\n@[implemented_by alternate]\ndef compute"),
             "native": base + "\ntheorem nativeEscape : (1 : Nat) = 1 := by native_decide\n",
             "comment": base + '\n-- sorry axiom @[extern] @[implemented_by]\ndef note : String := "sorry axiom"\n',
+            # a tactic proof that abstracts a `_proof_1` lemma, rewritten as a term without it
+            "tactic": base + TACTIC,
+            "tactic_term": base + TACTIC.replace(":= by\n  intro v hv\n  unfold obligation\n  omega",
+                                                 ":=\n  fun v _ => Nat.add_zero v"),
         }
         for label, source in variants.items():
             p = cls.directory / label
@@ -102,6 +109,23 @@ class ProofAuditTests(unittest.TestCase):
     def test_native_decide_trust_increase_fails(self):
         self.assertVerdict("native", "FAIL", "added_axiom_dependency")
 
+    def test_generated_lemma_gone_with_its_proof_passes(self):
+        names = set(self.snapshots["tactic"]["roots"]) - set(self.snapshots["tactic_term"]["roots"])
+        self.assertTrue(any(audit.generated(n) for n in names), names)
+        result = audit.compare(self.snapshots["tactic"], self.snapshots["tactic_term"])
+        self.assertEqual(result["status"], "PASS", json.dumps(result, indent=2))
+        # the theorem the proof belonged to is still an obligation
+        removed = audit.compare(self.snapshots["tactic"], self.snapshots["base"])
+        self.assertIn(("FAIL", "removed_declaration", "small_range"),
+                      {(f["status"], f["code"], f["subject"]) for f in removed["findings"]})
+
+    def test_generated_names(self):
+        for name in ("small_range._proof_1_1", "f._unsafe_rec", "f.eq_1", "f.eq_def", "f.match_2",
+                     "_private.A.0.f._proof_3", "f._auxLemma.4"):
+            self.assertTrue(audit.generated(name), name)
+        for name in ("eq_1", "preserved", "f.proof", "f.match", "_private.A.0.g", "fast._impl"):
+            self.assertFalse(audit.generated(name), name)
+
     def test_comments_and_strings_do_not_trigger(self):
         self.assertVerdict("comment", "PASS")
 
@@ -146,6 +170,42 @@ class ProofAuditTests(unittest.TestCase):
         result = audit.audit(self.projects["base"], self.projects["good"], ["Sample"], (), 60)
         self.assertEqual(result["status"], "INCONCLUSIVE")
         self.assertIn("uncovered_source_change", {f["code"] for f in result["findings"]})
+
+    def test_files_only_without_modules(self):
+        # no module selected: a protected change fails, a Lean change is not covered
+        base, candidate = self.projects["base"], self.projects["good"]
+        result = audit.audit(base, candidate, [], audit.DEFAULT_PROTECTED, 60)
+        self.assertEqual(result["status"], "INCONCLUSIVE", result)
+        self.assertIn("uncovered_source_change", {f["code"] for f in result["findings"]})
+        (candidate / "tests").mkdir(exist_ok=True)
+        expected = candidate / "tests/expected.txt"
+        expected.write_text("weakened")
+        self.addCleanup(lambda: expected.unlink(missing_ok=True))
+        result = audit.audit(base, candidate, [], audit.DEFAULT_PROTECTED, 60)
+        self.assertEqual(result["status"], "FAIL", result)
+
+    def test_package_in_a_subdirectory(self):
+        # the Lake package below the checkout root (`--subdir`), as in lean-regex's regex/
+        pairs = {}
+        for label in ("base", "sorry"):
+            top = self.directory / f"nested-{label}"
+            package = top / "pkg"
+            package.mkdir(parents=True)
+            for name in ("lean-toolchain", "lakefile.toml", "Sample.lean"):
+                (package / name).write_text((self.projects[label] / name).read_text())
+            (top / ".gitignore").write_text(".lake/\n")
+            command(["git", "init", "-q"], top)
+            command(["lake", "build", "Sample"], package)
+            command(["git", "add", "."], top)
+            command(["git", "-c", "user.name=Audit Test", "-c", "user.email=audit@example.invalid",
+                     "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], top)
+            pairs[label] = top
+        result = audit.audit(pairs["base"], pairs["sorry"], ["Sample"], audit.DEFAULT_PROTECTED, 60, "pkg")
+        self.assertEqual(result["status"], "FAIL", result)
+        self.assertIn("sorry_dependency", {f["code"] for f in result["findings"]})
+        self.assertEqual(result["changedFiles"], ["pkg/Sample.lean"])
+        with self.assertRaisesRegex(ValueError, "package root"):
+            audit.audit(pairs["base"], pairs["sorry"], ["Sample"], audit.DEFAULT_PROTECTED, 60)
 
     def test_source_change_during_capture(self):
         actual = audit.inventory

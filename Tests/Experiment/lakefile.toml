@@ -1,0 +1,17 @@
+# The project `scripts/experiment-check.sh` runs `leanprof experiment` on
+# (see Exp/Buckets.lean). No dependency on leanprof.
+name = "expdemo"
+defaultTargets = ["Exp"]
+testDriver = "check"
+
+[[lean_lib]]
+name = "Exp"
+
+[[lean_exe]]
+name = "bench"
+root = "Main"
+
+[[lean_exe]]
+name = "check"
+root = "Check"
+srcDir = "tests"

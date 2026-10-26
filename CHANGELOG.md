@@ -24,6 +24,61 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `bench/run.py` records each component's `probes_ns` and `holds_tiny`,
   and RESULTS.md marks the rows (`†`).
 
+### One complete experiment operation: `leanprof experiment`
+
+- `leanprof experiment start` records a baseline under an experiment id
+  (`.lake/leanprof/experiments/ID/`), in a git worktree of HEAD: the build
+  (default targets and the executable), the tests (`--test CMD`, or `lake
+  test`), the behaviour on every case (the workload, each file of `--inputs
+  DIR`, each line of `--cases FILE`: stdout, stderr, exit code and each
+  `--check-output FILE`, the same on two runs), the held-out cases of
+  `--heldout DIR` as hashes only, and `measure`.
+- `leanprof experiment try [REV | --working-tree]` checks one candidate in a
+  worktree of its own, which keeps its build between tries and starts from
+  the base's (only what changed is rebuilt): build; the proof-preservation
+  guard; tests; identical behaviour on every case; then, when the generated
+  C is the base's (a proof-only change), compile heartbeats instead of any
+  run; else exact counts first (worse: DISCARD, nothing timed) and paired
+  timing of the plain binaries. Without `--exe`, the measure is `elab
+  --heartbeats` on the changed modules and their dependents in the package.
+  It returns KEEP (0), DISCARD (1), ERROR (2) or INCONCLUSIVE (3) with
+  `tries/N/evidence.json` and a summary (`--json` prints the evidence). A
+  KEEP becomes the base; from the working tree it is committed on the
+  current branch with the evidence in the message (git hooks off), a commit
+  gets a git note (`refs/notes/leanprof-experiments`).
+- The guard is the proof-preservation auditor (`scripts/proof-audit`),
+  compiled into the command, on the changed modules and every module of the
+  package importing them: DISCARD for a changed test, expected output or
+  experiment input, a `sorry`, a new axiom or axiom dependency, a new
+  `@[implemented_by]`, `@[extern]`, `unsafe` or `partial`, a removed
+  theorem; INCONCLUSIVE when a theorem statement or a definition one uses
+  changed, or a file outside the Lean modules. A candidate changing the
+  lakefile, manifest or toolchain is INCONCLUSIVE before it is built.
+- `leanprof experiment finish` runs the held-out cases on the final base,
+  exit 1 when they differ; `status` lists the tries. MCP tools
+  `experiment_start`, `experiment_try`, `experiment_finish` and
+  `experiment_status` (tests only through the Lake test driver; paths inside
+  the project). `research/program.md` is now the loop built on it.
+- The auditor: `--subdir` for a Lake package below the checkout root (as
+  lean-regex's `regex/`); no `--module` runs only the file checks;
+  declarations Lean generates (a tactic's `_proof_1`, equation lemmas,
+  matchers, `_unsafe_rec`) are no longer obligations, so a rewritten proof is
+  not a removed declaration; an axiom a proof no longer uses is no longer
+  "changed". Its tests run in CI.
+- `measure`, `measure-pair` and `experiment start` take `--ignore-lines
+  TEXT` (repeatable): stdout's lines containing TEXT are left out of the
+  output hash (the experiment's cases also leave them out of stderr). A
+  benchmark that prints its own timings, such as lean-regex's `Bench`, can
+  then be checked for identical output; the summary's output source says
+  which lines were left out, so `judge` compares only summaries hashed alike.
+- `judge` (the library): `judge … (judgeTime := false)` judges exact counts
+  only, and a verdict says when time was unsettled.
+- `scripts/experiment-check.sh` (CI) runs it on `Tests/Experiment`: a
+  known-good change (KEEP, committed), a change visible on one input only
+  (DISCARD), a `sorry`, a weaker statement and a loosened test (DISCARD,
+  INCONCLUSIVE, DISCARD), a proof-only change (heartbeats, nothing timed), a
+  held-out difference found by `finish`, and a library experiment.
+
 ### Runtime and cleanup fixes from the 2026-10-25 code review
 
 - `--auto`'s tiny-function rule (`scripts/leanprof-tiny.awk`) no longer

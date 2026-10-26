@@ -2,6 +2,7 @@ import Lean.Data.Json
 import Leanprof.Core
 import Leanprof.Explain
 import Leanprof.Fix
+import Leanprof.Experiment
 import Leanprof.Judge
 import Leanprof.Regress
 import Leanprof.Workload
@@ -77,14 +78,15 @@ def commands : List (String × String × String) := [
     "by more than PCT% (default 10) and MS ms (default 1). For each declaration that got more\n" ++
     "expensive, what changed inside it (definitions unfolded, instances, simp lemmas, repeated work,\n" ++
     "`--counts` counters); --explain names explain's cause for each copy site that copies more."),
-  ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
+  ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--ignore-lines TEXT]... [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
     "--core also counts copies and allocations inside Lean's precompiled libraries (as `run --core`);\n" ++
     "judge compares only summaries measured the same way.\n" ++
     "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
+    "--ignore-lines TEXT leaves stdout's lines containing TEXT out of its hash (a benchmark's own timings).\n" ++
     "For `judge` and autoresearch loops."),
-  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
+  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output FILE] [--ignore-lines TEXT]... [--out FILE] [-- ARGS...]",
     "Measure two prebuilt binaries in alternating AB/BA order (1 warmup pair), stopping as soon as the\n" ++
     "time verdict is settled: slower or faster by more than PCT% (default 1), or within ±PCT%; at most N\n" ++
     "pairs (default 30), looking after 6, 8, 10, ... pairs (a group-sequential sign test: each of these\n" ++
@@ -126,6 +128,23 @@ def commands : List (String × String × String) := [
     "EXE first (otherwise the last report is read); --finding N picks finding N of the list printed;\n" ++
     "--all also considers copy sites of only empty or tiny values (as explain --all); --dry-run\n" ++
     "prints the findings and the diff only."),
+  ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
+    "One experiment, from baseline to verdict. `start` records the base (HEAD, or --base REV) in a git\n" ++
+    "worktree under .lake/leanprof/experiments/ID: the build (default targets and EXE), the tests (--test CMD,\n" ++
+    "or `lake test` with a test driver), the behaviour on every case (ARGS, ARGS with each file of --inputs DIR\n" ++
+    "in place of {} or appended, each line of --cases FILE; stdout, stderr, exit code and each --check-output\n" ++
+    "file, the same on two runs; --ignore-lines TEXT: lines containing TEXT are not compared), the held-out cases (--heldout DIR, as hashes only) and `measure`.\n" ++
+    "`try` checks a commit or the working tree in a worktree of its own, each step only after the one before\n" ++
+    "passed: build; the proof-preservation audit of the changed modules and their dependents (DISCARD for\n" ++
+    "sorry, a new axiom, implemented_by, extern, unsafe or partial, a removed theorem, a changed test, expected\n" ++
+    "output or input; INCONCLUSIVE when a theorem statement or a definition it uses changed); tests; identical\n" ++
+    "behaviour on every case; then, if the generated C is the base's, compile heartbeats only (--time times it\n" ++
+    "anyway), else exact counts (`measure`; worse: DISCARD without timing) and paired timing (`measure-pair`).\n" ++
+    "Without --exe the measure is `elab --heartbeats` on the changed modules and their dependents.\n" ++
+    "Exit code 0 KEEP, 1 DISCARD, 2 ERROR, 3 INCONCLUSIVE; evidence in tries/N/evidence.json (--json prints it).\n" ++
+    "A KEEP becomes the base; from the working tree it is committed on the current branch with the evidence\n" ++
+    "in the message (--no-commit: not), a commit gets a git note (refs/notes/leanprof-experiments).\n" ++
+    "`finish` runs the held-out cases on the final base and removes the worktrees; exit 1 if they differ."),
   ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [--ranges N] [--keep N] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
     "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++
@@ -166,6 +185,7 @@ def summary : String → String
   | "judge" => "KEEP or DISCARD from measure summaries or one paired session"
   | "report-md" => "Markdown summary of base and head reports, for pull-request comments"
   | "explain" => "why each copy happened: where the second reference comes from, and a fix"
+  | "experiment" => "start an experiment, try candidates (KEEP/DISCARD/INCONCLUSIVE with evidence), finish on held-out inputs"
   | "fix" => "apply explain's fix on a new branch, test, measure and judge it; commit KEEPs with the evidence"
   | "html" => "one self-contained HTML report: flame graph, tables, source, comparison"
   | "top" => "live view of a running program: hot scopes, copies, allocations, tasks, per second"
@@ -1520,6 +1540,8 @@ structure MeasureOpts where
   warmup : Nat := 1
   hbFiles : Array String := #[]
   checkOutput : Option String := none
+  /-- lines of stdout containing any of these are left out of its hash (a program's own timings) -/
+  ignoreLines : Array String := #[]
   allocs : Bool := true
   core : Bool := false
   scope : Option String := none
@@ -1535,6 +1557,8 @@ partial def parseMeasure (o : MeasureOpts) : List String → Except String Measu
   | "--out" :: f :: rest => parseMeasure { o with out := f } rest
   | "--scope" :: n :: rest => parseMeasure { o with scope := some n } rest
   | "--check-output" :: f :: rest => parseMeasure { o with checkOutput := some f } rest
+  | "--ignore-lines" :: t :: rest =>
+    if t.isEmpty then .error "--ignore-lines needs a text" else parseMeasure { o with ignoreLines := o.ignoreLines.push t } rest
   | "--no-deps" :: rest => parseMeasure { o with deps := false } rest
   | "--no-allocs" :: rest => parseMeasure { o with allocs := false } rest
   | "--core" :: rest => parseMeasure { o with core := true } rest
@@ -1556,6 +1580,8 @@ def fnv1a (b : ByteArray) : String := Id.run do
     h := (h ^^^ x.toUInt64) * 1099511628211
   let hex := Nat.toDigits 16 h.toNat
   return "fnv1a64:" ++ String.ofList (List.replicate (16 - hex.length) '0' ++ hex)
+
+open Leanprof.Judge (dropLines stdoutSource)
 
 /-- A decimal like `33.23` (no exponent). -/
 def parseDecimal? (t : String) : Option Float :=
@@ -1650,7 +1676,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
       hashes := hashes.push <| ← match o.checkOutput with
         | some f => do
           if ← (f : FilePath).pathExists then pure (fnv1a (← IO.FS.readBinFile f)) else pure "missing"
-        | none => pure (fnv1a out.stdout.toUTF8)
+        | none => pure (fnv1a (dropLines o.ignoreLines out.stdout).toUTF8)
       reports := reports.push report
   finally
     cleanupInstrumented exe
@@ -1688,7 +1714,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs), ("core", Json.bool o.core),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("exit_code", toJson codes.back!.toNat),
-    ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD "stdout")),
+    ("output", Json.mkObj [("source", Json.str (o.checkOutput.getD (stdoutSource o.ignoreLines))),
       ("hash", Json.str hashes.back!), ("stable", Json.bool outputStable)]),
     ("time_ns", Json.mkObj ([("median", toJson (median times)), ("min", toJson (times.foldl min times[0]!)),
       ("max", toJson (times.foldl max 0)), ("mean", toJson mean.round), ("stddev", toJson stddev.round),
@@ -1723,7 +1749,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
   if o.allocs then
     IO.println s!"  allocs   {allocTotal last} by compiled Lean code{if o.core then ", Lean's libraries included" else " of the project (--core adds Lean's libraries)"}{if allocsStable then "" else s!" (runs: {allocRuns.toList})"}"
   unless last.selfCheck.isEmpty do IO.println s!"  warning  {last.selfCheck}"
-  IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD "stdout"}), exit code {codes.back!}"
+  IO.println s!"  output   {hashes.back!} ({o.checkOutput.getD (stdoutSource o.ignoreLines)}), exit code {codes.back!}"
   if let some xs := hb then
     IO.println s!"  compile  {fmt2 ((xs.foldl (fun a (_, t) => a + t) 0) / 1000)} kHB in {xs.length} declarations"
   IO.println s!"written to {o.out}"
@@ -1746,6 +1772,7 @@ structure PairOpts where
   baseRev : Option String := none
   exe : Option String := none
   checkOutput : Option String := none
+  ignoreLines : Array String := #[]
   out : String := ".lake/leanprof/paired.json"
   args : Array String := #[]
 
@@ -1757,6 +1784,8 @@ partial def parsePair (o : PairOpts) : List String → Except String PairOpts
   | "--candidate-cwd" :: x :: rest => parsePair {o with candidateCwd := x} rest
   | "--out" :: x :: rest => parsePair {o with out := x} rest
   | "--check-output" :: x :: rest => parsePair {o with checkOutput := some x} rest
+  | "--ignore-lines" :: t :: rest =>
+    if t.isEmpty then .error "--ignore-lines needs a text" else parsePair {o with ignoreLines := o.ignoreLines.push t} rest
   | "--scope" :: x :: rest =>
     if x.isEmpty || x.any (fun c => c == '\t' || c == '\n') then .error "--scope needs a name without tabs or newlines"
     else parsePair {o with scope := some x} rest
@@ -1940,11 +1969,11 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
           | none => pure true
         let output ← match checked with
           | some p => if present then pure (fnv1a (← IO.FS.readBinFile p)) else pure "missing"
-          | none => pure (fnv1a result.stdout.toUTF8)
+          | none => pure (fnv1a (dropLines o.ignoreLines result.stdout).toUTF8)
         samples := samples.push <| Json.mkObj ([
           ("pair", toJson pair), ("side", Json.str (if side == 0 then "base" else "candidate")),
           ("time_ns", toJson timed), ("exit_code", toJson result.exitCode.toNat),
-          ("stdout_hash", Json.str (fnv1a result.stdout.toUTF8)),
+          ("stdout_hash", Json.str (fnv1a (dropLines o.ignoreLines result.stdout).toUTF8)),
           ("stderr_hash", Json.str (fnv1a result.stderr.toUTF8)),
           ("output_hash", Json.str output), ("output_present", Json.bool present)] ++
           (if o.scope.isSome then [("process_ns", toJson elapsed)] else []))
@@ -1969,7 +1998,7 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
     ("base", Json.str binaries[0]!.toString), ("candidate", Json.str binaries[1]!.toString),
     ("base_hash", Json.str binaryHashes[0]!), ("candidate_hash", Json.str binaryHashes[1]!),
     ("base_cwd", Json.str dirs[0]!.toString), ("candidate_cwd", Json.str dirs[1]!.toString),
-    ("args", toJson o.args), ("output_source", Json.str (o.checkOutput.getD "stdout")),
+    ("args", toJson o.args), ("output_source", Json.str (o.checkOutput.getD (stdoutSource o.ignoreLines))),
     ("samples", Json.arr samples),
     ("machine", Json.mkObj [("overloaded", Json.bool overloaded),
       ("load_avg_1m", match maxLoad with | some v => toJson v | none => Json.null),
@@ -2729,6 +2758,12 @@ def dispatch (argv : List String) : IO UInt32 := do
       guardSignals 0
       Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
       Leanprof.Fix.fixCmd rest fun args cwd => do
+        Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
+    | "experiment" :: rest =>
+      -- a signal ends the current step; the worktrees stay for the next try
+      guardSignals 0
+      Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+      Leanprof.Experiment.experimentCmd rest fun args cwd => do
         Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
     | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
     | "top" :: rest => LeanprofLive.topCmd rest

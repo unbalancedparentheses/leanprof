@@ -1,9 +1,11 @@
-# Proof-preservation audit (standalone prototype)
+# Proof-preservation audit
 
 An optimization that still compiles can weaken the theorem it was meant to
 prove. This audit compares compiled declarations in baseline and candidate Git
 checkouts and returns structured evidence before a caller considers a KEEP.
-It is independent of `leanprof fix`; it is **not yet wired into that command**.
+[`leanprof experiment try`](experiment.md) runs it as its guard, on the
+changed modules and their dependents, with the source compiled into the
+command; it is not wired into `leanprof fix`. It also runs on its own:
 
 ```sh
 python3 /path/to/leanprof/scripts/proof-audit/audit.py \
@@ -12,11 +14,14 @@ python3 /path/to/leanprof/scripts/proof-audit/audit.py \
   --protect 'fixtures/expected/**' > /tmp/proof-audit.json
 ```
 
-Repeat `--module` for each changed module. Both checkouts must have the same
+Repeat `--module` for each changed module; with none, only the file checks
+below run (protected and uncovered files). Both checkouts must have the same
 module names, Lean version and Lean compiler Git hash. Each must be the root of
-its Git repository/worktree, with source modules at `MyProject/Proofs.lean`.
-Custom Lake `srcDir`, unusual quoted module names, source symlinks and Git
-submodules are currently unsupported. Both working trees may be dirty: their
+its Git repository/worktree, with source modules at `MyProject/Proofs.lean`, or
+at `SUBDIR/MyProject/Proofs.lean` with `--subdir SUBDIR` when the Lake package
+is in a subdirectory (lean-regex's `regex/`). Custom Lake `srcDir`, unusual
+quoted module names, source symlinks and Git submodules are currently
+unsupported. Both working trees may be dirty: their
 actual file contents, including nonignored untracked files, are fingerprinted.
 
 The command runs `lake build MODULE...` in each checkout and then runs the
@@ -56,7 +61,12 @@ records which evidence was compared; it is not a signed attestation.
 ## What it checks
 
 - Every baseline declaration in the selected modules remains present, including
-  private/generated declarations. Changing its declaration kind fails.
+  private ones. Changing its declaration kind fails. Declarations Lean
+  generates for another one (a tactic's `_proof_1` lemma, `eq_1`, `eq_def`,
+  `match_1`, `_unsafe_rec`, `_auxLemma`, …: `audit.generated`) are not
+  obligations: a rewritten proof may remove them or change their statement,
+  and `_unsafe_rec`, the compiled code of well-founded recursion, may be
+  partial. Their axioms are still checked.
 - Structural signatures are preserved. The collector uses kernel expressions,
   not pretty-printed types or source text. It erases binder spelling and source
   metadata, retaining universe parameters, binder kinds and expression structure.
@@ -64,8 +74,9 @@ records which evidence was compared; it is not a signed attestation.
   follows referenced definitions, inductives, constructors and recursor rules.
   For example, changing `def obligation n := n + 0 = n` to `True` cannot pass
   merely because the theorem's type still says `obligation n`.
-- Existing declarations acquire no new transitive axiom dependencies. Axiom
-  types and the definitions they refer to are also checked. New declarations
+- Existing declarations acquire no new transitive axiom dependencies. The
+  types of the axioms they still use, and the definitions those refer to, are
+  also checked (an axiom a proof no longer needs cannot weaken it). New declarations
   cannot introduce axioms beyond the selected baseline's existing axiom set.
 - Candidate declarations in selected modules must not depend on `sorryAx`.
   Adding an axiom in those modules fails even if it is unused.
@@ -88,8 +99,8 @@ records which evidence was compared; it is not a signed attestation.
 This first version recognizes structural equality after binder-name/metadata
 erasure. It does **not** attempt general cross-environment definitional equality.
 A different but equivalent statement, a renamed universe parameter, a changed
-supporting definition, or the removal of a generated helper may therefore yield
-`INCONCLUSIVE` or `FAIL`. Neither permits an automatic KEEP. A future equivalence
+supporting definition, or the removal of a declaration it does not recognise as
+generated may therefore yield `INCONCLUSIVE` or `FAIL`. Neither permits an automatic KEEP. A future equivalence
 checker can discharge specific inconclusive cases against preserved dependencies.
 
 `PASS` concerns theorem declarations and their assumptions in the selected
@@ -97,13 +108,16 @@ modules. It does not establish equivalence of executable definitions, preserve
 runtime validation branches, audit every downstream module, or prove that tests
 are adequate. Ignored files and installed toolchain/dependency artifacts are not
 part of the Git source inventory; this is not a hermetic build or a defense
-against tampered `.olean` files. The prototype is intended for small, controlled
-module experiments before attempting whole-library coverage.
+against tampered `.olean` files. It is meant for module-sized experiments; `leanprof
+experiment` passes it the changed modules and every module of the package that
+imports them.
 
-The intended integration is additive: the caller requires **both** audit `PASS`
-and its normal correctness checks, then measures the candidate and judges the
-result. Any audit `FAIL` or `INCONCLUSIVE` prevents KEEP. Preserve the JSON with
-the experiment ID and recheck source fingerprints before committing. Do not use
+The integration is additive, as `leanprof experiment` does it: the caller
+requires **both** audit `PASS` and its normal correctness checks, then measures
+the candidate and judges the result. Any audit `FAIL` or `INCONCLUSIVE` prevents
+KEEP (the experiment accepts one finding alone, `no_theorems`: no statement to
+weaken, see [the guard](experiment.md#the-guard)). The experiment keeps the JSON
+with its evidence (`tries/N/audit.json`). Do not use
 this result to waive output comparisons, configured tests, downstream builds or
 performance measurements.
 
