@@ -39,6 +39,8 @@ NAV = [
         "docs/guide/run-time.md",
         "docs/guide/copies-and-allocations.md",
         "docs/guide/fix.md",
+        "docs/guide/experiment.md",
+        "docs/guide/proof-audit.md",
         "docs/guide/memory.md",
         "docs/guide/compile-time.md",
         "docs/guide/editor.md",

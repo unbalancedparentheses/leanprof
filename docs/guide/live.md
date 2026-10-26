@@ -7,7 +7,7 @@ server never produces one. Three tools look at a program while it runs:
 |---|---|---|
 | Live view | `leanprof top EXE`, or `LEANPROF_LIVE=1` and `leanprof top --pid PID` | hottest scopes, copy sites, allocation sites, tasks, waits, memory and CPU, with rates per second, refreshed like `top` |
 | Flight recorder | `LEANPROF_FLIGHT=DIR`, `LEANPROF_SLOW_MS=MS`, `leanprof dump PID` | a Perfetto trace of the last seconds, written on demand or when a scope is slow |
-| MCP server | `leanprof mcp` | profiling tools for AI agents: run, sample, stat, elab, explain, compare, judge, live, dump |
+| MCP server | `leanprof mcp` | profiling tools for AI agents: run, sample, stat, elab, explain, compare, judge, experiments, live, dump |
 
 ## `leanprof top`
 
@@ -183,13 +183,14 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted) |
 | `compare` | regressions between two reports (exact for copies and calls) |
 | `judge` | KEEP or DISCARD from two `measure` summaries (`base`, `new`) or one paired session (`pair`); `min_change` in percent |
+| `experiment_start`, `experiment_try`, `experiment_finish`, `experiment_status` | [`leanprof experiment`](experiment.md): record a baseline, try a commit or the working tree (verdict and evidence JSON), run the held-out inputs; tests are the project's Lake test driver (no shell command), paths must be inside the project |
 | `live` | a running program's current state, with rates over `seconds` (it must run with `LEANPROF_LIVE`) |
 | `dump` | a running program's flight recorder as a Perfetto trace |
 
 CI runs a scripted session against it ([`scripts/mcp-check.py`](../../scripts/mcp-check.py)):
 two `run`s of `copybug`, `report`, `hot`, `explain`, `compare` both ways,
-`measure` and `judge`, `measure_pair` and a paired `judge`, `live` and `dump` on a running `server`, and the
-error cases.
+`measure` and `judge`, `measure_pair` and a paired `judge`, `live` and `dump` on a running `server`, an
+experiment on a copy of `Tests/Experiment` (start, a KEEP, status, finish), and the error cases.
 
 ## Overhead
 
