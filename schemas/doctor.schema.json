@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/doctor.schema.json",
+  "title": "leanprof doctor",
+  "description": "What leanprof needs, what the project has and which modes work here (`leanprof doctor --json`, the MCP `doctor` tool). `setup_failures` are the required checks that failed, each with an error code and what to do.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.doctor"
+        }
+      }
+    },
+    "leanprof": {
+      "const": "doctor"
+    },
+    "leanprof_version": {
+      "type": "string"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "no required check failed"
+    },
+    "problems": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lean": {
+      "type": "object",
+      "properties": {
+        "found": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string"
+        },
+        "short_version": {
+          "type": "string"
+        },
+        "supported": {
+          "type": "boolean",
+          "description": "Lean 4.27 or later"
+        },
+        "minimum": {
+          "type": "string"
+        },
+        "tested": {
+          "type": "string"
+        },
+        "lake": {
+          "type": "boolean"
+        },
+        "toolchain": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "the project's lean-toolchain"
+        }
+      },
+      "required": [
+        "found",
+        "version",
+        "supported",
+        "lake"
+      ]
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "lake_project": {
+          "type": "boolean"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "executables": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "libraries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "test_driver": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_workload": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "executable",
+                "ambiguous",
+                "elab",
+                "nothing"
+              ]
+            }
+          },
+          "description": "what `leanprof` with no arguments profiles; `ambiguous` lists the executables, never choosing between them"
+        },
+        "depends_on_leanprof": {
+          "type": "boolean"
+        },
+        "restored_instrumented_build": {
+          "type": "boolean",
+          "description": "an interrupted or --keep run had left instrumented objects; the normal build was put back"
+        }
+      },
+      "required": [
+        "lake_project",
+        "executables",
+        "libraries",
+        "test_driver"
+      ]
+    },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "cc": {
+          "type": "boolean"
+        },
+        "clang_auto": {
+          "type": "boolean"
+        },
+        "samply": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "sampling_allowed": {
+              "type": "boolean"
+            },
+            "blocked": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "found"
+          ]
+        },
+        "perf": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "applies": {
+              "type": "boolean",
+              "description": "Linux only"
+            },
+            "version": {
+              "type": "string"
+            },
+            "perf_event_paranoid": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "found",
+            "applies"
+          ]
+        },
+        "objcopy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "cc",
+        "samply",
+        "perf",
+        "objcopy"
+      ]
+    },
+    "self_check": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "checked": {
+          "type": "string"
+        },
+        "warning": {
+          "type": "string"
+        }
+      }
+    },
+    "elab_driver": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "bundled",
+            "cached",
+            "on_first_use",
+            "unavailable"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "modes": {
+      "type": "object",
+      "description": "each mode: whether it works here, and why not",
+      "additionalProperties": {
+        "$ref": "#/$defs/mode"
+      },
+      "required": [
+        "run",
+        "stat",
+        "measure",
+        "sample",
+        "elab",
+        "elab_driver",
+        "auto",
+        "core"
+      ]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ok",
+          "required",
+          "message",
+          "fix"
+        ]
+      }
+    },
+    "setup_failures": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/error"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "leanprof",
+    "ok",
+    "problems",
+    "lean",
+    "project",
+    "tools",
+    "elab_driver",
+    "modes",
+    "checks",
+    "setup_failures"
+  ],
+  "$defs": {
+    "mode": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "available",
+        "why"
+      ]
+    }
+  }
+}

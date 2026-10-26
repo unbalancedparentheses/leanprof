@@ -24,6 +24,13 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   DISCARD (a regression, no improvement, changed behaviour) is told apart
   from one that says nothing about the change (another command or scope
   measured, an unstable output, a failed measurement).
+- Discovery without guesswork: `leanprof doctor --json` and the MCP
+  `doctor` tool report the Lean version and whether it is supported, the
+  project's executables, libraries and test driver, the workload
+  `leanprof` alone would pick, which modes work here and why not (run,
+  stat, measure, sample, elab and whether its driver is bundled, cached or
+  built on first use, `--auto`, `--core`), samply and perf, and each setup
+  failure as an error with a code and a fix (`schemas/doctor.schema.json`).
 - MCP: every tool result has `structuredContent` that follows the
   `outputSchema` the tool declares, next to the text. Failures carry a
   typed `error`: `code` (`not_lake_project`, `build_failed`,

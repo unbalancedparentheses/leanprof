@@ -25,7 +25,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS] \| --attach F \| --pid PID` | live view of a running program, refreshed like `top` ([live](live.md)) |
 | `dump [--timeout S] PID` | Perfetto trace of a running program's last seconds (flight recorder) |
 | `mcp` | Model Context Protocol server on stdio for AI agents ([live](live.md#mcp-server)) |
-| `doctor` | check the tools and project setup leanprof needs, and that copy detection works with this Lean ([self-check](how-it-works.md#self-check-is-copy-detection-working)) |
+| `doctor [--json]` | check the tools and project setup leanprof needs, and that copy detection works with this Lean ([self-check](how-it-works.md#self-check-is-copy-detection-working)); `--json` reports it for agents: the Lean version and whether it is supported, the project's executables, libraries and test driver, which modes work (run, stat, measure, sample, elab and whether its driver is built, `--auto`, `--core`) and why not, samply and perf, and each setup failure with its error code and fix |
 
 Reports go to `.lake/leanprof/`: `report.json` (run, stat, sample and
 measure), `elab.json`, `measure.json`, samply's profile `EXE.json`, and the
@@ -110,6 +110,7 @@ describes it:
 | `compare` | `compare --json` |
 | `experiment-try`, `experiment-finish`, `experiment-status` | `experiment try --json` (`tries/N/evidence.json`), `experiment finish --json` (`finish.json`), `experiment status --json` (`experiment.json`) |
 | `fix` | `fix --json` (`.lake/leanprof/fix/result.json`) |
+| `doctor` | `doctor --json` |
 | `error` | a command that fails, to the file `LEANPROF_ERROR_JSON` names (`code`, `message`, `retryable`, `hint`; the MCP server's `error`) |
 
 A schema's version goes up only when a field is removed or changes meaning.

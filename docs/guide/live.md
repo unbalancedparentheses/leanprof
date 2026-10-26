@@ -172,6 +172,7 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 
 | tool | does |
 |---|---|
+| `doctor` | discovery, before anything else: the Lean version and whether it is supported, the project's executables, libraries and test driver, which modes work here and why not, samply and perf, each setup failure with its error code and fix (`leanprof doctor --json`; a few seconds, nothing of the project is built) |
 | `run` | build with probes (`auto`, `allocs`, `counters`, `frees`, `core`), run, summarize the report |
 | `sample` | samply: CPU per Lean declaration with file:line |
 | `stat` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks |

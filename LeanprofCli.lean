@@ -173,8 +173,11 @@ def commands : List (String × String × String) := [
     "measure_pair targets, read reports, list hot scopes/copies/allocations with file:line, compare,\n" ++
     "judge (measure summaries or a paired session), and\n" ++
     "query (live) or dump (dump) a running program."),
-  ("doctor", "",
-    "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
+  ("doctor", "[--json]",
+    "Check that the tools leanprof needs are installed and the project is set up, and say what to fix.\n" ++
+    "--json prints it for agents (schemas/doctor.schema.json): the Lean version and whether it is supported,\n" ++
+    "the project's executables, libraries and test driver, which modes work here (run, sample, elab and its\n" ++
+    "driver, --auto, --core), samply and perf, and each setup failure with what to do."),
   ("help", "[COMMAND]", "Show this overview, or one command's options.")]
 
 /-- What each command is for, in one line. -/
@@ -2387,34 +2390,87 @@ def reportMd (argv : List String) : IO UInt32 := do
 
 /-! ## doctor -/
 
-def doctor : IO UInt32 := do
-  let mut problems := 0
-  let report (ok : Bool) (what fix : String) : IO Bool := do
-    IO.println s!"  {if ok then "ok " else "!! "} {what}{if ok || fix.isEmpty then "" else s!"\n       {fix}"}"
+/-- The oldest Lean leanprof supports, and the newest it is tested with. -/
+def minLean : Nat × Nat := (4, 27)
+def testedLean : String := "4.27.0 to 4.35.0"
+
+/-- `4.35.0`, `4.36.0-rc1` or `4.36.0-nightly-2026-10-23` as (major, minor). -/
+def leanMajorMinor (v : String) : Option (Nat × Nat) :=
+  match (v.splitOn "-").headD v |>.splitOn "." with
+  | a :: b :: _ => do return (← a.toNat?, ← b.toNat?)
+  | _ => none
+
+/-- How the elab driver for the project's Lean is had: `bundled` (built with
+leanprof, the same Lean), `cached` (built for this Lean before), `on_first_use`
+(built the first time `elab` runs, in seconds), or `unavailable`. -/
+def driverStatus : IO (String × String) := do
+  let some theirs ← Leanprof.Elab.githashOf "lean" | return ("unavailable", "")
+  if let some p ← Leanprof.Elab.bundledDriver then
+    if Lean.githash == theirs then return ("bundled", p.toString)
+  let pre ← try pure (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
+    catch _ => return ("unavailable", "")
+  let dir ← Leanprof.Elab.cachedDriverDir pre theirs
+  let p := dir / Leanprof.Elab.driverExe
+  return if ← p.pathExists then ("cached", p.toString) else ("on_first_use", p.toString)
+
+/-- `leanprof doctor [--json]`: what leanprof needs, what the project has, and
+which modes work here. `--json` prints it as one document
+(`schemas/doctor.schema.json`) for agents. -/
+def doctor (argv : List String) : IO UInt32 := do
+  let json := argv.contains "--json"
+  unless argv.all (· == "--json") do throw <| IO.userError "usage: leanprof doctor [--json]"
+  let checks ← IO.mkRef (#[] : Array Json)
+  let failures ← IO.mkRef (#[] : Array Json)
+  let problems ← IO.mkRef 0
+  -- one line per check; a required check that fails is a problem, and a setup failure for agents
+  let report (id : String) (ok : Bool) (what fix : String) (required := true) (code := "failed") : IO Bool := do
+    unless json do
+      IO.println s!"  {if ok then "ok " else "!! "} {what}{if ok || fix.isEmpty then "" else s!"\n       {fix}"}"
+    checks.modify (·.push (Json.mkObj [("id", Json.str id), ("ok", Json.bool ok), ("required", Json.bool required),
+      ("message", Json.str what), ("fix", Json.str (if ok then "" else fix))]))
+    if !ok && required then
+      problems.modify (· + 1)
+      failures.modify (·.push (Leanprof.Contract.errorJson code what fix))
     return ok
   let tryCmd (cmd : String) (args : Array String) : IO (Option IO.Process.Output) := do
-    try return some (← IO.Process.output { cmd, args }) catch _ => return none
-  IO.println "leanprof doctor"
+    try return some (← IO.Process.output { cmd, args, stdin := .null }) catch _ => return none
+  let firstLine (o : Option IO.Process.Output) : String :=
+    (o.map fun x => (x.stdout.trimAscii.toString.splitOn "\n").headD "").getD ""
+  unless json do IO.println "leanprof doctor"
   -- Lean
   let lean ← tryCmd "lean" #["--version"]
   let leanOk := lean.any (·.exitCode == 0)
-  unless ← report leanOk s!"Lean: {(lean.map (·.stdout.trimAscii.toString)).getD "not found"}"
-      "install Lean with elan: https://github.com/leanprover/elan" do problems := problems + 1
+  let short ← if leanOk then pure (firstLine (← tryCmd "lean" #["--short-version"])) else pure ""
+  let supported := match leanMajorMinor short with
+    | some v => v.1 > minLean.1 || (v.1 == minLean.1 && v.2 ≥ minLean.2)
+    | none => false
+  discard <| report "lean" leanOk s!"Lean: {if leanOk then firstLine lean else "not found"}"
+    "install Lean with elan: https://github.com/leanprover/elan" (code := "lean_not_found")
+  if leanOk then
+    discard <| report "lean_supported" supported
+      s!"Lean {short} is {if supported then "" else "not "}supported (4.27 and later; tested {testedLean})"
+      "use Lean 4.27 or later in lean-toolchain"
   let lake ← tryCmd "lake" #["--version"]
-  unless ← report (lake.any (·.exitCode == 0)) "Lake" "comes with Lean; is elan's bin directory on PATH?" do
-    problems := problems + 1
+  let lakeOk := lake.any (·.exitCode == 0)
+  discard <| report "lake" lakeOk "Lake" "comes with Lean; is elan's bin directory on PATH?" (code := "lean_not_found")
   -- project
   let isProject := (← ("lakefile.toml" : FilePath).pathExists) || (← ("lakefile.lean" : FilePath).pathExists)
-  unless ← report isProject "inside a Lake project" "run leanprof from a project's root directory" do
-    problems := problems + 1
-  if let some t ← projectTargets then
-    let what := match Leanprof.Workload.choose t with
-      | .exe e why => s!"`{e}` ({why})"
-      | .ambiguous exes _ => s!"one of {exes.size} executables, named: leanprof EXE -- ARGS"
-      | .elab => "compile time of the libraries (no executable)"
-      | .nothing => "nothing (no lean_exe or lean_lib in the lakefile)"
-    discard <| report true s!"`leanprof` with no arguments profiles {what}" ""
+  discard <| report "lake_project" isProject "inside a Lake project" "run leanprof from a project's root directory"
+    (code := "not_lake_project")
+  let targets ← projectTargets
+  let mut workload := Json.null
+  if let some t := targets then
+    let (what, w) := match Leanprof.Workload.choose t with
+      | .exe e why => (s!"`{e}` ({why})",
+          Json.mkObj [("kind", Json.str "executable"), ("executable", Json.str e), ("why", Json.str why)])
+      | .ambiguous exes _ => (s!"one of {exes.size} executables, named: leanprof EXE -- ARGS",
+          Json.mkObj [("kind", Json.str "ambiguous"), ("executables", toJson exes)])
+      | .elab => ("compile time of the libraries (no executable)", Json.mkObj [("kind", Json.str "elab")])
+      | .nothing => ("nothing (no lean_exe or lean_lib in the lakefile)", Json.mkObj [("kind", Json.str "nothing")])
+    workload := w
+    discard <| report "workload" true s!"`leanprof` with no arguments profiles {what}" ""
   -- an instrumented build left by an interrupted (or `--keep`) run: put the normal one back
+  let mut restored := false
   if isProject then
     let stashed ← (← workspacePackages).filterM fun p => (stashDir p).isDir
     let saved ← if ← savedDir.isDir then
@@ -2423,64 +2479,128 @@ def doctor : IO UInt32 := do
           else some e.fileName)
       else pure #[]
     if stashed.isEmpty && saved.isEmpty then
-      discard <| report true "no instrumented build left in .lake/build" ""
+      discard <| report "normal_build" true "no instrumented build left in .lake/build" ""
     else
       restoreObjects
       for exe in saved do restoreExe exe (removeUnsaved := false)
-      discard <| report true (s!"an interrupted or --keep run had left instrumented objects in {stashed.size} " ++
+      restored := true
+      discard <| report "normal_build" true (s!"an interrupted or --keep run had left instrumented objects in {stashed.size} " ++
         s!"package(s){if saved.isEmpty then "" else s!" and {", ".intercalate saved.toList}"}: the normal build is back") ""
   let dep ← (pure (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) <||>
     (do return (← IO.FS.realPath (← packageRoot)) == (← IO.FS.realPath (← IO.currentDir))))
-  discard <| report true (if dep then "project depends on leanprof (profile!, #leanprof, test assertions available)"
+  discard <| report "depends_on_leanprof" true (if dep then "project depends on leanprof (profile!, #leanprof, test assertions available)"
     else "project does not depend on leanprof (run/sample/elab still work; add it for profile! and #leanprof)") ""
   -- leanprof's own files
   let root ← packageRoot
-  unless ← report (← (root / "scripts" / "leanprof-cc").pathExists) s!"leanprof files at {root}"
-      "reinstall with scripts/install.sh" do problems := problems + 1
-  -- C compiler for probes
+  let filesOk ← report "leanprof_files" (← (root / "scripts" / "leanprof-cc").pathExists) s!"leanprof files at {root}"
+    "reinstall with scripts/install.sh"
+  -- C compiler for probes, the runtime's self-check, clang for --auto
+  let mut ccOk := false
+  let mut clangOk := false
+  let mut selfCheck := Json.null
   if leanOk then
-    let leanPrefix := ((← tryCmd "lean" #["--print-prefix"]).map (·.stdout.trimAscii.toString)).getD ""
+    let leanPrefix := firstLine (← tryCmd "lean" #["--print-prefix"])
     let tmp := (← IO.FS.createTempFile).2
     let out ← tryCmd "cc" #["-fsyntax-only", "-I", leanPrefix ++ "/include", (root / "c" / "leanprof.c").toString]
     let ccFix ← match ← ccProblem with
       | some p => pure p
       | none => pure s!"{(out.map (·.stderr.take 300 |>.toString)).getD "cc not found"}"
-    unless ← report (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean (for run, stat, measure)"
-        ccFix do problems := problems + 1
+    ccOk ← report "cc" (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean (for run, stat, measure)"
+      ccFix
     -- the runtime's self-check, built and linked as `leanprof run` builds a program
-    if out.any (·.exitCode == 0) then
-      let leanVersion := ((← tryCmd "lean" #["--short-version"]).map (·.stdout.trimAscii.toString)).getD "?"
+    if ccOk then
       match ← selfCheckProbe root with
       | .ok (ops, "") =>
-        discard <| report true s!"copy detection works with Lean {leanVersion} ({ops})" ""
-      | .ok (_, warning) =>
-        discard <| report false warning ""
-        problems := problems + 1
+        discard <| report "self_check" true s!"copy detection works with Lean {short} ({ops})" ""
+        selfCheck := Json.mkObj [("ok", Json.bool true), ("checked", Json.str ops), ("warning", Json.str "")]
+      | .ok (ops, warning) =>
+        discard <| report "self_check" false warning ""
+        selfCheck := Json.mkObj [("ok", Json.bool false), ("checked", Json.str ops), ("warning", Json.str warning)]
       | .error e =>
-        discard <| report false s!"copy detection self-check could not run: {e}" ""
-        problems := problems + 1
+        discard <| report "self_check" false s!"copy detection self-check could not run: {e}" ""
+        selfCheck := Json.mkObj [("ok", Json.bool false), ("checked", Json.str ""), ("warning", Json.str e)]
     let probe := tmp.withExtension "c"
     IO.FS.writeFile probe "int f(int x) { return x + 1; }\n"
     let clang ← tryCmd "sh" #["-c", s!"LEANPROF_AUTO=1 {root / "scripts" / "leanprof-cc"} -c {probe} -o {tmp}.o"]
-    unless ← report (clang.any (·.exitCode == 0)) "clang with -finstrument-functions-after-inlining (for --auto)"
-        s!"install clang: {← installHint "clang"}" do problems := problems + 1
+    clangOk ← report "clang_auto" (clang.any (·.exitCode == 0)) "clang with -finstrument-functions-after-inlining (for --auto)"
+      s!"install clang: {← installHint "clang"}" (required := false)
   -- samply: optional, but what `leanprof sample` and `leanprof` with no arguments use
-  match ← findSamply with
+  let samply ← findSamply
+  let blocked ← samplingBlocked
+  let mut samplyJson := Json.mkObj [("found", Json.bool false)]
+  match samply with
   | some s =>
-    let v := ((← tryCmd s #["--version"]).map (·.stdout.trimAscii.toString)).getD "samply"
-    discard <| report true s!"{v}{if s == "samply" then "" else s!" at {s}"} (for `leanprof sample`)" ""
-    if let some why ← samplingBlocked then
-      discard <| report false "sampling allowed on this machine" s!"{why}\n       (until then `leanprof` with no arguments uses `leanprof stat`)"
+    let v := firstLine (← tryCmd s #["--version"])
+    discard <| report "samply" true s!"{if v.isEmpty then "samply" else v}{if s == "samply" then "" else s!" at {s}"} (for `leanprof sample`)" ""
+      (required := false)
+    if let some why := blocked then
+      discard <| report "sampling_allowed" false "sampling allowed on this machine"
+        s!"{why}\n       (until then `leanprof` with no arguments uses `leanprof stat`)" (required := false)
+    samplyJson := Json.mkObj [("found", Json.bool true), ("path", Json.str s), ("version", Json.str v),
+      ("sampling_allowed", Json.bool blocked.isNone), ("blocked", Json.str (blocked.getD ""))]
   | none =>
-    discard <| report false "samply (for `leanprof sample`; without it, `leanprof` with no arguments rebuilds with probes)"
+    discard <| report "samply" false "samply (for `leanprof sample`; without it, `leanprof` with no arguments rebuilds with probes)"
       s!"optional; get it (samply 0.13.1, checksum-verified, into {← leanprofHome}/samply):\n         {← samplyInstallCmd}\n       or: brew install samply / cargo install samply"
+      (required := false)
+  -- perf (Linux): the kernel's sampler, which samply uses there
+  let mut perfJson := Json.mkObj [("found", Json.bool false), ("applies", Json.bool (!System.Platform.isOSX))]
+  unless System.Platform.isOSX do
+    let perf ← tryCmd "perf" #["--version"]
+    let paranoid ← try pure (some (← IO.FS.readFile "/proc/sys/kernel/perf_event_paranoid").trimAscii.toString)
+      catch _ => pure none
+    perfJson := Json.mkObj [("found", Json.bool (perf.any (·.exitCode == 0))), ("applies", Json.bool true),
+      ("version", Json.str (firstLine perf)),
+      ("perf_event_paranoid", match paranoid.bind (·.toInt?) with | some n => toJson n | none => Json.null)]
   -- objcopy, for `run --core`
   let objcopy ← findObjcopy
-  discard <| report objcopy.isSome
-    s!"{objcopy.getD "llvm-objcopy"} (for `leanprof run --core`)"
-    s!"optional; install it with: {← installHint "objcopy"}"
-  IO.println (if problems == 0 then "everything leanprof needs is here" else s!"{problems} problem(s)")
-  return if problems == 0 then 0 else 1
+  discard <| report "objcopy" objcopy.isSome s!"{objcopy.getD "llvm-objcopy"} (for `leanprof run --core`)"
+    s!"optional; install it with: {← installHint "objcopy"}" (required := false)
+  -- the elab driver for this Lean
+  let (drv, drvPath) ← if leanOk then driverStatus else pure ("unavailable", "")
+  unless json do
+    IO.println s!"  {if drv == "unavailable" then "!! " else "ok "} elab driver: {match drv with
+      | "bundled" => "built with leanprof (the project's Lean)"
+      | "cached" => s!"built for this Lean, cached at {drvPath}"
+      | "on_first_use" => "built for this Lean the first time `elab` runs (seconds, once)"
+      | _ => "unavailable (`elab --no-driver` uses `lean --json`)"}"
+  let n ← problems.get
+  if json then
+    let mode (ok : Bool) (why : String) : Json :=
+      Json.mkObj [("available", Json.bool ok), ("why", Json.str (if ok then "" else why))]
+    let probes := leanOk && lakeOk && isProject && ccOk && filesOk
+    let probesWhy := if !isProject then "not a Lake project" else if !leanOk || !lakeOk then "Lean or Lake not found"
+      else if !ccOk then "the C compiler cannot build leanprof's runtime" else "leanprof's files are missing"
+    let t := targets.getD {}
+    let doc := Json.mkObj [("schema", Leanprof.Contract.schema "doctor"), ("leanprof", Json.str "doctor"),
+      ("leanprof_version", Json.str Leanprof.Contract.leanprofVersion), ("ok", Json.bool (n == 0)), ("problems", toJson n),
+      ("lean", Json.mkObj [("found", Json.bool leanOk), ("version", Json.str (firstLine lean)),
+        ("short_version", Json.str short), ("supported", Json.bool supported), ("minimum", Json.str "4.27.0"),
+        ("tested", Json.str testedLean), ("lake", Json.bool lakeOk),
+        ("toolchain", match ← (try some <$> IO.FS.readFile "lean-toolchain" catch _ => pure none) with
+          | some s => Json.str s.trimAscii.toString | none => Json.null)]),
+      ("project", Json.mkObj [("lake_project", Json.bool isProject), ("dir", Json.str (← IO.currentDir).toString),
+        ("executables", toJson t.exes), ("libraries", toJson t.libs),
+        ("test_driver", match t.testDriver with | some d => Json.str d | none => Json.null),
+        ("default_workload", workload), ("depends_on_leanprof", Json.bool dep),
+        ("restored_instrumented_build", Json.bool restored)]),
+      ("tools", Json.mkObj [("cc", Json.bool ccOk), ("clang_auto", Json.bool clangOk), ("samply", samplyJson),
+        ("perf", perfJson), ("objcopy", match objcopy with | some o => Json.str o | none => Json.null)]),
+      ("self_check", selfCheck),
+      ("elab_driver", Json.mkObj [("status", Json.str drv), ("path", Json.str drvPath)]),
+      ("modes", Json.mkObj [
+        ("run", mode probes probesWhy), ("stat", mode probes probesWhy), ("measure", mode probes probesWhy),
+        ("live", mode probes probesWhy), ("auto", mode (probes && clangOk) "clang with -finstrument-functions-after-inlining is missing"),
+        ("core", mode (probes && objcopy.isSome) "llvm-objcopy or objcopy is missing"),
+        ("sample", mode (samply.isSome && blocked.isNone && isProject && lakeOk)
+          (if samply.isNone then "samply is not installed" else blocked.getD "not a Lake project")),
+        ("measure_pair", mode (isProject && lakeOk) "not a Lake project"),
+        ("elab", mode (leanOk && isProject) "Lean not found, or not a Lake project"),
+        ("elab_driver", mode (drv != "unavailable") "the elab driver cannot be had for this Lean (elab --no-driver works)")]),
+      ("checks", Json.arr (← checks.get)), ("setup_failures", Json.arr (← failures.get))]
+    IO.println doc.pretty
+  else
+    IO.println (if n == 0 then "everything leanprof needs is here" else s!"{n} problem(s)")
+  return if n == 0 then 0 else 1
 
 /-! ## stat -/
 
@@ -2782,7 +2902,7 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
     match commandHelp c with
     | some h => IO.println h; return 0
     | none => IO.eprintln usage; return 2
-  | ["doctor"] => doctor
+  | "doctor" :: rest => doctor rest
   | "run" :: rest => run rest
   | "stat" :: rest => statCmd rest
   | "measure" :: rest => measureCmd rest

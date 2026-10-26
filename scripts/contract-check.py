@@ -241,6 +241,19 @@ def full(lp):
     check_doc("compare --json (elab reports)", "compare",
               stdout_json("compare", run([lp, "compare", "--json", f"{d}/elab.json", f"{d}/elab.json"])))
 
+    # discovery
+    p = run([lp, "doctor", "--json"])
+    j = check_doc("doctor --json", "doctor", stdout_json("doctor", p))
+    check("doctor: this project's targets and modes", j.get("ok") is True and p.returncode == 0
+          and "copybug" in j["project"]["executables"] and j["project"]["test_driver"] == "tests"
+          and j["modes"]["run"]["available"] and j["lean"]["supported"], j)
+    empty = tempfile.mkdtemp(prefix="leanprof-contract-doctor-")
+    p = run([lp, "doctor", "--json"], cwd=empty, ok_codes=(1,))
+    j = check_doc("doctor --json outside a project", "doctor", stdout_json("doctor", p))
+    check("doctor outside a project: a not_lake_project setup failure",
+          j.get("ok") is False and "not_lake_project" in [f["code"] for f in j.get("setup_failures", [])], j)
+    shutil.rmtree(empty, ignore_errors=True)
+
     # an error recorded for the caller (LEANPROF_ERROR_JSON)
     for args, want in [(["judge", f"{d}/no-such.json"], "not_found"), (["measure", "--bogus", "copybug"], "bad_argument")]:
         ef = os.path.abspath(f"{d}/error.json")

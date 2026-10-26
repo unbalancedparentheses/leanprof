@@ -820,6 +820,15 @@ def tools : Array Json := #[
      ("path", sProp "snapshot file (LEANPROF_LIVE=path)"), ("seconds", nProp "interval for rates (default 1, at most 60)")] []
     [("path", sProp "the snapshot read"), ("pid", nProp "the program's process id"), ("exited", bProp "the program has exited"),
      ("seq", nProp "the snapshot's number"), ("scopes", aoProp "the hottest scopes, by total time")],
+  tool "doctor" ("Discover the setup before anything else: the Lean version and whether leanprof supports it, the " ++
+    "project's executables, libraries and test driver, which modes work here (run, stat, measure, sample, elab and " ++
+    "whether its driver is built, --auto, --core), samply and perf, and each setup failure with its error code and fix. " ++
+    "Builds and runs nothing of the project (a few seconds).")
+    [] []
+    [("doctor", oProp "leanprof doctor --json (schemas/doctor.schema.json)"),
+     ("ready", bProp "no required check failed"),
+     ("modes", oProp "per mode: available, and why not"),
+     ("setup_failures", aoProp "the required checks that failed, as errors (code, message, retryable, hint)")],
   tool "dump" "Write a running program's flight recorder (LEANPROF_FLIGHT) to a Perfetto trace of its last seconds; returns the path."
     [("pid", sProp "process id")] ["pid"]
     [("path", sProp "the Perfetto trace written")]]
@@ -1212,6 +1221,20 @@ def callTool (name : String) (a : Json) : IO Json := do
     return res ("\n".intercalate (render path.toString prev cur 220 60 (some 10)).toList)
       [("path", Json.str path.toString), ("pid", cur.getObjValD "pid"), ("exited", Json.bool (bool cur "exited")),
        ("seq", cur.getObjValD "seq"), ("scopes", Json.arr scopes)]
+  | "doctor" =>
+    let d := cwd.getD "."
+    unless ← (d : FilePath).isDir do toolFail "bad_argument" s!"cwd is not a directory: {d}"
+    let r ← runSelf #["doctor", "--json"] cwd
+    let some doc := (Json.parse r.out).toOption | return errorResult name (r.errorJson) s!"{r.out}{r.err}"
+    let lines := (arr doc "checks").map fun c =>
+      s!"  {if bool c "ok" then "ok " else "!! "} {str c "message"}" ++
+        (if bool c "ok" || (str c "fix").isEmpty then "" else s!"\n       {str c "fix"}")
+    let n := num doc "problems"
+    let text := "\n".intercalate (#["leanprof doctor"] ++ lines ++
+      #[s!"  elab driver: {str (obj doc "elab_driver") "status"}",
+        if n == 0 then "everything leanprof needs is here" else s!"{n.toUInt64} problem(s)"]).toList
+    return res text [("doctor", doc), ("ready", Json.bool (bool doc "ok")), ("modes", doc.getObjValD "modes"),
+      ("setup_failures", doc.getObjValD "setup_failures")]
   | "dump" =>
     let some pid := argStr a "pid" | toolFail "bad_argument" "missing argument: pid"
     try checkPid pid catch e => toolFail "bad_argument" (toString e)

@@ -92,9 +92,21 @@ output_schemas.update({t["name"]: t.get("outputSchema", {}) for t in listed})
 check("every tool has an outputSchema (an object with ok, tool and error)",
       all(t.get("outputSchema", {}).get("type") == "object" and {"ok", "tool"} <= set(t["outputSchema"].get("required", []))
           and "error" in t["outputSchema"].get("properties", {}) for t in listed), [t["name"] for t in listed])
-want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
+want = {"doctor", "run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge",
+        "live", "dump",
         "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
+
+# discovery first: what this project has and which modes work
+text, err = tool("doctor")
+check("doctor", not err and last.get("ready") is True and "copybug" in last["doctor"]["project"]["executables"]
+      and last["doctor"]["project"]["test_driver"] == "tests" and last["modes"]["run"]["available"] is True
+      and last["doctor"]["lean"]["supported"] is True and last["doctor"]["elab_driver"]["status"] != "unavailable"
+      and "leanprof doctor" in text, last)
+text, err = tool("doctor", cwd=tempfile.mkdtemp(prefix="leanprof-mcp-doctor-"))
+check("doctor outside a project: not ready, with a not_lake_project setup failure",
+      not err and last.get("ready") is False and "not_lake_project" in [f["code"] for f in last["setup_failures"]]
+      and last["modes"]["run"]["available"] is False and last["modes"]["run"]["why"], last)
 
 text, err = tool("run", executable="copybug", args=["1000"], json=".lake/leanprof/mcp-small.json")
 check("run", not err and "exit code 0" in text and "buildWithHistory" in text and "copies" in text, text)
