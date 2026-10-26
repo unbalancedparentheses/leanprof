@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import Leanprof.Core
 import Leanprof.Explain
+import Leanprof.StaticCopies
 import Leanprof.Fix
 import Leanprof.Experiment
 import Leanprof.Judge
@@ -2724,6 +2725,7 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
   | "sample" :: rest => sample rest
   | "elab" :: rest => elabCmd rest
   | "explain" :: rest =>
+    if rest.contains "--static" then Leanprof.StaticCopies.explainStatic rest else
     Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
   | "fix" :: rest =>
     -- a signal ends the current step; `fix` then removes its worktree

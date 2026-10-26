@@ -599,7 +599,7 @@ inductive Recv where
 /-- Method suffixes and operators that perform each operation in source. -/
 def surface (opName : String) : List String × List String :=
   if opName.endsWith ".push" then ([".push", ".pushn"], [])
-  else if opName.startsWith "String.append" then ([".append"], ["++", "++="])
+  else if opName.startsWith "String.append" || opName.startsWith "Array.append" then ([".append"], ["++", "++="])
   else if opName.endsWith ".pop" then ([".pop", ".back", ".popWhile"], [])
   else if opName.endsWith ".swap" then ([".swap", ".swapAt", ".reverse"], [])
   else ([".set", ".modify", ".uset", ".setIfInBounds", ".insertAt", ".insertIdx", ".swapAt", ".setD"], [])
@@ -994,6 +994,36 @@ def sectionUpdate (line buf : String) : Option String := do
     out := c :: out
   guard (depth == 0)
   return s!"{buf} := {buf}.{String.ofList out.reverse}"
+
+/-- Why updates through a global `IO.Ref` or `Std.Mutex` made by `initialize`
+copy, and the fix: (why, fix, fix code, source lines), when the declaration
+`decl` uses such a global of `src`. -/
+def mtGlobalExplained (src : Array String) (decl : Array (Nat × String)) (kind : String) :
+    Option (String × String × String × Array Nat) := do
+  let (g, ty, il, init, ul, ut) ← globalUse src decl
+  let mutex := has ty "Mutex"
+  let why := s!"`{g}` is a global `{ty}` made by `initialize` (line {il}): Lean marks what it holds as " ++
+    "multi-threaded, because any thread can reach it, and never updates a multi-threaded value in place, " ++
+    s!"even when `{g}` holds the only reference. So every update through `{g}` (line {ul}, `{ut}`) copies the " ++
+    s!"whole {kind}; `modify`, `take` or `atomically` do not change that."
+  let fix := if mutex then
+      s!"Collect the updates in a local `let mut` that only this thread sees (updated in place), and merge " ++
+      s!"them into `{g}` once, instead of once per update; with several threads, give each its own buffer " ++
+      "and merge at the end. (Tested on Lean 4.35 with leanprof's copy counter: no copies per update.)"
+    else
+      s!"Update a value that only this thread can see, and publish it once: a local `IO.mkRef` (or a " ++
+      s!"`let mut`) updated in place, then `{g}.set` when it is complete. If other threads must see every " ++
+      "update, give each thread its own buffer and merge them at the end. (Tested on Lean 4.35 with " ++
+      "leanprof's copy counter: no copies.)"
+  let upd := if mutex then (sectionUpdate ut "buf").getD "buf := …  -- the update, on `buf`"
+    else replaceWord ut g "buf"
+  let code := if mutex then
+      s!"let mut buf := {init}   -- before the loop: private to this thread\n{upd}\n" ++
+      s!"{g}.atomically (modify (· ++ buf))   -- after the loop: publish once"
+    else
+      s!"let buf ← IO.mkRef {init}   -- before the loop: private to this thread\n{upd}\n" ++
+      s!"{g}.set (← buf.get)   -- after the loop: publish once"
+  return (why, fix, code, dedup #[il, ul])
 
 /-- Code lines of a fix, printed under `fix:`; alternatives separated by `or:`. -/
 def codeBlock (code : Array String) : String := Id.run do
@@ -1409,35 +1439,13 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
     -- a few copies of values that other threads could see: say so, not why all copied
     out := out ++ s!"  ({mt.toUInt64} of the copies were of values shared with other threads; the others are explained below)\n"
   else if mt > 0 then
-    match globalUse src decl with
-    | some (g, ty, il, init, ul, ut) =>
+    match mtGlobalExplained src decl kind with
+    | some (why, fix, code, ls) =>
       mtGlobal := true
-      let mutex := has ty "Mutex"
-      let why := s!"`{g}` is a global `{ty}` made by `initialize` (line {il}): Lean marks what it holds as " ++
-        "multi-threaded, because any thread can reach it, and never updates a multi-threaded value in place, " ++
-        s!"even when `{g}` holds the only reference. So every update through `{g}` (line {ul}, `{ut}`) copies the " ++
-        s!"whole {kind}; `modify`, `take` or `atomically` do not change that."
-      let fix := if mutex then
-          s!"Collect the updates in a local `let mut` that only this thread sees (updated in place), and merge " ++
-          s!"them into `{g}` once, instead of once per update; with several threads, give each its own buffer " ++
-          "and merge at the end. (Tested on Lean 4.35 with leanprof's copy counter: no copies per update.)"
-        else
-          s!"Update a value that only this thread can see, and publish it once: a local `IO.mkRef` (or a " ++
-          s!"`let mut`) updated in place, then `{g}.set` when it is complete. If other threads must see every " ++
-          "update, give each thread its own buffer and merge them at the end. (Tested on Lean 4.35 with " ++
-          "leanprof's copy counter: no copies.)"
-      let upd := if mutex then (sectionUpdate ut "buf").getD "buf := …  -- the update, on `buf`"
-        else replaceWord ut g "buf"
-      let code := if mutex then
-          s!"let mut buf := {init}   -- before the loop: private to this thread\n{upd}\n" ++
-          s!"{g}.atomically (modify (· ++ buf))   -- after the loop: publish once"
-        else
-          s!"let buf ← IO.mkRef {init}   -- before the loop: private to this thread\n{upd}\n" ++
-          s!"{g}.set (← buf.get)   -- after the loop: publish once"
       out := out ++ wrap s!"  why (multi-threaded): {why}" "       " ++ "\n"
       out := out ++ wrap s!"  fix: {fix}" "       " ++ "\n" ++ codeBlock #[code]
-      out := out ++ s!"  where: {file} {showLines (dedup #[il, ul])}\n"
-      entries := entries.push (site "multi-threaded-global" why fix #[code] (dedup #[il, ul])
+      out := out ++ s!"  where: {file} {showLines ls}\n"
+      entries := entries.push (site "multi-threaded-global" why fix #[code] ls
         "high: the copies are counted as multi-threaded; global matched by text" 3)
     | none =>
       let why := "the value was reachable from more than one thread (a `Task` result or argument, a global " ++
