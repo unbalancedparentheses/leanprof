@@ -259,6 +259,12 @@ def lightScopeTests (sanitized : Bool) : StateT Nat IO Unit := do
   check "a caller of a light scope that got cheaper gets the estimate subtracted, without wrapping"
     (child.exitCode == 0 && field "self_ns" ≥ 0 && field "self_ns" < 0.9 * field "total_ns")
     s!"self={field "self_ns"} total={field "total_ns"} {child.stderr}"
+  -- and that caller's row says it holds a scope too small to time, which
+  -- went light before this caller first called it
+  let holds := (parent.bind fun s => (s.getObjVal? "holds_tiny" >>= Lean.Json.getArr?).toOption).getD #[]
+  check "a caller of a light scope is marked as holding it"
+    (sanitized || holds.any (·.getStr?.toOption == some "test.wrapchild"))
+    s!"holds_tiny={holds}"
   try IO.FS.removeFile "light-wrap.json" catch _ => pure ()
 
 -- a long `do` block: Lean before 4.28 elaborates it past the default depth

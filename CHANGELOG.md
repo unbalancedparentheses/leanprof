@@ -44,6 +44,24 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   for `String.splitOn`, the hardware thread count through the runtime
   function directly).
 
+### Callers of tiny `profile!` scopes are marked
+
+- A row that calls a light scope (one too small to time, timed on a sample
+  of its calls), when that scope's probes cost at least 0.3 of the row's
+  time, is marked: `holds_tiny` in the JSON (the light scopes' names), a
+  line under the terminal table, and a note in the editor and the HTML
+  report saying to remove those `profile!` and use `leanprof sample` for
+  its time. The calls around a nanosecond of work change the caller's code
+  by an amount that depends on that code (in the `tiny` benchmark an
+  empty pair of calls cost 2.1 ns a call in one loop and 1.5 ns in the
+  other), so no subtraction is right for every caller, and a sample of the
+  same build is as far off; calibrating the probes in place, sampling the
+  instrumented program and subtracting less were measured and do not help
+  (bench/README.md). The `tiny` workload under `profile!` stays 7.6–9 points
+  off in share; counts stay exact.
+- `bench/run.py` records each component's `probes_ns` and `holds_tiny`,
+  and RESULTS.md marks the rows (`†`).
+
 ### Runtime and cleanup fixes from the 2026-10-25 code review
 
 - `--auto`'s tiny-function rule (`scripts/leanprof-tiny.awk`) no longer

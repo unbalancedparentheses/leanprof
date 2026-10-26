@@ -197,16 +197,31 @@ clock, boost off; see [bench/README.md](../../bench/README.md)):
   of about three probe pairs per call (~25 ns) or less; in the benchmark,
   unflagged rows were within 14% of the truth (median 3%), flagged ones
   off by 22% in the median.
+- **Callers of tiny scopes are marked too.** A row that calls a light
+  scope, when that scope's probes cost at least 0.3 of the row's time,
+  gets `holds_tiny` (the light scopes' names) in the JSON, a line under
+  the terminal table, and a note in the editor and the HTML report. Two
+  calls around a nanosecond of work change the code they sit in, by an
+  amount that depends on that code: in the `tiny` benchmark a pair of
+  calls that did nothing at all cost 2.1 ns a call in one loop and 1.5 ns
+  in the other, so no subtraction is right for both (one phase comes out
+  at 0.80–0.93 of its time, the other at 0.52–0.63), and a sample of the same
+  build is just as far off (34–40% for a phase whose true share is 24.5%).
+  For such a row's time, remove those `profile!` (or `set_option
+  leanprof.enabled false` in their file) and use `leanprof sample`; keep
+  them for the exact counts.
 - **`leanprof sample`** slows programs down 1.0–1.3× and is within 0.1–1.9
   percentage points of each function's true share of time, like samply.
 
 So: take counts, copies, allocations and causes from the exact modes, and
-the time of starred rows from `sample`. What is left for those rows is what
-a probe costs inside the program beyond what calibration measures (register
-spills around the call, the core it runs on): on the shared M5 Max in
-October 2026 the `tiny` and `rec` workloads under `profile!` came out at
-1.2–4.9 times their time, so their share was 8–10 points off whatever
-leanprof subtracted. `LEANPROF_NO_CALIBRATION=1` shows
+the time of starred rows from `sample` (of a build without the tiny
+scopes, for rows marked as holding them). What is left for those rows is
+what a probe costs inside the program beyond what calibration measures
+(register spills around the call, work of the caller that the probe hides
+or that hides it, the core it runs on): on the shared M5 Max in October
+2026 the `tiny` workload under `profile!` was 7.7–10 points off in share
+whatever leanprof subtracted ([bench/README.md](../../bench/README.md)
+has what was tried). `LEANPROF_NO_CALIBRATION=1` shows
 raw times. On Apple Silicon leanprof reads the CPU's counter directly: it
 runs at 1 GHz on an M5 and at 24 MHz (41.7 ns per tick) on earlier chips,
 where percentiles of very short scopes are coarse. On Linux it reads the
