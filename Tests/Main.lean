@@ -215,6 +215,48 @@ def simSessions (sessions maxRuns : Nat) (shift : Float) (skewed : Bool := false
       | .same => (a, b, c + 1, e) | .unsettled => (a, b, c, e + 1)
   return (counts, pairs.toFloat / sessions.toFloat)
 
+/-- Light scopes whose calls change cost (apart from `tests`, which Lean 4.34
+no longer compiles within its heartbeats with them inside). -/
+def lightScopeTests (sanitized : Bool) : StateT Nat IO Unit := do
+  -- a light scope's first 1,024 calls are all timed, later ones one in 64: a
+  -- costlier second phase must not be weighed like the first (with every
+  -- timed call scaled up alike, the total came out at about half)
+  let k32 ← opaqueNat 32
+  let n64k ← opaqueNat 65536
+  let _ ← IO.lazyPure fun _ => epochLoop 0 1024
+  let before ← totalNs "test.epochs"
+  let _ ← IO.lazyPure fun _ => epochLoop k32 n64k
+  let est := (← totalNs "test.epochs") - before
+  let timed ← timedCalls "test.epochs"
+  -- the same work without the scope (the loop around it included), fastest of 5
+  let mut plainNs : Nat := 0
+  for _ in [0:5] do
+    let t0 ← IO.monoNanosNow
+    let _ ← IO.lazyPure fun _ => spinLoop k32 n64k
+    let w := (← IO.monoNanosNow) - t0
+    if plainNs == 0 || w < plainNs then plainNs := w
+  check "a light scope's sampled calls stand for the calls they were sampled from"
+    -- (no upper bound: on a loaded machine a preempted sampled call can
+    -- stand for 64 calls' worth of waiting)
+    (sanitized || est > 0.7 * plainNs.toFloat)
+    s!"estimate={est} without the scope={plainNs} timed={timed}"
+  -- a light child adds its estimate to its caller's children; when it has
+  -- become cheaper than that, the caller's self time must not wrap around
+  -- (the report then showed it as all of the caller's time, as it did when
+  -- the estimate was rounded down to whole ticks of a 24 MHz clock)
+  let app ← IO.appPath
+  let wrapEnv := #[("LEANPROF_JSON", some "light-wrap.json"), ("LEANPROF_QUIET", some "1")]
+  let child ← IO.Process.output { cmd := app.toString, args := #["--light-wrap"], env := wrapEnv }
+  let wrapJson ← try IO.FS.readFile "light-wrap.json" catch _ => pure ""
+  let parent := (Lean.Json.parse wrapJson).toOption.bind fun j =>
+    ((j.getObjVal? "scopes" >>= Lean.Json.getArr?).toOption.getD #[]).find? fun s =>
+      (s.getObjValAs? String "name").toOption == some "test.wrapparent"
+  let field (k : String) := (parent.bind fun s => (s.getObjValAs? Float k).toOption).getD (-1)
+  check "a caller of a light scope that got cheaper gets the estimate subtracted, without wrapping"
+    (child.exitCode == 0 && field "self_ns" ≥ 0 && field "self_ns" < 0.9 * field "total_ns")
+    s!"self={field "self_ns"} total={field "total_ns"} {child.stderr}"
+  try IO.FS.removeFile "light-wrap.json" catch _ => pure ()
+
 def tests : StateT Nat IO Unit := do
   let n500 ← opaqueNat 500
   let n300 ← opaqueNat 300
@@ -276,44 +318,7 @@ def tests : StateT Nat IO Unit := do
   check "a tiny scope is timed on a sample of its calls" (timed ≥ 1024 && timed < n / 4) s!"timed={timed} of {n}"
   check "a tiny scope's time stands for all its calls" ((← totalNs "test.tiny") ≥ 0)
   check "a scope with real work is timed on every call" ((← timedCalls "test.history") == 1)
-  -- a light scope's first 1,024 calls are all timed, later ones one in 64: a
-  -- costlier second phase must not be weighed like the first (with every
-  -- timed call scaled up alike, the total came out at about half)
-  let k32 ← opaqueNat 32
-  let n64k ← opaqueNat 65536
-  let _ ← IO.lazyPure fun _ => epochLoop 0 1024
-  let before ← totalNs "test.epochs"
-  let _ ← IO.lazyPure fun _ => epochLoop k32 n64k
-  let est := (← totalNs "test.epochs") - before
-  let timed ← timedCalls "test.epochs"
-  -- the same work without the scope (the loop around it included), fastest of 5
-  let mut plainNs : Nat := 0
-  for _ in [0:5] do
-    let t0 ← IO.monoNanosNow
-    let _ ← IO.lazyPure fun _ => spinLoop k32 n64k
-    let w := (← IO.monoNanosNow) - t0
-    if plainNs == 0 || w < plainNs then plainNs := w
-  check "a light scope's sampled calls stand for the calls they were sampled from"
-    -- (no upper bound: on a loaded machine a preempted sampled call can
-    -- stand for 64 calls' worth of waiting)
-    (sanitized || est > 0.7 * plainNs.toFloat)
-    s!"estimate={est} without the scope={plainNs} timed={timed}"
-  -- a light child adds its estimate to its caller's children; when it has
-  -- become cheaper than that, the caller's self time must not wrap around
-  -- (the report then showed it as all of the caller's time, as it did when
-  -- the estimate was rounded down to whole ticks of a 24 MHz clock)
-  let app ← IO.appPath
-  let wrapEnv := #[("LEANPROF_JSON", some "light-wrap.json"), ("LEANPROF_QUIET", some "1")]
-  let child ← IO.Process.output { cmd := app.toString, args := #["--light-wrap"], env := wrapEnv }
-  let wrapJson ← try IO.FS.readFile "light-wrap.json" catch _ => pure ""
-  let parent := (Lean.Json.parse wrapJson).toOption.bind fun j =>
-    ((j.getObjVal? "scopes" >>= Lean.Json.getArr?).toOption.getD #[]).find? fun s =>
-      (s.getObjValAs? String "name").toOption == some "test.wrapparent"
-  let field (k : String) := (parent.bind fun s => (s.getObjValAs? Float k).toOption).getD (-1)
-  check "a caller of a light scope that got cheaper gets the estimate subtracted, without wrapping"
-    (child.exitCode == 0 && field "self_ns" ≥ 0 && field "self_ns" < 0.9 * field "total_ns")
-    s!"self={field "self_ns"} total={field "total_ns"} {child.stderr}"
-  try IO.FS.removeFile "light-wrap.json" catch _ => pure ()
+  lightScopeTests sanitized
   let u ← IO.lazyPure fun _ => scopedU64 n20.toUInt64
   let fl ← IO.lazyPure fun _ => scopedFloat n20.toFloat
   let bo ← IO.lazyPure fun _ => scopedBool n20
