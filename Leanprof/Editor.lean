@@ -3,6 +3,8 @@ module
 public import Leanprof.Core
 public meta import Lean.Elab.Command
 public meta import Lean.Data.Json
+-- String.splitOn, outside the prelude of Lean before 4.28
+public meta import Init.Data.String.Legacy
 
 /-!
 # `#leanprof`: results next to the code

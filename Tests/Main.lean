@@ -161,7 +161,11 @@ constants computed at startup. -/
 def opaqueNat (n : Nat) : IO Nat := do
   return n + (← IO.monoMsNow) * 0
 
-unsafe def depthInTaskImpl (v : Nat) : Nat := unsafeBaseIO depth + v * 0
+/-- `depth`, called with `v` so that it is not a constant computed at startup
+(Lean 4.27 made `unsafeBaseIO depth + v * 0` one). -/
+@[noinline] def depthWith (v : Nat) : BaseIO Nat := return (← depth) + v * 0
+
+unsafe def depthInTaskImpl (v : Nat) : Nat := unsafeBaseIO (depthWith v)
 
 /-- Scopes open on the thread that evaluates it: a task run by leanprof's
 wrapper has one (its `task <- scope`), an unwrapped one has none. -/
@@ -257,6 +261,8 @@ def lightScopeTests (sanitized : Bool) : StateT Nat IO Unit := do
     s!"self={field "self_ns"} total={field "total_ns"} {child.stderr}"
   try IO.FS.removeFile "light-wrap.json" catch _ => pure ()
 
+-- a long `do` block: Lean before 4.28 elaborates it past the default depth
+set_option maxRecDepth 2048 in
 def tests : StateT Nat IO Unit := do
   let n500 ← opaqueNat 500
   let n300 ← opaqueNat 300
