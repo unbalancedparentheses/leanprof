@@ -115,6 +115,21 @@ input_file htmlJs where
 `needs` rebuilds it when the page's CSS or script changes. -/
 lean_lib LeanprofHtml where
   needs := #[htmlCss, htmlJs]
+/-- The proof-preservation auditor (`scripts/proof-audit`), compiled into
+`leanprof experiment` with `include_str` and written next to each experiment. -/
+input_file auditPy where
+  path := "scripts" / "proof-audit" / "audit.py"
+  text := true
+
+input_file auditSnapshot where
+  path := "scripts" / "proof-audit" / "Snapshot.lean"
+  text := true
+
+/-- `leanprof experiment`, a library so `needs` rebuilds it when the auditor changes. -/
+lean_lib LeanprofExperiment where
+  roots := #[`Leanprof.Experiment]
+  needs := #[auditPy, auditSnapshot]
+
 /-- `leanprof top`, `dump` and `mcp`, imported by the command line. -/
 lean_lib LeanprofLive
 

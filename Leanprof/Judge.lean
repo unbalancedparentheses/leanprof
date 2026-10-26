@@ -34,6 +34,18 @@ namespace Leanprof.Judge
 
 open Lean
 
+/-- `s` without its lines that contain any of `ignore` (`--ignore-lines`: a
+benchmark's own timings, which differ on every run), before it is hashed. -/
+def dropLines (ignore : Array String) (s : String) : String :=
+  if ignore.isEmpty then s
+  else "\n".intercalate ((s.splitOn "\n").filter fun l => !ignore.any fun t => (l.splitOn t).length > 1)
+
+/-- What an output hash covers: `stdout`, or stdout without some lines. Both
+summaries of a verdict must cover the same. -/
+def stdoutSource (ignore : Array String) : String :=
+  if ignore.isEmpty then "stdout"
+  else s!"stdout without lines containing {", ".intercalate (ignore.toList.map fun t => s!"`{t}`")}"
+
 /-- What `judge` reads back from a `measure` summary. -/
 structure Summary where
   command : Json := Json.null
@@ -113,6 +125,10 @@ structure Verdict where
   better : Array String
   /-- what changed without deciding anything -/
   notes : Array String
+  /-- time could not be settled either way (a paired session stopped at its
+  most pairs without a call, or not judged on an overloaded machine): an
+  experiment says INCONCLUSIVE rather than DISCARD when nothing else improved -/
+  unsettled : Bool := false
 
 /-- `x` with two decimals. -/
 def fmt2 (x : Float) : String :=
@@ -157,7 +173,7 @@ def siteChanges (what : String) (b n : Std.HashMap String Nat) (top : Nat := 10)
 
 /-- KEEP or DISCARD, from the summaries before (`b`) and after (`n`) a change
 (the rules are in the module docstring). -/
-def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
+def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : Verdict := Id.run do
   let mut worse : Array String := #[]
   let mut better : Array String := #[]
   let mut notes : Array String := #[]
@@ -218,7 +234,10 @@ def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
   -- least minChange percent, and never on an overloaded machine
   let pct := if b.median > 0 then (n.median - b.median) / b.median * 100 else 0
   let t := s!"time: median {fmtMs b.median} -> {fmtMs n.median} ({if pct > 0 then "+" else ""}{fmt2 pct}%)"
-  if b.tooSmallRuns > 0 || n.tooSmallRuns > 0 then
+  if !judgeTime then
+    -- exact counts only (`leanprof experiment` times plain binaries in pairs instead)
+    notes := notes.push s!"{t} (not judged: exact counts only)"
+  else if b.tooSmallRuns > 0 || n.tooSmallRuns > 0 then
     -- the scope's time was what is left after subtracting leanprof's probes,
     -- 0 or less in some runs: no time to compare
     notes := notes.push s!"{t} (not judged: the scope's time was too small to measure in {b.tooSmallRuns} base and {n.tooSmallRuns} new runs)"
@@ -433,14 +452,18 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
   -- noise and stalls of its own: judged only when asked (a machine always shared)
   let description := if overloaded && allowOverloaded then
     description ++ " (machine overloaded while measuring; judged with --allow-overloaded)" else description
+  let mut unsettled := false
   if overloaded && !allowOverloaded then
     notes := notes.push (description ++ " (not judged: machine overloaded; --allow-overloaded judges it anyway)")
+    unsettled := true
   else match timeCall lo hi minChange with
     | .faster => better := better.push description
     | .slower => worse := worse.push description
     | .same => notes := notes.push (description ++ s!" (no change beyond ±{fmt2 minChange}%, the --min-change)")
-    | .unsettled => notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
-  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes }
+    | .unsettled =>
+      notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
+      unsettled := true
+  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, unsettled }
 
 /-- The verdict as `judge` prints it. -/
 def Verdict.render (v : Verdict) : String := Id.run do

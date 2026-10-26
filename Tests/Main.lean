@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -709,6 +709,76 @@ def tests : StateT Nat IO Unit := do
     (Workload.choose { exes := #["tests"], testDriver := some "tests" } matches .exe "tests" _)
   check "workload: nothing to profile" (Workload.choose {} == .nothing)
 
+/-- `leanprof experiment`'s pure parts (Leanprof/Experiment.lean); the whole
+operation runs in `scripts/experiment-check.sh`. -/
+def experimentTests : StateT Nat IO Unit := do
+  check "experiment: {} is replaced by the input, or the input appended"
+    (Experiment.substInput #["-e", "x", "{}"] "/in/a" == #["-e", "x", "/in/a"] &&
+      Experiment.substInput #["--file={}"] "/in/a" == #["--file=/in/a"] &&
+      Experiment.substInput #["60000"] "/in/a" == #["60000", "/in/a"]) ""
+  check "--ignore-lines leaves out the lines with any of the texts"
+    (Judge.dropLines #["Ran ", "Average"] "Ran 1 iterations in 3.2ms\nAverage time: 3.2ms\nFound 7 matches\n" ==
+      "Found 7 matches\n" && Judge.dropLines #[] "a\nb" == "a\nb" &&
+      Judge.stdoutSource #[] == "stdout" && Judge.stdoutSource #["ms"] == "stdout without lines containing `ms`") ""
+  check "experiment: cases files, one argument list per line"
+    (Experiment.parseCases "# sizes\n1000\n\n  20000  --fast \n" == #[#["1000"], #["20000", "--fast"]]) ""
+  check "experiment: module names by Lake's default layout"
+    (Experiment.moduleOfPath "Exp/Spec.lean" == some "Exp.Spec" && Experiment.moduleOfPath "Main.lean" == some "Main" &&
+      Experiment.moduleOfPath "data/x.txt" == none && Experiment.moduleOfPath "my-dir/A.lean" == none &&
+      Experiment.inPackage "regex/" "regex/Regex/VM.lean" == some "Regex/VM.lean" &&
+      Experiment.inPackage "regex/" "README.md" == none && Experiment.inPackage "" "A.lean" == some "A.lean") ""
+  let header := "/-! a module doc\n  import NotThis -/\nmodule\n\npublic import Exp.Buckets\nimport Lean.Data.Json  -- json\n" ++
+    "meta import all Foo.Bar\n\n/-- docs -/\ndef x := 1\nimport Late\n"
+  check "experiment: imports from the header only"
+    (Experiment.parseImports header == #["Exp.Buckets", "Lean.Data.Json", "Foo.Bar"]) s!"{Experiment.parseImports header}"
+  let graph := #[("A", #[]), ("B", #["A"]), ("C", #["B"]), ("D", #["Lean"]), ("E", #["C", "A"])]
+  check "experiment: dependents, transitively, without the changed modules"
+    (Experiment.dependents graph #["A"] == #["B", "E", "C"] && Experiment.dependents graph #["D"] == #[] &&
+      Experiment.dependents graph #["C"] == #["E"]) s!"{Experiment.dependents graph #["A"]}"
+  let finding (status code : String) : Lean.Json := Lean.Json.mkObj [("status", Lean.Json.str status),
+    ("code", Lean.Json.str code), ("subject", "x"), ("detail", "d")]
+  let audit (status : String) (fs : Array Lean.Json) : Lean.Json :=
+    Lean.Json.mkObj [("status", Lean.Json.str status), ("findings", Lean.Json.arr fs)]
+  check "experiment: the guard follows the auditor; no_theorems alone passes"
+    ((Experiment.guardOf (audit "PASS" #[])).status == "PASS" &&
+      (Experiment.guardOf (audit "FAIL" #[finding "FAIL" "sorry_dependency", finding "INCONCLUSIVE" "no_theorems"])).status == "FAIL" &&
+      (Experiment.guardOf (audit "INCONCLUSIVE" #[finding "INCONCLUSIVE" "no_theorems"])).status == "PASS" &&
+      (Experiment.guardOf (audit "INCONCLUSIVE" #[finding "INCONCLUSIVE" "no_theorems",
+        finding "INCONCLUSIVE" "signature_changed"])).status == "INCONCLUSIVE" &&
+      (Experiment.guardOf (audit "" #[])).status == "INCONCLUSIVE" &&
+      (Experiment.guardOf (Lean.Json.mkObj [])).status == "INCONCLUSIVE") ""
+  let v (worse better : Array String) (unsettled := false) : Judge.Verdict :=
+    { keep := worse.isEmpty && !better.isEmpty, worse, better, notes := #[], unsettled }
+  let outcome (e : Judge.Verdict) (p : Option Judge.Verdict) := (Experiment.combine e p).1
+  check "experiment: the verdict from exact counts and paired time"
+    (outcome (v #["copies up"] #[]) none == .discard &&
+      outcome (v #[] #["copies down"]) (some (v #[] #[] (unsettled := true))) == .keep &&
+      outcome (v #[] #["copies down"]) (some (v #["slower"] #[])) == .discard &&
+      outcome (v #[] #[]) (some (v #[] #["faster"])) == .keep &&
+      outcome (v #[] #[]) (some (v #[] #[] (unsettled := true))) == .inconclusive &&
+      outcome (v #[] #[]) (some (v #[] #[])) == .discard) ""
+  check "experiment: exit codes"
+    (Experiment.Outcome.keep.exitCode == 0 && Experiment.Outcome.discard.exitCode == 1 &&
+      Experiment.Outcome.error.exitCode == 2 && Experiment.Outcome.inconclusive.exitCode == 3) ""
+  let hb (xs : List (String × Float)) : Judge.Summary := { heartbeats := some (Std.HashMap.ofList xs) }
+  let hbOut (a b : List (String × Float)) :=
+    (Experiment.heartbeatOutcome (Judge.judge (hb a) (hb b) (judgeTime := false))).1
+  check "experiment: heartbeats judge a library"
+    (hbOut [("t", 200000)] [("t", 100000)] == .keep && hbOut [("t", 100000)] [("t", 200000)] == .discard &&
+      hbOut [("t", 100000)] [("t", 99500)] == .discard) ""
+  let sig : Experiment.CaseSig := { args := #["1"], exit_code := 0, stdout := "a", stderr := "b", files := #[("out", "h")] }
+  let sig' : Experiment.CaseSig := { sig with exit_code := 1, files := #[("out", "h2")] }
+  let d := Experiment.caseDifference sig sig' "x\ny" "x\nz" "" ""
+  check "experiment: how a case's behaviour changed"
+    (d.contains "exit code 0 -> 1" && d.contains "out changed" && !d.contains "stdout") d
+  let st : Experiment.State := {
+    id := "x", created := "now", top := "/r", pkg_prefix := "", mode := "exe"
+    start_commit := "a", base_commit := "b", baseline := #[sig], test := some "lake test" }
+  check "experiment: the state round-trips through JSON"
+    (match (Lean.fromJson? (Lean.toJson st) : Except String Experiment.State) with
+      | .ok s => s.baseline == #[sig] && s.test == some "lake test" && s.runs == 3
+      | .error _ => false) ""
+
 def main (args : List String) : IO UInt32 := do
   -- a light scope (cheap calls) whose estimate is then raised by costlier
   -- calls, called cheaply again from a parent; checked by the tests above
@@ -718,7 +788,7 @@ def main (args : List String) : IO UInt32 := do
     let _ ← IO.lazyPure fun _ => wrapLoop k (2 * 65536)
     let _ ← IO.lazyPure fun _ => wrapParent 60000
     return 0
-  let ((), failures) ← tests.run 0
+  let ((), failures) ← (do tests; experimentTests).run 0
   if failures == 0 then
     IO.println "all tests passed"
     return 0
