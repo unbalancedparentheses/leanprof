@@ -24,7 +24,7 @@ sysctl`).
 
 **Results: [RESULTS.md](RESULTS.md)** (the table at its top is the
 headline), raw numbers in [results.json](results.json), the same suite with
-the runtime before the first round of fixes below in [results-before.json](results-before.json); RESULTS.md ends with a before/after table against `main` before the Mac outliner fix (2026-10-25; that run has no lean-compiler-backend section: the suite's `lcb` invocation fails against the current lean-compiler-backend, before and after alike, so its figures below are from the second round).
+the runtime before the first round of fixes below in [results-before.json](results-before.json); RESULTS.md (2026-10-26, with the `holds_tiny` marks, `†`) ends with a before/after table against the previous RESULTS.md (run at `38205d5`, 2026-10-25; neither run has a lean-compiler-backend section: the suite's `lcb` invocation fails against the current lean-compiler-backend, before and after alike, so its figures below are from the second round).
 
 ### What it measures
 
@@ -169,6 +169,97 @@ or better everywhere, but the program is 1.1–1.4× slower against
 LeanProfiler's 1.0–1.05×: leanprof calibrates its probes for 10–15 ms
 at the first scope, inside the first phase, which these 40–120 ms
 workloads see.
+
+### Tiny `profile!` scopes: what is left, and what was tried (Apple M5 Max, 2026-10-26)
+
+The last inaccurate case: `tiny` under `profile!`, 7.6–9.0 points off in
+share, with `phTinyA` at 0.80–0.93 of its time and `phTinyB` at 0.52–0.63
+(the per-component rows of the pairs below). Sampling the plain build
+(`sample`) is 0.5 points off.
+
+**The cause.** Each phase's own wall time under `profile!`, against the
+plain build (`tiny 100`, 7 runs each, medians; calibration, ~8 ms inside
+the first phase, taken out), gives what a pair of probes really costs in
+each loop:
+
+| | calibrated | in `phTinyA` | in `phTinyB` |
+|---|---|---|---|
+| light pair (`profile!`, pure) | 4.7 ns | 4.66 ns | 4.17 ns |
+| timed pair (`LEANPROF_TIME_ALL=1`) | 7.0 ns | 7.05 ns | 6.58 ns |
+
+So calibration is right for `phTinyA`, whose loop (`tinyA i`) is limited by
+throughput, and 0.4–0.55 ns a call too high for `phTinyB`, whose loop is a
+chain of dependent operations (`acc := acc + tinyB (acc + i)`): there the
+probe runs while the chain waits, and hides that much of the phase's own
+1.6 ns a call. Over 20M calls that is 9–11 ms of 33, which is the 0.6. The
+gap is the same for light and timed pairs, and the same 0.6 shows with
+every call timed.
+
+**Negative results**, each measured:
+
+1. **Calibrating light probes in place.** What the runtime can measure in
+   place is how the cost changes between kinds of probe: light against
+   timed is 2.39 ns in `phTinyA`'s loop and 2.41 ns in `phTinyB`'s, against
+   2.3 ns in calibration. The hidden part is the same for both kinds, so no
+   difference between probes shows it; it would take a run of the loop
+   without probes. Serializing the light probe (`isb` at both ends, so that
+   nothing overlaps it, calibrated the same way) made `tiny` 14.8× slower
+   and the phases 14.2× and 8.5× their time (10.0 points).
+2. **Sampling alongside.** samply at 4 kHz on the `profile!` build,
+   dropping every sample whose leaf is leanprof's code, puts `phTinyA` at
+   34.4–39.5% of the two phases against 24.5% (leanprof's report: 33.5%).
+   The sample is as wrong as the subtraction, for the same reason: where
+   the probe and the chain overlap, the sample lands in the probe and the
+   phase's work looks smaller. With the probes reduced to returning at once
+   (a prototype `LEANPROF_OFF`, not kept), the phases still ran 32 and
+   64 ms against 10.5 and 32.9 plain (an empty pair: 2.1 ns a call in
+   `phTinyA`'s loop, 1.5 ns in `phTinyB`'s) and the sample gave 31.5–35.5%.
+   The two calls change the program; only a build without them gets the
+   shares, which is what `sample` on the plain build does.
+3. **Subtracting less.** `phTinyA` needs the calibrated cost and
+   `phTinyB` about 12% less. A correction proportional to the probes moves
+   `phTinyA` (4.6 ns of probes per ns of work) more than `phTinyB` (2.9):
+   adding back 6% of the probes, for example, gives 36% for a 24.5% share.
+
+**What changed: the report says which rows these are.** A light scope keeps
+the scope it was first sampled under, and when the light calls' probes
+cost at least 0.3 of that caller's time the caller's row gets `holds_tiny`
+(the JSON), a line under the terminal table, and a note in the editor and
+HTML report: its time is off whatever is subtracted, and so is a sample of
+this build; remove those `profile!` (or `set_option leanprof.enabled
+false`) and use `leanprof sample`. Before, these rows had only the generic
+`*` ("use `leanprof sample`"), which for a `profile!` build sends the
+reader to a sample that is off too. In the suite `phTinyA`, `phTinyB` and
+the three `taskWork` rows (which call `taskStep`) are marked (`†` in
+RESULTS.md), off by 10–19% in the median and 37–48% at most.
+
+Interleaved pairs (before: `origin/main` at `474033e`; after: this change;
+the same `bench/run.py`), every workload × `plain`, `profile`, `auto`, 7
+runs a cell, three pairs under the shared lock, load average 3.5–4.8 on 18
+CPUs; each value is one suite's median, the three pairs in order:
+
+| | before | after |
+|---|---|---|
+| `tiny` `profile!` share error | 9.0 / 8.3 / 7.6 pp | 9.0 / 8.5 / 7.6 pp |
+| `tiny` `profile!` `phTinyA` / `phTinyB` | 0.93/0.62, 0.91/0.59, 0.91/0.63 | 0.80/0.52, 0.86/0.59, 0.90/0.63 |
+| `tiny` `--auto` share error | 0.7 / 0.6 / 0.7 pp | 0.7 / 0.6 / 0.5 pp |
+| `rec` `profile!` / `--auto` share error | 2.7–3.2 / 1.3–1.5 pp | 1.2–1.7 / 1.2–1.4 pp |
+| `mix` `profile!` / `--auto` | 0.4–0.5 / 0.4 pp | 0.5 / 0.4 pp |
+| `alloc` `profile!` / `--auto` | 0.3–0.5 / 4.3–4.4 pp | 0.2–0.5 / 4.3–4.8 pp |
+| `copy` `profile!` / `--auto` | 0.2–0.4 / 1.7–2.2 pp | 0.2–0.4 / 1.5–2.2 pp |
+| `tasks` `profile!` / `--auto` | 1.0–1.9 / 1.6–2.6 pp | 1.3–1.8 / 1.6–2.1 pp |
+| `tiny` slowdown, `profile!` | 4.22–4.31× | 4.28–4.33× |
+| `rec` slowdown, `profile!` / `--auto` | 2.07–2.17× / 2.77–2.88× | 2.07–2.12× / 2.88–2.91× |
+
+Counts are exact in every cell. The change only adds a pointer store on a
+light scope's sampled calls (one in 64) and work at report time, and the
+times are the same within the noise; `rec` under `profile!` came out better
+in all three after-runs (no light scope there, nothing in the change that
+touches it: likely code placement, not claimed).
+
+Also seen, not acted on: on macOS a thread-local variable is reached
+through `_tlv_get_addr`, a call; `leanprof sample` of the `profile!` build
+puts 6.4% of its time there, about 0.45 ns of each probe pair.
 
 ### Review fixes: tiny classifier and light scopes (Apple M5 Max, 2026-10-25)
 

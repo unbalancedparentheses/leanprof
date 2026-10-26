@@ -150,7 +150,13 @@ alike weighed a cheap first phase like the sample of a costlier later one).
 Each light call adds the sample's mean, kept in 1/1024 ticks, to its
 caller's children, so the caller's self time leaves it out; that self time
 is a signed sum, since a light call can take less than the mean. These
-times are estimates; the report gives such rows' `timed_calls`.
+times are estimates; the report gives such rows' `timed_calls`. A light
+scope also keeps the scope it was first sampled under, and the report
+marks that caller's row (`holds_tiny`) when the light calls' probes cost at
+least 0.3 of its time: the calls around a nanosecond of work change the
+caller's own code (they break up its loop, and the work and the probe hide
+parts of each other), by an amount that depends on that code and that no
+calibration loop sees, so no amount subtracted is right for every caller.
 
 ## Names and positions
 
