@@ -19,3 +19,8 @@ root = "WorkMain"
 [[lean_exe]]
 name = "bench"
 root = "Bench"
+
+# --- leanprof measure-pair --scope work: WorkBench.lean (no dependency) ---
+[[lean_exe]]
+name = "workbench"
+root = "WorkBench"

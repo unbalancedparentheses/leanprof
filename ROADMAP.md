@@ -49,7 +49,11 @@ including refreshed comparisons against current alternatives.
   release); Windows documented as unsupported.
 - [x] Security review of the MCP server, the GitHub Action and the install
   script ([review](docs/reviews/security-review.md)): 12 findings fixed or
-  documented. Follow-up: build provenance attestations for releases.
+  documented, and the MCP path and option bypasses a later code review
+  found (default working directories, symbolic links, options among
+  `elab`'s files) fixed and checked by
+  `scripts/mcp-check.py`. Follow-up: build provenance attestations for
+  releases.
 - [x] Issue and PR templates, `SECURITY.md`, a Lean version support policy,
   `CONTRIBUTING.md`.
 - [x] Easier first run: the installer checks `PATH`, and errors say how to
@@ -106,11 +110,14 @@ users than the rest of v0.2.0, and take priority over its long tail.
 Ranked; the first two are planned next to the gap-closing work, the rest
 after v0.2.0.
 
-- [x] **`leanprof fix`.** Apply the fix `explain` prints, then prove it:
+- [x] **`leanprof fix`.** Apply the fix `explain` prints, then check it:
   identical output, tests pass, `judge` says KEEP. Leave a commit with the
   evidence. For people, not only agents. Done for the three causes whose
   code replaces lines (`nested-array-element`, `map-value-reinserted`,
-  `loop-over-updated-array`; [guide](docs/guide/fix.md)). Still open: edits
+  `loop-over-updated-array`; [guide](docs/guide/fix.md)). The checks run one
+  workload, so they are evidence, not proof: each rewrite is applied only
+  where the code shows it computes the same values, in a git worktree that
+  an interruption cannot leave in your checkout, with git hooks off. Still open: edits
   for `stored-then-updated` and `multi-threaded-global`, which need the
   code that reads the value or the loop's bounds.
 - [ ] **Regressions explained.** When the Action fails a pull request, say
@@ -138,6 +145,11 @@ provenance and one complete experiment operation come first.
   the tests, or compile time for a library), profiles it and prints the top
   three findings with source and fixes. Never picks an ambiguous workload
   silently; handles dependency instrumentation and restores the normal build.
+  Done: the workload choice (executables listed, never chosen between), a
+  sampled first profile (`stat` without samply or perf events), three
+  findings with file:line and the `run`/`explain`/`fix` commands, samply from
+  the installer. Left: the fixes themselves in the findings, which today take
+  `leanprof run` and `explain` (an exact second pass on the top copy sites).
 - [ ] `leanprof autoresearch`: sets the project up (workload, tests, output
   check) and starts the loop in Claude Code, or prints the next steps. The
   loop ships as a Claude Code command.
@@ -207,10 +219,16 @@ provenance and one complete experiment operation come first.
   - [x] Keep instrumented objects apart from the normal build: the next
     plain build after `measure` took 0.18 s on the Mac (it was a 10 s
     rebuild). `measure-pair` is the timing-only mode on plain builds.
-  - [ ] Cheaper paired verdicts: `measure-pair` took 7.1 s per verdict at 20
-    pairs (2.9 s at 6) against LeanBench's 0.74 s on the same Mac, with 0
-    false verdicts in 40 and a 2.4% slowdown caught 9 in 10
-    (docs/case-studies/leanbench.md).
+  - [x] Cheaper paired verdicts: `measure-pair` took 7.1 s per verdict at 20
+    pairs against LeanBench's 0.74 s. Now it stops when settled (a
+    group-sequential sign test, each claim wrong at most 2.5%), `--scope`
+    times one `Leanprof.bench` region and `--base-rev` caches the base:
+    0.89 s end to end against LeanBench's 1.09 s on the same trials at load
+    4–13 (0/20 false, 2.4% caught 4/5); still 1.9–2.3 s against 1.06 s at
+    load up to 15 (docs/case-studies/leanbench.md).
+  - [ ] Short timed regions are sensitive to load (unchanged code ran to 30
+    pairs unsettled at load 15): choose the work per run from the measured
+    spread, or report the per-run noise next to the verdict.
   - [x] `measure --scope NAME`: time a `profile!` scope instead of the whole
     process (a 10.4% slowdown read as +10.4%, was 8.2%).
   - [ ] Several named benchmarks per summary, each judged; read LeanBench's

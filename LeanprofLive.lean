@@ -693,13 +693,19 @@ def tools : Array Json := #[
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
     [("base", sProp "baseline report"), ("new", sProp "new report"), ("threshold", nProp "time threshold in percent (default 10)")]
     ["base", "new"],
-  tool "measure_pair" ("Run two prebuilt binaries in alternating AB/BA order (no builds, no probes) into one " ++
-    "paired session for judge: every timing, exit code and output hash.")
+  tool "measure_pair" ("Run two binaries in alternating AB/BA order (no probes) into one paired session for " ++
+    "judge, stopping once the time verdict is settled: every timing, exit code and output hash. Give base and " ++
+    "candidate (prebuilt), or base_rev and exe (the base built at that git revision, cached; the candidate built here).")
     [("base", sProp "baseline binary"), ("candidate", sProp "candidate binary"),
+     ("base_rev", sProp "git revision to build the baseline at (cached by commit), with exe"),
+     ("exe", sProp "Lake executable to build at base_rev and in candidate_cwd"),
      ("args", aProp "arguments for both binaries"), ("base_cwd", sProp "working directory of the baseline"),
-     ("candidate_cwd", sProp "working directory of the candidate"), ("runs", nProp "pairs, 6 to 1000 (default 20)"),
-     ("warmup", nProp "warmup pairs (default 3)"), ("check_output", sProp "output file compared instead of stdout"),
-     ("out", sProp "session file (default .lake/leanprof/paired.json)")] ["base", "candidate"],
+     ("candidate_cwd", sProp "working directory of the candidate"), ("runs", nProp "most pairs, 6 to 1000 (default 30); stops early once the time verdict is settled"),
+     ("fixed", bProp "measure exactly runs pairs, no early stop"),
+     ("min_change", sProp "smallest time change in percent that counts (default 1)"),
+     ("scope", sProp "time only the region the program wraps in Leanprof.bench with this name"),
+     ("warmup", nProp "warmup pairs (default 1)"), ("check_output", sProp "output file compared instead of stdout"),
+     ("out", sProp "session file (default .lake/leanprof/paired.json)")] [],
   tool "judge" ("KEEP or DISCARD a change: from two measure summaries (output, copies, allocations, heartbeats, " ++
     "time), or from one measure_pair session (output and a paired 95% median interval on time).")
     [("base", sProp "baseline measure summary"), ("new", sProp "new measure summary"),
@@ -739,13 +745,37 @@ def inDir (cwd : Option String) (p : String) : FilePath :=
   | some d => if p.startsWith "/" then p else (d : FilePath) / p
   | none => p
 
-/-- A file the server writes or deletes for its client: relative to the project
-and without `..`, so a tool call cannot overwrite or remove files elsewhere. -/
-def projectPath (what p : String) : IO String := do
+/-- A file the server writes or deletes for its client, in the directory
+`cwd` (none: the server's own): relative, without `..`, and inside `cwd`
+with symbolic links resolved, so a tool call cannot overwrite or remove
+files elsewhere, also through a link (`external/x.json` with `external`
+pointing out of the project, or `x.json` itself a link). -/
+def projectPath (cwd : Option String) (what p : String) : IO String := do
   let fp : FilePath := p
-  if fp.isAbsolute || fp.components.contains ".." || p.isEmpty then
-    throw <| IO.userError s!"{what} must be a path inside the project (relative, without ..): {p}"
+  let refuse {α} : IO α :=
+    throw <| IO.userError s!"{what} must be a path inside the project (relative, without .., not through a symbolic link): {p}"
+  if fp.isAbsolute || fp.components.contains ".." || p.isEmpty then refuse
+  let root ← IO.FS.realPath (cwd.getD ".")
+  let inside (r : FilePath) := r == root || r.toString.startsWith (root.toString ++ "/")
+  let isLink (q : FilePath) : IO Bool := do
+    try return (← q.symlinkMetadata).type == .symlink catch _ => return false
+  let full := inDir cwd p
+  -- the file itself: writing follows a link, removing it would not, but
+  -- neither should be possible
+  if ← isLink full then refuse
+  -- the nearest directory above it that exists, links resolved
+  let mut d := full.parent.getD "."
+  for _ in [0:fp.components.length + 1] do
+    if ← d.pathExists then break
+    if ← isLink d then refuse
+    d := d.parent.getD "."
+  unless inside (← IO.FS.realPath d) do refuse
   return p
+
+/-- A file name the server passes on as a command's argument: the command
+must not read it as an option (`leanprof elab`'s `--out F` among its files). -/
+def notOption (f : String) : IO Unit := do
+  if f.startsWith "-" then throw <| IO.userError s!"not a file name: {f} (an option cannot be passed as a file)"
 
 def isLakeProject (dir : FilePath) : IO Bool := do
   return (← (dir / "lakefile.lean").pathExists) || (← (dir / "lakefile.toml").pathExists)
@@ -758,7 +788,7 @@ def callTool (name : String) (a : Json) : IO Json := do
     return #[exe, "--"] ++ argStrs a "args"
   match name with
   | "run" =>
-    let json ← projectPath "json" (argStr a "json" |>.getD ".lake/leanprof/report.json")
+    let json ← projectPath cwd "json" (argStr a "json" |>.getD ".lake/leanprof/report.json")
     let flags := [("auto", "--auto"), ("allocs", "--allocs"), ("counters", "--counters"), ("frees", "--frees"),
       ("core", "--core")].filterMap fun (k, f) => if argBool a k then some f else none
     let (rc, out, err) ← runSelf (#["run", "--json", json] ++ flags.toArray ++ (← exeArgs)) cwd
@@ -777,11 +807,13 @@ def callTool (name : String) (a : Json) : IO Json := do
   | "elab" =>
     let files := argStrs a "files"
     if files.isEmpty then throw <| IO.userError "missing argument: files"
+    -- `leanprof elab` reads options anywhere among its files (`--out F`)
+    for f in files do notOption f
     let (rc, out, err) ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
     return textResult s!"{out}\n{tailText err 10}" (rc != 0)
   | "measure" =>
-    let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
+    let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++
       (if argBool a "core" then #["--core"] else #[]) ++ (← exeArgs)) cwd
     return textResult s!"summary {outFile}\n{out}\n{tailText err 10}" (rc != 0)
@@ -819,28 +851,41 @@ def callTool (name : String) (a : Json) : IO Json := do
   | "compare" =>
     let (some b, some n) := (argStr a "base", argStr a "new") | throw <| IO.userError "missing argument: base or new"
     let thr := (argNat a "threshold").map (#["--threshold", toString ·]) |>.getD #[]
+    for f in [b, n] do notOption f
     let (rc, out, err) ← runSelf (#["compare"] ++ thr ++ #[b, n]) cwd
     let verdict := if rc == 0 then "no regressions" else if rc == 1 then "REGRESSION" else "error"
     return textResult s!"{verdict}\n{out}{err}" (rc > 1)
   | "measure_pair" =>
-    let (some b, some c) := (argStr a "base", argStr a "candidate")
-      | throw <| IO.userError "missing argument: base or candidate"
-    let outFile ← projectPath "out" (argStr a "out" |>.getD ".lake/leanprof/paired.json")
+    let (bins, sides) ← match argStr a "base", argStr a "candidate", argStr a "base_rev", argStr a "exe" with
+      | some b, some c, none, none => pure ([b, c], #["--base", b, "--candidate", c])
+      | none, none, some r, some e => pure ([], #["--base-rev", r, "--exe", e])
+      | _, _, _, _ => throw <| IO.userError "give base and candidate, or base_rev and exe"
+    let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/paired.json")
     -- Only what a Lake project built, run in a Lake project: the tool must not
     -- become a way to run any program, or to delete files (measure-pair
     -- removes the checked output file before each run).
-    for bin in [b, c] do
+    for bin in bins do
       let real ← try IO.FS.realPath (inDir cwd bin) catch _ => throw <| IO.userError s!"no such binary: {bin}"
       unless (real.toString.splitOn "/.lake/build/bin/").length > 1 do
         throw <| IO.userError s!"{bin} is not a binary built by Lake (.lake/build/bin/)"
-    for k in ["base_cwd", "candidate_cwd"] do
-      if let some d := argStr a k then
-        unless ← isLakeProject (inDir cwd d) do throw <| IO.userError s!"{k} is not a Lake project: {d}"
-    if let some f := argStr a "check_output" then discard <| projectPath "check_output" f
+    -- the directories it really runs in: `base_cwd` and `candidate_cwd`
+    -- default to `cwd` (itself the server's directory when not given),
+    -- where the session is written too
+    let top := cwd.getD "."
+    let dirs := [("cwd", top)] ++ ["base_cwd", "candidate_cwd"].map fun k =>
+      (k, ((argStr a k).map fun d => (inDir cwd d).toString).getD top)
+    for (k, d) in dirs do
+      unless ← isLakeProject d do throw <| IO.userError s!"{k} is not a Lake project: {d}"
+    if let some f := argStr a "check_output" then
+      for (_, d) in dirs.drop 1 do discard <| projectPath (some d) "check_output" f
     let opt (k flag : String) := (argStr a k).map (#[flag, ·]) |>.getD #[]
     let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
-    let (rc, out, err) ← runSelf (#["measure-pair", "--base", b, "--candidate", c, "--out", outFile] ++
+    if argStr a "base_rev" |>.isSome then
+      unless ← isLakeProject (inDir cwd ((argStr a "candidate_cwd").getD ".")) do
+        throw <| IO.userError "base_rev needs candidate_cwd (default the project) to be a Lake project"
+    let (rc, out, err) ← runSelf (#["measure-pair"] ++ sides ++ #["--out", outFile] ++
       opt "base_cwd" "--base-cwd" ++ opt "candidate_cwd" "--candidate-cwd" ++ opt "check_output" "--check-output" ++
+      opt "min_change" "--min-change" ++ opt "scope" "--scope" ++ (if argBool a "fixed" then #["--fixed"] else #[]) ++
       num "runs" "--runs" ++ num "warmup" "--warmup" ++ #["--"] ++ argStrs a "args") cwd
     return textResult s!"session {outFile}\n{out}\n{tailText err 10}" (rc != 0)
   | "judge" =>
@@ -848,6 +893,7 @@ def callTool (name : String) (a : Json) : IO Json := do
       | some p, none, none => pure #[p]
       | none, some b, some n => pure #[b, n]
       | _, _, _ => throw <| IO.userError "give pair, or base and new"
+    for f in files do notOption f
     let minChange := (argStr a "min_change").map (#["--min-change", ·]) |>.getD #[]
     let allow := if argBool a "allow_overloaded" then #["--allow-overloaded"] else #[]
     let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ allow ++ files) cwd

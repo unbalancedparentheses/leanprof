@@ -15,11 +15,16 @@ with tempfile.TemporaryDirectory(prefix='leanprof-pair-') as temporary:
     root = Path(temporary)
     binary = root / 'program with spaces'
     binary.write_text(f'#!{sys.executable}\n' + '''
-import json, pathlib, sys
+import json, os, pathlib, sys
 config = json.loads(pathlib.Path('config.json').read_text())
 assert sys.argv[2:] == ['literal ; $() argument'], sys.argv
 with open(sys.argv[1], 'a') as stream:
     stream.write(config['side'] + '\\n')
+if config.get('bench_ns') and 'LEANPROF_BENCH_OUT' in os.environ:
+    with open(os.environ['LEANPROF_BENCH_OUT'], 'a') as bench:
+        # a region that runs twice is summed; other names are ignored
+        ns = config['bench_ns']
+        bench.write(f"work\\t{ns // 2}\\nwork\\t{ns - ns // 2}\\nother\\t5\\n")
 if config.get('write_output'):
     pathlib.Path('output.txt').write_text(config.get('output', 'same file'))
 print(config.get('stdout', 'same stdout'))
@@ -83,7 +88,67 @@ raise SystemExit(config.get('exit_code', 0))
             '--base-cwd', dirs['base'], '--candidate-cwd', dirs['candidate'],
             '--runs', '6', '--warmup', '1', '--out', result,
             '--', order, 'literal ; $() argument'], 2)
+    # --scope: the region's reported time, summed per run; sequential: a
+    # constant +10% stops at the first look that can decide (8 pairs of at most 30)
+    for side, ns in [('base', 1_000_000), ('candidate', 1_100_000)]:
+        (dirs[side] / 'config.json').write_text(json.dumps({'side': side, 'bench_ns': ns}))
+    scoped = ['measure-pair', '--base', binary, '--candidate', binary,
+              '--base-cwd', dirs['base'], '--candidate-cwd', dirs['candidate'], '--warmup', '0', '--out', result]
+    tail = ['--', order, 'literal ; $() argument']
+    proc = invoke(scoped + ['--scope', 'work'] + tail)
+    data = json.loads(result.read_text())
+    assert data['version'] == 2 and data['runs'] == 8 and data['scope'] == 'work', data['runs']
+    assert data['design']['max_runs'] == 30
+    assert {r['time_ns'] for r in data['samples']} == {1_000_000, 1_100_000}
+    assert all(r['process_ns'] > 0 for r in data['samples'])
+    assert 'scope work' in proc.stdout and 'stopped at 8 of at most 30' in proc.stdout, proc.stdout
+    assert invoke(['judge', '--allow-overloaded', result], 1).stdout.startswith('DISCARD\n  - paired time of scope work: median change 10.00%')
+    # --fixed: no early stop
+    invoke(scoped + ['--scope', 'work', '--fixed', '--runs', '10'] + tail)
+    data = json.loads(result.read_text())
+    assert data['runs'] == 10
+    # a sequential session that does not end at one of its looks is refused
+    data['design'] = {**data['design'], 'first_look': 7, 'max_runs': 30}
+    result.write_text(json.dumps(data))
+    assert 'looks' in invoke(['judge', result], 2).stderr
+    # a scope the program does not report is an error, not a time of zero
+    proc = invoke(scoped + ['--scope', 'missing'] + tail, 2)
+    assert 'did not report scope missing' in proc.stderr, proc.stderr
     invoke(['measure-pair', '--base', binary, '--candidate', binary, '--runs', '5'], 2)
+    invoke(['measure-pair', '--base', binary, '--candidate', binary, '--min-change', 'x'], 2)
     invoke(['measure-pair', '--base', binary, '--candidate', binary, '--warmup', 'bad'], 2)
     invoke(['measure-pair', '--base', binary], 2)
-print('paired CLI: order, warmups, paths, literal arguments, output checks and verdicts passed')
+    invoke(['measure-pair', '--base-rev', 'HEAD'], 2)
+
+    # --base-rev REV --exe NAME: the base is built once per commit and reused;
+    # the candidate is the working tree, built with lake
+    project = root / 'project'
+    (project / 'Hello').mkdir(parents=True)
+    (project / 'lakefile.toml').write_text('name = "hello"\n\n[[lean_exe]]\nname = "hello"\nroot = "Main"\n')
+    (project / 'lean-toolchain').write_text((Path(__file__).resolve().parent.parent / 'lean-toolchain').read_text())
+    (project / '.gitignore').write_text('.lake\n')
+    main = ('def main : IO Unit := do\n'
+            '  let t0 ← IO.monoNanosNow\n'
+            '  IO.println "same"\n'
+            '  let t1 ← IO.monoNanosNow\n'
+            '  if let some p ← IO.getEnv "LEANPROF_BENCH_OUT" then\n'
+            '    IO.FS.withFile p .append fun h => h.putStrLn s!"main\\t{t1 - t0 + 1}"\n')
+    (project / 'Main.lean').write_text(main)
+    git = lambda *a: subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a], cwd=project,
+                                    check=True, capture_output=True)
+    git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'base')
+    (project / 'Main.lean').write_text(main + '-- an edit\n')
+    cached = ['measure-pair', '--base-rev', 'HEAD', '--exe', 'hello', '--candidate-cwd', project,
+              '--scope', 'main', '--runs', '6', '--out', result]
+    first = invoke(cached).stdout
+    assert 'built in' in first and 'and cached' in first and 'candidate built in' in first, first
+    data = json.loads(result.read_text())
+    assert data['builds']['cache'] == 'built' and data['scope'] == 'main'
+    assert data['base_cwd'].endswith('/src'), data['base_cwd']
+    second = invoke(cached).stdout
+    assert 'from the cache' in second, second
+    assert json.loads(result.read_text())['builds']['cache'] == 'hit'
+    # another commit is another base
+    git('commit', '-qam', 'edit')
+    assert 'and cached' in invoke(cached).stdout
+print('paired CLI: order, warmups, paths, literal arguments, output checks, --scope, sequential stop, cached base builds and verdicts passed')

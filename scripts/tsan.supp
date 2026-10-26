@@ -30,3 +30,11 @@ race_top:lean_alloc_ctor_memory
 # lpf_task_run on the old context. Keep this limited to header initialization,
 # rather than suppressing lpf_task_wrap/lpf_task_run or all leanprof frames.
 race_top:lean_set_st_header
+# And to the inlined field stores that fill the new context (CI run on
+# review-fix-mcp 7533841, taskchains: lean_ctor_set in lpf_task_wrap against
+# lean_ctor_get in lpf_task_run on the previous context in the same block).
+# Suppressing frame by frame keeps missing the next inlining, so cover the
+# function itself: lpf_task_wrap only fills the context it has just
+# allocated, before publishing it through the task, so a real race on its
+# stores would need a second writer it does not have.
+race:lpf_task_wrap

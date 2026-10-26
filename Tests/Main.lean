@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Tests.Elab import Tests.ExplainFixes import Tests.Regress
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -140,6 +140,54 @@ unsafe def depthInTaskImpl (v : Nat) : Nat := unsafeBaseIO depth + v * 0
 /-- Scopes open on the thread that evaluates it: a task run by leanprof's
 wrapper has one (its `task <- scope`), an unwrapped one has none. -/
 @[implemented_by depthInTaskImpl] opaque depthInTask (v : Nat) : Nat
+
+/-! Simulated paired sessions for the sequential rule (`Judge.seqStop`). -/
+
+/-- xorshift64*: a deterministic generator, so the error rates are reproducible. -/
+def nextRand (x : UInt64) : UInt64 × Float :=
+  let x := x ^^^ (x >>> 12)
+  let x := x ^^^ (x <<< 25)
+  let x := x ^^^ (x >>> 27)
+  (x, ((x * 2685821657736338717) >>> 11).toFloat / 9007199254740992.0)
+
+/-- One paired change with median `shift`: heavy-tailed noise like the shared
+Mac's (Laplace, scale 0.4%, and one change in 20 an outlier up to ±8%), or
+skewed (exponential, shifted to median 0). -/
+def simChange (seed : UInt64) (shift : Float) (skewed : Bool) : UInt64 × Float := Id.run do
+  let (seed, u) := nextRand seed
+  let (seed, v) := nextRand seed
+  if skewed then return (seed, shift + 0.5 * (-Float.log (1 - u) - Float.log 2))
+  if v < 0.05 then return (seed, shift + (u - 0.5) * 16)
+  let w := u - 0.5
+  let lap := if w < 0 then 0.4 * Float.log (1 + 2 * w) else -0.4 * Float.log (1 - 2 * w)
+  return (seed, shift + lap)
+
+/-- `sessions` sequential sessions (at most `maxRuns` pairs, `--min-change`
+1%): how many ended slower, faster, within ±1% and unsettled, and the mean
+number of pairs measured. -/
+def simSessions (sessions maxRuns : Nat) (shift : Float) (skewed : Bool := false) (seed : UInt64 := 88172645463325252) :
+    (Nat × Nat × Nat × Nat) × Float := Id.run do
+  let d : Judge.SeqDesign := { max := maxRuns }
+  let bounds := (Judge.seqBounds d).1
+  let mut seed := seed
+  let mut counts := (0, 0, 0, 0)
+  let mut pairs := 0
+  for _ in [:sessions] do
+    let mut xs : Array Float := #[]
+    for _ in [:maxRuns] do
+      let (s, x) := simChange seed shift skewed
+      seed := s
+      xs := xs.push x
+      if Judge.seqStop d bounds xs 1 then break
+    pairs := pairs + xs.size
+    let call := match Judge.seqInterval bounds xs with
+      | some (lo, hi) => Judge.timeCall lo hi 1
+      | none => .unsettled
+    let (a, b, c, e) := counts
+    counts := match call with
+      | .slower => (a + 1, b, c, e) | .faster => (a, b + 1, c, e)
+      | .same => (a, b, c + 1, e) | .unsettled => (a, b, c, e + 1)
+  return (counts, pairs.toFloat / sessions.toFloat)
 
 def tests : StateT Nat IO Unit := do
   let n500 ← opaqueNat 500
@@ -382,6 +430,37 @@ def tests : StateT Nat IO Unit := do
         "    pred := pred.modify t (·.push i)"] && ps[1]!.edits.size == 1 && ps[2]!.edits.size == 1)
       s!"{ps.map (·.what)} {ps.map (Fix.applyEdits twoSrc ·.edits)}"
   | .error e => check "fix: two rewrites of one site are applied together, then alone" false e
+  -- rewrites only when they compute the same values on every input
+  check "fix: `set! i (xs[j]!…)` (another element) has no Array.modify rewrite"
+    (Explain.modifyRewrite "  xs := xs.set! i (xs[j]!.push t)" == none &&
+      Explain.modifyRewrite "  xs := xs.set! i (xs[i + 1]!.push t)" == none &&
+      Explain.modifyRewrite "  xs := xs.set! (i + 1) (xs[(i + 1)]!.push t)" == some "xs := xs.modify (i + 1) (·.push t)") ""
+  let otherIdx := Lean.Json.mkObj [("cause", "nested-array-element"), ("file", "X.lean"), ("where", "X.lean:1"),
+    ("lines", Lean.toJson #[2]), ("fix_code", Lean.toJson #["xs := xs.modify i (·.push v)"])]
+  check "fix: a nested update reading another index is refused"
+    (match Fix.plansFor otherIdx #["def f := Id.run do", "    xs := xs.set! i (xs[j]!.push v)"] with
+      | .error _ => true | .ok _ => false) ""
+  let loopF := Lean.Json.mkObj [("cause", "loop-over-updated-array"), ("file", "L.lean"), ("where", "L.lean:1"),
+    ("lines", Lean.toJson #[5, 6]), ("fix_code", Lean.toJson #["for i in [0:xs.size] do\n  let x := xs[i]!"])]
+  let loopSrc (body : List String) (counter := "    let mut j := 0") : Array String :=
+    #["def f (xs : Array Nat) := Id.run do", "  let mut xs := xs", "  for _ in [0:3] do", counter, "    for x in xs do"] ++
+      body.toArray ++ #["  return xs", ""]
+  let loopOk (body : List String) (counter := "    let mut j := 0") : Bool :=
+    match Fix.plansFor loopF (loopSrc body counter) with | .ok _ => true | .error _ => false
+  check "fix: a loop updating only the element it visits (and appending) is rewritten"
+    (loopOk ["      xs := xs.set! j (x + 1)", "      j := j + 1"] &&
+      loopOk ["      let y := xs.size", "      xs := xs.modify j (· + y)", "      xs := xs.push x", "      j := j + 1"]) ""
+  check "fix: a loop that may change an element not visited yet is refused"
+    (!loopOk ["      xs := xs.set! ((j + 1) % xs.size) (x + j % 3)", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! (j + 1) x", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      xs := xs.pop", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      xs := xs.reverse", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      j := j + 2"] &&
+      !loopOk ["      xs := xs.set! j x", "      if x > 0 then", "        j := j + 1", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j x", "      if x > 0 then continue", "      j := j + 1"] &&
+      !loopOk ["      let mut j := 5", "      xs := xs.set! j x", "      j := j + 1"] &&
+      !loopOk ["      xs := xs.set! j (x + 1)", "      j := j + 1"] (counter := "    let mut j := 1") &&
+      !loopOk ["      xs := xs.set! k x", "      j := j + 1"]) ""
   check "fix: branch names from the function and cause"
     (Fix.branchName "Foo.groupBy (in Std.Legacy.Range.forIn'.loop)" "map-value-reinserted" ==
       "leanprof-fix/groupBy-map-value-reinserted") (Fix.branchName "Foo.groupBy (in x)" "c")
@@ -477,11 +556,74 @@ def tests : StateT Nat IO Unit := do
     ((Judge.pairedInterval #[1, 2, 3, 4, 5, 6]) == some (3.5, 1, 6))
   check "paired: twenty pairs use the sixth and fifteenth order statistics"
     ((Judge.pairedInterval ((List.range 20).toArray.map (·.toFloat))) == some (9.5, 5, 14))
+  -- the sequential rule: exact error spent, then error rates and power by simulation
+  for n in [6, 8, 20, 30, 60, 200, 1000] do
+    let (bounds, spent) := Judge.seqBounds { max := n }
+    check s!"sequential: at most {n} pairs spends at most 2.5% per side, exactly ({spent})"
+      (spent ≤ 0.025 && spent > 0 && bounds.size > 0)
+  check "sequential: one look is the fixed interval (20 pairs: 6th and 15th order statistics)"
+    ((Judge.seqBounds (.fixed 20)).1 == #[(20, some 5)])
+  check "sequential: the first look that can decide at most 30 pairs is 8 pairs"
+    (((Judge.seqBounds { max := 30 }).1.find? (·.2.isSome)).map (·.1) == some 8)
+  let sessions := 4000
+  -- three standard errors of a 2.5% rate over `sessions` sessions
+  let slack := 0.025 + 3 * Float.sqrt (0.025 * 0.975 / sessions.toFloat)
+  let rate (k : Nat) := k.toFloat / sessions.toFloat
+  let fmtSim (c : (Nat × Nat × Nat × Nat) × Float) :=
+    let ((a, b, e, u), p) := c
+    s!"slower {rate a}, faster {rate b}, within ±1% {rate e}, unsettled {rate u}, mean pairs {p}"
+  for skewed in [false, true] do
+    let kind := if skewed then "skewed" else "heavy-tailed"
+    let r0 := simSessions sessions 30 0 skewed (if skewed then 11 else 12)
+    IO.println s!"     sequential, {kind}, unchanged: {fmtSim r0}"
+    check s!"sequential ({kind}): unchanged code is called slower or faster at most 5% of the time"
+      (rate (r0.1.1 + r0.1.2.1) ≤ 2 * slack) (fmtSim r0)
+    -- the worst cases: a true median exactly at the minimum change
+    let r1 := simSessions sessions 30 1 skewed (if skewed then 21 else 22)
+    IO.println s!"     sequential, {kind}, median +1% (= --min-change): {fmtSim r1}"
+    check s!"sequential ({kind}): a +1% median is called slower at most 2.5% (+3 SE)" (rate r1.1.1 ≤ slack) (fmtSim r1)
+    check s!"sequential ({kind}): a +1% median is called within ±1% at most 2.5% (+3 SE)" (rate r1.1.2.2.1 ≤ slack) (fmtSim r1)
+    let r2 := simSessions sessions 30 (-1) skewed (if skewed then 31 else 32)
+    IO.println s!"     sequential, {kind}, median -1%: {fmtSim r2}"
+    check s!"sequential ({kind}): a -1% median is called faster at most 2.5% (+3 SE)" (rate r2.1.2.1 ≤ slack) (fmtSim r2)
+  let p0 := simSessions sessions 30 0 false 41
+  check "sequential: unchanged code is settled within ±1% in at least 90% of sessions" (rate p0.1.2.2.1 ≥ 0.9) (fmtSim p0)
+  for (shift, min) in [(2.4, 0.95), (4.8, 0.99), (10.4, 0.99)] do
+    let r := simSessions sessions 30 shift false (51 + shift.toUInt64)
+    IO.println s!"     sequential, heavy-tailed, median +{shift}%: {fmtSim r}"
+    check s!"sequential: a +{shift}% change is caught as slower in at least {min * 100}% of sessions"
+      (rate r.1.1 ≥ min) (fmtSim r)
+    let f := simSessions sessions 30 (-shift) false (61 + shift.toUInt64)
+    check s!"sequential: a -{shift}% change is caught as faster in at least {min * 100}% of sessions"
+      (rate f.1.2.1 ≥ min) (fmtSim f)
   -- END leanprof judge
   -- leanprof elab: reading traces (Tests/Elab.lean)
   Tests.Elab.run fun n ok d => check n ok d
   -- why a declaration or copy site got worse (Tests/Regress.lean)
   Tests.Regress.run fun n ok d => check n ok d
+  -- `leanprof` with no arguments: the targets of a lakefile, and what it profiles
+  let leanCfg := "import Lake\nopen Lake DSL\n\npackage p where\n  -- testDriver := \"commented\"\n" ++
+    "  moreLeancArgs := #[\"--x\"] /- lean_exe hidden -/\n\n@[default_target] lean_lib P\n\n" ++
+    "lean_exe «my-app» where\n  root := `Main\n\n@[test_driver] lean_exe tests where\n  root := `Tests\n"
+  let t := Workload.parseLean leanCfg
+  check "workload: lakefile.lean targets, comments skipped"
+    (t.exes == #["my-app", "tests"] && t.libs == #["P"] && t.testDriver == some "tests") s!"{repr t}"
+  check "workload: the one executable besides the test driver"
+    (Workload.choose t == .exe "my-app" "the project's only executable")
+  let tomlCfg := "name = \"importGraph\"\ndefaultTargets = [\"ImportGraph\", \"graph\"]\ntestRunner = \"ImportGraphTest\"\n\n" ++
+    "[[require]]\nname = \"Cli\"\n\n[[lean_lib]]\nname = \"ImportGraph\"\n\n# a comment\n[[lean_exe]]\nname = \"graph\"\nroot = \"MainGraph\"\n\n" ++
+    "[[lean_exe]]\nname = \"unused\"\n\n[[lean_lib]]\nname = \"ImportGraphTest\"\n"
+  let t2 := Workload.parseToml tomlCfg
+  check "workload: lakefile.toml targets (not the [[require]] name)"
+    (t2.exes == #["graph", "unused"] && t2.libs == #["ImportGraph", "ImportGraphTest"] &&
+      t2.testDriver == some "ImportGraphTest") s!"{repr t2}"
+  check "workload: two executables are not chosen between"
+    (Workload.choose t2 == .ambiguous #["graph", "unused"] none)
+  check "workload: a library with a library test driver profiles compile time"
+    (Workload.choose (Workload.parseToml "name = \"Cli\"\ntestDriver = \"CliTest\"\n[[lean_lib]]\nname = \"Cli\"\n") == .elab)
+  check "workload: only the test driver"
+    (Workload.choose { exes := #["tests"], testDriver := some "tests" } matches .exe "tests" _)
+  check "workload: nothing to profile" (Workload.choose {} == .nothing)
 
 def main : IO UInt32 := do
   let ((), failures) ← tests.run 0

@@ -225,40 +225,164 @@ def judge (b n : Summary) (minChange : Float := 1) : Verdict := Id.run do
   else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
   return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes }
 
+/-! ## Paired sessions: a group-sequential sign test
+
+`measure-pair` looks at the paired percent changes after `first`,
+`first + step`, … pairs and at `max`, and stops at the first look where the
+time verdict is settled. Looking again and again at a fixed-sample interval
+would raise its error rate, so every look has its own order statistic, fixed
+in advance, such that over all looks together each end of the interval
+misses the true median with probability at most `alpha / 2`.
+
+Why: let the changes be independent with median `μ` (continuous). Among the
+first `n`, the count of changes `≤ μ` is a Binomial(n, ½) random walk. At a
+look `n` with bound `kₙ`, the interval's lower end is the `(kₙ+1)`-th smallest
+change, which lies above `μ` exactly when at most `kₙ` changes are `≤ μ`.
+`seqBounds` computes the chance that the walk is at or below `kₙ` at some look
+exactly (dynamic programming over the walk, a path counted at its first
+crossing only) and takes each `kₙ` as large as the alpha-spending function
+`alpha / 2 · n / max` allows (linear spending in the pairs measured, after Lan
+and DeMets). The upper end is the same by symmetry. The interval reported is
+the intersection of every look's interval so far, so, however the session
+was stopped, it contains `μ` with probability at least `1 - alpha`, and with
+`m` the minimum change (`--min-change`):
+
+* "slower" (lower end above `m`) when `μ ≤ m`: at most `alpha / 2` (2.5%);
+* "faster" (upper end below `-m`) when `μ ≥ -m`: at most 2.5%;
+* "no change beyond ±m" (interval inside `[-m, m]`) when `|μ| > m`: at most 2.5%.
+
+A single look (`SeqDesign.fixed`, `measure-pair --fixed` and version-1
+sessions) is the classic distribution-free interval: the largest `k` with
+`P(Binomial(n, ½) ≤ k) ≤ 0.025`. Tests/Main.lean checks the spent error
+exactly and the error rates and power by simulation. -/
+
+/-- When a paired session looks at its changes: after `first`, `first + step`,
+… pairs and after `max`. -/
+structure SeqDesign where
+  max : Nat
+  first : Nat := 6
+  step : Nat := 2
+  /-- two-sided: each end of the interval may miss the median with probability `alpha / 2` -/
+  alpha : Float := 0.05
+  deriving Repr, Inhabited
+
+/-- One look after `n` pairs: the classic fixed-sample interval. -/
+def SeqDesign.fixed (n : Nat) : SeqDesign := { max := n, first := n }
+
+def SeqDesign.looks (d : SeqDesign) : Array Nat := Id.run do
+  let mut out := #[]
+  let step := Nat.max d.step 1
+  for i in [:(d.max - d.first + step - 1) / step] do out := out.push (d.first + i * step)
+  return out.push d.max
+
+def SeqDesign.json (d : SeqDesign) : Json :=
+  Json.mkObj [("rule", "group-sequential sign test, linear alpha spending"),
+    ("max_runs", Lean.toJson d.max), ("first_look", Lean.toJson d.first), ("look_every", Lean.toJson d.step),
+    ("alpha", Lean.toJson d.alpha)]
+
+def SeqDesign.ofJson (j : Json) : Except String SeqDesign := do
+  let max ← j.getObjValAs? Nat "max_runs"
+  let first ← j.getObjValAs? Nat "first_look"
+  let step ← j.getObjValAs? Nat "look_every"
+  let alpha ← j.getObjValAs? Float "alpha"
+  let d : SeqDesign := { max, first, step, alpha }
+  unless 6 ≤ d.first && d.first ≤ d.max && d.max ≤ 1000 && d.step ≥ 1 && 0.001 ≤ d.alpha && d.alpha ≤ 0.2 do
+    throw "invalid sequential design"
+  return d
+
+/-- Each look's bound `k` (`none`: no interval yet at that look) and the
+probability spent on one side over all looks, which never exceeds `alpha / 2`. -/
+def seqBounds (d : SeqDesign) : Array (Nat × Option Nat) × Float := Id.run do
+  -- dist[s]: probability that s of the first n changes are ≤ μ and the walk
+  -- has not crossed a bound yet
+  let mut dist : Array Float := #[1]
+  let mut n := 0
+  let mut spent : Float := 0
+  let mut out := #[]
+  for look in d.looks do
+    for _ in [n:look] do
+      let prev := dist
+      dist := (Array.range (prev.size + 1)).map fun s =>
+        ((if s < prev.size then prev[s]! else 0) + (if s > 0 then prev[s - 1]! else 0)) / 2
+    n := look
+    let allow := d.alpha / 2 * look.toFloat / d.max.toFloat
+    let mut k : Option Nat := none
+    let mut cum : Float := 0
+    for s in [:dist.size] do
+      if spent + cum + dist[s]! ≤ allow * (1 + 1e-12) then
+        cum := cum + dist[s]!
+        k := some s
+      else break
+    spent := spent + cum
+    if let some b := k then dist := dist.mapIdx fun i p => if i ≤ b then 0 else p
+    out := out.push (look, k)
+  return (out, spent)
+
+/-- The interval for the median after the last look within `changes`: the
+intersection of the intervals of every look so far (`none` before the first
+look that bounds the median). -/
+def seqInterval (bounds : Array (Nat × Option Nat)) (changes : Array Float) : Option (Float × Float) := Id.run do
+  let mut acc : Option (Float × Float) := none
+  for (n, k) in bounds do
+    if n > changes.size then break
+    let some k := k | continue
+    let sorted := (changes.extract 0 n).qsort (· < ·)
+    let (lo, hi) := (sorted[k]!, sorted[n - k - 1]!)
+    acc := some <| match acc with
+      | some (a, b) => (Max.max a lo, Min.min b hi)
+      | none => (lo, hi)
+  return acc
+
+/-- What an interval says about time, with minimum change `m` percent. -/
+inductive TimeCall | slower | faster | same | unsettled
+  deriving BEq, Repr, Inhabited
+
+def timeCall (lo hi m : Float) : TimeCall :=
+  if lo > hi then .unsettled  -- the looks disagree (rare): no claim
+  else if lo > m then .slower
+  else if hi < -m then .faster
+  else if -m ≤ lo && hi ≤ m then .same
+  else .unsettled
+
+/-- Whether a session with these changes stops now: at a look whose interval
+settles the time verdict, or at the last look. -/
+def seqStop (d : SeqDesign) (bounds : Array (Nat × Option Nat)) (changes : Array Float) (m : Float) : Bool :=
+  changes.size ≥ d.max ||
+    (bounds.any (·.1 == changes.size) &&
+      match seqInterval bounds changes with
+      | some (lo, hi) => timeCall lo hi m != .unsettled
+      | none => false)
+
 /-- Distribution-free 95% interval for the population median of paired percent
-changes. Endpoints are order statistics: choose the largest k for which
-40 * sum(j=0..k, choose(n,j)) <= 2^n. Each excluded tail has probability
-at most 0.025 under independent pairs. No normality or symmetry is assumed.
-With fewer than six pairs there is no finite interval at this confidence. -/
-def pairedInterval (changes : Array Float) : Option (Float × Float × Float) := Id.run do
+changes, from one look at all of them: `(median, lower, upper)`. With fewer
+than six pairs there is no finite interval at this confidence. -/
+def pairedInterval (changes : Array Float) : Option (Float × Float × Float) := do
   let n := changes.size
-  if n < 6 || n > 1000 then return none
+  if n < 6 || n > 1000 then none
+  let (lo, hi) ← seqInterval (seqBounds (.fixed n)).1 changes
   let sorted := changes.qsort (· < ·)
-  let mut choose := 1
-  let mut tail := 0
-  let mut endpoint : Option Nat := none
-  for k in [:n / 2] do
-    tail := tail + choose
-    if 40 * tail ≤ 2 ^ n then endpoint := some k
-    choose := choose * (n - k) / (k + 1)
-  let some k := endpoint | return none
-  let med := if n % 2 == 1 then sorted[n / 2]! else
-    (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2
-  return some (med, sorted[k]!, sorted[n - k - 1]!)
+  let med := if n % 2 == 1 then sorted[n / 2]! else (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2
+  return (med, lo, hi)
 
 /-- Judge one plain-binary interleaved session. Validate its ordering and every
 sample's output/exit status before using paired times. Separate sessions cannot
-accidentally be presented as pairs of compatible standalone summaries. -/
+accidentally be presented as pairs of compatible standalone summaries.
+Version 1: one look after all pairs; version 2: the sequential design it
+records (`seqBounds`), stopped at one of its looks. -/
 def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := false) :
     Except String Verdict := do
   unless str j "leanprof" == "measure-pair" do throw "not a `leanprof measure-pair` result"
-  unless (j.getObjValAs? Nat "version").toOption == some 1 do throw "unsupported paired result version"
+  let version := (j.getObjValAs? Nat "version").toOption
+  unless version == some 1 || version == some 2 do throw "unsupported paired result version"
   let samples ← j.getObjValAs? (Array Json) "samples"
   let runs ← j.getObjValAs? Nat "runs"
   unless runs ≥ 6 && runs ≤ 1000 && samples.size == 2 * runs do
     throw "paired result needs 6..1000 complete pairs"
+  let design ← if version == some 2 then SeqDesign.ofJson (← j.getObjVal? "design") else pure (.fixed runs)
+  unless design.looks.contains runs do throw "a sequential session must stop at one of its looks"
   let machine ← j.getObjVal? "machine"
   let overloaded ← machine.getObjValAs? Bool "overloaded"
+  let scope := str j "scope"
   let mut worse : Array String := #[]
   let mut better : Array String := #[]
   let mut notes : Array String := #["plain binaries: copies, allocations and compile heartbeats were not measured"]
@@ -288,17 +412,25 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
       else expected := some signature
     let (base, candidate) := if i % 2 == 0 then (times[0]!, times[1]!) else (times[1]!, times[0]!)
     changes := changes.push ((candidate.toFloat / base.toFloat - 1) * 100)
-  let some (med, lo, hi) := pairedInterval changes | throw "not enough pairs for a 95% median interval"
-  let description := s!"paired time: median change {fmt2 med}%, 95% median interval [{fmt2 lo}%, {fmt2 hi}%] ({runs} pairs)"
+  let some (lo, hi) := seqInterval (seqBounds design).1 changes
+    | throw "not enough pairs for a 95% median interval"
+  let sorted := changes.qsort (· < ·)
+  let med := if runs % 2 == 1 then sorted[runs / 2]! else (sorted[runs / 2 - 1]! + sorted[runs / 2]!) / 2
+  let what := if scope.isEmpty then "paired time" else s!"paired time of scope {scope}"
+  let how := if design.first == design.max then s!"{runs} pairs"
+    else s!"{runs} pairs, sequential: stopped at {runs} of at most {design.max}"
+  let description := s!"{what}: median change {fmt2 med}%, 95% median interval [{fmt2 lo}%, {fmt2 hi}%] ({how})"
   -- Pairs cancel a drift common to both sides, but an overloaded machine adds
   -- noise and stalls of its own: judged only when asked (a machine always shared)
   let description := if overloaded && allowOverloaded then
     description ++ " (machine overloaded while measuring; judged with --allow-overloaded)" else description
   if overloaded && !allowOverloaded then
     notes := notes.push (description ++ " (not judged: machine overloaded; --allow-overloaded judges it anyway)")
-  else if hi < -minChange then better := better.push description
-  else if lo > minChange then worse := worse.push description
-  else notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
+  else match timeCall lo hi minChange with
+    | .faster => better := better.push description
+    | .slower => worse := worse.push description
+    | .same => notes := notes.push (description ++ s!" (no change beyond ±{fmt2 minChange}%, the --min-change)")
+    | .unsettled => notes := notes.push (description ++ s!" (inconclusive at --min-change {fmt2 minChange}%)")
   return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes }
 
 /-- The verdict as `judge` prints it. -/
