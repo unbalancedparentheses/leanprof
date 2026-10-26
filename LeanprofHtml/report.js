@@ -766,9 +766,9 @@ const PV = elab ? (function () {
   function baseCols(k, on) {
     if (!base || on === false) return [];
     const rank = { regression: 0, new: 1, gone: 2, faster: 3, same: 4 };
-    return [{ t: "base", v: (r) => (r._b == null ? -1 : r._b), f: (v, r) => (r._b == null ? "–" : f(r._b)), num: true },
-      { t: "change", v: (r) => amtOf(r, k) - (r._b || 0), f: (v, r) => (r._b == null ? "new" : change(r._b, amtOf(r, k), f)), num: true },
-      { t: "status", v: (r) => rank[status(r, k)], f: (v, r) => stTag(status(r, k)) }];
+    return [{ t: "base", v: (r) => (r._b == null ? -1 : r._b), f: (_v, r) => (r._b == null ? "–" : f(r._b)), num: true },
+      { t: "change", v: (r) => amtOf(r, k) - (r._b || 0), f: (_v, r) => (r._b == null ? "new" : change(r._b, amtOf(r, k), f)), num: true },
+      { t: "status", v: (r) => rank[status(r, k)], f: (_v, r) => stTag(status(r, k)) }];
   }
   const rowCls = (k) => (base ? (r) => ({ regression: "bad", faster: "good" }[status(r, k)] || null) : null);
   // ---------- navigation ----------
@@ -809,16 +809,16 @@ const PV = elab ? (function () {
   function partsBar(o) {
     const tot = num(o, "total_ns") || 1;
     return h("div", { class: "pv-parts", title: PARTS.map(([n, k]) => n + " " + f(num(o, k))).join(", ") },
-      PARTS.map(([n, k], i) => h("i", { class: "p" + i, style: "width:" + (num(o, k) / tot * 100).toFixed(2) + "%" })));
+      PARTS.map(([, k], i) => h("i", { class: "p" + i, style: "width:" + (num(o, k) / tot * 100).toFixed(2) + "%" })));
   }
   const legend = h("div", { class: "legend" }, PARTS.map(([n], i) => h("span", null, h("i", { class: "pv-sw p" + i }), n)));
   const pctOf = (all, k) => ({ t: "%", v: (r) => (all > 0 ? amtOf(r, k || "total_ns") / all * 100 : 0), f: fPct, num: true });
   function declTable(rows, baseRows, all, what) {
     rows = withBase(rows, baseRows, declKey, (s) => num(s, "total_ns"));
     return table(rows, [
-      { t: "declaration", v: (r) => r.name || r.pos, f: (v, r) => (r._gone ? h("span", { class: "mono muted" }, shortName(r)) : link(h("span", { class: "mono" }, shortName(r)), { f: fileOfPos(r.pos), d: r.pos })), wrap: true },
+      { t: "declaration", v: (r) => r.name || r.pos, f: (_v, r) => (r._gone ? h("span", { class: "mono muted" }, shortName(r)) : link(h("span", { class: "mono" }, shortName(r)), { f: fileOfPos(r.pos), d: r.pos })), wrap: true },
       pcol("where", "pos"), { t: "total", v: (r) => amtOf(r, "total_ns"), f: (v) => f(v), num: true, bar: true }, ...baseCols("total_ns", baseRows != null), pctOf(all),
-      { t: "parts", v: (r) => amtOf(r, "elab_ns"), f: (v, r) => partsBar(r) },
+      { t: "parts", v: (r) => amtOf(r, "elab_ns"), f: (_v, r) => partsBar(r) },
       { t: "costliest operation", v: (r) => (arr(r, "top")[0] ? arr(r, "top")[0].op : ""), f: (v, r) => (v ? h("span", { class: "mono" }, f(num(arr(r, "top")[0], "amount")) + "  " + v) : ""), wrap: true }],
     { what: what || "declarations", rowClass: rowCls("total_ns"), sort: 2 });
   }
@@ -871,7 +871,7 @@ const PV = elab ? (function () {
     const childTable = table(withBase(rows, bRows, (r) => r.key, (r) => num(r, "total_ns")), [
       { t: rows.some((r) => r._dir) ? "folder or module" : "module", v: (r) => r.name, f: (v, r) => (r._gone ? h("span", { class: "mono muted" }, v) : link(h("span", { class: "mono" }, v), r._dir ? { p: r._dir } : { f: r.file })), wrap: true },
       { t: "total", v: (r) => amtOf(r, "total_ns"), f: (v) => f(v), num: true, bar: true }, ...baseCols("total_ns"), pctOf(all),
-      { t: "parts", v: (r) => amtOf(r, "elab_ns"), f: (v, r) => partsBar(r) },
+      { t: "parts", v: (r) => amtOf(r, "elab_ns"), f: (_v, r) => partsBar(r) },
       { t: "modules", v: (r) => (r._dir ? num(r, "files") : 1), f: fN, num: true },
       { t: "wall", v: (r) => num(r, "wall_ns"), f: (v, r) => (r._dir || !v ? "" : fNs(v)), num: true, tip: "the module's own elaboration process, imports included (noisy)" },
       { t: "errors", v: (r) => num(r, "errors"), f: (v, r) => (v ? h("span", { class: "tag bad", title: r.first_error || "" }, r._dir ? v + " files" : "error") : ""), num: true }],
@@ -1012,7 +1012,7 @@ if (meas) addTab("measure", "Measure", null, () => {
 
 const filesWithSource = Object.keys(sources);
 if (filesWithSource.length) addTab("source", "Source", filesWithSource.length, () => {
-  const order = filesWithSource.map((f) => [f, [...hints.keys()].filter((p) => splitPos(p)[0] === f).length]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const order = filesWithSource.map((f) => /** @type {[string, number]} */ ([f, [...hints.keys()].filter((p) => splitPos(p)[0] === f).length])).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   return panel(null, "The lines each report mentions, read from the project when this page was made, with the hints `#leanprof` shows in the editor. Hover a hint for details.",
     order.map(([f, n]) => h("div", { class: "file", id: "file-" + f }, h("h3", null, f, h("span", { class: "note" }, "  " + n + " hinted lines")),
       srcLines(f, Object.keys(sources[f]).map(Number).sort((a, b) => a - b), null))));
@@ -1047,20 +1047,21 @@ if (pairs.length || (meas && measB)) addTab("diff", "Comparison", totalRegressio
       (r.exact ? "a declaration's heartbeats up by more than 1% and 1,000" : "a " + (p.name === "run" ? "scope" : "declaration") + " slower by more than " + D.threshold + "% and " + D.min_ms + " ms") + ".",
       h("div", { class: "tw" }, h("table", null, h("thead", null, h("tr", null, ["metric", "base", "new", "change", "check"].map((t, i) => h("th", { class: i && i < 4 ? "num" : "" }, t)))),
         h("tbody", null, metrics.map((m) => h("tr", null, h("td", null, m[0]), h("td", { class: "num" }, m[1]), h("td", { class: "num" }, m[2]), h("td", { class: "num" }, m[3]), h("td", null, tag(m[4])))))))));
-    out.push(panel(p.name === "run" ? "Scopes" : "Declarations", null, table(r.scopes, [{ t: "status", v: (x) => rank[x.st], f: (v, x) => [st(x.st), x.why ? " " + x.why : ""] },
+    out.push(panel(p.name === "run" ? "Scopes" : "Declarations", null, table(r.scopes, [{ t: "status", v: (x) => rank[x.st], f: (_v, x) => [st(x.st), x.why ? " " + x.why : ""] },
       col(p.name === "run" ? "scope" : "declaration", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: (v, x) => (x.bs ? SMALL_SCOPE : f(v)), num: true }, { t: "new", v: (x) => x.n, f: (v, x) => (x.ns ? SMALL_SCOPE : f(v)), num: true },
-      { t: "change", v: (x) => x.n - x.b, f: (v, x) => (x.bs || x.ns ? "–" : change(x.b, x.n, f)), num: true }, { t: "%", v: (x) => x.pct, f: (v, x) => (x.bs || x.ns ? "–" : (v > 0 ? "+" : "") + fPct(v)), num: true },
+      { t: "change", v: (x) => x.n - x.b, f: (_v, x) => (x.bs || x.ns ? "–" : change(x.b, x.n, f)), num: true }, { t: "%", v: (x) => x.pct, f: (v, x) => (x.bs || x.ns ? "–" : (v > 0 ? "+" : "") + fPct(v)), num: true },
       ...(p.name === "run" ? [{ t: "calls base", v: (x) => x.bc, f: fN, num: true }, { t: "calls new", v: (x) => x.nc, f: fN, num: true }] : [])],
       { sort: 0, asc: true, rowClass: rowCls, what: "scopes" })));
-    if (r.copies.length) out.push(panel("Copies of shared values", "Any increase at a site is a regression.", table(r.copies, [{ t: "status", v: (x) => rank[x.st], f: (v, x) => st(x.st) },
-      col("site", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: fN, num: true }, { t: "new", v: (x) => x.n, f: fN, num: true }, { t: "change", v: (x) => x.n - x.b, f: (v, x) => change(x.b, x.n, fN), num: true }],
+    if (r.copies.length) out.push(panel("Copies of shared values", "Any increase at a site is a regression.", table(r.copies, [{ t: "status", v: (x) => rank[x.st], f: (_v, x) => st(x.st) },
+      col("site", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: fN, num: true }, { t: "new", v: (x) => x.n, f: fN, num: true }, { t: "change", v: (x) => x.n - x.b, f: (_v, x) => change(x.b, x.n, fN), num: true }],
       { sort: 0, asc: true, rowClass: rowCls, what: "sites" })));
-    if (r.allocs.length) out.push(panel("Allocations that changed", "Per site for information; an increase of the total is a regression.", table(r.allocs, [{ t: "", v: (x) => rank[x.st], f: (v, x) => st(x.st) },
-      col("site", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: fN, num: true }, { t: "new", v: (x) => x.n, f: fN, num: true }, { t: "change", v: (x) => x.n - x.b, f: (v, x) => change(x.b, x.n, fN), num: true }],
+    if (r.allocs.length) out.push(panel("Allocations that changed", "Per site for information; an increase of the total is a regression.", table(r.allocs, [{ t: "", v: (x) => rank[x.st], f: (_v, x) => st(x.st) },
+      col("site", "k", null, { wrap: true }), { t: "base", v: (x) => x.b, f: fN, num: true }, { t: "new", v: (x) => x.n, f: fN, num: true }, { t: "change", v: (x) => x.n - x.b, f: (_v, x) => change(x.b, x.n, fN), num: true }],
       { sort: 4, what: "sites" })));
   }
   if (meas && measB) {
     const b = measB.data, n = meas.data;
+    /** @type {[string, number, number, (x: number) => string][]} */
     const rows = [["median time", num(b.time_ns, "median"), num(n.time_ns, "median"), fNs], ["min time", num(b.time_ns, "min"), num(n.time_ns, "min"), fNs], ["max time", num(b.time_ns, "max"), num(n.time_ns, "max"), fNs],
       ["copies", num(b, "copies_total"), num(n, "copies_total"), fN]];
     if (b.allocs_total != null && n.allocs_total != null) rows.push(["allocations", num(b, "allocs_total"), num(n, "allocs_total"), fN]);
