@@ -16,10 +16,18 @@
 #   --release [VERSION]  prebuilt command (default when piped), VERSION like v0.1.0
 #   --source             build from source (default in a clone)
 #   --bin DIR            where the `leanprof` command goes (default ~/.local/bin)
-# Environment: LEANPROF_HOME (default ~/.local/share/leanprof) holds releases
-# and the source checkout; LEANPROF_REPO (default
+#   --samply             also fetch samply (for `leanprof sample`), without asking
+#   --no-samply          do not fetch samply, and do not ask
+#   --samply-only        only fetch samply (leanprof is already installed)
+# When samply is not on PATH, the installer asks (on a terminal) whether to
+# fetch samply 0.13.1, the release leanprof is tested with, checked against
+# the SHA256 below, into LEANPROF_HOME/samply; leanprof runs that one when
+# there is no samply on PATH.
+# Environment: LEANPROF_HOME (default ~/.local/share/leanprof) holds releases,
+# the source checkout and samply; LEANPROF_REPO (default
 # unbalancedparentheses/leanprof); LEANPROF_DOWNLOAD overrides the download
-# location (a URL or file:// directory holding the archives and SHA256SUMS).
+# location (a URL or file:// directory holding the archives and SHA256SUMS),
+# LEANPROF_SAMPLY_DOWNLOAD that of samply's archives.
 set -eu
 
 repo="${LEANPROF_REPO:-unbalancedparentheses/leanprof}"
@@ -27,6 +35,7 @@ home="${LEANPROF_HOME:-$HOME/.local/share/leanprof}"
 bin="$HOME/.local/bin"
 mode=""
 version=""
+samply=ask
 
 here=""
 case "$0" in
@@ -41,7 +50,10 @@ while [ $# -gt 0 ]; do
       case "${2:-}" in v[0-9]*) version="$2"; shift ;; esac ;;
     --source) mode=source ;;
     --bin) bin="$2"; shift ;;
-    -h|--help) sed -n '2,23p' "$0" 2>/dev/null || echo "see https://github.com/$repo/blob/main/scripts/install.sh"; exit 0 ;;
+    --samply) samply=yes ;;
+    --no-samply) samply=no ;;
+    --samply-only) mode=samply; samply=yes ;;
+    -h|--help) sed -n '2,30p' "$0" 2>/dev/null || echo "see https://github.com/$repo/blob/main/scripts/install.sh"; exit 0 ;;
     -*) echo "install.sh: unknown option $1" >&2; exit 2 ;;
     *) bin="$1" ;;
   esac
@@ -53,6 +65,80 @@ fi
 
 say() { echo "leanprof install: $*" >&2; }
 
+# samply, pinned: the release leanprof is tested with, and its archives' SHA256
+samply_version=0.13.1
+samply_archive() {
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) echo "aarch64-apple-darwin 7597239aa3769e75058be5ed359dbfe067f5e7714a5f052c45dd81d509aec17f" ;;
+    Darwin-x86_64) echo "x86_64-apple-darwin a57f05f9162d06c36df6d51425d976ac774a8cd6dbd84050e6303fa8bf813998" ;;
+    Linux-x86_64|Linux-amd64) echo "x86_64-unknown-linux-gnu 61875daad67888798690dea3cb2748279df6ac299c5c6a857d67eed7642473d9" ;;
+    Linux-aarch64|Linux-arm64) echo "aarch64-unknown-linux-gnu aa465162b62830168775b7ff4804bc35049436dcbc29bb3d1ea9f580380ea06a" ;;
+    *) echo "" ;;
+  esac
+}
+
+# fetch samply into $home/samply; returns 1 (and says why) when it cannot
+install_samply() {
+  # shellcheck disable=SC2046
+  set -- $(samply_archive)
+  if [ $# -ne 2 ]; then
+    say "no samply release for $(uname -s) $(uname -m) (https://github.com/mstange/samply)"
+    return 1
+  fi
+  triple="$1" want="$2"
+  if [ "$(uname -s)" = Linux ] && ! command -v xz >/dev/null 2>&1; then
+    say "unpacking samply needs xz: sudo apt install xz-utils (or your distribution's xz package)"
+    return 1
+  fi
+  base="${LEANPROF_SAMPLY_DOWNLOAD:-https://github.com/mstange/samply/releases/download/samply-v$samply_version}"
+  archive="samply-$triple.tar.xz"
+  stmp="$(mktemp -d)"
+  say "downloading samply $samply_version ($archive)"
+  if ! fetch "$base/$archive" "$stmp/$archive"; then
+    say "could not download $base/$archive"
+    rm -rf "$stmp"
+    return 1
+  fi
+  got="$(sha256 "$stmp/$archive")"
+  if [ "$got" != "$want" ]; then
+    say "checksum mismatch for $archive (expected $want, got $got): not installed"
+    rm -rf "$stmp"
+    return 1
+  fi
+  tar -C "$stmp" -xJf "$stmp/$archive"
+  if ! "$stmp/samply-$triple/samply" --version >/dev/null 2>&1; then
+    say "the downloaded samply does not run here"
+    rm -rf "$stmp"
+    return 1
+  fi
+  mkdir -p "$home"
+  rm -rf "$home/samply"
+  mv "$stmp/samply-$triple" "$home/samply"
+  rm -rf "$stmp"
+  say "installed samply $samply_version in $home/samply (leanprof runs it when there is no samply on PATH)"
+}
+
+# samply, for `leanprof sample` and `leanprof` with no arguments: fetched with
+# --samply, offered on a terminal, otherwise the command to get it is said
+maybe_samply() {
+  [ "$samply" = no ] && return 0
+  if [ "$samply" != yes ]; then
+    command -v samply >/dev/null 2>&1 && return 0
+    [ -x "$home/samply/samply" ] && return 0
+    if [ -t 2 ] && (: < /dev/tty) 2>/dev/null; then
+      say "leanprof samples programs with samply (no rebuild), which is not installed"
+      printf 'leanprof install: fetch samply %s (5 MB, checksum-verified) into %s/samply? [Y/n] ' "$samply_version" "$home" >&2
+      read -r answer < /dev/tty || answer=n
+      case "$answer" in [nN]*) samply=no ;; *) samply=yes ;; esac
+    fi
+    if [ "$samply" != yes ]; then
+      say "to sample without a rebuild later: curl -sSfL https://raw.githubusercontent.com/$repo/main/scripts/install.sh | sh -s -- --samply-only"
+      return 0
+    fi
+  fi
+  install_samply || say "leanprof works without samply: then \`leanprof\` with no arguments rebuilds with probes (leanprof stat)"
+}
+
 # put a command named leanprof in $bin that runs $1: a small launcher rather
 # than a symlink, since leanprof finds its scripts and runtime source next to
 # the real executable
@@ -61,15 +147,17 @@ link() {
   rm -f "$bin/leanprof"
   # single-quoted, so a path with quotes, $ or spaces cannot change the launcher
   q=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
-  printf "#!/bin/sh\nexec '%s' \"\$@\"\n" "$q" > "$bin/leanprof"
+  # LEANPROF_HOME, where leanprof finds the samply this script fetched
+  mkdir -p "$home"
+  qh=$(cd "$home" && pwd | sed "s/'/'\\\\''/g")
+  printf "#!/bin/sh\nif [ -z \"\${LEANPROF_HOME:-}\" ]; then LEANPROF_HOME='%s'; export LEANPROF_HOME; fi\nexec '%s' \"\$@\"\n" "$qh" "$q" > "$bin/leanprof"
   chmod +x "$bin/leanprof"
   say "installed $bin/leanprof (runs $1)"
   case ":$PATH:" in *":$bin:"*) ;; *) say "add $bin to your PATH" ;; esac
   command -v elan >/dev/null 2>&1 || [ -x "$HOME/.elan/bin/elan" ] ||
     say "leanprof needs Lean to profile anything: install elan (https://github.com/leanprover/elan)"
-  command -v samply >/dev/null 2>&1 ||
-    say "for 'leanprof sample', install samply (brew install samply, or cargo install samply)"
-  say "check a project with: leanprof doctor"
+  maybe_samply
+  say "then, in a Lean project: leanprof   (finds what to profile; leanprof doctor checks the setup)"
 }
 
 platform() {
@@ -172,6 +260,7 @@ install_source() {
 }
 
 case "$mode" in
+  samply) install_samply ;;
   release) install_release || { say "building from source instead"; install_source; } ;;
   source) install_source ;;
 esac

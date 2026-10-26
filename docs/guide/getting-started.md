@@ -3,20 +3,27 @@
 leanprof works in two ways, and you can use both:
 
 - **From the command line, on any Lake project**, with no changes to the
-  project: `leanprof run`, `leanprof sample` and `leanprof elab` build and
-  profile it from outside.
+  project: `leanprof` alone finds what to profile and profiles it;
+  `leanprof run`, `leanprof sample` and `leanprof elab` go deeper.
 - **As a library**, to mark the code you care about with `profile!`, check
   copies and allocations in tests, and see results in the editor.
 
 ## Install the command
 
-You need Lean (through [elan](https://github.com/leanprover/elan)), a C
-compiler, and, for sampling, [samply](https://github.com/mstange/samply)
-(`brew install samply` or `cargo install samply`). Then one command:
+You need Lean (through [elan](https://github.com/leanprover/elan)) and a C
+compiler (for the exact commands, which rebuild with probes). Then one
+command:
 
 ```
 curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | sh
 ```
+
+When [samply](https://github.com/mstange/samply), the sampler `leanprof
+sample` runs, is not on your `PATH`, the installer asks whether to fetch
+samply 0.13.1, the version leanprof is tested with, checked against its
+SHA256, into `~/.local/share/leanprof/samply`; leanprof uses that one when
+there is no samply on `PATH`. Without samply everything but `sample` works,
+and `leanprof` with no arguments rebuilds with probes instead.
 
 It puts `leanprof` in `~/.local/bin`: the prebuilt command of the latest
 [release](https://github.com/unbalancedparentheses/leanprof/releases) for
@@ -28,13 +35,20 @@ source (in `~/.local/share/leanprof/src`). Options go after `sh -s --`:
 curl -sSfL .../install.sh | sh -s -- --release v0.1.0   # a given version
 curl -sSfL .../install.sh | sh -s -- --source           # always build from source
 curl -sSfL .../install.sh | sh -s -- --bin ~/bin        # somewhere else
+curl -sSfL .../install.sh | sh -s -- --samply           # also samply, without asking
+curl -sSfL .../install.sh | sh -s -- --samply-only      # only samply, later
 ```
 
 From a clone, `sh scripts/install.sh` builds that clone instead. Run the
 installer again to update.
 
 Run `leanprof doctor` inside a project to check that everything it needs is
-there. For the editor, see also the [VS Code extension](vscode.md).
+there; for each missing tool it prints the command that installs it on your
+system (macOS: `xcode-select --install` for the C compiler, `brew install
+llvm` for the llvm-objcopy of `--core`; Debian and Ubuntu: `sudo apt install
+clang`, `sudo apt install llvm`; Arch: `sudo pacman -S clang`, `sudo pacman
+-S llvm`). `run` and `stat` say the same when the compiler is what failed.
+For the editor, see also the [VS Code extension](vscode.md).
 
 ### Supported platforms
 
@@ -64,7 +78,57 @@ names. A Windows port would need each of these replaced.
 
 ## First profile of an existing project
 
-From the project's directory (`myapp` is one of its `lean_exe` targets):
+From the project's directory:
+
+```
+leanprof
+```
+
+leanprof reads the lakefile and picks what to profile: the project's one
+`lean_exe`; else its test driver, when that is an executable; else, for a
+library, its compile time (`leanprof elab --project --compact`). With
+several executables it lists them and profiles none; name one, with its
+arguments after `--`:
+
+```
+$ leanprof
+leanprof: this project has 3 executables; pick the one to profile (with its arguments):
+  leanprof graph -- ARGS
+  leanprof unused_transitive_imports -- ARGS
+  leanprof import-graph-workspace-summary -- ARGS
+compile time of the libraries:
+  leanprof elab --project --compact
+$ leanprof graph -- --to ImportGraph out.dot
+```
+
+It runs the cheapest profile that says something: `leanprof sample` when
+samply can sample (no rebuild with probes; on Linux perf events must be open
+to users, `sudo sysctl kernel.perf_event_paranoid=1`), else `leanprof stat`.
+After that profile's report come the top findings and the commands that go
+deeper. On leanprof's small test project (`Tests/Smoke`):
+
+```
+leanprof: top findings
+  1. 55.25% of CPU in buildWithHistory (in Std.Legacy.Range.forIn'.loop) (Main.lean:10): lean_copy_expand_array 45.76%, mi_page_free_list_extend 5.09%
+  2. 50.31% of CPU allocates and frees objects: `leanprof run --allocs smoke -- 30000` counts allocations per function
+  3. 45.78% of CPU copies arrays or strings that were still shared: `leanprof run smoke -- 30000` finds each copy site, `leanprof explain` says why and gives the fix
+
+next steps
+  leanprof run smoke -- 30000             exact: copies of shared values, tasks, waits (rebuilds with probes, puts your build back)
+  leanprof explain                        after run: why each copy happened, and the fix in Lean
+  leanprof fix --exe smoke -- 30000       apply that fix on a git branch, test, measure, commit it only if it helps
+  leanprof run --auto smoke -- 30000      every function's exact time and call count
+  samply load .lake/leanprof/smoke.json   flame graph with Lean names
+```
+
+On a Mac (M-series) with no samply and an empty leanprof home, installing
+from a release archive, samply included, took 4.8 s (plus downloading the
+77 MB archive), and `leanprof` in a new `lake new` project, building it
+included, 8.6 s; on the project above, 5.4 s. While no release is
+published, the installer builds leanprof from source, which took 58 s.
+
+The commands it chooses between, by hand (`myapp` is one of the project's
+`lean_exe` targets):
 
 ```
 leanprof sample myapp -- ARGS      # where CPU time goes; no rebuild of your code with probes
