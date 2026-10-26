@@ -381,6 +381,25 @@ def seqStop (d : SeqDesign) (bounds : Array (Nat × Option Nat)) (changes : Arra
       | some (lo, hi) => timeCall lo hi m != .unsettled
       | none => false)
 
+/-- `measure-pair --scope`'s repetitions per run when not given: the region
+runs this many times in each process and the fastest counts, which keeps a
+stall of a loaded machine out of the pair. Fixed after the warmup pair and
+before the measured ones, so the sequential test's error bounds are those of
+any fixed design. From the 1-minute load over the CPU count: 1 below half,
+5 below three quarters, else 10; at most what fits in 100 ms of the region
+(`regionNs`, its time in the warmup pair), at least 1. On the shared 18-core
+Mac (load 5 to 15) one repetition left 88% of sessions on unchanged code
+unsettled after 30 pairs at load 12 and 99% at load 14; ten settled 99.9%
+and 96% (simulation from 200 measured pairs each, `bench/verdicts/`). -/
+def autoRepeat (load : Option Float) (cpus : Option Nat) (regionNs : Option Nat) : Nat :=
+  let byLoad := match load, cpus with
+    | some l, some c => if c == 0 then 1
+        else if l < c.toFloat * 0.5 then 1 else if l < c.toFloat * 0.75 then 5 else 10
+    | _, _ => 1
+  match regionNs with
+  | some t => Nat.max 1 (Nat.min byLoad (100000000 / Nat.max t 1))
+  | none => byLoad
+
 /-- Distribution-free 95% interval for the population median of paired percent
 changes, from one look at all of them: `(median, lower, upper)`. With fewer
 than six pairs there is no finite interval at this confidence. -/
@@ -444,7 +463,10 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
     | throw "not enough pairs for a 95% median interval"
   let sorted := changes.qsort (· < ·)
   let med := if runs % 2 == 1 then sorted[runs / 2]! else (sorted[runs / 2 - 1]! + sorted[runs / 2]!) / 2
+  -- repetitions the program ran per run (`Leanprof.bench` under `--repeat`)
+  let nrep := samples.foldl (fun m r => Nat.max m ((r.getObjValAs? (Array Nat) "reps_ns").toOption.map (·.size) |>.getD 1)) 1
   let what := if scope.isEmpty then "paired time" else s!"paired time of scope {scope}"
+  let what := if nrep > 1 then what ++ s!" (fastest of {nrep} repetitions per run)" else what
   let how := if design.first == design.max then s!"{runs} pairs"
     else s!"{runs} pairs, sequential: stopped at {runs} of at most {design.max}"
   let description := s!"{what}: median change {fmt2 med}%, 95% median interval [{fmt2 lo}%, {fmt2 hi}%] ({how})"

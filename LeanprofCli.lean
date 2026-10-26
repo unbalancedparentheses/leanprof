@@ -86,13 +86,15 @@ def commands : List (String × String × String) := [
     "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
     "--ignore-lines TEXT leaves stdout's lines containing TEXT out of its hash (a benchmark's own timings).\n" ++
     "For `judge` and autoresearch loops."),
-  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output FILE] [--ignore-lines TEXT]... [--out FILE] [-- ARGS...]",
+  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME [--repeat N]] [--warmup N] [--check-output FILE] [--ignore-lines TEXT]... [--out FILE] [-- ARGS...]",
     "Measure two prebuilt binaries in alternating AB/BA order (1 warmup pair), stopping as soon as the\n" ++
     "time verdict is settled: slower or faster by more than PCT% (default 1), or within ±PCT%; at most N\n" ++
     "pairs (default 30), looking after 6, 8, 10, ... pairs (a group-sequential sign test: each of these\n" ++
     "claims is wrong at most 2.5% of the time). --fixed measures exactly N pairs instead.\n" ++
     "--scope NAME times only the region the program wraps in `Leanprof.bench \"NAME\"` (or reports as\n" ++
-    "`NAME<TAB>NANOSECONDS` lines appended to $LEANPROF_BENCH_OUT), not the whole process.\n" ++
+    "`NAME<TAB>NANOSECONDS` lines appended to $LEANPROF_BENCH_OUT), not the whole process; the region\n" ++
+    "runs N times in each run and the fastest counts: --repeat N, or auto (the default: 1 below half\n" ++
+    "the CPUs' load, 5 below three quarters, else 10, fewer when the region takes over 10 ms).\n" ++
     "--base-rev REV --exe NAME builds NAME at git revision REV once, kept in .lake/leanprof/base by commit\n" ++
     "and build settings, and builds the candidate with `lake build NAME` in --candidate-cwd (default .).\n" ++
     "No probes are added. Saves every timing, exit status and output hash in one session,\n" ++
@@ -1739,6 +1741,10 @@ structure PairOpts where
   warmup : Nat := 1
   /-- time only what `Leanprof.bench NAME` reports, not the whole process -/
   scope : Option String := none
+  /-- with `--scope`: repetitions of the region in each run, of which the
+  fastest counts; `none`: chosen from the load and the region's time
+  (`Judge.autoRepeat`) -/
+  repeats : Option Nat := none
   /-- build the base at this git revision (cached) and the candidate in its directory -/
   baseRev : Option String := none
   exe : Option String := none
@@ -1777,20 +1783,28 @@ partial def parsePair (o : PairOpts) : List String → Except String PairOpts
     let some n := x.toNat? | throw "--warmup must be an integer from 0 to 1000"
     unless n ≤ 1000 do throw "--warmup must be an integer from 0 to 1000"
     parsePair {o with warmup := n} rest
+  | "--repeat" :: "auto" :: rest => parsePair {o with repeats := none} rest
+  | "--repeat" :: x :: rest => do
+    let some n := x.toNat? | throw "--repeat must be auto or an integer from 1 to 1000"
+    unless n ≥ 1 && n ≤ 1000 do throw "--repeat must be auto or an integer from 1 to 1000"
+    parsePair {o with repeats := some n} rest
   | "--" :: rest => .ok {o with args := rest.toArray}
   | x :: _ => .error s!"unknown or incomplete measure-pair option: {x}"
 
-/-- The total of a `Leanprof.bench` region's lines (`NAME<TAB>NANOSECONDS`) in
-`file`, as written to `$LEANPROF_BENCH_OUT`; `none` when the region never ran. -/
-def benchTotal (file : FilePath) (scope : String) : IO (Option Nat) := do
-  unless ← file.pathExists do return none
-  let mut total : Option Nat := none
+/-- A `Leanprof.bench` region's time per repetition in `file`, as written to
+`$LEANPROF_BENCH_OUT`: lines `NAME<TAB>NANOSECONDS[<TAB>K]` (no `K`: repetition
+0), summed per repetition `K`, in order of `K`; empty when the region never ran. -/
+def benchReps (file : FilePath) (scope : String) : IO (Array Nat) := do
+  unless ← file.pathExists do return #[]
+  let mut sums : Std.HashMap Nat Nat := {}
   for line in (← IO.FS.readFile file).splitOn "\n" do
-    match line.splitOn "\t" with
-    | [name, ns] => if name == scope then
-        if let some v := ns.toNat? then total := some (total.getD 0 + v)
-    | _ => pure ()
-  return total
+    let (name, ns, k) := match line.splitOn "\t" with
+      | [name, ns] => (name, ns.toNat?, some 0)
+      | [name, ns, k] => (name, ns.toNat?, k.toNat?)
+      | _ => ("", none, none)
+    if name == scope then
+      if let (some v, some k) := (ns, k) then sums := sums.insert k (sums.getD k 0 + v)
+  return (sums.toArray.qsort (·.1 < ·.1)).map (·.2)
 
 /-- Settings besides the commit that change what `lake build` makes. -/
 def buildSettingVars : Array String :=
@@ -1885,6 +1899,12 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let binaryHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
   let (initialLoad, cpus) ← machineLoad
   let design : Leanprof.Judge.SeqDesign := if o.fixed then .fixed o.runs else { max := o.runs }
+  if o.scope.isNone && o.repeats.isSome then
+    throw <| IO.userError "--repeat needs --scope: without it the whole process is timed"
+  -- repetitions of the region per run: given, or chosen after the warmup
+  -- pair (which runs it once) from the load and the region's time
+  let mut nrep := if o.scope.isSome then o.repeats.getD 1 else 1
+  let mut warmupNs : Option Nat := none
   let bounds := (Leanprof.Judge.seqBounds design).1
   let mut maxLoad := initialLoad
   let mut samples : Array Json := #[]
@@ -1907,6 +1927,9 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let mut stopped := false
   for phase in [:2] do
     let count := if phase == 0 then o.warmup else o.runs
+    if phase == 1 && o.scope.isSome && o.repeats.isNone then
+      nrep := Leanprof.Judge.autoRepeat maxLoad cpus warmupNs
+    let env := env.push ("LEANPROF_BENCH_REPEAT", if o.scope.isSome then some (toString nrep) else none)
     for pair in [:count] do
       if stopped then break
       let mut times : Array Nat := #[0, 0]
@@ -1923,16 +1946,18 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
         let result ← guardedOutput { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env := sideEnv, stdin := .null }
         let elapsed := (← IO.monoNanosNow) - t0
         checkInterrupted
-        let timed ← match o.scope with
-          | none => pure elapsed
+        let (timed, reps) ← match o.scope with
+          | none => pure (elapsed, #[])
           | some s => do
-            let some t ← benchTotal benchFile s
+            let reps ← benchReps benchFile s
+            let some t := reps.foldl (fun m v => some (match m with | some a => Nat.min a v | none => v)) none
               | throw <| IO.userError (s!"{binaries[side]!} did not report scope {s}: wrap the region in " ++
                   s!"`Leanprof.bench \"{s}\" fun _ => ...`, or append `{s}<TAB>NANOSECONDS` lines to $LEANPROF_BENCH_OUT" ++
                   (if result.exitCode != 0 then s!" (it exited with {result.exitCode}: {result.stderr})" else ""))
-            pure (Nat.max t 1)
+            pure (Nat.max t 1, reps)
         if phase == 0 then
           if result.exitCode != 0 then throw <| IO.userError s!"warmup failed for {binaries[side]!}: {result.stderr}"
+          if o.scope.isSome then warmupNs := some (Nat.min timed (warmupNs.getD timed))
           continue
         times := times.set! side timed
         let present ← match checked with
@@ -1947,7 +1972,8 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
           ("stdout_hash", Json.str (fnv1a (dropLines o.ignoreLines result.stdout).toUTF8)),
           ("stderr_hash", Json.str (fnv1a result.stderr.toUTF8)),
           ("output_hash", Json.str output), ("output_present", Json.bool present)] ++
-          (if o.scope.isSome then [("process_ns", toJson elapsed)] else []))
+          (if o.scope.isSome then [("process_ns", toJson elapsed)] else []) ++
+          (if reps.size > 1 then [("reps_ns", toJson reps)] else []))
       let load ← loadNow
       maxLoad := match maxLoad, load with
         | some a, some b => some (max a b)
@@ -1963,6 +1989,8 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   unless finalHashes == binaryHashes do throw <| IO.userError "a benchmark binary changed during measurement"
   let j := Json.mkObj [("version", toJson (2 : Nat)), ("leanprof", "measure-pair"),
     ("mode", "plain"), ("runs", toJson changes.size), ("warmup", toJson o.warmup),
+    ("repeat", toJson nrep), ("repeat_rule", Json.str (if o.scope.isNone then "none"
+      else if o.repeats.isSome then "given" else "auto")),
     ("design", design.json), ("min_change", toJson o.minChange),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("builds", builds.getD Json.null),

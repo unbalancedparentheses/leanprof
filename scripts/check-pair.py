@@ -25,6 +25,15 @@ if config.get('bench_ns') and 'LEANPROF_BENCH_OUT' in os.environ:
         # a region that runs twice is summed; other names are ignored
         ns = config['bench_ns']
         bench.write(f"work\\t{ns // 2}\\nwork\\t{ns - ns // 2}\\nother\\t5\\n")
+if config.get('bench_reps') and 'LEANPROF_BENCH_OUT' in os.environ:
+    # repetitions (LEANPROF_BENCH_REPEAT): each tagged with its index, the
+    # region run twice per repetition (summed per index)
+    reps = config['bench_reps']
+    n = int(os.environ['LEANPROF_BENCH_REPEAT'])
+    with open(os.environ['LEANPROF_BENCH_OUT'], 'a') as bench:
+        for k in range(n):
+            ns = reps[k % len(reps)]
+            bench.write(f"work\\t{ns // 2}\\t{k}\\nwork\\t{ns - ns // 2}\\t{k}\\n")
 if config.get('write_output'):
     pathlib.Path('output.txt').write_text(config.get('output', 'same file'))
 print(config.get('stdout', 'same stdout'))
@@ -107,6 +116,37 @@ raise SystemExit(config.get('exit_code', 0))
     invoke(scoped + ['--scope', 'work', '--fixed', '--runs', '10'] + tail)
     data = json.loads(result.read_text())
     assert data['runs'] == 10
+    # --repeat N: the region runs N times per run, the fastest repetition counts
+    for side, ns in [('base', 1_000_000), ('candidate', 1_100_000)]:
+        reps = [3 * ns, ns, 2 * ns, ns + 7, 5 * ns]
+        (dirs[side] / 'config.json').write_text(json.dumps({'side': side, 'bench_reps': reps}))
+    order.write_text('')
+    rep = ['measure-pair', '--base', binary, '--candidate', binary,
+           '--base-cwd', dirs['base'], '--candidate-cwd', dirs['candidate'], '--out', result, '--scope', 'work']
+    proc = invoke(rep + ['--repeat', '5'] + tail)
+    data = json.loads(result.read_text())
+    assert data['repeat'] == 5 and data['repeat_rule'] == 'given' and data['runs'] == 8, (data['repeat'], data['runs'])
+    assert len(order.read_text().splitlines()) == 18  # and one warmup pair
+    assert {r['time_ns'] for r in data['samples']} == {1_000_000, 1_100_000}
+    assert all(len(r['reps_ns']) == 5 for r in data['samples'])
+    assert 'fastest of 5 repetitions per run' in proc.stdout, proc.stdout
+    # auto (the default): chosen from the load after the warmup pair, 1 to 10
+    proc = invoke(rep + tail)
+    data = json.loads(result.read_text())
+    assert data['repeat_rule'] == 'auto' and 1 <= data['repeat'] <= 10, data['repeat']
+    assert all(len(r.get('reps_ns', [0])) == data['repeat'] for r in data['samples'])
+    (dirs['base'] / 'config.json').write_text(json.dumps({'side': 'base', 'bench_reps': [4, 3, 2]}))
+    (dirs['candidate'] / 'config.json').write_text(json.dumps({'side': 'candidate', 'bench_reps': [4, 3, 2]}))
+    invoke(rep + ['--repeat', '3', '--fixed', '--runs', '6'] + tail)
+    data = json.loads(result.read_text())
+    assert data['repeat'] == 3 and {r['time_ns'] for r in data['samples']} == {2}
+    invoke(rep + ['--repeat', '0'] + tail, 2)
+    assert '--repeat needs --scope' in invoke(['measure-pair', '--base', binary, '--candidate', binary,
+                                               '--repeat', '3'], 2).stderr
+    for side, ns in [('base', 1_000_000), ('candidate', 1_100_000)]:
+        (dirs[side] / 'config.json').write_text(json.dumps({'side': side, 'bench_ns': ns}))
+    invoke(scoped + ['--scope', 'work', '--fixed', '--runs', '10'] + tail)
+    data = json.loads(result.read_text())
     # a sequential session that does not end at one of its looks is refused
     data['design'] = {**data['design'], 'first_look': 7, 'max_runs': 30}
     result.write_text(json.dumps(data))

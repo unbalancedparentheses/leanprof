@@ -661,6 +661,12 @@ def tests : StateT Nat IO Unit := do
     ((Judge.seqBounds (.fixed 20)).1 == #[(20, some 5)])
   check "sequential: the first look that can decide at most 30 pairs is 8 pairs"
     (((Judge.seqBounds { max := 30 }).1.find? (·.2.isSome)).map (·.1) == some 8)
+  check "repetitions: one on a machine loaded below half its CPUs, 5 below three quarters, else 10"
+    (Judge.autoRepeat (some 4) (some 18) none == 1 && Judge.autoRepeat (some 12) (some 18) none == 5 &&
+      Judge.autoRepeat (some 15) (some 18) none == 10 && Judge.autoRepeat none none none == 1)
+  check "repetitions: at most 100 ms of the region per run, at least one"
+    (Judge.autoRepeat (some 15) (some 18) (some 20000000) == 5 &&
+      Judge.autoRepeat (some 15) (some 18) (some 500000000) == 1 && Judge.autoRepeat (some 15) (some 18) (some 0) == 10)
   let sessions := 4000
   -- three standard errors of a 2.5% rate over `sessions` sessions
   let slack := 0.025 + 3 * Float.sqrt (0.025 * 0.975 / sessions.toFloat)
