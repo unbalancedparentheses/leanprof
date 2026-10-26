@@ -11,7 +11,7 @@ found is in the [case study](../../case-studies/mathlib.md).
 | | `Analysis/Fourier/LpSpace.lean` | 107.8 M → 57.9 M (−46.3%) | 3.1–4.0 s → 2.0–2.4 s |
 
 Heartbeats are for the whole file, from `leanprof elab --heartbeats FILE`
-before and after, compared with `leanprof compare`; they are exact (the
+before and after, compared with `leanprof compare`; they are exact (nearly the
 same on every run). Wall times are plain `lean` runs with Lake's setup for
 the module (imports included) on an Apple M5 Max shared with other jobs.
 

@@ -8,7 +8,7 @@
 | compile heartbeats | 667.45 kHB | 790.92 kHB | +123.47 kHB (+18.50%) | ❌ fail |
 | time (wall, noisy) | 11.84 ms | 18.34 ms | +6.50 ms (+54.87%) | noisy, not checked |
 
-Copies, allocations and calls do not vary between runs and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: copies, heartbeats.
+Copies, allocations and calls do not vary between runs (unless threads race) and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: copies, heartbeats.
 
 <details><summary>why <code>Regress.lean simp_case</code> got more expensive: +56.97 kHB; top change: simp lemma used (count) <code>step_eq</code> +41</summary>
 

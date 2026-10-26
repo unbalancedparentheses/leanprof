@@ -127,6 +127,6 @@ Six large or proof-heavy files: 296M heartbeats in total (2 min 38 s).
   String` 1,772 times. A direct coercion instance (or explicit conversions)
   would remove most of the first.
 
-Because these numbers are heartbeats, they are the same on every run, so a
+Because these numbers are heartbeats, they are nearly the same on every run, so a
 `leanprof compare` of `elab.json` before and after a change shows its exact
 effect.

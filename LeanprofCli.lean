@@ -68,7 +68,7 @@ def commands : List (String × String × String) := [
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
     "the package in parallel (--module-glob: those matching, e.g. 'Foo.Data.*'). --counts adds Lean's exact\n" ++
     "unfold counts (slower). --heartbeats counts\n" ++
-    "heartbeats, which are the same on every run. Terms and tactics are timed by exact source range\n" ++
+    "heartbeats, which are nearly the same on every run. Terms and tactics are timed by exact source range\n" ++
     "(line:column); --compact times only those (close to plain lean). On another Lean than leanprof's,\n" ++
     "the first run builds its driver for that Lean (seconds, once; ~/.cache/leanprof/drivers).\n" ++
     "--no-driver elaborates with `lean --json` instead."),
@@ -1041,7 +1041,7 @@ def compare (argv : List String) : IO UInt32 := do
     match base.scopes.get? k, new.scopes.get? k with
     | some (bt, bc), some (nt, nc) =>
       let pct := if bt > 0 then (nt - bt) / bt * 100 else 0
-      -- heartbeats do not vary between runs, but editing one declaration moves
+      -- heartbeats barely vary between runs, but editing one declaration moves
       -- its neighbours by a few: count increases above 1% and 1,000 heartbeats
       let slower := if base.exact && new.exact then nt - bt > max (bt * 0.01) 1000
         else pct > thr && (nt - bt) / 1e6 > minMs
@@ -2233,7 +2233,7 @@ def reportMd (argv : List String) : IO UInt32 := do
     out := out.push s!"| time (wall, noisy) | {fmtMs b.wall} | {fmtMs n.wall} | {fmtChange fmtMs b.wall n.wall} | noisy, not checked |"
   out := out.push ""
   let enforced := if o.failOn.isEmpty then "nothing (fail-on: none)" else ", ".intercalate o.failOn
-  out := out.push s!"Copies, allocations and calls do not vary between runs and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: {enforced}."
+  out := out.push s!"Copies, allocations and calls do not vary between runs (unless threads race) and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: {enforced}."
   let introEnd := out.size
   let row (m : MdMetric) (k : String) (x y : Float) : String :=
     let mark := if !m.bad.any (·.1 == k) then "" else if o.failOn.contains m.id then " ❌" else " ⚠️"
@@ -2583,7 +2583,7 @@ def sampleFindings (exe : String) (args : Array String) : IO (Array String × Ar
     (s!"leanprof run {exe}{a}", "exact: copies of shared values, tasks, waits (rebuilds with probes, puts your build back)"),
     ("leanprof explain", "after run: why each copy happened, and the fix in Lean"),
     (s!"leanprof fix --exe {exe}{a}", "apply that fix on a git branch, test, measure, commit it only if it helps"),
-    (s!"leanprof run --auto {exe}{a}", "every function's exact time and call count"),
+    (s!"leanprof run --auto {exe}{a}", "every function's time and exact call count"),
     (s!"samply load .lake/leanprof/{exe}.json", "flame graph with Lean names")])
 
 /-- Findings of a `stat` report: the costliest copy sites, then the hottest scopes. -/
@@ -2612,7 +2612,7 @@ def statFindings (exe : String) (args : Array String) : IO (Array String × Arra
     (s!"leanprof run {exe}{a}", "the same counts with every copy site, task and wait listed"),
     ("leanprof explain", if copies.isEmpty then "why each copy happened (none in this run)" else "why each copy happened, and the fix in Lean"),
     (s!"leanprof fix --exe {exe}{a}", "apply that fix on a git branch, test, measure, commit it only if it helps"),
-    (s!"leanprof run --auto {exe}{a}", "every function's exact time and call count"),
+    (s!"leanprof run --auto {exe}{a}", "every function's time and exact call count"),
     ("leanprof doctor", "what `leanprof` needs to sample instead, with no rebuild")])
 
 /-- Findings of a compile-time report: the costliest declarations. -/
@@ -2634,7 +2634,7 @@ def elabFindings : IO (Array String × Array (String × String)) := do
   let slowest := (getArr j "files").qsort (num · "total_ns" > num · "total_ns")
   let file := (slowest[0]?.map (str · "file")).getD "FILE.lean"
   return (findings, #[
-    (s!"leanprof elab --heartbeats {shellQuote file}", "exact (heartbeats, the same on every run) for the slowest file"),
+    (s!"leanprof elab --heartbeats {shellQuote file}", "exact (heartbeats, nearly the same on every run) for the slowest file"),
     (s!"leanprof elab --counts {shellQuote file}", "what isDefEq and whnf unfolded, instances tried, simp lemmas"),
     ("leanprof html", "the project view: folder, module, declaration, term, with source")])
 

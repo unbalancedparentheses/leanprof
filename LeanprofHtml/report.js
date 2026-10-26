@@ -507,7 +507,7 @@ function runTiles() {
 function elabTiles() {
   const d = elab.data, f = fAmt(elab), out = [];
   const tot = (x) => sum(arr(x, "scopes"), (s) => num(s, "total_ns"));
-  out.push(tile(hbUnit(elab) ? "compile heartbeats" : "compile time", f(tot(d)), hbUnit(elab) ? "exact, the same on every run" : "wall time, noisy", elabB ? { base: tot(elabB.data), cur: tot(d) } : null, f));
+  out.push(tile(hbUnit(elab) ? "compile heartbeats" : "compile time", f(tot(d)), hbUnit(elab) ? "exact, nearly the same on every run" : "wall time, noisy", elabB ? { base: tot(elabB.data), cur: tot(d) } : null, f));
   out.push(tile("lines with cost", fN(arr(d, "scopes").length), new Set(arr(d, "scopes").map((s) => isPos(s.pos) ? splitPos(s.pos)[0] : s.pos)).size + " files"));
   if (arr(d, "repeated").length) out.push(tile("repeated work", fN(arr(d, "repeated").length), "operations done more than once"));
   const top = arr(d, "scopes").slice().sort((a, b) => num(b, "total_ns") - num(a, "total_ns"))[0];
@@ -546,7 +546,7 @@ if (run || elab) addTab("flame", run && (run.flame || sampled) ? "Flame graph" :
 if (run) {
   const d = run.data, wall = num(d, "wall_ns");
   if (arr(d, "scopes").length) addTab("scopes", sampled ? "Declarations" : "Scopes", arr(d, "scopes").length, () => panel(null,
-    sampled ? "Sampled CPU time per Lean declaration, inclusive of what it calls." : "Exact time and calls per scope (profile! labels and, with --auto, functions), leanprof's own cost subtracted. * " + NEAR_PROBE + ".",
+    sampled ? "Sampled CPU time per Lean declaration, inclusive of what it calls." : "Time and exact calls per scope (profile! labels and, with --auto, functions), leanprof's own cost subtracted. * " + NEAR_PROBE + ".",
     table(arr(d, "scopes"), sampled ? [col("declaration", "name"), pcol("where", "pos"), ncol("CPU (incl.)", "total_ns", fNs, { bar: true }), { t: "% CPU", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }]
       : [col("scope", "name"), pcol("where", "pos"), { t: "kind", v: (r) => (r.auto ? "function" : "profile!") }, ncol("calls", "calls"), ncol("total", "total_ns", (v, r) => r && r.near_probe_cost === true ? h("span", { title: NEAR_PROBE + (holdsTiny(r) ? "\n" + holdsTiny(r) : "") }, tScope(r, "total_ns") + "*") : fScope("total_ns")(v, r), { bar: true }), ncol("self", "self_ns", fScope("self_ns")),
         { t: "% wall", v: (r) => wall > 0 ? num(r, "total_ns") / wall * 100 : 0, f: fPct, num: true }, ncol("mean", "mean_ns", fScope("mean_ns")), ncol("p50", "p50_ns", fScope("p50_ns")), ncol("p99", "p99_ns", fScope("p99_ns")), ncol("max", "max_ns", fNs),

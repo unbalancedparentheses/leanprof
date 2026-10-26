@@ -16,8 +16,9 @@ two reports already record:
 * `run` reports with `leanprof explain`'s findings (`explain.json`) for the
   head: the cause explain found for each copy site whose count went up.
 
-Everything compared is exact (heartbeats and counts do not vary between runs);
-what a report does not record is said to be not recorded, never estimated.
+Everything compared is exact (counts do not vary between runs unless threads
+race, heartbeats barely); what a report does not record is said to be not
+recorded, never estimated.
 -/
 
 namespace Leanprof.Regress
