@@ -27,6 +27,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   builds the candidate with `lake build NAME`, so a loop of verdicts against
   one base pays only the candidate's incremental build. The MCP tool takes
   `base_rev`, `exe`, `scope`, `min_change` and `fixed`.
+- Measured on the LeanBench case study's trials (shared Mac, load 4–13):
+  sequential `measure-pair --scope` took 0.89 s per verdict end to end
+  against LeanBench's 1.09 s (7.1 s for the old 20 fixed pairs), with 0
+  false verdicts in 20 and the 2.4% slowdown caught 4 of 5; at load up to
+  15 it took 1.9–2.3 s against LeanBench's 1.06 s.
 - One warmup pair instead of three; `lake env` for both sides at once, and
   the load average read in process instead of two `sysctl` per pair.
 

@@ -207,10 +207,16 @@ provenance and one complete experiment operation come first.
   - [x] Keep instrumented objects apart from the normal build: the next
     plain build after `measure` took 0.18 s on the Mac (it was a 10 s
     rebuild). `measure-pair` is the timing-only mode on plain builds.
-  - [ ] Cheaper paired verdicts: `measure-pair` took 7.1 s per verdict at 20
-    pairs (2.9 s at 6) against LeanBench's 0.74 s on the same Mac, with 0
-    false verdicts in 40 and a 2.4% slowdown caught 9 in 10
-    (docs/case-studies/leanbench.md).
+  - [x] Cheaper paired verdicts: `measure-pair` took 7.1 s per verdict at 20
+    pairs against LeanBench's 0.74 s. Now it stops when settled (a
+    group-sequential sign test, each claim wrong at most 2.5%), `--scope`
+    times one `Leanprof.bench` region and `--base-rev` caches the base:
+    0.89 s end to end against LeanBench's 1.09 s on the same trials at load
+    4–13 (0/20 false, 2.4% caught 4/5); still 1.9–2.3 s against 1.06 s at
+    load up to 15 (docs/case-studies/leanbench.md).
+  - [ ] Short timed regions are sensitive to load (unchanged code ran to 30
+    pairs unsettled at load 15): choose the work per run from the measured
+    spread, or report the per-run noise next to the verdict.
   - [x] `measure --scope NAME`: time a `profile!` scope instead of the whole
     process (a 10.4% slowdown read as +10.4%, was 8.2%).
   - [ ] Several named benchmarks per summary, each judged; read LeanBench's

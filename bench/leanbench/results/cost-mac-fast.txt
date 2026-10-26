@@ -1,0 +1,23 @@
+load: { 5.46 4.38 4.11 }
+setup LeanBench: lake build bench from scratch (fetch + LeanBench + Cli + workload): 37.80 s
+setup plain exe: lake build work after that: 0.65 s
+setup leanprof: first measure (builds runtime + shims): 4.65 s
+verdict 1: LeanBench 2.46 s, leanprof 7.97 s, lake rebuild after leanprof 0.22 s
+verdict 2: LeanBench 1.03 s, leanprof 7.81 s, lake rebuild after leanprof 0.21 s
+verdict 3: LeanBench 1.01 s, leanprof 9.64 s, lake rebuild after leanprof 0.25 s
+verdict 4: LeanBench 1.09 s, leanprof 11.77 s, lake rebuild after leanprof 0.27 s
+verdict 5: LeanBench 1.26 s, leanprof 11.42 s, lake rebuild after leanprof 0.36 s
+verdict 1: rebuild after an edit: work 1.52 s, bench 4.07 s; unchanged base 0.33 s; measure-pair 20 pairs 12.84 s, 10 pairs 6.71 s, 6 pairs 4.52 s,
+verdict 2: rebuild after an edit: work 0.75 s, bench 0.34 s; unchanged base 0.30 s; measure-pair 20 pairs 10.09 s, 10 pairs 6.62 s, 6 pairs 4.25 s,
+verdict 3: rebuild after an edit: work 1.11 s, bench 0.47 s; unchanged base 0.30 s; measure-pair 20 pairs 6.92 s, 10 pairs 5.77 s, 6 pairs 4.30 s,
+verdict 4: rebuild after an edit: work 0.75 s, bench 0.32 s; unchanged base 0.30 s; measure-pair 20 pairs 6.12 s, 10 pairs 5.10 s, 6 pairs 4.23 s,
+verdict 5: rebuild after an edit: work 0.85 s, bench 0.30 s; unchanged base 0.29 s; measure-pair 20 pairs 8.50 s, 10 pairs 6.09 s, 6 pairs 3.94 s,
+fast slow10 workbench: 5.89 s (24 pairs, base built , candidate build 1.49), 1.97 s (8 pairs, base hit , candidate build 0.87), 2.56 s (22 pairs, base hit , candidate build 0.69), 1.88 s (14 pairs, base hit , candidate build 0.76), 1.00 s (8 pairs, base hit , candidate build 0.51), 1.10 s (8 pairs, base hit , candidate build 0.61),
+fast slow10 work: 5.73 s (8 pairs, base built , candidate build 0.81), 3.51 s (8 pairs, base hit , candidate build 0.5), 3.37 s (8 pairs, base hit , candidate build 0.4), 3.22 s (8 pairs, base hit , candidate build 0.27), 3.36 s (8 pairs, base hit , candidate build 0.38), 3.47 s (8 pairs, base hit , candidate build 0.37),
+fast base workbench: 2.50 s (30 pairs, base hit , candidate build 0.82), 2.93 s (30 pairs, base hit , candidate build 0.98), 2.33 s (30 pairs, base hit , candidate build 0.76), 2.34 s (30 pairs, base hit , candidate build 0.85), 1.91 s (30 pairs, base hit , candidate build 0.44), 1.76 s (30 pairs, base hit , candidate build 0.42),
+fast base work: 6.75 s (18 pairs, base hit , candidate build 0.69), 4.26 s (12 pairs, base hit , candidate build 0.27), 4.36 s (12 pairs, base hit , candidate build 0.37), 9.80 s (30 pairs, base hit , candidate build 0.37), 4.39 s (12 pairs, base hit , candidate build 0.37), 2.98 s (8 pairs, base hit , candidate build 0.27),
+LeanBench after an edit: build + baseline + compare: 2.16 + 1.29 + 0.36 s, 0.28 + 0.41 + 0.37 s, 0.28 + 0.41 + 0.37 s, 0.29 + 0.41 + 0.37 s, 0.28 + 0.40 + 0.37 s, 0.28 + 0.40 + 0.37 s,
+verdict 1: measure --scope + judge 9.48 s, lake build workscope after it 0.39 s
+verdict 2: measure --scope + judge 9.34 s, lake build workscope after it 0.39 s
+verdict 3: measure --scope + judge 9.35 s, lake build workscope after it 0.38 s
+load: { 11.04 14.68 9.51 }
