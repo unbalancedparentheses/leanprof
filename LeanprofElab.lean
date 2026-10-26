@@ -1336,6 +1336,9 @@ def suggestionsJson (acc : Acc) : IO (Array Json) := do
     let texts := groups.getD k #[]
     let variants := texts.toList.eraseDups
     let sugg := variants.head!
+    -- a `simp` a macro runs (`decreasing_tactic`'s `simp_wf`): its suggestion names the
+    -- macro's hygienic options (`+zetaDelta✝`) and there is no call in the source to replace
+    if !acc.tacRanges.contains k && variants.any (·.contains '✝') then continue
     unless srcs.contains f do
       srcs := srcs.insert f (((← try IO.FS.readFile f catch _ => pure "").splitOn "\n").toArray)
     let lines := srcs.getD f #[]
@@ -1351,7 +1354,7 @@ def suggestionsJson (acc : Acc) : IO (Array Json) := do
           | .error e => e)
       | none =>
         (s!"{f}:{l}:{c + 1}", "", 0, texts.size,
-          "the call's whole range is unknown (it needs leanprof-elab-driver): apply by hand")
+          "the call's whole source range is unknown (generated syntax, or elaborated without leanprof-elab-driver): apply by hand")
     out := out.push (Json.mkObj [("pos", Json.str s!"{f}:{l}"), ("range", Json.str range),
       ("original", Json.str original), ("suggestion", Json.str sugg),
       ("lemmas", toJson (ElabWhy.onlyLemmas sugg).size), ("amount", toJson amount), ("count", toJson count),

@@ -671,8 +671,14 @@ def tools : Array Json := #[
     (exeProps ++ [("top", nProp "declarations shown (default 15)")]) ["executable"],
   tool "stat" "One-screen summary of a run: wall/CPU time, peak memory, allocations, copies, frees, tasks, top scopes."
     exeProps ["executable"],
-  tool "elab" "Compile cost per line and declaration of Lean files (elaboration, kernel, compiler), optionally in exact heartbeats."
+  tool "elab" ("Compile cost per line and declaration of Lean files (elaboration, kernel, compiler), optionally in " ++
+    "exact heartbeats. With why: for the costliest declarations, the causes the profile shows (a costly simp, " ++
+    "definitions unfolded, instance searches that fail, decide, the kernel, repeated work), each with what was " ++
+    "observed and a change to try, among them Lean's own `simp only [...]` list for each simp. With max_heartbeats: " ++
+    "every declaration above that budget (maxHeartbeats' unit, 1,000 heartbeats), an error if there is one.")
     [("files", aProp "Lean files"), ("heartbeats", bProp "count heartbeats (deterministic) instead of time"),
+     ("why", bProp "explain the costliest declarations and record Lean's simp only list for each simp"),
+     ("max_heartbeats", nProp "list every declaration above this many thousand heartbeats (implies heartbeats)"),
      ("top", nProp "lines shown")] ["files"],
   tool "measure" "Run an executable several times with probes into one summary, for judge."
     (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)"),
@@ -687,7 +693,9 @@ def tools : Array Json := #[
   tool "explain" ("Explain the costliest findings of a run report or live snapshot: why each copy of a shared value " ++
     "happens and how to fix it (for a report, `leanprof explain`'s diagnosis from the compiler's IR, with the fix " ++
     "in the program's own names), where a scope's time goes (own or nested), tail latency, allocations per call, " ++
-    "task granularity, failed reuse and closure calls. Not for sampled reports (they count no copies or calls).")
+    "task granularity, failed reuse and closure calls. Not for sampled reports (they count no copies or calls). " ++
+    "On an elab report (.lake/leanprof/elab.json): why the costliest declarations are slow to compile, observed " ++
+    "causes kept apart from suggested changes.")
     [("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
      ("name", sProp "only findings whose function, scope or name contains this"), ("limit", nProp "findings per kind (default 5)")] [],
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
@@ -834,9 +842,13 @@ def callTool (name : String) (a : Json) : IO Json := do
     if files.isEmpty then throw <| IO.userError "missing argument: files"
     -- `leanprof elab` reads options anywhere among its files (`--out F`)
     for f in files do notOption f
+    let budget := (argNat a "max_heartbeats").map (#["--max-heartbeats", toString ·]) |>.getD #[]
     let (rc, out, err) ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
+      (if argBool a "why" then #["--why"] else #[]) ++ budget ++
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
-    return textResult s!"{out}\n{tailText err 10}" (rc != 0)
+    -- exit code 1 with a budget: declarations above it (listed), not a failure to run
+    let overBudget := rc == 1 && !budget.isEmpty && (out.splitOn "heartbeat budget:").length > 1
+    return textResult s!"{if overBudget then "OVER BUDGET\n" else ""}{out}\n{tailText err 10}" (rc != 0 && !overBudget)
   | "measure" =>
     let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++
@@ -861,6 +873,11 @@ def callTool (name : String) (a : Json) : IO Json := do
     let limit := (argNat a "limit").getD 5
     match ← readJson? (inDir cwd path) with
     | some j =>
+      -- a compile-time report: why its costliest declarations are slow
+      if bool j "elab" then
+        notOption path
+        let (rc, out, err) ← runSelf #["explain", "--report", path, "--top", toString limit] cwd
+        return textResult s!"{out}\n{tailText err 5}" (rc != 0)
       -- as `leanprof explain`: a sampled report has no copies and no call counts
       if bool j "sampled" then
         return textResult (s!"{path} is from `leanprof sample`, which counts no copies or calls: " ++

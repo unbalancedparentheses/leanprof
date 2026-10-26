@@ -64,7 +64,7 @@ def commands : List (String × String × String) := [
     "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
     "Needs samply: the one on PATH, else the one `install.sh --samply` put in leanprof's home\n" ++
     "(`leanprof doctor` says how to get it)."),
-  ("elab", "[--heartbeats] [--compact] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
+  ("elab", "[--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
@@ -73,7 +73,11 @@ def commands : List (String × String × String) := [
     "heartbeats, which are nearly the same on every run. Terms and tactics are timed by exact source range\n" ++
     "(line:column); --compact times only those (close to plain lean). On another Lean than leanprof's,\n" ++
     "the first run builds its driver for that Lean (seconds, once; ~/.cache/leanprof/drivers).\n" ++
-    "--no-driver elaborates with `lean --json` instead."),
+    "--no-driver elaborates with `lean --json` instead.\n" ++
+    "--why: for the costliest declarations, the causes the profile shows and a change to try (observed and\n" ++
+    "suggested kept apart), with Lean's own `simp only [...]` list for each `simp` (`leanprof fix --elab` applies it).\n" ++
+    "--max-heartbeats N (implies --heartbeats): list every declaration above N thousand heartbeats\n" ++
+    "(maxHeartbeats' unit) and exit 1 if there is one, for CI."),
   ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
@@ -105,20 +109,22 @@ def commands : List (String × String × String) := [
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
     "machine was overloaded while measuring (--allow-overloaded judges a paired session anyway, for a\n" ++
     "machine that is always shared; the verdict says so)."),
-  ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] [--explain NEW_EXPLAIN.json] [--max-chars N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
+  ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--max-heartbeats N] [--title T] [--threshold PCT] [--min-ms MS] [--top N] [--explain NEW_EXPLAIN.json] [--max-chars N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
     "with pass/fail per exact metric, and why each regressed declaration or copy site got worse (as\n" ++
     "`compare`). At most N characters (default 60000, under GitHub's comment limit).\n" ++
-    "Exit 1 if a metric named by --fail-on (default: copies) regressed."),
-  ("explain", "[--report FILE] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]]",
+    "--max-heartbeats N lists every declaration of the head above N thousand heartbeats (maxHeartbeats' unit).\n" ++
+    "Exit 1 if a metric named by --fail-on (default: copies) regressed, or a declaration is above --max-heartbeats."),
+  ("explain", "[--report FILE | --elab] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]]",
     "For each copy of a shared value in the last report, say where the second reference comes from,\n" ++
     "read from the compiler's IR (.lake/build/ir/*.c), with source lines and, when the cause is\n" ++
     "recognised, the fix as Lean code with the program's own names. --json prints the ranked findings\n" ++
     "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
-    "#leanprof hovers."),
-  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]",
+    "#leanprof hovers. On an elab report (--elab: .lake/leanprof/elab.json), why the costliest declarations are\n" ++
+    "slow to compile and what to try (as `elab --why`)."),
+  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] | --elab [FILE.lean...] [--report FILE] [--top N] [--rounds N] [--test CMD | --no-test] [--dry-run] [--branch NAME]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
     "inserted back, an index loop for a loop over the array it updates), then check it: on a new git\n" ++
@@ -129,7 +135,12 @@ def commands : List (String × String × String) := [
     "why. The checkout is left as it was; a tree with uncommitted changes is refused. --exe profiles\n" ++
     "EXE first (otherwise the last report is read); --finding N picks finding N of the list printed;\n" ++
     "--all also considers copy sites of only empty or tiny values (as explain --all); --dry-run\n" ++
-    "prints the findings and the diff only."),
+    "prints the findings and the diff only.\n" ++
+    "--elab: compile time. Replace the costliest `simp` calls by Lean's own `simp only [...]` list for each\n" ++
+    "(from `elab --heartbeats --why` of FILE.lean..., or --report FILE), as one commit judged by `leanprof\n" ++
+    "experiment`: the build, the proof-preservation guard, the tests and the heartbeats of the changed modules\n" ++
+    "and their dependents. Edits that break their file or make their declaration dearer are dropped and the rest\n" ++
+    "tried again (at most --rounds, default 4). KEEP: a commit with the evidence on a new local branch."),
   ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
     "One experiment, from baseline to verdict. `start` records the base (HEAD, or --base REV) in a git\n" ++
     "worktree under .lake/leanprof/experiments/ID: the build (default targets and EXE), the tests (--test CMD,\n" ++
@@ -2104,6 +2115,8 @@ structure MdOpts where
   files : Array String := #[]
   explain : Option String := none
   maxChars : Nat := 60000
+  /-- `--max-heartbeats N`: fail when a declaration of the head costs more than N thousand heartbeats. -/
+  maxHeartbeats : Option Nat := none
 
 def mdMetricIds : List String := ["copies", "allocs", "calls", "heartbeats"]
 
@@ -2121,6 +2134,9 @@ partial def parseReportMd (o : MdOpts) : List String → Except String MdOpts
   | "--top" :: v :: rest => parseReportMd { o with top := v.toNat! } rest
   | "--explain" :: v :: rest => parseReportMd { o with explain := some v } rest
   | "--max-chars" :: v :: rest => parseReportMd { o with maxChars := v.toNat! } rest
+  | "--max-heartbeats" :: v :: rest => match v.toNat? with
+    | some n => parseReportMd { o with maxHeartbeats := some n } rest
+    | none => .error s!"--max-heartbeats needs a number (maxHeartbeats' unit, 1,000 heartbeats), not {v}"
   | a :: rest =>
     if a.startsWith "--" then .error s!"unknown option {a}"
     else parseReportMd { o with files := o.files.push a } rest
@@ -2219,8 +2235,20 @@ def reportMd (argv : List String) : IO UInt32 := do
         base := mapSum b.compile, new := mapSum n.compile, fmt := fmtMs, rows := d, bad := #[],
         rule := "informational: run `leanprof elab --heartbeats` for an exact count" }
   let failed := metrics.filter fun m => m.isExact && !m.bad.isEmpty && o.failOn.contains m.id
+  -- the heartbeat budget: every declaration of the head above it fails, new or not
+  let mut budget : Option (Nat × Array Json × Array Json) := none
+  if let some n := o.maxHeartbeats then
+    let some (b, h) := elabPair
+      | throw <| IO.userError "--max-heartbeats needs two elab reports (BASE_ELAB.json NEW_ELAB.json)"
+    unless b.heartbeats && h.heartbeats do
+      throw <| IO.userError "--max-heartbeats needs elab reports in heartbeats (`leanprof elab --heartbeats`)"
+    let i := if run.isSome then 2 else 0
+    let bj ← IO.ofExcept (Json.parse (← IO.FS.readFile o.files[i]!))
+    let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile o.files[i + 1]!))
+    budget := some (n, Leanprof.ElabWhy.overBudget bj n, Leanprof.ElabWhy.overBudget nj n)
+  let overBudget := match budget with | some (_, _, h) => !h.isEmpty | none => false
   let mut out : Array String := #[]
-  out := out.push s!"### {o.title}: {if failed.isEmpty then "✅ no regressions" else "❌ regression"}"
+  out := out.push s!"### {o.title}: {if failed.isEmpty && !overBudget then "✅ no regressions" else if failed.isEmpty then "❌ over the heartbeat budget" else "❌ regression"}"
   out := out.push ""
   out := out.push "| metric | base | head | change | check |"
   out := out.push "|---|---:|---:|---:|---|"
@@ -2233,10 +2261,29 @@ def reportMd (argv : List String) : IO UInt32 := do
     out := out.push s!"| {m.label} | {m.fmt m.base} | {m.fmt m.new} | {fmtChange m.fmt m.base m.new} | {check} |"
   if let some (b, n) := timeRow then
     out := out.push s!"| time (wall, noisy) | {fmtMs b.wall} | {fmtMs n.wall} | {fmtChange fmtMs b.wall n.wall} | noisy, not checked |"
+  if let some (n, bo, ho) := budget then
+    out := out.push (s!"| declarations above {groupDigits n} kHB | {bo.size} | {ho.size} | " ++
+      s!"{if ho.size == bo.size then "" else if ho.size > bo.size then s!"+{ho.size - bo.size}" else s!"-{bo.size - ho.size}"} | " ++
+      s!"{if ho.isEmpty then "✅ pass" else "❌ fail"} |")
   out := out.push ""
   let enforced := if o.failOn.isEmpty then "nothing (fail-on: none)" else ", ".intercalate o.failOn
   out := out.push s!"Copies, allocations and calls do not vary between runs (unless threads race) and heartbeats nearly so (a declaration counts as regressed above 1% and 1,000); time does, so it is shown but never checked. Enforced: {enforced}."
   let introEnd := out.size
+  if let some (n, bo, ho) := budget then
+    unless ho.isEmpty do
+      let baseKeys := bo.map (str · "key")
+      out := out.push ""
+      out := out.push s!"<details open><summary>heartbeat budget: {ho.size} {if ho.size == 1 then "declaration" else "declarations"} above {groupDigits n} kHB (maxHeartbeats' unit)</summary>"
+      out := out.push ""
+      out := out.push "| declaration | where | heartbeats | elab / kernel | |"
+      out := out.push "|---|---|---:|---|---|"
+      for sc in ho.toList.take o.top do
+        let isNew := !baseKeys.contains (str sc "key")
+        out := out.push (s!"| {mdCode (shorten (str sc "name") 60)} | {mdCode (str sc "pos")} | {fmtHeartbeats (num sc "total_ns")} | " ++
+          s!"{fmtHeartbeats (num sc "elab_ns")} / {fmtHeartbeats (num sc "kernel_ns")} | {if isNew then "new above the budget" else ""} |")
+      if ho.size > o.top then out := out.push s!"\n… and {ho.size - o.top} more (`leanprof elab --max-heartbeats {n}` lists all)"
+      out := out.push ""
+      out := out.push "</details>"
   let row (m : MdMetric) (k : String) (x y : Float) : String :=
     let mark := if !m.bad.any (·.1 == k) then "" else if o.failOn.contains m.id then " ❌" else " ⚠️"
     s!"| {mdCode k} | {m.fmt x} | {m.fmt y} | {fmtChange m.fmt x y}{mark} |"
@@ -2316,7 +2363,7 @@ def reportMd (argv : List String) : IO UInt32 := do
   let whyLines := shown.toList.flatMap fun w => ["", w]
   let final := out.toList.take introEnd ++ whyLines ++ out.toList.drop introEnd
   IO.println ("\n".intercalate final)
-  return if failed.isEmpty then 0 else 1
+  return if failed.isEmpty && !overBudget then 0 else 1
 
 /-! ## doctor -/
 

@@ -261,7 +261,12 @@ def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO 
     match applyEdits (← IO.FS.readFile e.file) #[e] with
     | .ok _ => if e.amount > 0 then edits := edits.push e
     | .error why => stale := stale.push why
-  let picked := (edits.toList.take o.top).toArray
+  -- calls inside a costlier call's range (`simpa using (by simp)`) are left to a later run:
+  -- the outer replacement keeps their text as it is
+  let upTo (l c l' c' : Nat) : Bool := l < l' || (l == l' && c ≤ c')
+  let overlaps (a b : SimpEdit) : Bool :=
+    a.file == b.file && !(upTo a.endLine a.endCol b.line b.col || upTo b.endLine b.endCol a.line a.col)
+  let picked := ((edits.foldl (fun acc e => if acc.any (overlaps e) then acc else acc.push e) #[]).toList.take o.top).toArray
   IO.println (s!"leanprof fix --elab: {all.size} `simp` call(s) with Lean's `simp only` list in {report}; " ++
     s!"{picked.size} to try, costliest first (`--top {o.top}`):")
   for e in picked do IO.println s!"  {describeEdit e hb}"
