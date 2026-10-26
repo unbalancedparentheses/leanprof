@@ -17,6 +17,9 @@ audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)
 
 
+TACTIC = "\ntheorem small_range : ∀ v, v < 24 → obligation v := by\n  intro v hv\n  unfold obligation\n  omega\n"
+
+
 def command(args, cwd):
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
     if result.returncode:
@@ -46,6 +49,10 @@ class ProofAuditTests(unittest.TestCase):
             "implemented_by": base.replace("def compute", "def alternate (n : Nat) : Nat := n\n@[implemented_by alternate]\ndef compute"),
             "native": base + "\ntheorem nativeEscape : (1 : Nat) = 1 := by native_decide\n",
             "comment": base + '\n-- sorry axiom @[extern] @[implemented_by]\ndef note : String := "sorry axiom"\n',
+            # a tactic proof that abstracts a `_proof_1` lemma, rewritten as a term without it
+            "tactic": base + TACTIC,
+            "tactic_term": base + TACTIC.replace(":= by\n  intro v hv\n  unfold obligation\n  omega",
+                                                 ":=\n  fun v _ => Nat.add_zero v"),
         }
         for label, source in variants.items():
             p = cls.directory / label
@@ -101,6 +108,23 @@ class ProofAuditTests(unittest.TestCase):
 
     def test_native_decide_trust_increase_fails(self):
         self.assertVerdict("native", "FAIL", "added_axiom_dependency")
+
+    def test_generated_lemma_gone_with_its_proof_passes(self):
+        names = set(self.snapshots["tactic"]["roots"]) - set(self.snapshots["tactic_term"]["roots"])
+        self.assertTrue(any(audit.generated(n) for n in names), names)
+        result = audit.compare(self.snapshots["tactic"], self.snapshots["tactic_term"])
+        self.assertEqual(result["status"], "PASS", json.dumps(result, indent=2))
+        # the theorem the proof belonged to is still an obligation
+        removed = audit.compare(self.snapshots["tactic"], self.snapshots["base"])
+        self.assertIn(("FAIL", "removed_declaration", "small_range"),
+                      {(f["status"], f["code"], f["subject"]) for f in removed["findings"]})
+
+    def test_generated_names(self):
+        for name in ("small_range._proof_1_1", "f._unsafe_rec", "f.eq_1", "f.eq_def", "f.match_2",
+                     "_private.A.0.f._proof_3", "f._auxLemma.4"):
+            self.assertTrue(audit.generated(name), name)
+        for name in ("eq_1", "preserved", "f.proof", "f.match", "_private.A.0.g", "fast._impl"):
+            self.assertFalse(audit.generated(name), name)
 
     def test_comments_and_strings_do_not_trigger(self):
         self.assertVerdict("comment", "PASS")

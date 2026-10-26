@@ -18,6 +18,19 @@ SIGNATURE = ("kind", "type", "levels", "extra", "isUnsafe", "isPartial")
 SEMANTICS = SIGNATURE + ("value", "implementedBy", "extern")
 
 
+# Name components of declarations Lean generates for another declaration: the
+# lemmas a tactic abstracts from a proof, equation and unfolding lemmas, matchers,
+# the compiled code of well-founded recursion. A proof rewrite removes or changes
+# them; they state nothing the project wrote. (A component in first position,
+# a theorem the user named `eq_1`, is not generated.)
+GENERATED = re.compile(r"(_proof|proof|_simp|eq|match)_\d+(_\d+)*|_auxLemma|eq_def|_unfold|_sunfold"
+                       r"|induct|splitter|_unsafe_rec|_unary|_binary|_mutual|fun_cases")
+
+
+def generated(name):
+    return any(GENERATED.fullmatch(part) for part in name.split(".")[1:])
+
+
 def finding(status, code, subject, detail):
     return dict(status=status, code=code, subject=subject, detail=detail)
 
@@ -92,11 +105,15 @@ def compare(base, candidate):
     roots = set(base["roots"])
     candidate_roots = set(candidate["roots"])
     for name in sorted(roots - candidate_roots):
+        if generated(name):
+            continue  # e.g. a tactic's `_proof_1`, gone with the proof that made it
         findings.append(finding("FAIL", "removed_declaration", name,
                                 "A baseline declaration is absent from the candidate modules"))
     for name in sorted(roots & candidate_roots):
         a, b = old[name], new[name]
-        if a["kind"] != b["kind"]:
+        if generated(name):
+            pass  # its axioms are still checked below; what it states is not an obligation
+        elif a["kind"] != b["kind"]:
             findings.append(finding("FAIL", "declaration_kind_changed", name,
                                     f"{a['kind']} became {b['kind']}"))
         elif any(a[k] != b[k] for k in SIGNATURE):
@@ -121,6 +138,9 @@ def compare(base, candidate):
     for name, b in sorted(candidate["runtimeEscapes"].items()):
         a = base["runtimeEscapes"].get(name, {})
         for attr in ("implementedBy", "extern", "isUnsafe", "isPartial"):
+            # the compiled code of well-founded recursion (`f._unsafe_rec`) is partial by design
+            if attr in ("isUnsafe", "isPartial") and generated(name):
+                continue
             if b[attr] and b[attr] != a.get(attr):
                 findings.append(finding("FAIL", "runtime_escape_changed", name,
                                         f"New or changed {attr}"))
@@ -129,9 +149,10 @@ def compare(base, candidate):
     # plus the types of its axioms. Theorem proof bodies are irrelevant here.
     pending = []
     for name in roots & candidate_roots:
-        if old[name]["kind"] == "theorem":
+        if old[name]["kind"] == "theorem" and not generated(name):
             pending.extend(old[name]["dependencies"])
-        pending.extend(old[name]["axioms"])
+        # an axiom the candidate no longer depends on cannot weaken it
+        pending.extend(set(old[name]["axioms"]) & set(new[name]["axioms"]))
     seen = set()
     while pending:
         name = pending.pop()
