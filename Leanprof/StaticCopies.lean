@@ -75,11 +75,27 @@ Lean emits as `..._closed_N`, nor a boxed scalar. -/
 def isGlobalObj (text : String) : Bool :=
   (text.startsWith "l_" || text.startsWith "lp_") && !has text "_closed_" && !has text "("
 
-/-- The global a variable holds, when it is one. -/
-def globalOf (f : CFun) (v : String) : Option String :=
+/-- The global a variable holds, when it is one: a module-level variable, or
+(Lean before 4.30) a closed constant whose initializer returns one (`closed`). -/
+def globalOf (closed : Std.HashMap String String) (f : CFun) (v : String) : Option String :=
   match defOf f (resolve f v) with
-  | some d => if d.fn == "" && isGlobalObj (cleanArg d.rhs) then some (cleanArg d.rhs) else none
+  | some d =>
+    let r := cleanArg d.rhs
+    if d.fn != "" then none else if isGlobalObj r then some r else closed.get? r
   | none => none
+
+/-- Closed constants that are only a module-level variable (`_init_X` returns
+`lp_pkg_events`): (X, the variable). -/
+def closedGlobals (file : FilePath) (lines : Array String) : Array (String × String) := Id.run do
+  let mut out := #[]
+  for h : i in [0:lines.size] do
+    let l := lines[i]
+    unless isFunHeader l && has l " _init_" do continue
+    let f := parseFun file lines i
+    if let [d, r] := f.stmts.toList then
+      if d.fn == "" && isGlobalObj (cleanArg d.rhs) && r.ret && r.rhs == d.lhs then
+        out := out.push (dropChars f.name 6, cleanArg d.rhs)
+  return out
 
 /-- Runtime calls that store their argument `i` in a container. -/
 def stores (s : Stmt) (i : Nat) : Bool :=
@@ -111,9 +127,24 @@ def knownEmpty (f : CFun) (v : String) : Bool :=
   | some d => d.fn.startsWith "lean_mk_empty" || d.fn == "l_Array_mkEmpty" || d.fn == "l_Array_emptyWithCapacity"
   | none => false
 
+/-- The structure field `v` was read from is released before `op` through
+another read of the same field (`lean_ctor_get(p, k)`, then `lean_dec`): Lean
+before 4.30 drops a reused structure's references to its fields this way, so
+an increment of `v` before it moves the reference out of the structure. -/
+def fieldReleased (f : CFun) (v : String) (op : Stmt) : Bool :=
+  match defOf f (resolve f v) with
+  | some d =>
+    d.fn == "lean_ctor_get" && f.stmts.any fun t => isDec t && t.idx < op.idx && compatible t op &&
+      match defOf f (t.args[0]?.getD "") with
+      | some d2 => d2.fn == "lean_ctor_get" && d2.args[0]? == d.args[0]? && d2.args[1]? == d.args[1]? &&
+          d2.lhs != d.lhs
+      | none => false
+  | none => false
+
 /-- Explain's analysis of `fd` shows a second reference to the updated value
 at the update, in this function. -/
 def localEvidence (f : CFun) (fd : Finding) : Bool :=
+  if fieldReleased f fd.var fd.op then false else
   match fd.holder with
   | .storedBy u =>
     -- the container it was stored in is released before the update
@@ -225,7 +256,7 @@ def retainedAt (f : CFun) (s : Stmt) (argIdx : Nat) (w : String) (chain : Option
     | none => false
   let incs := f.stmts.filter fun t => isInc t && t.args[0]? == some w && t.idx < s.idx && compatible t s &&
     !transfer t
-  if incs.isEmpty then return none
+  if incs.isEmpty || fieldReleased f w s then return none
   let n := incs.foldl (fun acc t => acc + (if t.fn.endsWith "_n" then (t.args[1]?.bind (·.toNat?)).getD 1 else 1)) 0
   let first := incs[0]!.idx
   let mut drops := 0
@@ -275,7 +306,8 @@ structure Scan where
   deriving Inhabited
 
 /-- Flag the updates of `funs` that are likely to copy. -/
-def scan (funs : Array CFun) : Scan := Id.run do
+def scan (funs : Array CFun) (closed : Std.HashMap String String := {}) : Scan := Id.run do
+  let globalOf := globalOf closed
   let bySym : Std.HashMap String CFun := funs.foldl (fun m f => m.insert f.name f) {}
   let mut sites : Array Site := #[]
   let mut empty := 0
@@ -655,6 +687,13 @@ def valueName (f : CFun) (v opName : String) (decl : Array (Nat × String)) (lin
       | .name n => return n
       | .elem c => return s!"{c}[…]"
       | .other => pure ()
+  -- the declaration updates one value with this operation (Lean before 4.30
+  -- names no C variables after the source)
+  let named := dedupS <| (codeLines decl).foldl (fun acc (_, l) => acc ++ (receivers opName l).filterMap fun
+    | .name n => some n
+    | .elem c => some s!"{c}[…]"
+    | .other => none) #[]
+  if named.size == 1 then return named[0]!
   return display f v
 
 /-- One flag, explained. -/
@@ -724,6 +763,7 @@ def explainStatic (argv : List String) : IO UInt32 := do
       ": build the package with `lake build` first")
   -- every function, and where it came from
   let mut funs : Array CFun := #[]
+  let mut closed : Std.HashMap String String := {}
   let mut moduleOf : Std.HashMap String (FilePath × String) := {}
   let mut stale : Array String := #[]
   for (pkg, file, m) in files do
@@ -731,10 +771,12 @@ def explainStatic (argv : List String) : IO UInt32 := do
     for f in functionsOf file lines do
       funs := funs.push f
       moduleOf := moduleOf.insert f.name (pkg, m)
+    for (c, g) in closedGlobals file lines do
+      closed := closed.insert c g
     if let some rel ← sourceFile pkg m then
       if (← (pkg / rel).metadata).modified.sec > (← file.metadata).modified.sec then
         stale := stale.push (pkg / rel).toString
-  let result := scan funs
+  let result := scan funs closed
   -- the report to check the flags against
   let reportPath := o.report.getD ".lake/leanprof/report.json"
   let report : Option Json ← if o.noReport then pure none
@@ -779,6 +821,20 @@ def explainStatic (argv : List String) : IO UInt32 := do
     let atCallee := ["loop-over-updated-array", "map-over-shared-array"].contains ex.cause
     let (at_, callerDeclName, callerLine) :=
       if atCallee then (here, declName, dl) else (at_, callerDeclName, callerLine)
+    let value := match s.via with
+      | .global g => userDecl (Leanprof.demangle g)
+      | .caller g _ w _ =>
+        match sourceName w with
+        | some n => if genericNames.contains n then valueName s.f s.fd.var s.fd.opName decl ex.lines else n
+        | none => display g w
+      | _ => valueName s.f s.fd.var s.fd.opName decl ex.lines
+    -- without source names in the C (Lean before 4.30): the value as the source names it
+    let ex := if sourceName s.fd.var |>.isSome then ex else
+      if value.startsWith "a temporary" || value.startsWith "the result of" || value == "a constant" then ex else
+      let ls := if !ex.lines.isEmpty then ex.lines else
+        (codeLines decl).filterMap fun (n, l) => if (receivers s.fd.opName l).any (fun r =>
+          r == .name value || (match r with | .elem c => s!"{c}[…]" == value | _ => false)) then some n else none
+      { ex with why := ex.why.replace "`a temporary`" s!"`{value}`", lines := ls, matched := ex.matched || !ls.isEmpty }
     let lines := dedup ex.lines
     let line := lines[0]?.getD callerLine
     let rel := let r := s.f.file.toString; if r.startsWith "./" then dropChars r 2 else r
@@ -791,13 +847,7 @@ def explainStatic (argv : List String) : IO UInt32 := do
     let names := #[fnName] ++ (if callerName.isEmpty then #[] else #[callerName])
     flags := flags.push {
       file := at_.file, line, decl := callerDeclName, fnName, sym := s.f.name, kind := s.kind, op := s.fd.opName,
-      value := (match s.via with
-        | .global g => userDecl (Leanprof.demangle g)
-        | .caller g _ w _ =>
-          match sourceName w with
-          | some n => if genericNames.contains n then valueName s.f s.fd.var s.fd.opName decl lines else n
-          | none => display g w
-        | _ => valueName s.f s.fd.var s.fd.opName decl lines),
+      value,
       ex := { ex with lines }, evidence, via, loop, runtime := runtimeOf report names s.f.name s.kind,
       viaKind := match s.via with | .here => "here" | .global _ => "global" | .caller .. => "caller",
       core := (coreUpdates.find? (·.1 == s.fd.op.fn)).isSome }

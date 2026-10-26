@@ -179,7 +179,9 @@ def parseFun (file : FilePath) (lines : Array String) (start : Nat) : CFun := Id
   let name := match (header.splitOn "(").head? with
     | some h => ((h.splitOn " ").getLast?.getD "").replace "*" ""
     | none => ""
-  let paramsText := dropRightChars (String.intercalate "(" ((header.splitOn "(").drop 1)) 2
+  -- up to the last `)`: Lean 4.35 ends the line with `){`, 4.27 with `) {`
+  let afterParen := String.intercalate "(" ((header.splitOn "(").drop 1)
+  let paramsText := String.intercalate ")" ((afterParen.splitOn ")").dropLast)
   let params := (splitArgs paramsText).filterMap fun p => (p.splitOn " ").getLast?.map (·.replace "*" "")
   let mut stmts : Array Stmt := #[]
   let mut conds : Std.HashMap String String := {}
