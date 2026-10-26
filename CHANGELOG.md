@@ -34,6 +34,11 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   running and the instrumented build in place until it ended, and a second
   signal then ended leanprof without cleaning up. `scripts/interrupt-check.py`
   covers both commands.
+- Every step of preparing an instrumented build (keeping the executable
+  aside and removing it, compiling leanprof's runtime, setting objects
+  aside) is inside the region that puts the normal build back on a failure
+  or a signal. A failed runtime compile (a missing compiler or header) left
+  the project's executable deleted.
 
 ### Compile time: a project view and published profiles
 

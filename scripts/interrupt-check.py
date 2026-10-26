@@ -13,7 +13,9 @@ program that waits), `leanprof run` is stopped while the program runs:
   signal on too);
 - by SIGKILL (nothing can be caught): a plain `lake build` afterwards must
   compile normal objects (leanprof forgot Lake's records of the instrumented
-  ones), and `leanprof doctor` puts the stashed normal build back.
+  ones), and `leanprof doctor` puts the stashed normal build back;
+- by a failure while preparing the instrumented build (compiling leanprof's
+  runtime): the executable and objects are as they were.
 
 "Normal" is checked by running the program with LEANPROF_JSON set: an
 instrumented build writes a report, a normal one does not.
@@ -107,7 +109,21 @@ try:
           and not os.path.exists(stash) and normal(work), d.stdout[-1500:])
     d = subprocess.run([LP, "doctor"], cwd=work, capture_output=True, text=True)
     check("doctor afterwards: nothing left", "no instrumented build left" in d.stdout, d.stdout[-1500:])
+    # a failure while preparing the instrumented build (here compiling
+    # leanprof's runtime, with a `cc` that fails) leaves the normal build as it was
+    fake = os.path.join(work, "fake-cc")
+    os.makedirs(fake)
+    with open(os.path.join(fake, "cc"), "w") as f:
+        f.write("#!/bin/sh\necho 'cc: refusing' >&2\nexit 1\n")
+    os.chmod(os.path.join(fake, "cc"), 0o755)
+    p = subprocess.run([LP, "run", "smoke"], cwd=work, capture_output=True, text=True,
+                       env=dict(os.environ, PATH=fake + os.pathsep + os.environ["PATH"], LEANPROF_QUIET="1"))
+    exe = os.path.join(work, ".lake", "build", "bin", "smoke")
+    check("a failed runtime compile is reported", p.returncode != 0 and "runtime" in p.stderr, p.stderr[-500:])
+    check("a failed runtime compile leaves the executable and objects in place",
+          os.path.exists(exe) and not os.path.exists(stash) and normal(work), p.stderr[-500:])
 finally:
     shutil.rmtree(work, ignore_errors=True)
+
 print("all interrupt checks passed" if failures == 0 else f"{failures} failed")
 sys.exit(1 if failures else 0)

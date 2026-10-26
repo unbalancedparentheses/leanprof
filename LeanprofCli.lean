@@ -549,8 +549,9 @@ partial def dropBuildRecords (deps : Bool) (exe : String) : IO Nat := do
 
 /-- Build `exe` with the copy shims in every package (with `deps := false`,
 only the root package; and, with `auto`, every function timed). A project that does not depend on leanprof gets leanprof's
-runtime compiled for its own Lean version, linked in by the wrapper. A failed
-build removes the instrumented objects again. -/
+runtime compiled for its own Lean version, linked in by the wrapper. A failure
+anywhere from setting the executable aside to the build itself puts the
+normal build back. -/
 def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false)
     (counters : Bool := false) (frees : Bool := false) (extraEnv : Array (String × Option String) := #[])
     (deps : Bool := true) : IO UInt32 := do
@@ -565,52 +566,65 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
       "(export PATH=$HOME/.elan/bin:$PATH); `leanprof doctor` checks the setup")
   -- a normal executable kept aside by an interrupted or `--keep` run comes back first
   restoreExe exe (removeUnsaved := false)
-  saveExe exe
-  -- Lake would keep an executable linked against an older leanprof runtime
-  -- (the rebuilt objects hash the same): make it relink
-  for f in exeFiles exe do
-    if ← f.pathExists then IO.FS.removeFile f
-  let cwd ← IO.currentDir
-  let linked := (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) ||
-    (← IO.FS.realPath root) == (← IO.FS.realPath cwd)
-  let mut runtimeEnv : Array (String × Option String) := #[]
-  unless linked do
-    let leanPrefix := (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
-    IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
-    let obj := cwd / ".lake" / "leanprof" / "runtime.o"
-    let rt := cwd / ".lake" / "leanprof" / "runtime-core.o"
-    let sc := cwd / ".lake" / "leanprof" / "runtime-selfcheck.o"
-    -- -mno-outline as in the lakefile: Apple clang's outliner made the
-    -- program's probes differ from (and cost more than) the calibrated ones
-    let inc := #["-O2", "-fPIC"] ++ (if System.Platform.isOSX then #["-mno-outline"] else #[]) ++
-      #["-I", leanPrefix ++ "/include", "-c"]
-    -- the runtime, and its self-check compiled as Lake compiles the program's
-    -- C (leanc with LEAN_CC set to the wrapper; copy flags only), in one object
-    let steps : List (String × Array String × Array (String × Option String)) := [
-      ("cc", inc ++ #[(root / "c" / "leanprof.c").toString, "-o", rt.toString], #[]),
-      ("leanc", #["-O2", "-c", (root / "c" / "selfcheck.c").toString, "-o", sc.toString], selfCheckEnv wrapper),
-      ("ld", #["-r", "-o", obj.toString, rt.toString, sc.toString], #[])]
-    for (cmd, args, env) in steps do
-      let out ← IO.Process.output { cmd, args, env }
-      if out.exitCode != 0 then
-        throw <| IO.userError s!"compiling leanprof's runtime failed ({cmd}):\n{out.stderr}"
-    runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
-  -- Lake does not notice a new LEAN_CC, so objects built without it must go:
-  -- they wait in .lake/leanprof/normal-objects and come back afterwards
-  let (stashed, pkgs) ← stashObjects deps
-  IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if counters then " and reuse/closure counters" else ""}{if frees then " and frees timed" else ""} in {if deps then "every package" else "the root package only"} ({stashed} normal objects of {pkgs} package{if pkgs == 1 then "" else "s"} set aside)"
-  let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
-    ("LEANPROF_ALLOCS", if allocs then some "1" else none),
-    ("LEANPROF_COUNTERS", if counters then some "1" else none),
-    ("LEANPROF_FREES", if frees then some "1" else none),
-    -- the build may run instrumented code (precompiled modules are loaded
-    -- into `lean`): no reports from it, and none over the program's
-    ("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none), ("LEANPROF_TRACE", none),
-    ("LEANPROF_STAT", none)] ++ runtimeEnv ++ extraEnv
-  let rc ← try spawnWait "lake" #["build", exe] buildEnv
-    catch e => cleanupInstrumented exe; throw e
+  -- From here every step changes the build (the executable is kept aside and
+  -- removed, the runtime compiled, objects set aside, the build run): a
+  -- failure at any of them, or a signal (caught from now on), puts the
+  -- normal build back.
+  guardSignals 0
+  let exeRemoved ← IO.mkRef false
+  let undo : IO Unit := do
+    restoreObjects
+    restoreExe exe (removeUnsaved := ← exeRemoved.get)
+  let rc ← try
+      saveExe exe
+      -- Lake would keep an executable linked against an older leanprof runtime
+      -- (the rebuilt objects hash the same): make it relink
+      exeRemoved.set true
+      for f in exeFiles exe do
+        if ← f.pathExists then IO.FS.removeFile f
+      let cwd ← IO.currentDir
+      let linked := (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) ||
+        (← IO.FS.realPath root) == (← IO.FS.realPath cwd)
+      let mut runtimeEnv : Array (String × Option String) := #[]
+      unless linked do
+        let leanPrefix := (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
+        IO.FS.createDirAll ((".lake" : FilePath) / "leanprof")
+        let obj := cwd / ".lake" / "leanprof" / "runtime.o"
+        let rt := cwd / ".lake" / "leanprof" / "runtime-core.o"
+        let sc := cwd / ".lake" / "leanprof" / "runtime-selfcheck.o"
+        -- -mno-outline as in the lakefile: Apple clang's outliner made the
+        -- program's probes differ from (and cost more than) the calibrated ones
+        let inc := #["-O2", "-fPIC"] ++ (if System.Platform.isOSX then #["-mno-outline"] else #[]) ++
+          #["-I", leanPrefix ++ "/include", "-c"]
+        -- the runtime, and its self-check compiled as Lake compiles the program's
+        -- C (leanc with LEAN_CC set to the wrapper; copy flags only), in one object
+        let steps : List (String × Array String × Array (String × Option String)) := [
+          ("cc", inc ++ #[(root / "c" / "leanprof.c").toString, "-o", rt.toString], #[]),
+          ("leanc", #["-O2", "-c", (root / "c" / "selfcheck.c").toString, "-o", sc.toString], selfCheckEnv wrapper),
+          ("ld", #["-r", "-o", obj.toString, rt.toString, sc.toString], #[])]
+        for (cmd, args, env) in steps do
+          let out ← IO.Process.output { cmd, args, env }
+          if out.exitCode != 0 then
+            throw <| IO.userError s!"compiling leanprof's runtime failed ({cmd}):\n{out.stderr}"
+        runtimeEnv := #[("LEANPROF_RUNTIME", some obj.toString)]
+      checkInterrupted
+      -- Lake does not notice a new LEAN_CC, so objects built without it must go:
+      -- they wait in .lake/leanprof/normal-objects and come back afterwards
+      let (stashed, pkgs) ← stashObjects deps
+      IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if counters then " and reuse/closure counters" else ""}{if frees then " and frees timed" else ""} in {if deps then "every package" else "the root package only"} ({stashed} normal objects of {pkgs} package{if pkgs == 1 then "" else "s"} set aside)"
+      let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
+        ("LEANPROF_ALLOCS", if allocs then some "1" else none),
+        ("LEANPROF_COUNTERS", if counters then some "1" else none),
+        ("LEANPROF_FREES", if frees then some "1" else none),
+        -- the build may run instrumented code (precompiled modules are loaded
+        -- into `lean`): no reports from it, and none over the program's
+        ("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none), ("LEANPROF_TRACE", none),
+        ("LEANPROF_STAT", none)] ++ runtimeEnv ++ extraEnv
+      checkInterrupted
+      spawnWait "lake" #["build", exe] buildEnv
+    catch e => undo; throw e
   if rc != 0 || (← caughtSignal) != 0 then
-    cleanupInstrumented exe
+    undo
     checkInterrupted
   else
     discard <| dropBuildRecords deps exe
