@@ -110,6 +110,12 @@ users than the rest of v0.2.0, and take priority over its long tail.
   finds both copy sites of lean-compiler-backend's old `CFG.build` and 2 of
   8 copying examples, with no false warning on 10 alternatives; not part of
   the command yet.
+  - [ ] Run `Tests/StaticCopies/check.py` in CI, checking static warnings
+    against instrumented copy counts, including exclusive updates and
+    ownership transfers that must not warn.
+  - [ ] Extend detection to map lookups, interprocedural sharing and
+    multi-threaded `IO.Ref` ownership. Validate each extension against
+    runtime measurements and publish false positives and missed copies.
 - [ ] **Make compile time the main target.** Most Lean users write proofs,
   not programs, and what they wait on is elaboration: Mathlib builds, slow
   `simp` calls, instance search. The compile-time side already works (all of
