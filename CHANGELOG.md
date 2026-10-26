@@ -482,6 +482,15 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - The VS Code extension's build tooling pins `@azure/msal-node` 7.1.1 (an
   advisory on the 6.x that `vsce` pulled in; not part of the `.vsix`).
 - The Lean versions workflow retries a toolchain download that timed out.
+- Tidy before v0.1.0, no change in behaviour beyond wording: the README
+  describes every command on `main` and calls probe times calibrated
+  estimates (counts are exact; repeatable unless threads race), and the
+  help, hints, HTML report and `report-md` note say the same; ROADMAP
+  statuses match `main`;
+  `docs/reproduce.md` points at the current benchmark run; the command uses
+  `LeanprofHtml`'s symbol-table helpers instead of copies; an unused
+  function, stale comments and the TypeScript checker's unused-parameter
+  noise in `report.js` are gone.
 
 ### Tiny functions
 
