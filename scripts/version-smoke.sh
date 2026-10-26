@@ -88,6 +88,10 @@ echo "== leanprof elab"
 head -12 elab.txt
 python3 "$check" .lake/leanprof/elab.json --elab --min-pos 2
 grep -q '"pos":"Main.lean:27"' .lake/leanprof/elab.json
+# on any Lean: elaborated by leanprof's driver (built for this Lean if it is not
+# leanprof's), with exact source ranges
+grep -q '"exact_ranges":true' .lake/leanprof/elab.json
+grep -q '"range":"Main.lean:27:65-27:71"' .lake/leanprof/elab.json
 
 if command -v samply >/dev/null 2>&1 || [ "$need_sample" = --sample ]; then
   echo "== leanprof sample"

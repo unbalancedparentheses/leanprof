@@ -118,10 +118,17 @@ lean_lib LeanprofHtml where
 /-- `leanprof top`, `dump` and `mcp`, imported by the command line. -/
 lean_lib LeanprofLive
 
+/-- The elab driver's source, compiled into the command with `include_str`: `elab`
+builds the driver from it for a project on another Lean. -/
+input_file elabDriverSrc where
+  path := "LeanprofElabDriver.lean"
+  text := true
+
 /-- `leanprof elab`, imported by the command, and its tests (run by `tests`), with those of
 why a declaration got more expensive (`Tests/Regress.lean`). -/
 lean_lib LeanprofElab where
   roots := #[`LeanprofElab, `LeanprofElabRange, `Tests.Elab, `Tests.Regress]
+  needs := #[elabDriverSrc]
 
 /-- `leanprof elab`'s in-process Lean frontend: elaborates a file with every term and
 tactic timed against its exact source range (LeanprofElabDriver.lean). It runs the

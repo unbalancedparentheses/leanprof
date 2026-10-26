@@ -55,6 +55,27 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   with 20,000 and shown as faster, and the same text in other declarations
   of the file was added in too. `scripts/check-html-ranges.py` (CI) compares
   such a report with itself.
+### Compile time: exact ranges on every supported Lean
+
+- `leanprof elab` on a project whose Lean is not leanprof's no longer falls
+  back to `lean --json` with approximate ranges: the first run builds
+  `leanprof-elab-driver` for that Lean, with that Lean (`lean -c`, `leanc`
+  against its shared libraries; 2 to 7 s on an M5 Max), from the driver's source
+  compiled into the command, and keeps it in `~/.cache/leanprof/drivers/`
+  (`LEANPROF_CACHE`, `XDG_CACHE_HOME`) by Lean commit, driver source and
+  Lean directory. Later runs reuse it. Terms and tactics then have exact
+  source ranges (`"exact_ranges":true`) and the definitions behind the
+  work are located by that driver (`--locate`), where leanprof could not
+  read that Lean's `.olean` files. `lean --json` is used only when the
+  build fails, and `elab` says why.
+- The driver's source builds on Lean 4.34.0-rc1, 4.34.0, 4.34.1, 4.35.0,
+  4.36.0-rc1 and nightly-2026-10-23 without version checks.
+- CI: the Lean versions matrix checks exact ranges on Tests/Smoke for each
+  toolchain and the driver cache (`scripts/driver-cache-check.sh`: built
+  once, reused, a failed build falls back with its reason); lean-regex
+  (4.34.0-rc1) and the installed release on lean4-cli `v4.34.0` (Fresh
+  install) expect exact ranges.
+
 ### First run: `leanprof` with no arguments, samply from the installer
 
 - `leanprof` with no arguments in a Lake project reads the lakefile and

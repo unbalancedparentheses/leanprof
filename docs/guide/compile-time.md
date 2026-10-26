@@ -92,11 +92,11 @@ declaration) and in the editor: hovering a declaration's `⚙` hint lists
 ## Terms and tactics, by exact source range
 
 `trace.profiler` attaches each command's trace to the command; the
-operations inside it keep no position. So when the project's Lean is the
-one leanprof was built with (the usual case: same toolchain), `elab` does
-not run `lean` but `leanprof-elab-driver`, Lean's own frontend run
-in-process: it loads the module as `lake` and `lean` would (its setup
-file: options, imports, plugins, shared libraries; `LEAN_PATH`;
+operations inside it keep no position. So `elab` does not run `lean` but
+`leanprof-elab-driver`, Lean's own frontend run in-process, built with the
+project's Lean (on another Lean than leanprof's, once: see below): it
+loads the module as `lake` and `lean` would (its setup file: options,
+imports, plugins, shared libraries; `LEAN_PATH`;
 asynchronous elaboration; the kernel), with the same trace options, and
 wraps, in that process only, every term and tactic elaborator and every
 macro. Each elaboration that takes longer than the threshold is recorded
@@ -136,14 +136,48 @@ descriptions the report reads, with `pp` limits (a description is cut to
 200 characters anyway), where `lean --json` prints every trace in full
 while elaborating: a full profile costs less than before (below).
 
-**Another Lean.** The driver can only load `.olean` files written by the
-Lean it was built with. When the project's `lean --githash` differs, or the
-driver is not built, or it cannot load a file's imports, `elab` says so and
-runs that project's `lean --json` as before: tactics are then placed on
-lines by finding their text in the source (a tactic Lean prints differently
-from how it is written is left on its declaration's line) and terms are not
-timed. `--no-driver` does that on purpose; `LEANPROF_ELAB_DRIVER=PATH`
-names another driver.
+**Another Lean.** A driver can only load `.olean` files written by the
+Lean it was built with. The one built with leanprof serves projects on
+leanprof's Lean. When the project's `lean --githash` differs, the first
+`elab` builds a driver for that Lean, with that Lean, from the driver's
+source (compiled into the command, so a release has it): `lean -c` and
+`leanc`, linked against that Lean's shared libraries as `lean` itself is.
+It says so and keeps the driver for the next runs:
+
+```
+leanprof: building leanprof-elab-driver for the project's Lean 4.34.0 (once; kept in ~/.cache/leanprof/drivers/293d5d0c0c3f-51ee28445160132a)
+leanprof: built in 3197 ms
+```
+
+The cache is `LEANPROF_CACHE`, else `$XDG_CACHE_HOME/leanprof`, else
+`~/.cache/leanprof`; a driver is kept by the Lean's commit, the driver's
+source (a new leanprof builds a new one) and the Lean's directory (it links
+against the libraries there). A build is done in a directory of its own and
+moved into place only once the driver runs and reports that commit, so a
+failed or concurrent build leaves nothing broken behind. On that Lean the
+driver also looks up the definitions behind the work (leanprof cannot
+read that Lean's `.olean` files itself), so the report has what it has on
+leanprof's own Lean. The driver source builds on every supported Lean
+(4.34.x, 4.35.x, the newest release candidate and the nightly: the Lean
+versions workflow checks `"exact_ranges":true` on each, daily).
+
+Building takes 2.1 to 6.9 s once per Lean (lean4-cli at `v4.34.0`, 5
+builds, Apple M5 Max at load 5 to 15; 26 s once with the machine at load
+57); after that, finding the driver is one file check. On lean4-cli's
+`Cli/Basic.lean` with Lean 4.34.0 (10 runs each), a profile through the
+cached driver takes 1.79 s (1.89 s with the definitions located), against
+1.76 s through `lean --json` and 1.64 s for plain `lean`. A driver built
+this way elaborates as fast as the one built with leanprof: with Lean
+4.35.0, 1.776 and 1.779 s against 1.778 and 1.744 s, with the same 373
+ranges.
+
+Only when that build fails (no `leanc` in the toolchain, an unwritable
+cache, a Lean the source does not build on), or the driver cannot load a
+file's imports, does `elab` say why and run that project's `lean --json`:
+tactics are then placed on lines by finding their text in the source (a
+tactic Lean prints differently from how it is written is left on its
+declaration's line) and terms are not timed. `--no-driver` does that on
+purpose; `LEANPROF_ELAB_DRIVER=PATH` names a driver to use as it is.
 
 Through `lean --json`, descriptions are printed on one line
 (`pp.oneline`): `Elab.step` describes a term with its whole syntax, so
@@ -173,7 +207,7 @@ term and tactic ranges; it has no repeated work and no definitions behind
 the work. It costs close to plain `lean` (see the
 [comparison](../case-studies/compile-time-vs-lean-source-profiler.md)), so
 it is the one to leave on, or to run on a large project first. It needs the
-driver (with another Lean, `elab` makes a full profile and says so).
+driver (without one, `elab` makes a full profile and says so).
 
 ## Whole projects
 
@@ -214,7 +248,7 @@ trace (Batteries' `String/Lemmas.lean` through `lean --json`: 1.2 s plain,
 
 At the default, `elab` takes 1.4 to 2.2 times as long as plain `lean` on
 Batteries' heaviest files, and `--compact` 1.01 to 1.3 times (4 to 20% more
-CPU time). Through `lean --json` (another Lean, or `--no-driver`) a full
+CPU time). Through `lean --json` (`--no-driver`, or no driver) a full
 profile is up to 1.8 times slower than through the driver
 (`String/Lemmas.lean`, whose traces print large terms: Lean prints every
 trace in full). The numbers are in the

@@ -16,7 +16,9 @@ rm -rf "$dir" "dist/$name.tar.gz"
 # executable: <root>/.lake/build/bin/leanprof
 mkdir -p "$dir/.lake/build/bin" "$dir/bin" "$dir/c" "$dir/scripts"
 cp .lake/build/bin/leanprof "$dir/.lake/build/bin/"
-# `leanprof elab`'s in-process frontend (exact source ranges), next to it
+# `leanprof elab`'s in-process frontend (exact source ranges), next to it, for
+# projects on the Lean it is built with; for other Leans, `elab` builds one from
+# the driver's source, which is compiled into the command (nothing else to ship)
 cp .lake/build/bin/leanprof-elab-driver "$dir/.lake/build/bin/"
 cp c/*.c c/*.h "$dir/c/"
 cp scripts/leanprof-cc scripts/leanprof-tiny.awk "$dir/scripts/"

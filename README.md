@@ -65,8 +65,8 @@ many, how many bytes, how much time, why the value was shared, and the fix.
 
 **Where it is behind:** LeanBench reaches a time verdict faster (0.74 s
 against 2.9–7.1 s); lean-source-profiler publishes all of Mathlib, leanprof
-Batteries and 40 Mathlib modules; exact compile-time ranges need the Lean
-leanprof was built with; tiny `profile!` scopes are timed less accurately
+Batteries and 40 Mathlib modules; on a Lean other than leanprof's, the
+first compile-time profile first builds a driver for it (seconds); tiny `profile!` scopes are timed less accurately
 than by sampling. Details and every number in
 [where leanprof wins, and where it does not](#where-leanprof-wins-and-where-it-does-not).
 
@@ -292,7 +292,8 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   lean-source-profiler's has timelines. The comparison above is against its latest release (0.3.0),
   whose default is the compact mode measured there; its main branch has
   since changed its dataset tooling and explorer, not re-tested here.
-  leanprof's exact ranges need the Lean it was built with.
+  On another Lean than its own, leanprof builds its driver for that Lean
+  once (seconds), as lean-source-profiler compiles its driver per toolchain.
 
 **Reviewed result, still awaiting independent replication:** the autoresearch
 loop found 12 compiler optimizations in about three hours. Review caught a
@@ -316,7 +317,7 @@ reproduction.
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – | – |
 | Peak memory per scope, freeing pauses | ✅ | – | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads | – |
-| Compile time | per file, declaration, term and tactic (exact ranges with the Lean leanprof was built with); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
+| Compile time | per file, declaration, term and tactic (exact ranges on every supported Lean: on another Lean than leanprof's, a driver is built for it once, in seconds); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
 | Exact regression checks, PR comments | ✅, with the cause of each ([example](docs/guide/ci-and-regressions.md#worked-example-batteries)) | thresholded time | – | – | mean against a saved baseline, fixed threshold |
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |

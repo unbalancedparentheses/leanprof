@@ -180,12 +180,12 @@ comments. LSP has neither.
 
 ## Gaps left, plainly
 
-- **One Lean per build.** The driver can only load `.olean` files of the
-  Lean it was built with; for a project on another toolchain, `elab` falls
-  back to `lean --json` (tactics by line, by their text; no terms) and
-  says so. LSP compiles its driver for each project's toolchain. Building
-  leanprof with the project's toolchain (as a Lake dependency, or a release
-  for that toolchain) gives the driver.
+- **One Lean per build** (fixed since). The driver can only load `.olean`
+  files of the Lean it was built with; for a project on another toolchain,
+  `elab` fell back to `lean --json` (tactics by line, by their text; no
+  terms). As LSP does, `elab` now compiles a driver for the project's
+  toolchain the first time it needs one (seconds) and keeps it
+  ([compile time](../guide/compile-time.md), "Another Lean").
 - **Terms and tactics under the threshold** are not recorded on their own
   (their time is in the range around them); LSP records every one.
   `--threshold 0` records them all, at a cost on large files.

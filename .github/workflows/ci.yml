@@ -282,7 +282,7 @@ jobs:
           printf '#!/bin/sh\necho 0123456789abcdef\n' > other-lean-driver && chmod +x other-lean-driver
           LEANPROF_ELAB_DRIVER=$PWD/other-lean-driver lake exe leanprof elab --heartbeats --threshold 0 --out other.json Examples/ElabHeavy.lean > other.txt 2> other.err
           cat other.err
-          grep -q "is not the one leanprof was built with" other.err
+          grep -q "is not the one .*other-lean-driver was built with" other.err
           grep -q "Examples/ElabHeavy.lean:28  refine" other.txt
           python3 -c "import json,sys; d=json.load(open('other.json')); sys.exit(0 if not d['exact_ranges'] and not d['ranges'] and any(t['pos'] == 'Examples/ElabHeavy.lean:22' for t in d['tactics']) else 1)"
           lake exe leanprof elab --no-driver --out nodriver.json Examples/ElabHeavy.lean > /dev/null
@@ -703,9 +703,10 @@ jobs:
           cat elab.err
           python3 $CHECK .lake/leanprof/elab.json --elab --min-pos 3
           grep -q "Regex/VM/Basic.lean:105  def eachStepChar" elab.txt
-          # another Lean than leanprof's: the driver cannot load its modules, `lean` is used
-          grep -q "is not the one leanprof was built with" elab.err
-          grep -q '"exact_ranges":false' .lake/leanprof/elab.json
+          # another Lean than leanprof's: the driver is built for it, with exact source ranges
+          grep -q "building leanprof-elab-driver for the project's Lean 4.34.0-rc1" elab.err
+          grep -q '"exact_ranges":true' .lake/leanprof/elab.json
+          grep -q '"range":"Regex/VM/Basic.lean:[0-9]*:[0-9]*-[0-9]*:[0-9]*"' .lake/leanprof/elab.json
 
   # The exact published numbers that are cheap to reproduce (docs/reproduce.md):
   # copies, allocations, calls and counts of the README example, Tests/Smoke,
