@@ -28,6 +28,11 @@ on:
         description: "Version to package as (default: lakefile.lean's), dry run: nothing is published"
         required: false
         default: ""
+# a newer push to the same branch replaces its dry run; a tag's release is
+# never cancelled
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 permissions:
   contents: read
 jobs:
