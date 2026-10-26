@@ -563,7 +563,7 @@ jobs:
         run: |
           lake build odd
           $LP/demangle-check .lake/build/bin/odd
-          # --time-tiny: «top level» and «ελ» are `n + 22`, too small to time, so
+          # --time-tiny: «top level» and «ελ» are `n + 22` on UInt64, too small to time, so
           # plain --auto leaves them out of the rows (checked after)
           $LP/leanprof run --auto --time-tiny --json odd.json odd -- 10
           python3 $CHECK odd.json --min-pos 5 --expect "«top level»=OddNames/Basic.lean" \

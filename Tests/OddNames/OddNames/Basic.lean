@@ -73,5 +73,6 @@ where
 
 end Odd
 
-@[noinline] def «top level» (n : Nat) : Nat := n + 22
-@[noinline] def «ελ» (n : Nat) : Nat := n + 23
+-- UInt64: `Nat` addition can take big-number code, so it is not too small to time
+@[noinline] def «top level» (n : UInt64) : UInt64 := n + 22
+@[noinline] def «ελ» (n : UInt64) : UInt64 := n + 23
