@@ -14,6 +14,7 @@
  * signal while nothing runs ends the command at once. */
 #include <lean/lean.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -54,4 +55,12 @@ LEAN_EXPORT lean_obj_res leanprof_cli_guard(uint32_t pid, lean_obj_arg w) {
 LEAN_EXPORT lean_obj_res leanprof_cli_caught(lean_obj_arg w) {
     (void)w;
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)lpc_caught));
+}
+
+/* The 1-minute load average without spawning sysctl (measure-pair reads it
+ * after every pair); negative when unavailable. */
+LEAN_EXPORT lean_obj_res leanprof_cli_loadavg(lean_obj_arg w) {
+    (void)w;
+    double l[1];
+    return lean_io_result_mk_ok(lean_box_float(getloadavg(l, 1) == 1 ? l[0] : -1.0));
 }

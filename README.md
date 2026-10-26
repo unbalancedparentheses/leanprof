@@ -118,8 +118,8 @@ All profiled from outside, without changing the projects:
 ```
 curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | sh
 cd your-lean-project
-leanprof doctor                      # checks Lean, clang, samply
-leanprof sample myapp -- args        # where the time goes
+leanprof                             # finds what to profile, samples it, top findings and next steps
+leanprof myapp -- args               # the same for one of several executables, with its arguments
 leanprof run myapp -- args           # exact counts, copies, tasks
 leanprof explain                     # why each copy happened, and the fix
 leanprof fix --exe myapp -- args     # apply it on a branch, test, measure, commit a KEEP
@@ -129,7 +129,9 @@ leanprof elab --heartbeats Foo.lean  # what each line costs to compile
 Your project needs no changes: leanprof compiles its runtime for your Lean
 version (4.34 and later) and puts your normal build back afterwards. The
 installer downloads a release for macOS (arm64, x86-64) or Linux (x86-64,
-arm64), checked against `SHA256SUMS`, or builds from source; Windows is not supported (WSL 2
+arm64), checked against `SHA256SUMS`, or builds from source, and offers to
+fetch [samply](https://github.com/mstange/samply) (pinned, checksum-verified)
+for sampling; `leanprof doctor` says what is missing. Windows is not supported (WSL 2
 works). To mark code with `profile!`, assert in tests that code does not copy
 or allocate, or use `#leanprof` in the editor, add the dependency:
 
@@ -179,6 +181,7 @@ of the run, to agents.
 
 | | command |
 |---|---|
+| Pick the workload (the executable, the tests, or compile time), profile it, top three findings and the commands that go deeper | `leanprof` |
 | CPU time per Lean declaration, no probes; flame graph with Lean names | `leanprof sample myapp` |
 | Exact time and calls per function or `profile!` scope, own cost subtracted (`--auto` leaves functions too small to time untimed; `--time-tiny` counts them) | `leanprof run [--auto] myapp` |
 | Copies of shared arrays and strings, with file:line, the reason and the fix | `leanprof run`, `leanprof explain` |
@@ -273,7 +276,14 @@ idle AMD Ryzen 9 7950X3D with the CPU frequency fixed ([results](bench/linux/aft
   against LeanBench's 0.74 s; `measure` + `judge` takes 5.0 s and no longer
   forces a rebuild afterwards. LeanBench times the action in process; for a
   plain binary the whole-process dilution was small (10.4% read as 10.0%),
-  and `measure --scope NAME` times one `profile!` scope.
+  and `measure --scope NAME` times one `profile!` scope. Since then
+  `measure-pair` stops once its verdict is settled (a group-sequential sign
+  test: each claim wrong at most 2.5% of the time) and `--scope` times one
+  `Leanprof.bench` region of a plain binary: on the same trials, at load
+  4–13, that took 0.89 s per verdict end to end (candidate build included)
+  against LeanBench's 1.09 s, with 0 false verdicts in 20 and the 2.4%
+  slowdown caught 4 of 5 (LeanBench at 5%: 0 of 5); at load up to 15 it
+  took 1.9–2.3 s against LeanBench's 1.06 s with its rebuild.
 - **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)**
   publishes profiles of all of Mathlib (8,556 files); leanprof's
   [published profiles](docs/profiles/README.md) cover all of Batteries and
@@ -300,6 +310,7 @@ reproduction.
 | Run time | exact and sampled | manual spans | – | sampled | wall time per named benchmark: mean, stddev, percentiles |
 | Overhead while recording | about 6–7 ns per scope on the Mac, 23 ns on Linux; constant, subtracted | 4.6 µs to 88 µs per span, growing with events | – | very low | none (times the plain build, two clock reads per sample) |
 | Works without changing the project | ✅ | – | ✅ | ✅ | – (a dependency and a bench module) |
+| First report | `leanprof` alone picks the workload and samples it: 8.6 s on a new `lake new` project, after a 4.8 s install with samply (Mac) | not measured | not measured | not measured | after adding the dependency and writing a bench module |
 | Lean names and file:line | ✅ | your span names | ✅ (compile time) | mangled C names | your benchmark names |
 | Copies, allocations, failed reuse, closures | ✅ | – | – | – | – |
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time | – | – | – | – |
@@ -310,7 +321,7 @@ reproduction.
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |
 | Seeded slowdowns caught, quiet machine ([case study](docs/case-studies/leanbench.md)) | 2%: 5/5, 5% and up: 5/5; never a false alarm in 20 | – | – | – | at a 5% threshold: 2%: 0/5, 4.8%: 2/5, 10% and up: 5/5; 0 false alarms in 20 |
-| Wall time per verdict | `measure-pair` 7.1 s (20 pairs; 2.9 s at 6), `measure` + `judge` 5.0 s; Mac, shared | – | – | – | 0.74 s on the same Mac (0.6 s on Linux) |
+| Wall time per verdict | sequential `measure-pair --scope` 0.89 s end to end at load 4–13 (1.9–2.3 s at load up to 15); 5.5 s timing whole 20-action processes; Mac, shared | – | – | – | 1.09 s in the same run (1.06 s with a rebuild at load up to 15; 0.74 s earlier, 0.6 s on Linux) |
 
 ## Documentation
 

@@ -320,19 +320,39 @@ leanprof measure-pair \
   --base ../base/.lake/build/bin/myapp \
   --candidate ../candidate/.lake/build/bin/myapp \
   --base-cwd ../base --candidate-cwd ../candidate \
-  --runs 20 --out paired.json -- INPUT
+  --out paired.json -- INPUT
 leanprof judge paired.json
 leanprof judge --min-change 2 paired.json
 ```
+
+In a loop of many verdicts against one base (an autoresearch loop, or every
+commit of a branch against `main`), let leanprof keep the base build:
+
+```sh
+leanprof measure-pair --base-rev main --exe myapp --scope work -- INPUT
+```
+
+builds `myapp` at `main` once into `.lake/leanprof/base/<commit>-<settings>/`
+(a `git archive` of the commit, with the project's `.lake/packages` copied in
+when its manifest is the same there; no worktree is registered), reuses it
+for every later verdict while the commit and the build settings (`ELAN_TOOLCHAIN`,
+`LEAN_CC`, `LEANC_OPTS` and the `LEANPROF_*` build variables) stay the same,
+and builds the candidate with `lake build myapp` in `--candidate-cwd`
+(default `.`). The base runs in its own tree, so files the program reads come
+from that commit. The session's `builds` says whether the base was built or
+reused and how long each build took. Delete `.lake/leanprof/base` to drop the
+cache.
 
 Binary paths resolve relative to the directory where you invoke leanprof.
 Both programs receive the same argument vector, without shell interpretation;
 their working directories may differ. Build both normally first and let build
 and test jobs finish. `measure-pair` does not modify either build.
 
-The default is three warmup pairs followed by 20 measured pairs, alternating
-baseline/candidate and candidate/baseline order. `--runs` accepts 6–1000 pairs;
-`--warmup` accepts 0–1000. The session records every duration, exit status,
+The default is one warmup pair, then measured pairs in alternating
+baseline/candidate and candidate/baseline order until the time verdict is
+settled (below), at most 30 pairs. `--runs` sets that maximum (6–1000);
+`--fixed` measures exactly `--runs` pairs with no early stop; `--warmup`
+accepts 0–1000. The session records every duration, exit status,
 stdout/stderr fingerprint, working directory and per-pair machine load. Binary
 fingerprints are checked before and after collection to detect rebuilds during
 the session; these FNV fingerprints are not cryptographic attestations.
@@ -348,7 +368,37 @@ even for DISCARD; use `judge`'s exit status (0 KEEP, 1 DISCARD, 2 invalid input)
 distribution-free 95% confidence interval for its population median, using
 binomial order statistics. A timing improvement counts only when the entire
 interval is below `-min-change` (default 1%); a regression counts when the entire
-interval is above `+min-change`. Otherwise timing is inconclusive. Overload
+interval is above `+min-change`; an interval inside `±min-change` says there
+is no change beyond it. Otherwise timing is inconclusive.
+
+**Stopping early, validly.** `measure-pair` looks at the changes after 6, 8,
+10, … pairs and stops at the first look that settles one of those three
+outcomes (with its own `--min-change`, default 1%). Taking the fixed-sample
+interval at every look would make it wrong more often than 5%, so each look
+uses its own order statistics, fixed in advance: a group-sequential sign test
+whose boundaries are computed exactly from the Binomial(n, ½) walk of the
+signs, with the error spent linearly in the pairs measured (Lan–DeMets
+spending). Over all the looks of a session the interval misses the true
+median by more on either side at most 2.5% of the time, however the session
+stopped, so each claim — slower than `+min-change`, faster than
+`-min-change`, within `±min-change` — is wrong at most 2.5% of the time; any
+false claim of a change in either direction, at most 5%. `judge` on a saved
+session recomputes the same interval (the session records its design) and
+may use another `--min-change`. The tests check the spent error exactly and
+the rates by simulation (4,000 sessions per case, heavy-tailed and skewed
+noise): a true median exactly at +1% was called slower 2.1% and within ±1%
+2.2% of the time; unchanged code was settled within ±1% in every session
+after about 11 pairs, a 2.4% change after about 9.
+
+**Timing one region.** `--scope NAME` times only a region the program marks,
+not the whole process, so start-up and setup no longer dilute a change and
+each run can do little work. Wrap it in `Leanprof.bench "NAME" fun _ => ...`
+(`import Leanprof.Bench`), or, without depending on leanprof, after the region
+append `NAME<TAB>NANOSECONDS` to the file named by `$LEANPROF_BENCH_OUT`
+(both use `IO.monoNanosNow`; a region that runs several times in one process
+is summed). Nothing else is instrumented. A run that reports no such region
+is an error. The session also records each run's whole-process time
+(`process_ns`). Overload
 during any sampled boundary disables the timing verdict, unless you pass
 `--allow-overloaded`: on a machine that is never below its CPU count (the
 shared 18-core Mac of the [dogfooding study](../case-studies/dogfood-lcb-concrete.md)
@@ -359,9 +409,9 @@ independent.
 
 The interval assumes independent pairs. Alternation reduces gradual drift; it
 does not eliminate periodic interference, thermal effects or systematic bias.
-Choose the run count before measurement; repeatedly rerunning until KEEP is
-not a valid 95% procedure. Timing includes process startup and output capture.
-There is no automatic early stopping or per-scope timing in this command.
+Use the built-in stopping rule rather than rerunning sessions until one says
+KEEP: reruns are not covered by it. Without `--scope`, timing includes process
+startup and output capture.
 
 This is a timing-only session: it does not count copies, allocations or compile
 heartbeats. Keep the existing `measure`/`judge BASE NEW` checks for exact metrics,

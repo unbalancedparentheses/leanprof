@@ -293,6 +293,13 @@
  "smoke.failed_run_clears": true,
  "smoke.last_report": true,
  "smoke.measure.copies": 2998,
+ "smoke.noargs": [
+  0,
+  true,
+  true,
+  true
+ ],
+ "smoke.noargs_restored": true,
  "smoke.restored": true,
  "smoke.run_out": true,
  "smoke.runtime_outlined": 0,

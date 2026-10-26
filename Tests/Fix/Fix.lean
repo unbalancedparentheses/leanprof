@@ -8,9 +8,9 @@ fresh git repository. It does not depend on leanprof.
   `fix` must KEEP it and commit it.
 * `smooth` loops over the array it updates (`loop-over-updated-array`). The
   fix `explain` prints, a loop over the indices, reads the current array, and
-  here the body writes the element the next pass reads: the output changes.
-  The tests still pass (they only check sizes), so only the comparison of
-  outputs catches it: `fix` must DISCARD it.
+  here the body writes the element the next pass reads: the values would
+  change. The tests would still pass (they only check sizes), so `fix` must
+  refuse the rewrite from the code, before changing anything.
 -/
 
 def buckets (n k : Nat) : Array (Array Nat) := Id.run do

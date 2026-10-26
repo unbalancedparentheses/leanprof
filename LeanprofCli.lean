@@ -4,6 +4,7 @@ import Leanprof.Explain
 import Leanprof.Fix
 import Leanprof.Judge
 import Leanprof.Regress
+import Leanprof.Workload
 import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
@@ -58,7 +59,8 @@ def commands : List (String × String × String) := [
     "graph with Lean names. The sampled report becomes the last report, .lake/leanprof/report.json\n" ++
     "(--json FILE also saves it to FILE). EXE is a target of this project or a path to any program, such as\n" ++
     "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
-    "Needs samply (brew install samply / cargo install samply)."),
+    "Needs samply: the one on PATH, else the one `install.sh --samply` put in leanprof's home\n" ++
+    "(`leanprof doctor` says how to get it)."),
   ("elab", "[--heartbeats] [--compact] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
@@ -81,10 +83,17 @@ def commands : List (String × String × String) := [
     "judge compares only summaries measured the same way.\n" ++
     "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
     "For `judge` and autoresearch loops."),
-  ("measure-pair", "--base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
-    "Measure two prebuilt binaries in alternating AB/BA order (default 20 pairs, 3 warmups).\n" ++
-    "No builds or probes are added. Save every timing, exit status and output hash in one session.\n" ++
-    "Use `judge PAIR.json` for a paired 95% median interval; at least 6 pairs are required."),
+  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output FILE] [--out FILE] [-- ARGS...]",
+    "Measure two prebuilt binaries in alternating AB/BA order (1 warmup pair), stopping as soon as the\n" ++
+    "time verdict is settled: slower or faster by more than PCT% (default 1), or within ±PCT%; at most N\n" ++
+    "pairs (default 30), looking after 6, 8, 10, ... pairs (a group-sequential sign test: each of these\n" ++
+    "claims is wrong at most 2.5% of the time). --fixed measures exactly N pairs instead.\n" ++
+    "--scope NAME times only the region the program wraps in `Leanprof.bench \"NAME\"` (or reports as\n" ++
+    "`NAME<TAB>NANOSECONDS` lines appended to $LEANPROF_BENCH_OUT), not the whole process.\n" ++
+    "--base-rev REV --exe NAME builds NAME at git revision REV once, kept in .lake/leanprof/base by commit\n" ++
+    "and build settings, and builds the candidate with `lake build NAME` in --candidate-cwd (default .).\n" ++
+    "No probes are added. Saves every timing, exit status and output hash in one session,\n" ++
+    "and prints `judge PAIR.json`'s verdict."),
   ("judge", "[--min-change PCT] [--allow-overloaded] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, allocations, heartbeats or time got worse. Time counts only\n" ++
@@ -167,7 +176,8 @@ def summary : String → String
 
 def usage : String :=
   "leanprof: profiler for Lean 4 programs (https://github.com/unbalancedparentheses/leanprof)\n\n" ++
-  "usage: leanprof COMMAND [OPTIONS]   (or `lake exe leanprof` in a project that depends on it)\n\n" ++
+  "usage: leanprof COMMAND [OPTIONS]   (or `lake exe leanprof` in a project that depends on it)\n" ++
+  "In a Lake project, `leanprof` alone (or `leanprof EXE -- ARGS`) finds what to profile, profiles it and says what next.\n\n" ++
   String.join (commands.map fun (c, _, _) => s!"  {c.pushn ' ' (14 - c.length)}{summary c}\n") ++
   "\nleanprof help COMMAND shows a command's options. Docs: docs/guide/getting-started.md"
 
@@ -175,6 +185,105 @@ def commandHelp (c : String) : Option String :=
   (commands.find? (·.1 == c)).map fun (c, opts, d) => s!"usage: leanprof {c} {opts}\n\n{d}"
 
 def usageFor (c : String) : String := (commandHelp c).getD usage
+
+/-! ## The tools leanprof uses, and how to install them -/
+
+/-- The system's package manager, for install commands. -/
+inductive Os where
+  | mac | debian | arch | fedora | linux
+  deriving BEq
+
+def detectOs : IO Os := do
+  if System.Platform.isOSX then return .mac
+  let rel ← try IO.FS.readFile "/etc/os-release" catch _ => pure ""
+  let field (k : String) : String := ((rel.splitOn "\n").find? (·.startsWith s!"{k}=")).map
+    (fun l => ((l.drop (k.length + 1)).toString.replace "\"" "")) |>.getD ""
+  let ids := (field "ID" ++ " " ++ field "ID_LIKE").splitOn " "
+  if ids.any (· ∈ ["debian", "ubuntu"]) then return .debian
+  if ids.any (· ∈ ["arch", "manjaro"]) then return .arch
+  if ids.any (· ∈ ["fedora", "rhel", "centos"]) then return .fedora
+  return .linux
+
+/-- The command that installs `tool` (`clang` or `objcopy`) on this system. -/
+def installHint (tool : String) : IO String := do
+  let os ← detectOs
+  return match tool, os with
+    | "clang", .mac => "xcode-select --install   (Apple's command line tools; or brew install llvm)"
+    | "clang", .debian => "sudo apt install clang"
+    | "clang", .arch => "sudo pacman -S clang"
+    | "clang", .fedora => "sudo dnf install clang"
+    | "clang", _ => "install clang with your distribution's package manager"
+    | _, .mac => "brew install llvm   (or set LEANPROF_OBJCOPY to an llvm-objcopy)"
+    | _, .debian => "sudo apt install llvm   (or binutils, for GNU objcopy)"
+    | _, .arch => "sudo pacman -S llvm   (or binutils, for GNU objcopy)"
+    | _, .fedora => "sudo dnf install llvm   (or binutils, for GNU objcopy)"
+    | _, _ => "install llvm (llvm-objcopy) or binutils (objcopy), or set LEANPROF_OBJCOPY"
+
+/-- What is wrong with the C compiler (`cc`), if anything, and how to fix it:
+it is missing, or on macOS a stub that asks for the command line tools. -/
+def ccProblem : IO (Option String) := do
+  let out ← try some <$> IO.Process.output { cmd := "cc", args := #["--version"], stdin := .null }
+    catch _ => pure none
+  match out with
+  | some o =>
+    if o.exitCode == 0 then return none
+    let why := (o.stderr.trimAscii.toString.splitOn "\n").head!
+    return some s!"the C compiler does not run ({why}); install one: {← installHint "clang"}"
+  | none => return some s!"no C compiler (cc) found; install one: {← installHint "clang"}"
+
+/-- Where the installer keeps releases, the source checkout and samply:
+`LEANPROF_HOME` (the installed launcher sets it), else `~/.local/share/leanprof`. -/
+def leanprofHome : IO FilePath := do
+  if let some h ← IO.getEnv "LEANPROF_HOME" then
+    if !h.isEmpty then return h
+  return ((← IO.getEnv "HOME").getD ".") ++ "/.local/share/leanprof"
+
+/-- The samply the installer fetched (`install.sh --samply`). -/
+def bundledSamply : IO FilePath := return (← leanprofHome) / "samply" / "samply"
+
+/-- The samply to run: `LEANPROF_SAMPLY` (`none`: act as if there were none),
+else the one on PATH, else the one the installer fetched into leanprof's home;
+`none` if there is none. -/
+def findSamply : IO (Option String) := do
+  if let some s ← IO.getEnv "LEANPROF_SAMPLY" then
+    if s == "none" then return none
+    if !s.isEmpty then return some s
+  let runs (cmd : String) : IO Bool := do
+    try return (← IO.Process.output { cmd, args := #["--version"], stdin := .null }).exitCode == 0
+    catch _ => return false
+  if ← runs "samply" then return some "samply"
+  let b ← bundledSamply
+  if (← b.pathExists) && (← runs b.toString) then return some b.toString
+  return none
+
+/-- The command that fetches the pinned samply into leanprof's home. -/
+def samplyInstallCmd : IO String := do
+  let home ← IO.getEnv "LEANPROF_HOME"
+  let def_ := ((← IO.getEnv "HOME").getD "") ++ "/.local/share/leanprof"
+  let pre := match home with
+    | some h => if h.isEmpty || h == def_ then "" else s!"LEANPROF_HOME={h} "
+    | none => ""
+  return s!"curl -sSfL https://raw.githubusercontent.com/unbalancedparentheses/leanprof/main/scripts/install.sh | {pre}sh -s -- --samply-only"
+
+/-- Why `leanprof sample` cannot sample on this machine, if it cannot: on
+Linux, perf events must be open to users. -/
+def samplingBlocked : IO (Option String) := do
+  if System.Platform.isOSX then return none
+  let v ← try IO.FS.readFile "/proc/sys/kernel/perf_event_paranoid" catch _ => return none
+  let uid ← try (·.stdout.trimAscii.toString) <$> IO.Process.output { cmd := "id", args := #["-u"] }
+    catch _ => pure ""
+  let some n := v.trimAscii.toString.toInt? | return none
+  if n > 1 && uid != "0" then
+    return some s!"perf events are closed to users (kernel.perf_event_paranoid = {n}); open them with: sudo sysctl kernel.perf_event_paranoid=1"
+  return none
+
+/-- The project's targets, from its Lake configuration (`none` outside a project). -/
+def projectTargets : IO (Option Leanprof.Workload.Targets) := do
+  if ← ("lakefile.lean" : FilePath).pathExists then
+    return some (Leanprof.Workload.parseLean (← IO.FS.readFile "lakefile.lean"))
+  if ← ("lakefile.toml" : FilePath).pathExists then
+    return some (Leanprof.Workload.parseToml (← IO.FS.readFile "lakefile.toml"))
+  return none
 
 /-- leanprof's package directory: this executable is `<root>/.lake/build/bin/leanprof`. -/
 def packageRoot : IO FilePath := do
@@ -293,18 +402,16 @@ def spawnWait (cmd : String) (args : Array String) (env : Array (String × Optio
   guardSignals child.pid
   try child.wait finally guardSignals 0
 
-/-- `IO.Process.output` with INT, TERM and HUP passed on to the child while it
-runs, as `spawnWait` does: an interrupted `measure` waits for its program to
-stop and puts the normal build back, instead of leaving the program running
-(and a second signal ending leanprof before it cleans up). -/
-def outputGuarded (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
-  let child ← IO.Process.spawn { args with stdout := .piped, stderr := .piped, stdin := .null }
+/-- `IO.Process.output`, with INT, TERM and HUP passed on to the child
+while it runs (`guardSignals`). -/
+def guardedOutput (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
+  let child ← IO.Process.spawn { args with stdout := .piped, stderr := .piped }
   guardSignals child.pid
   try
-    let stdout ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
-    let stderr ← child.stderr.readToEnd
+    let err ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+    let stdout ← child.stdout.readToEnd
+    let stderr ← IO.ofExcept err.get
     let exitCode ← child.wait
-    let stdout ← IO.ofExcept stdout.get
     return { exitCode, stdout, stderr }
   finally guardSignals 0
 
@@ -417,7 +524,8 @@ LEANPROF_OBJCOPY, then llvm-objcopy (also versioned, and in Homebrew's and
 Debian's LLVM directories), then GNU objcopy on Linux, then the llvm-objcopy
 that rustup's toolchains ship as `rust-objcopy` (when it runs on its own). -/
 def findObjcopy : IO (Option String) := do
-  if let some p ← IO.getEnv "LEANPROF_OBJCOPY" then return some p
+  if let some p ← IO.getEnv "LEANPROF_OBJCOPY" then
+    if !p.isEmpty then return some p
   let path := ((← IO.getEnv "PATH").getD "").splitOn ":" |>.filter (!·.isEmpty)
   let versions := (List.range 10).map (23 - ·)
   let names := "llvm-objcopy" :: versions.map (s!"llvm-objcopy-{·}")
@@ -446,8 +554,7 @@ functions renamed to leanprof's shims, cached in `.lake/leanprof/core/` by
 toolchain and set of renamed symbols. Returns the directory to search first. -/
 def coreLibDir (allocs : Bool) (frees : Bool := false) : IO FilePath := do
   let some objcopy ← findObjcopy | throw <| IO.userError <|
-    "leanprof run --core needs llvm-objcopy: brew install llvm, apt install llvm (GNU objcopy also " ++
-    "works on Linux), or set LEANPROF_OBJCOPY"
+    s!"--core needs llvm-objcopy, which is not installed; install it with:\n  {← installHint "objcopy"}"
   let leanOut (arg : String) : IO String := do
     return (← IO.Process.output { cmd := "lean", args := #[arg] }).stdout.trimAscii.toString
   let leanPrefix : FilePath := ⟨← leanOut "--print-prefix"⟩
@@ -602,6 +709,8 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
           ("cc", inc ++ #[(root / "c" / "leanprof.c").toString, "-o", rt.toString], #[]),
           ("leanc", #["-O2", "-c", (root / "c" / "selfcheck.c").toString, "-o", sc.toString], selfCheckEnv wrapper),
           ("ld", #["-r", "-o", obj.toString, rt.toString, sc.toString], #[])]
+        if let some p ← ccProblem then
+          throw <| IO.userError s!"leanprof compiles its runtime with the C compiler: {p}"
         for (cmd, args, env) in steps do
           let out ← IO.Process.output { cmd, args, env }
           if out.exitCode != 0 then
@@ -631,6 +740,8 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
   if rc != 0 || (← caughtSignal) != 0 then
     undo
     checkInterrupted
+    -- the probes are compiled by the system's C compiler: say so when it is the cause
+    if let some p ← ccProblem then IO.eprintln s!"leanprof: {p}"
   else
     discard <| dropBuildRecords deps exe
   return rc
@@ -1126,9 +1237,12 @@ def sample (argv : List String) : IO UInt32 := do
   if ← out.pathExists then IO.FS.removeFile out
   let samplyArgs := #["record", "--save-only", "--unstable-presymbolicate", "--rate", toString o.rate,
     "-o", (← absPath out).toString, (← absPath bin).toString] ++ o.args
-  let rc ← try spawnWait "samply" samplyArgs ((← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1")]) (o.cwd.map (·))
+  let some samply ← findSamply | do
+    IO.eprintln s!"leanprof: `leanprof sample` needs samply, which is not installed; get it with:\n  {← samplyInstallCmd}\n(or brew install samply / cargo install samply)"
+    return 1
+  let rc ← try spawnWait samply samplyArgs ((← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1")]) (o.cwd.map (·))
     catch e =>
-      IO.eprintln s!"leanprof: cannot run samply ({e}); install it: brew install samply / cargo install samply"
+      IO.eprintln s!"leanprof: cannot run {samply} ({e}); get samply with: {← samplyInstallCmd}"
       return 1
   -- samply exits with the program's exit code: a failing program still has a profile
   unless ← out.pathExists do
@@ -1346,14 +1460,36 @@ def sample (argv : List String) : IO UInt32 := do
   let syms' := syms.setObjVal! "string_table" (Json.arr (renamed.map Json.str))
   IO.FS.writeFile symsPath syms'.compress
   -- a report `#leanprof` can show in the editor: sampled CPU per declaration
+  -- the project's own functions also get `own_ns`: their self time plus that of
+  -- code outside the project (Lean's library, the runtime) they called directly
+  let mut ownT : Std.HashMap String Float := {}
+  for (n, w) in selfT.toList do
+    if ownCode.getD n false then ownT := ownT.insert n (ownT.getD n 0 + w)
+  -- and `own_top`, the outside code that took most of that time
+  let mut ownLeaves : Std.HashMap String (Array (String × Float)) := {}
+  for (lf, m) in leafCallers.toList do
+    for (c, cw) in m.toList do
+      ownT := ownT.insert c (ownT.getD c 0 + cw)
+      ownLeaves := ownLeaves.insert c ((ownLeaves.getD c #[]).push (lf, cw))
   let mut scopes : Array Json := #[]
   for (n, w) in leanIncl.toList do
     let wh ← Leanprof.whereIs n
     if wh.isEmpty then continue
-    scopes := scopes.push <| Json.mkObj [("name", Json.str n), ("pos", Json.str wh), ("auto", Json.bool true),
-      ("total_ns", toJson (w * 1000)), ("self_ns", toJson (selfT.getD n 0 * 1000)), ("calls", toJson (0 : Nat))]
+    scopes := scopes.push <| Json.mkObj ([("name", Json.str n), ("pos", Json.str wh), ("auto", Json.bool true),
+      ("total_ns", toJson (w * 1000)), ("self_ns", toJson (selfT.getD n 0 * 1000)), ("calls", toJson (0 : Nat))] ++
+      (match ownT.get? n with
+        | some o =>
+          let top := ((ownLeaves.getD n #[]).qsort (·.2 > ·.2)).toList.take 3 |>.map fun (lf, w) =>
+            Json.mkObj [("name", Json.str lf), ("ns", toJson (w * 1000))]
+          [("own_ns", toJson (o * 1000)), ("own_top", Json.arr top.toArray)]
+        | none => []))
+  -- where the runtime's time went, for `leanprof` with no arguments' findings
+  let runtime := (catT.toArray.qsort (fun a b => a.2 > b.2)).map fun (c, w) =>
+    Json.mkObj [("category", Json.str c), ("self_ns", toJson (w * 1000))]
   let report := Json.mkObj [("version", toJson (3 : Nat)), ("sampled", Json.bool true),
-    ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[])]
+    ("exe", Json.str exe), ("exit_code", toJson rc.toNat),
+    ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[]),
+    ("runtime", Json.arr runtime)]
   -- the last report, and --json FILE (with --out elsewhere, nothing has
   -- created .lake/leanprof yet)
   IO.FS.createDirAll ".lake/leanprof"
@@ -1433,6 +1569,13 @@ def parseDecimal? (t : String) : Option Float :=
 /-- The 1-minute load average and the number of CPUs, when the system says
 (`/proc/loadavg` and `nproc` on Linux, `sysctl` on macOS). A time verdict
 from a machine running more jobs than it has CPUs is not trustworthy. -/
+@[extern "leanprof_cli_loadavg"] opaque cliLoadAvg : IO Float
+
+/-- The 1-minute load average, read in process. -/
+def loadNow : IO (Option Float) := do
+  let l ← cliLoadAvg
+  return if l < 0 then none else some l
+
 def machineLoad : IO (Option Float × Option Nat) := do
   let out (cmd : String) (args : Array String) : IO String := do
     try pure (← IO.Process.output { cmd, args }).stdout catch _ => pure ""
@@ -1487,7 +1630,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
       -- a signal between two runs: no next run
       checkInterrupted
       let t0 ← IO.monoNanosNow
-      let out ← outputGuarded { cmd := (exePath exe).toString, args := o.args, env }
+      let out ← guardedOutput { cmd := (exePath exe).toString, args := o.args, env, stdin := .null }
       let t1 ← IO.monoNanosNow
       checkInterrupted
       if i < o.warmup then continue
@@ -1590,8 +1733,17 @@ structure PairOpts where
   candidate : String := ""
   baseCwd : String := "."
   candidateCwd : String := "."
-  runs : Nat := 20
-  warmup : Nat := 3
+  /-- the most pairs; the session stops at the first look that settles the time verdict -/
+  runs : Nat := 30
+  /-- one look after `runs` pairs instead (no early stop) -/
+  fixed : Bool := false
+  minChange : Float := 1
+  warmup : Nat := 1
+  /-- time only what `Leanprof.bench NAME` reports, not the whole process -/
+  scope : Option String := none
+  /-- build the base at this git revision (cached) and the candidate in its directory -/
+  baseRev : Option String := none
+  exe : Option String := none
   checkOutput : Option String := none
   out : String := ".lake/leanprof/paired.json"
   args : Array String := #[]
@@ -1604,6 +1756,18 @@ partial def parsePair (o : PairOpts) : List String → Except String PairOpts
   | "--candidate-cwd" :: x :: rest => parsePair {o with candidateCwd := x} rest
   | "--out" :: x :: rest => parsePair {o with out := x} rest
   | "--check-output" :: x :: rest => parsePair {o with checkOutput := some x} rest
+  | "--scope" :: x :: rest =>
+    if x.isEmpty || x.any (fun c => c == '\t' || c == '\n') then .error "--scope needs a name without tabs or newlines"
+    else parsePair {o with scope := some x} rest
+  | "--fixed" :: rest => parsePair {o with fixed := true} rest
+  | "--base-rev" :: x :: rest => parsePair {o with baseRev := some x} rest
+  | "--exe" :: x :: rest =>
+    if x.isEmpty || x.any (· == '/') then .error "--exe needs the name of a Lake executable"
+    else parsePair {o with exe := some x} rest
+  | "--min-change" :: x :: rest => do
+    let some pct := parseDecimal? x | throw "--min-change must be a percentage from 0 to 100"
+    unless pct ≤ 100 do throw "--min-change must be a percentage from 0 to 100"
+    parsePair {o with minChange := pct} rest
   | "--runs" :: x :: rest => do
     let some n := x.toNat? | throw "--runs must be an integer from 6 to 1000"
     unless n ≥ 6 && n ≤ 1000 do throw "--runs must be an integer from 6 to 1000"
@@ -1615,8 +1779,103 @@ partial def parsePair (o : PairOpts) : List String → Except String PairOpts
   | "--" :: rest => .ok {o with args := rest.toArray}
   | x :: _ => .error s!"unknown or incomplete measure-pair option: {x}"
 
+/-- The total of a `Leanprof.bench` region's lines (`NAME<TAB>NANOSECONDS`) in
+`file`, as written to `$LEANPROF_BENCH_OUT`; `none` when the region never ran. -/
+def benchTotal (file : FilePath) (scope : String) : IO (Option Nat) := do
+  unless ← file.pathExists do return none
+  let mut total : Option Nat := none
+  for line in (← IO.FS.readFile file).splitOn "\n" do
+    match line.splitOn "\t" with
+    | [name, ns] => if name == scope then
+        if let some v := ns.toNat? then total := some (total.getD 0 + v)
+    | _ => pure ()
+  return total
+
+/-- Settings besides the commit that change what `lake build` makes. -/
+def buildSettingVars : Array String :=
+  #["ELAN_TOOLCHAIN", "LEAN_CC", "LEANC_OPTS", "LEAN_SYSROOT", "LEAN_AR", "LEANPROF_SANITIZE",
+    "LEANPROF_ALLOCS", "LEANPROF_COUNTERS", "LEANPROF_FREES", "LEANPROF_AUTO", "LEANPROF_RUNTIME"]
+
+/-- `cmd args` in `cwd`; its stdout, trimmed, or an error with its stderr. -/
+def runOut (cmd : String) (args : Array String) (cwd : FilePath) : IO String := do
+  let out ← IO.Process.output { cmd, args, cwd := some cwd, stdin := .null }
+  unless out.exitCode == 0 do
+    throw <| IO.userError s!"{cmd} {" ".intercalate args.toList} failed in {cwd}:\n{out.stderr}{out.stdout}"
+  return out.stdout.trimAscii.toString
+
+/-- `lake build EXE` in `dir` and the seconds it took. -/
+def lakeBuildExe (dir : FilePath) (exe : String) : IO (FilePath × Float) := do
+  let t0 ← IO.monoNanosNow
+  discard <| runOut "lake" #["build", exe] dir
+  let secs := ((← IO.monoNanosNow) - t0).toFloat / 1e9
+  let bin := dir / ".lake" / "build" / "bin" / exe
+  unless ← bin.pathExists do throw <| IO.userError s!"lake build {exe} in {dir} made no {bin}"
+  return (bin, secs)
+
+/-- The base for `measure-pair --base-rev REV --exe NAME`: NAME built at commit
+REV, in `.lake/leanprof/base/` of the project in `projDir`, and kept there by
+commit and build settings (`buildSettingVars`, and the executable), so later
+verdicts against the same base do not build it again. The tree is `git
+archive` of the commit (no worktree is registered); the project's
+`.lake/packages` are copied in when its manifest is the same at REV. Returns the
+binary, its working directory, and what was done. -/
+def cachedBase (projDir : FilePath) (rev exe : String) : IO (FilePath × FilePath × Json) := do
+  let top ← IO.FS.realPath (← runOut "git" #["rev-parse", "--show-toplevel"] projDir)
+  let proj ← IO.FS.realPath projDir
+  let rel := (proj.toString.drop top.toString.length).toString.dropWhile (· == '/') |>.toString
+  let commit ← runOut "git" #["rev-parse", "--verify", "--quiet", rev ++ "^{commit}"] projDir
+  let mut settings := s!"exe={exe}"
+  for v in buildSettingVars do
+    if let some x ← IO.getEnv v then settings := settings ++ s!"\n{v}={x}"
+  let key := (fnv1a (commit ++ "\n" ++ settings).toUTF8).drop 8 |>.take 12 |>.toString
+  let root := proj / ".lake" / "leanprof" / "base" / s!"{commit.take 12}-{key}"
+  let tree := root / "src"
+  let dir := if rel.isEmpty then tree else tree / rel
+  let bin := dir / ".lake" / "build" / "bin" / exe
+  let marker := root / "built.json"
+  let info (cache : String) (secs : Float) := Json.mkObj [("rev", Json.str rev), ("commit", Json.str commit),
+    ("cache", Json.str cache), ("dir", Json.str root.toString), ("build_s", toJson secs)]
+  if (← marker.pathExists) && (← bin.pathExists) then
+    return (bin, dir, info "hit" 0)
+  if ← root.pathExists then IO.FS.removeDirAll root
+  IO.FS.createDirAll tree
+  let t0 ← IO.monoNanosNow
+  let tar := root / "src.tar"
+  discard <| runOut "git" #["archive", "--format=tar", "-o", tar.toString, commit] top
+  discard <| runOut "tar" #["-xf", tar.toString, "-C", tree.toString] top
+  IO.FS.removeFile tar
+  let manifest := "lake-manifest.json"
+  let packages := proj / ".lake" / "packages"
+  if (← packages.pathExists) && (← (dir / manifest).pathExists) && (← (proj / manifest).pathExists) then
+    if (← IO.FS.readFile (dir / manifest)) == (← IO.FS.readFile (proj / manifest)) then
+      IO.FS.createDirAll (dir / ".lake")
+      discard <| runOut "cp" #["-R", packages.toString, (dir / ".lake").toString] proj
+  discard <| lakeBuildExe dir exe
+  let secs := ((← IO.monoNanosNow) - t0).toFloat / 1e9
+  IO.FS.writeFile marker ((Json.mkObj [("commit", Json.str commit), ("settings", Json.str settings),
+    ("build_s", toJson secs)]).pretty ++ "\n")
+  return (bin, dir, info "built" secs)
+
 def measurePairCmd (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parsePair {} argv)
+  -- --base-rev REV --exe NAME: base from the cache, candidate built here
+  let (o, builds) ← match o.baseRev, o.exe with
+    | some rev, some exe => do
+      unless o.base.isEmpty do throw <| IO.userError "give --base or --base-rev, not both"
+      let (bin, dir, info) ← cachedBase o.candidateCwd rev exe
+      let (cand, candSecs) ← if o.candidate.isEmpty then
+          (fun (b, t) => (b.toString, some t)) <$> lakeBuildExe o.candidateCwd exe
+        else pure (o.candidate, none)
+      let what := match info.getObjValAs? String "cache" with
+        | .ok "hit" => "from the cache"
+        | _ => s!"built in {fmt2 ((info.getObjValAs? Float "build_s").toOption.getD 0)} s and cached"
+      let short := ((info.getObjValAs? String "commit").toOption.getD "").take 12
+      IO.println (s!"leanprof measure-pair: base {rev} ({short}) {what}" ++
+        (match candSecs with | some t => s!", candidate built in {fmt2 t} s" | none => ""))
+      pure ({ o with base := bin.toString, baseCwd := dir.toString, candidate := cand },
+        some (info.setObjVal! "candidate_build_s" (match candSecs with | some t => toJson t | none => Json.null)))
+    | some _, none | none, some _ => throw <| IO.userError "--base-rev and --exe go together"
+    | none, none => pure (o, none)
   unless !o.base.isEmpty && !o.candidate.isEmpty do
     throw <| IO.userError (usageFor "measure-pair")
   -- Resolve binaries before changing cwd: relative paths belong to the caller.
@@ -1624,53 +1883,88 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let dirs ← #[o.baseCwd, o.candidateCwd].mapM fun p => IO.FS.realPath (FilePath.mk p)
   let binaryHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
   let (initialLoad, cpus) ← machineLoad
+  let design : Leanprof.Judge.SeqDesign := if o.fixed then .fixed o.runs else { max := o.runs }
+  let bounds := (Leanprof.Judge.seqBounds design).1
   let mut maxLoad := initialLoad
   let mut samples : Array Json := #[]
   let mut loads : Array Json := #[]
-  -- each side as `lake exe` would run it in its own directory
-  let lakeEnvs ← dirs.mapM fun d => lakeRunEnv (some d)
+  let mut changes : Array Float := #[]
+  -- each side as `lake exe` would run it in its own directory (both at once:
+  -- `lake env` takes about 0.1 s)
+  let envTasks ← dirs.mapM fun d => IO.asTask (lakeRunEnv (some d))
+  let lakeEnvs ← envTasks.mapM fun t => IO.ofExcept t.get
+  -- --scope: each run appends its `Leanprof.bench` timings to this file
+  -- (absolute: each side runs in its own directory)
+  let benchFile : FilePath := (o.out : FilePath).withExtension "bench.tmp"
+  let cwd ← IO.currentDir
+  let benchFile := if benchFile.isAbsolute then benchFile else cwd / benchFile
+  if o.scope.isSome then if let some dir := benchFile.parent then IO.FS.createDirAll dir
   let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none),
-    ("LEANPROF_TRACE", none), ("LEANPROF_LIVE", none), ("LEANPROF_FLIGHT", none)]
+    ("LEANPROF_TRACE", none), ("LEANPROF_LIVE", none), ("LEANPROF_FLIGHT", none),
+    ("LEANPROF_BENCH_OUT", o.scope.map fun _ => benchFile.toString)]
   -- Warmups are a separate phase, so measured pair zero always starts AB.
+  let mut stopped := false
   for phase in [:2] do
     let count := if phase == 0 then o.warmup else o.runs
     for pair in [:count] do
+      if stopped then break
+      let mut times : Array Nat := #[0, 0]
       for offset in [:2] do
         let side := (pair + offset) % 2
         let checked := o.checkOutput.map fun p => dirs[side]! / p
         if let some p := checked then
           if ← p.pathExists then IO.FS.removeFile p
         checkInterrupted
+        if o.scope.isSome then
+          if ← benchFile.pathExists then IO.FS.removeFile benchFile
         let t0 ← IO.monoNanosNow
         let sideEnv := lakeEnvs[side]! ++ env
-        let result ← outputGuarded { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env := sideEnv }
+        let result ← guardedOutput { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env := sideEnv, stdin := .null }
         let elapsed := (← IO.monoNanosNow) - t0
         checkInterrupted
+        let timed ← match o.scope with
+          | none => pure elapsed
+          | some s => do
+            let some t ← benchTotal benchFile s
+              | throw <| IO.userError (s!"{binaries[side]!} did not report scope {s}: wrap the region in " ++
+                  s!"`Leanprof.bench \"{s}\" fun _ => ...`, or append `{s}<TAB>NANOSECONDS` lines to $LEANPROF_BENCH_OUT" ++
+                  (if result.exitCode != 0 then s!" (it exited with {result.exitCode}: {result.stderr})" else ""))
+            pure (Nat.max t 1)
         if phase == 0 then
           if result.exitCode != 0 then throw <| IO.userError s!"warmup failed for {binaries[side]!}: {result.stderr}"
           continue
+        times := times.set! side timed
         let present ← match checked with
           | some p => p.pathExists
           | none => pure true
         let output ← match checked with
           | some p => if present then pure (fnv1a (← IO.FS.readBinFile p)) else pure "missing"
           | none => pure (fnv1a result.stdout.toUTF8)
-        samples := samples.push <| Json.mkObj [
+        samples := samples.push <| Json.mkObj ([
           ("pair", toJson pair), ("side", Json.str (if side == 0 then "base" else "candidate")),
-          ("time_ns", toJson elapsed), ("exit_code", toJson result.exitCode.toNat),
+          ("time_ns", toJson timed), ("exit_code", toJson result.exitCode.toNat),
           ("stdout_hash", Json.str (fnv1a result.stdout.toUTF8)),
           ("stderr_hash", Json.str (fnv1a result.stderr.toUTF8)),
-          ("output_hash", Json.str output), ("output_present", Json.bool present)]
-      let (load, _) ← machineLoad
+          ("output_hash", Json.str output), ("output_present", Json.bool present)] ++
+          (if o.scope.isSome then [("process_ns", toJson elapsed)] else []))
+      let load ← loadNow
       maxLoad := match maxLoad, load with
         | some a, some b => some (max a b)
         | none, x | x, none => x
-      if phase == 1 then loads := loads.push (match load with | some v => toJson v | none => Json.null)
+      if phase == 1 then
+        loads := loads.push (match load with | some v => toJson v | none => Json.null)
+        changes := changes.push ((times[1]!.toFloat / times[0]!.toFloat - 1) * 100)
+        stopped := Leanprof.Judge.seqStop design bounds changes o.minChange
+  if o.scope.isSome then
+    if ← benchFile.pathExists then IO.FS.removeFile benchFile
   let overloaded := match maxLoad, cpus with | some l, some c => l > c.toFloat | _, _ => false
   let finalHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
   unless finalHashes == binaryHashes do throw <| IO.userError "a benchmark binary changed during measurement"
-  let j := Json.mkObj [("version", toJson (1 : Nat)), ("leanprof", "measure-pair"),
-    ("mode", "plain"), ("runs", toJson o.runs), ("warmup", toJson o.warmup),
+  let j := Json.mkObj [("version", toJson (2 : Nat)), ("leanprof", "measure-pair"),
+    ("mode", "plain"), ("runs", toJson changes.size), ("warmup", toJson o.warmup),
+    ("design", design.json), ("min_change", toJson o.minChange),
+    ("scope", match o.scope with | some s => Json.str s | none => Json.null),
+    ("builds", builds.getD Json.null),
     ("base", Json.str binaries[0]!.toString), ("candidate", Json.str binaries[1]!.toString),
     ("base_hash", Json.str binaryHashes[0]!), ("candidate_hash", Json.str binaryHashes[1]!),
     ("base_cwd", Json.str dirs[0]!.toString), ("candidate_cwd", Json.str dirs[1]!.toString),
@@ -1682,8 +1976,9 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
       ("pair_loads", Json.arr loads)])]
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
   IO.FS.writeFile o.out (j.pretty ++ "\n")
-  IO.println s!"leanprof measure-pair: {o.runs} pairs, alternating AB/BA; written to {o.out}"
-  IO.print (← IO.ofExcept (Leanprof.Judge.judgePaired j)).render
+  let how := if o.fixed then "" else s!" (stops when settled, at most {o.runs})"
+  IO.println s!"leanprof measure-pair: {changes.size} pairs{how}, alternating AB/BA; written to {o.out}"
+  IO.print (← IO.ofExcept (Leanprof.Judge.judgePaired j o.minChange)).render
   -- Like measure, collection succeeds even when the candidate is discarded.
   return 0
 
@@ -2042,6 +2337,13 @@ def doctor : IO UInt32 := do
   let isProject := (← ("lakefile.toml" : FilePath).pathExists) || (← ("lakefile.lean" : FilePath).pathExists)
   unless ← report isProject "inside a Lake project" "run leanprof from a project's root directory" do
     problems := problems + 1
+  if let some t ← projectTargets then
+    let what := match Leanprof.Workload.choose t with
+      | .exe e why => s!"`{e}` ({why})"
+      | .ambiguous exes _ => s!"one of {exes.size} executables, named: leanprof EXE -- ARGS"
+      | .elab => "compile time of the libraries (no executable)"
+      | .nothing => "nothing (no lean_exe or lean_lib in the lakefile)"
+    discard <| report true s!"`leanprof` with no arguments profiles {what}" ""
   -- an instrumented build left by an interrupted (or `--keep`) run: put the normal one back
   if isProject then
     let stashed ← (← workspacePackages).filterM fun p => (stashDir p).isDir
@@ -2070,8 +2372,11 @@ def doctor : IO UInt32 := do
     let leanPrefix := ((← tryCmd "lean" #["--print-prefix"]).map (·.stdout.trimAscii.toString)).getD ""
     let tmp := (← IO.FS.createTempFile).2
     let out ← tryCmd "cc" #["-fsyntax-only", "-I", leanPrefix ++ "/include", (root / "c" / "leanprof.c").toString]
-    unless ← report (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean"
-        s!"{(out.map (·.stderr.take 300 |>.toString)).getD "cc not found"}" do problems := problems + 1
+    let ccFix ← match ← ccProblem with
+      | some p => pure p
+      | none => pure s!"{(out.map (·.stderr.take 300 |>.toString)).getD "cc not found"}"
+    unless ← report (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean (for run, stat, measure)"
+        ccFix do problems := problems + 1
     -- the runtime's self-check, built and linked as `leanprof run` builds a program
     if out.any (·.exitCode == 0) then
       let leanVersion := ((← tryCmd "lean" #["--short-version"]).map (·.stdout.trimAscii.toString)).getD "?"
@@ -2088,17 +2393,22 @@ def doctor : IO UInt32 := do
     IO.FS.writeFile probe "int f(int x) { return x + 1; }\n"
     let clang ← tryCmd "sh" #["-c", s!"LEANPROF_AUTO=1 {root / "scripts" / "leanprof-cc"} -c {probe} -o {tmp}.o"]
     unless ← report (clang.any (·.exitCode == 0)) "clang with -finstrument-functions-after-inlining (for --auto)"
-        "install clang (Xcode command line tools, or your distribution's clang package)" do problems := problems + 1
-  -- samply
-  let samply ← tryCmd "samply" #["--version"]
-  discard <| report (samply.any (·.exitCode == 0))
-    s!"{(samply.map (·.stdout.trimAscii.toString)).getD "samply"} (for `leanprof sample`)"
-    "optional: brew install samply, or cargo install samply"
+        s!"install clang: {← installHint "clang"}" do problems := problems + 1
+  -- samply: optional, but what `leanprof sample` and `leanprof` with no arguments use
+  match ← findSamply with
+  | some s =>
+    let v := ((← tryCmd s #["--version"]).map (·.stdout.trimAscii.toString)).getD "samply"
+    discard <| report true s!"{v}{if s == "samply" then "" else s!" at {s}"} (for `leanprof sample`)" ""
+    if let some why ← samplingBlocked then
+      discard <| report false "sampling allowed on this machine" s!"{why}\n       (until then `leanprof` with no arguments uses `leanprof stat`)"
+  | none =>
+    discard <| report false "samply (for `leanprof sample`; without it, `leanprof` with no arguments rebuilds with probes)"
+      s!"optional; get it (samply 0.13.1, checksum-verified, into {← leanprofHome}/samply):\n         {← samplyInstallCmd}\n       or: brew install samply / cargo install samply"
   -- objcopy, for `run --core`
   let objcopy ← findObjcopy
   discard <| report objcopy.isSome
     s!"{objcopy.getD "llvm-objcopy"} (for `leanprof run --core`)"
-    "optional: brew install llvm, apt install llvm, rustup component add llvm-tools, or set LEANPROF_OBJCOPY"
+    s!"optional; install it with: {← installHint "objcopy"}"
   IO.println (if problems == 0 then "everything leanprof needs is here" else s!"{problems} problem(s)")
   return if problems == 0 then 0 else 1
 
@@ -2206,10 +2516,195 @@ def statCmd (argv : List String) : IO UInt32 := do
   IO.println s!"  report: {json}"
   return code
 
+/-! ## `leanprof` with no arguments: find the workload, profile it cheaply, say what next -/
+
+def shellQuote (a : String) : String :=
+  if !a.isEmpty && a.toList.all (fun c => c.isAlphanum || "-_./=:,+@%".contains c) then a
+  else "'" ++ a.replace "'" "'\\''" ++ "'"
+
+/-- ` -- ARGS` as typed on a command line, or nothing. -/
+def argsText (args : Array String) : String :=
+  if args.isEmpty then "" else " -- " ++ " ".intercalate (args.toList.map shellQuote)
+
+/-- How to run `exe` the way `leanprof EXE` does: by name, unless the name is a command. -/
+def startCommand (exe : String) : String :=
+  if (commands.any (·.1 == exe)) then s!"leanprof sample {shellQuote exe}" else s!"leanprof {shellQuote exe}"
+
+def printFindings (findings : Array String) (next : Array (String × String)) : IO Unit := do
+  IO.println "\nleanprof: top findings"
+  if findings.isEmpty then IO.println "  nothing stands out in this run"
+  for (f, i) in findings.toList.zipIdx do
+    IO.println s!"  {i + 1}. {f}"
+  IO.println "\nnext steps"
+  let w := next.foldl (fun m (c, _) => max m c.length) 0
+  for (c, what) in next do
+    IO.println s!"  {c.pushn ' ' (w - c.length)}   {what}"
+
+/-- Findings of a sampled report: the project's functions that took the most
+CPU, and runtime work (copies, allocation, closures) worth an exact count. -/
+def sampleFindings (exe : String) (args : Array String) : IO (Array String × Array (String × String)) := do
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile lastReport))
+  let total := num j "wall_ns"
+  let a := argsText args
+  let share (x : Float) := if total > 0 then x / total * 100 else 0
+  let cat (c : String) := (getArr j "runtime").foldl (fun s r => if str r "category" == c then s + num r "self_ns" else s) 0
+  let mut cands : Array (Float × String) := #[]
+  let copies := cat "copying non-exclusive values"
+  if share copies ≥ 1 then
+    cands := cands.push (copies, s!"{fmt2 (share copies)}% of CPU copies arrays or strings that were still shared: " ++
+      s!"`leanprof run {exe}{a}` finds each copy site, `leanprof explain` says why and gives the fix")
+  let alloc := cat "allocation" + cat "freeing objects (reference counts reaching zero)"
+  if share alloc ≥ 10 then
+    cands := cands.push (alloc, s!"{fmt2 (share alloc)}% of CPU allocates and frees objects: " ++
+      s!"`leanprof run --allocs {exe}{a}` counts allocations per function")
+  let closures := cat "applying closures"
+  if share closures ≥ 5 then
+    cands := cands.push (closures, s!"{fmt2 (share closures)}% of CPU applies closures: " ++
+      s!"`leanprof run --counters {exe}{a}` counts closure applications per function")
+  let own := (getArr j "scopes").filter (num · "own_ns" > 0) |>.qsort (num · "own_ns" > num · "own_ns")
+  for s in own.toList.take 3 do
+    let x := num s "own_ns"
+    if share x < 1 then continue
+    let self := num s "self_ns"
+    let parts := (if share self ≥ 1 then [s!"its own code {fmt2 (share self)}%"] else []) ++
+      ((getArr s "own_top").toList.filter (fun l => share (num l "ns") ≥ 1) |>.map fun l =>
+        let n := str l "name"
+        -- a C++ name without its parameter list
+        let n := if (n.splitOn " (in ").length == 1 then (n.splitOn "(").head! else n
+        s!"{if n.length > 50 then (n.take 50).toString ++ "…" else n} {fmt2 (share (num l "ns"))}%")
+    cands := cands.push (x, s!"{fmt2 (share x)}% of CPU in {str s "name"} ({str s "pos"})" ++
+      (if parts.isEmpty then "" else s!": {", ".intercalate parts}"))
+  let findings := (cands.qsort (·.1 > ·.1)).toList.take 3 |>.toArray |>.map (·.2)
+  let findings := if total < 20e6 then
+      findings.push s!"only {fmtTime total} of CPU was sampled: a larger input (`{startCommand exe} -- ARGS`) gives steadier numbers"
+    else findings
+  return (findings, #[
+    (s!"leanprof run {exe}{a}", "exact: copies of shared values, tasks, waits (rebuilds with probes, puts your build back)"),
+    ("leanprof explain", "after run: why each copy happened, and the fix in Lean"),
+    (s!"leanprof fix --exe {exe}{a}", "apply that fix on a git branch, test, measure, commit it only if it helps"),
+    (s!"leanprof run --auto {exe}{a}", "every function's exact time and call count"),
+    (s!"samply load .lake/leanprof/{exe}.json", "flame graph with Lean names")])
+
+/-- Findings of a `stat` report: the costliest copy sites, then the hottest scopes. -/
+def statFindings (exe : String) (args : Array String) : IO (Array String × Array (String × String)) := do
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile lastReport))
+  let a := argsText args
+  let run := num j "run_ns"
+  let copies := (getArr j "copies").filter (fun c => num c "shared" + num c "multi_threaded" > 0)
+    |>.qsort (num · "copy_ns" > num · "copy_ns")
+  let mut findings : Array String := #[]
+  for c in copies.toList.take 3 do
+    let n := num c "shared" + num c "multi_threaded"
+    let pos := str c "where"
+    findings := findings.push (s!"{withCommas n.toUInt64.toNat} {if n == 1 then "copy" else "copies"} of a shared {str c "kind"} in {str c "function"}" ++
+      s!"{if pos.isEmpty then "" else s!" ({pos})"}, {fmtTime (num c "copy_ns")}" ++
+      s!"{if run > 0 then s!" ({fmt2 (num c "copy_ns" / run * 100)}% of the run)" else ""}")
+  let allocs := getArr j "allocations"
+  let est := allocs.foldl (fun s x => s + num x "est_ns") 0
+  if let .ok f := j.getObjVal? "frees" then
+    if findings.size < 3 && run > 0 && num f "free_ns" / run ≥ 0.1 then
+      findings := findings.push (s!"freeing objects takes {fmt2 (num f "free_ns" / run * 100)}% of the run (longest pause " ++
+        s!"{fmtTime (num f "max_ns")}): `leanprof run --frees {exe}{a}` says where each cascade starts")
+  if findings.size < 3 && run > 0 && est / run ≥ 0.1 then
+    findings := findings.push s!"allocation takes about {fmt2 (est / run * 100)}% of the run: `leanprof run --allocs {exe}{a}` lists it per function"
+  return (findings, #[
+    (s!"leanprof run {exe}{a}", "the same counts with every copy site, task and wait listed"),
+    ("leanprof explain", if copies.isEmpty then "why each copy happened (none in this run)" else "why each copy happened, and the fix in Lean"),
+    (s!"leanprof fix --exe {exe}{a}", "apply that fix on a git branch, test, measure, commit it only if it helps"),
+    (s!"leanprof run --auto {exe}{a}", "every function's exact time and call count"),
+    ("leanprof doctor", "what `leanprof` needs to sample instead, with no rebuild")])
+
+/-- Findings of a compile-time report: the costliest declarations. -/
+def elabFindings : IO (Array String × Array (String × String)) := do
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile ((".lake" : FilePath) / "leanprof" / "elab.json")))
+  let total := (getArr j "files").foldl (fun s f => s + num f "total_ns") 0
+  let decls := (getArr j "scopes").qsort (num · "total_ns" > num · "total_ns")
+  let mut findings : Array String := #[]
+  for d in decls.toList.take 3 do
+    let x := num d "total_ns"
+    if x <= 0 then continue
+    let phases := [("elaboration", num d "elab_ns"), ("kernel", num d "kernel_ns"),
+      ("compiler", num d "compile_ns"), ("linters", num d "lint_ns")]
+    let (ph, px) := phases.foldl (fun b p => if p.2 > b.2 then p else b) ("", 0)
+    let name := str d "name"
+    let name := if name.length > 60 then (name.take 60).toString ++ "…" else name
+    findings := findings.push (s!"{fmtTime x}{if total > 0 then s!" ({fmt2 (x / total * 100)}%)" else ""} in {name} " ++
+      s!"({str d "pos"}), {fmt2 (if x > 0 then px / x * 100 else 0)}% {ph}")
+  let slowest := (getArr j "files").qsort (num · "total_ns" > num · "total_ns")
+  let file := (slowest[0]?.map (str · "file")).getD "FILE.lean"
+  return (findings, #[
+    (s!"leanprof elab --heartbeats {shellQuote file}", "exact (heartbeats, the same on every run) for the slowest file"),
+    (s!"leanprof elab --counts {shellQuote file}", "what isDefEq and whnf unfolded, instances tried, simp lemmas"),
+    ("leanprof html", "the project view: folder, module, declaration, term, with source")])
+
+def startCmd (pick : Option String) (args : Array String) : IO UInt32 := do
+  let some targets ← projectTargets | do
+    IO.println usage
+    IO.println "\nIn a Lake project (a directory with lakefile.lean or lakefile.toml), `leanprof` with no arguments profiles it."
+    return 0
+  let choice : Leanprof.Workload.Choice := match pick with
+    | some e => .exe e "named on the command line"
+    | none => Leanprof.Workload.choose targets
+  match choice with
+  | .nothing =>
+    IO.eprintln "leanprof: the lakefile declares no lean_exe or lean_lib to profile; name a program: leanprof sample PATH -- ARGS"
+    return 2
+  | .ambiguous exes test =>
+    IO.println s!"leanprof: this project has {exes.size} executables; pick the one to profile (with its arguments):"
+    for e in exes do IO.println s!"  {startCommand e} -- ARGS"
+    if let some t := test then IO.println s!"the tests (test driver):\n  {startCommand t}"
+    unless targets.libs.isEmpty do
+      IO.println "compile time of the libraries:\n  leanprof elab --project --compact"
+    return 2
+  | .elab =>
+    IO.println s!"leanprof: no executable in this project; profiling compile time of its {if targets.libs.size == 1 then "library" else "libraries"} ({", ".intercalate targets.libs.toList})"
+    IO.println "  leanprof elab --project --compact   (builds the package, then elaborates each module with timing)"
+    (← IO.getStdout).flush
+    let rc ← elabCmd ["--project", "--compact", "--top", "5"]
+    if rc != 0 then return rc
+    let (f, n) ← elabFindings
+    printFindings f n
+    return 0
+  | .exe exe why =>
+    IO.println s!"leanprof: profiling `{exe}`{if args.isEmpty then " with no arguments" else s!" {" ".intercalate (args.toList.map shellQuote)}"} ({why})"
+    (← IO.getStdout).flush
+    let rc ← spawnWait "lake" #["build", exe] #[]
+    if rc != 0 then
+      IO.eprintln s!"leanprof: `lake build {exe}` failed"
+      return rc
+    let samply ← findSamply
+    let blocked ← samplingBlocked
+    let mut useStat := samply.isNone || blocked.isSome
+    if let some why := blocked then
+      IO.println s!"leanprof: cannot sample here: {why}"
+    else if samply.isNone then
+      IO.println s!"leanprof: samply is not installed, so `{exe}` is rebuilt with probes (leanprof stat); to sample with no rebuild, get samply:\n  {← samplyInstallCmd}"
+    let mut code : UInt32 := 0
+    (← IO.getStdout).flush
+    if !useStat then
+      IO.println s!"  leanprof sample --top 8 {exe}{argsText args}   (samply, no rebuild with probes)"
+      code ← sample (["--top", "8", exe] ++ (if args.isEmpty then [] else "--" :: args.toList))
+      unless ← lastReport.pathExists do
+        IO.println "leanprof: sampling failed; counting with probes instead (leanprof stat)"
+        (← IO.getStdout).flush
+        useStat := true
+    if useStat then
+      IO.println s!"  leanprof stat {exe}{argsText args}"
+      (← IO.getStdout).flush
+      code ← statCmd ([exe] ++ (if args.isEmpty then [] else "--" :: args.toList))
+      unless ← lastReport.pathExists do return if code == 0 then 1 else code
+    let (f, n) ← if useStat then statFindings exe args else sampleFindings exe args
+    printFindings f n
+    if code != 0 then
+      IO.println s!"\n`{exe}` exited with code {code}{if args.isEmpty then s!"; if it needs arguments: {startCommand exe} -- ARGS" else ""}"
+    return code
+
 def dispatch (argv : List String) : IO UInt32 := do
   try
     match argv with
-    | [] | ["help"] | ["--help"] | ["-h"] =>
+    | [] => startCmd none #[]
+    | "--" :: rest => startCmd none rest.toArray
+    | ["help"] | ["--help"] | ["-h"] =>
       IO.println usage
       return 0
     | ["help", c] | [c, "--help"] | [c, "-h"] =>
@@ -2229,15 +2724,26 @@ def dispatch (argv : List String) : IO UInt32 := do
     | "explain" :: rest =>
       Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
     | "fix" :: rest =>
-      Leanprof.Fix.fixCmd rest fun args => do
-        IO.Process.output { cmd := (← IO.appPath).toString, args, env := #[("LEANPROF_QUIET", some "1")], stdin := .null }
+      -- a signal ends the current step; `fix` then removes its worktree
+      guardSignals 0
+      Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+      Leanprof.Fix.fixCmd rest fun args cwd => do
+        Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
     | "html" :: rest => LeanprofHtml.htmlCmd (usageFor "html") rest
     | "top" :: rest => LeanprofLive.topCmd rest
     | "dump" :: rest => LeanprofLive.dumpCmd rest
     | "mcp" :: rest => LeanprofLive.mcpCmd rest
-    | _ =>
-      IO.eprintln usage
-      return 2
+    | name :: rest =>
+      -- `leanprof EXE [-- ARGS]`: the no-argument flow for an executable of this project
+      let exes := ((← projectTargets).map (·.exes)).getD #[]
+      if !name.startsWith "-" && exes.contains name then
+        startCmd (some name) (match rest with | "--" :: r => r.toArray | r => r.toArray)
+      else if name.startsWith "-" then
+        IO.eprintln usage
+        return 2
+      else
+        IO.eprintln s!"leanprof: `{name}` is neither a command nor an executable of this project{if exes.isEmpty then "" else s!" ({", ".intercalate exes.toList})"}; `leanprof help` lists the commands"
+        return 2
   catch e =>
     let s ← caughtSignal
     if s != 0 then return 128 + s  -- said by `main`

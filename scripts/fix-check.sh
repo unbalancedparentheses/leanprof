@@ -4,10 +4,17 @@
 #
 #   a tree with uncommitted changes      -> refused, nothing touched
 #   --dry-run                            -> the diff, nothing touched
-#   buckets (nested-array-element)       -> KEEP, committed on a new branch
-#   smooth (loop-over-updated-array)     -> DISCARD: output changed, branch deleted
+#   buckets (nested-array-element)       -> KEEP, committed on a new branch;
+#                                           git hooks do not run, the commit is
+#                                           exactly the edit
+#   smooth (loop-over-updated-array)     -> refused: the body writes an element
+#                                           not visited yet, nothing touched
+#   buckets, a test the edit fails       -> DISCARD, no branch
+#   buckets, a test rewrites the file    -> DISCARD: not what was measured
+#   TERM while the candidate is checked  -> exit 143, worktree removed
 #
-# After each, the checkout must be on main with a clean tree. Exits 1 on any
+# The checks run in a git worktree (.lake/leanprof/fix/worktree). After each,
+# the checkout must be on main with a clean tree and no worktree. Exits 1 on any
 # unexpected result. CI runs it; run it from the repository root.
 set -eu
 
@@ -33,6 +40,7 @@ fail() { echo "fix-check: $1"; failed=1; }
 clean() {
   [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || fail "$1: not back on main"
   [ -z "$(git status --porcelain --untracked-files=no)" ] || fail "$1: the tree is not clean"
+  [ "$(git worktree list | wc -l)" -eq 1 ] || fail "$1: a git worktree was left: $(git worktree list)"
 }
 # the measurements are small: 3 runs, 10 pairs
 opts="--runs 3 --pairs 10"
@@ -56,8 +64,17 @@ clean "dry run"
 [ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "dry run created a branch"
 
 echo
-echo "== buckets: KEEP"
+echo "== buckets: KEEP (with git hooks that must not run)"
+# a pre-commit hook that changes what is committed, and hooks that leave a mark
+hooks=$(git rev-parse --git-path hooks)
+mkdir -p "$hooks"
+printf '#!/bin/sh\necho "-- added by a hook" >> Fix.lean\ngit add Fix.lean\ntouch "%s/hook-ran"\n' "$work" > "$hooks/pre-commit"
+printf '#!/bin/sh\ntouch "%s/hook-ran"\n' "$work" > "$hooks/post-checkout"
+cp "$hooks/post-checkout" "$hooks/post-commit"
+chmod +x "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/post-commit"
 if "$lp" fix $opts --exe buckets > keep.txt 2>&1; then :; else fail "buckets: exit code $?"; fi
+rm -f "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/post-commit"
+[ ! -e "$work/hook-ran" ] || fail "buckets: a git hook ran"
 cat keep.txt
 grep -q "^KEEP: committed" keep.txt || fail "buckets: not kept"
 clean "buckets"
@@ -73,17 +90,62 @@ grep -q "output: identical before and after" message.txt || fail "buckets: outpu
 grep -q "paired time: median change" message.txt || fail "buckets: no paired interval in the message"
 [ "$(git diff --name-only main "$branch")" = Fix.lean ] || fail "buckets: the commit changes more than Fix.lean"
 git diff main "$branch" | grep -q '^+    bs := bs.modify i (·.push v)$' || fail "buckets: the commit is not the edit"
+[ "$(git diff main "$branch" | grep -c '^[-+] ')" = 2 ] || fail "buckets: the commit has more than the edit"
+git show "$branch:Fix.lean" | grep -q "added by a hook" && fail "buckets: a hook changed the commit"
 
 echo
-echo "== smooth: DISCARD (the output changes)"
-if "$lp" fix $opts --exe buckets -- --smooth > discard.txt 2>&1; then fail "smooth: kept"; fi
-cat discard.txt
-grep -q "^DISCARD" discard.txt || fail "smooth: no DISCARD"
-grep -q "the output changed" discard.txt || fail "smooth: the reason is not the output"
-grep -q "tests pass" discard.txt || fail "smooth: the tests were expected to pass"
+echo "== smooth: refused (the loop rewrite could change what it computes)"
+if "$lp" fix $opts --exe buckets -- --smooth > refused-loop.txt 2>&1; then fail "smooth: not refused"; fi
+sed -n '/^leanprof fix: [0-9]* finding/,$p' refused-loop.txt
+grep -q "which fix cannot show" refused-loop.txt || fail "smooth: no reason given for refusing the loop rewrite"
+grep -q "none of these findings has a mechanical fix" refused-loop.txt || fail "smooth: not refused before any change"
 clean "smooth"
-[ -z "$(git branch --list 'leanprof-fix/smooth*')" ] || fail "smooth: the branch was not deleted"
+[ -z "$(git branch --list 'leanprof-fix/smooth*')" ] || fail "smooth: a branch was created"
 git diff --quiet HEAD -- Fix.lean || fail "smooth: Fix.lean changed"
+
+echo
+echo "== buckets with a test the edit fails: DISCARD"
+git branch -q -D "$branch"
+if "$lp" fix $opts --exe buckets --test 'grep -q "bs.set!" Fix.lean' > discard.txt 2>&1; then fail "discard: kept"; fi
+cat discard.txt
+grep -q "^DISCARD" discard.txt || fail "discard: no DISCARD"
+grep -q "the tests fail" discard.txt || fail "discard: the reason is not the tests"
+clean "discard"
+[ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "discard: the branch was not deleted"
+git diff --quiet HEAD -- Fix.lean || fail "discard: Fix.lean changed"
+
+echo
+echo "== buckets with a test that rewrites the file: DISCARD (what was measured is not the edit)"
+if "$lp" fix $opts --exe buckets --test 'echo "-- by the test" >> Fix.lean' > rewritten.txt 2>&1; then
+  fail "rewritten: kept"
+fi
+sed -n '/^leanprof fix: alternative/,$p' rewritten.txt
+grep -q "changed while it was checked" rewritten.txt || fail "rewritten: the reason is not the changed file"
+clean "rewritten"
+[ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "rewritten: a branch was created"
+
+echo
+echo "== TERM while the candidate is checked: the worktree goes, the checkout is untouched"
+log=.lake/leanprof/fix/log.txt
+rm -f "$log"
+"$lp" fix $opts --exe buckets > term.txt 2>&1 &
+pid=$!
+i=0
+# the second build in the log is the candidate's
+while [ $i -lt 1500 ]; do
+  n=$(grep -c '^== lake build' "$log" 2>/dev/null || true)
+  [ "${n:-0}" -ge 2 ] && break
+  sleep 0.2; i=$((i + 1))
+done
+grep -q "bs := bs.modify" .lake/leanprof/fix/worktree/Fix.lean 2>/dev/null || fail "term: the candidate was not in the worktree"
+grep -q "bs := bs.modify" Fix.lean && fail "term: the candidate is in the checkout"
+kill -TERM $pid
+code=0; wait $pid || code=$?
+cat term.txt
+[ $code = 143 ] || fail "term: exit code $code, not 143 (128 + TERM)"
+clean "term"
+[ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "term: a branch was left"
+[ ! -e .lake/leanprof/fix/worktree ] || fail "term: the worktree directory was left"
 
 [ $failed = 0 ] && echo "fix-check: all passed"
 exit $failed

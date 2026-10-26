@@ -28,8 +28,8 @@ profile. The boundaries they must keep are narrower:
 | # | Component | Finding | Severity | Status |
 |---|---|---|---|---|
 | 1 | MCP | `measure_pair` ran any binary with any arguments (`/bin/sh -c …`): arbitrary command execution from a tool call, beyond building Lake projects. | high | fixed: both binaries must resolve into a `.lake/build/bin/` directory, and `base_cwd`/`candidate_cwd` must be Lake projects |
-| 2 | MCP | `measure_pair`'s `check_output` is deleted before each run; with an arbitrary working directory and path (`base_cwd: ~`, `check_output: .bashrc`) a call could delete any file. | high | fixed: `check_output` must be relative without `..`, in a Lake project (finding 1) |
-| 3 | MCP | `run`'s `json` and `measure`'s/`measure_pair`'s `out` accepted any path, so a call could overwrite any file the user can write with JSON. | medium | fixed: paths the server writes must be relative to the project, without `..` |
+| 2 | MCP | `measure_pair`'s `check_output` is deleted before each run; with an arbitrary working directory and path (`base_cwd: ~`, `check_output: .bashrc`) a call could delete any file. | high | fixed: `check_output` must be relative without `..`, in a Lake project (finding 1); the defaults of the working directories were not checked (finding 13) |
+| 3 | MCP | `run`'s `json` and `measure`'s/`measure_pair`'s `out` accepted any path, so a call could overwrite any file the user can write with JSON. | medium | fixed: paths the server writes must be relative to the project, without `..`; the lexical check missed links (finding 14) |
 | 4 | MCP, CLI | `live` and `dump` passed the client's `pid` to `kill`: `-1` signals every process of the user (SIGUSR1 kills those that do not handle it), `0` the process group; a pid with `/` named files outside the temporary directory. | medium | fixed: a pid must be digits and not 0 (also for `leanprof dump` and `top --pid`) |
 | 5 | MCP | An `executable` starting with `-` was read by `leanprof run` as an option. | low | fixed: refused |
 | 6 | MCP | `live`'s `seconds` slept as long as asked. | low | fixed: at most 60 |
@@ -48,6 +48,26 @@ pids `-1`, `0` and `../../etc/x` for `live` and `dump`). Before the fix, the
 same checks showed the server running `/bin/echo`, writing
 `/tmp/leanprof-mcp-outside.json` and `../outside.json`, and accepting
 pid `-1`.
+
+## Follow-up: bypasses found by a later code review (2026-10-25)
+
+A code review of the tree after these fixes found that the restrictions on
+paths and options could still be bypassed, and that the Action's comment
+step pasted an input into a jq program. All four reproduced, and are fixed:
+
+| # | Component | Finding | Severity | Status |
+|---|---|---|---|---|
+| 13 | MCP | `measure_pair` checked `base_cwd` and `candidate_cwd` only when given. Both default to the top-level `cwd`, which was not checked: with `cwd` a directory outside any project, absolute paths to Lake-built binaries and `check_output: "important.txt"`, the file was deleted there before the first run. | high | fixed: the directories it really runs in (`cwd`, or the server's own, and both defaults) must be Lake projects, and `check_output` must be inside both run directories |
+| 14 | MCP | The path checks of findings 2 and 3 were lexical. `out: "external/result.json"`, with `external` a symbolic link in the project pointing elsewhere, wrote outside the project; so did a path that is itself a link. | medium | fixed: the nearest existing directory above the path, links resolved, must be inside the working directory, and the path itself must not be a link (dangling links on the way are refused too) |
+| 15 | MCP | `elab`'s `files` were appended to `leanprof elab`'s options, which it reads anywhere: `["--out", "/outside/report.json", "Main.lean"]` wrote the report outside the project. | medium | fixed: a file starting with `-` is refused (`leanprof elab` has no `--`); also for `compare`'s and `judge`'s report paths |
+| 16 | Action | The comment step found its earlier comment with `gh api --jq` and the marker (from the `comment-tag` input) pasted into the jq program. A tag with `"` broke the query, whose error was suppressed, so every run posted a new comment; a tag such as `x") or (true) or ("` made the predicate match any comment, and the step then edited the first one. The tag comes from the workflow author, not the pull request. | low | fixed: the jq program is fixed text and the marker is compared in Python, as data; `scripts/comment-check.sh` (in CI) runs the step against a fake `gh` with both tags |
+
+`scripts/mcp-check.py` checks all three: `measure_pair` with a `cwd` that
+is not a project (with and without explicit side directories), a report
+path through a linked directory, a summary path that is a link, `--out`
+among `elab`'s files, and an option as `compare`'s report. Before the fix,
+the first deleted `important.txt` outside the project, and the report path
+and `elab` wrote outside it.
 
 ## Accepted risks (by design, or for later)
 

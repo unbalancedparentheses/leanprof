@@ -703,7 +703,10 @@ def storedWith (opName : String) (line : String) (n : String) : Option String :=
         return some (dropRightChars t suf.length)
   return none
 
-/-- `C.set! I (C[I]!.op V)` rewritten as `C.modify I (·.op V)`. -/
+/-- `C.set! I (C[I]!.op V)` rewritten as `C.modify I (·.op V)`. The element
+read must be at the same index, written the same way: `C.set! i (C[j]!.op V)`
+updates `C[j]` into slot `i`, which `modify` cannot express, so it has no
+rewrite. -/
 def modifyRewrite (line : String) : Option String := do
   let t := trim ((line.splitOn "--").head!)
   let (lhs, rhs) := match t.splitOn " := " with
@@ -715,9 +718,8 @@ def modifyRewrite (line : String) : Option String := do
   let afterSet := dropChars rhs (c.length + setTok.length)
   let idx := (afterSet.splitOn " (").head!
   let inner := dropChars afterSet (idx.length + 2)
-  guard (inner.startsWith (c ++ "[") && inner.endsWith ")")
-  let afterElem := (inner.splitOn "]").drop 1
-  let rest := "]".intercalate afterElem
+  guard (!idx.isEmpty && inner.startsWith (c ++ "[" ++ idx ++ "]") && inner.endsWith ")")
+  let rest := dropChars inner (c.length + idx.length + 2)
   let rest := if rest.startsWith "!" || rest.startsWith "?" then dropChars rest 1 else rest
   guard (rest.startsWith ".")
   return s!"{lhs}{c}.modify {idx} (·{dropRightChars rest 1})"

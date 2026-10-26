@@ -8,16 +8,17 @@ otherwise install the command (`sh scripts/install.sh`) and use
 
 | command | does |
 |---|---|
+| (none) `[-- ARGS]`, or `EXE [-- ARGS]` | in a Lake project: pick the workload (the one `lean_exe`; else the test driver when it is an executable; else compile time of the libraries, as `elab --project --compact`; several executables are listed, never chosen between), profile it the cheapest way (`sample` when samply can sample, else `stat`), print the top findings and the `run`/`explain`/`fix` commands that go deeper. `EXE` names one of the project's executables. Exit 2 when it lists executables instead |
 | `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--json F] [--cwd DIR] EXE [-- ARGS]` | sample with samply (`--out`: samply's profile), report per Lean declaration (`--json`: a copy of the report); exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
 | `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--scope NAME] [--heartbeats-files F…] [--check-output F] [--no-allocs] [--core] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time of the process or, with `--scope`, of one `profile!` scope, output; `self_check_warning`, empty unless copies may be undercounted) |
-| `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--warmup N] [--check-output F] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries; no builds or added probes |
+| `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output F] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries until the time verdict is settled (at most N pairs, default 30); `--scope` times one `Leanprof.bench` region; no builds or added probes |
 | `judge [--min-change PCT] BASE.json NEW.json` or `judge [--min-change PCT] PAIR.json` | KEEP (exit 0) or DISCARD (exit 1); paired sessions use a 95% median interval |
 | `explain [--report F] [--out F] [--top N] [--all] [--json] [--why EXE [-- ARGS]]` | why each copy of a shared value happened, with the fix as Lean code when the cause is recognised ([copies](copies-and-allocations.md#why-it-was-shared-leanprof-explain)) |
-| `fix [--exe EXE [-- ARGS]] [--test CMD] [--check-output F] [--finding N] [--all] [--dry-run] [--report F] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]` | apply the fix `explain` prints for the costliest mechanically fixable copy, on a new git branch. It builds, tests, compares the output, measures, times the plain binaries in pairs and judges. KEEP commits with the evidence (exit 0); DISCARD deletes the branch (exit 1). The checkout ends as it started; a tree with uncommitted changes is refused ([fix](fix.md)) |
+| `fix [--exe EXE [-- ARGS]] [--test CMD] [--check-output F] [--finding N] [--all] [--dry-run] [--report F] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]` | apply the fix `explain` prints for the costliest mechanically fixable copy. In a git worktree of HEAD, it builds, tests, compares the output, measures, times the plain binaries in pairs and judges. KEEP commits with the evidence on a new branch (exit 0); DISCARD creates no branch (exit 1). The checkout is never touched, also when interrupted; a tree with uncommitted changes is refused ([fix](fix.md)) |
 | `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
 | `html [-o F] [--trace F] [--profile F] [REPORT.json…]` | one self-contained HTML page: summary, flame graph, tables, source, comparison of two reports ([HTML report](html-report.md)) |
 | `top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS] \| --attach F \| --pid PID` | live view of a running program, refreshed like `top` ([live](live.md)) |
@@ -65,11 +66,14 @@ For programs that link leanprof:
 | `LEANPROF_SLOW_MAX=n` | at most `n` slow dumps (default 10) |
 | `LEANPROF_PROJECT=dir` | the project, when the program runs elsewhere (set by `--cwd`): where `.ilean` files and packages are found |
 | `LEANPROF_CORE_DIR=prefix` | a Lean toolchain (`lean --print-prefix`) whose `lib/lean/*.ilean` and `src/lean` give positions of Lean's own functions (set by `run`) |
+| `LEANPROF_BENCH_OUT=file` | `Leanprof.bench "NAME"` appends `NAME<TAB>NANOSECONDS` to this file after each region (set by `measure-pair --scope`; any program may write the same lines without the dependency) |
 
 For `leanprof run --core`:
 
 | variable | effect |
 |---|---|
+| `LEANPROF_HOME=dir` | where the installer put releases, the source checkout and samply (default `~/.local/share/leanprof`; the installed launcher sets it) |
+| `LEANPROF_SAMPLY=path` | samply to run (default: `samply` on `PATH`, then `$LEANPROF_HOME/samply/samply`); `none` acts as if there were none |
 | `LEANPROF_OBJCOPY=path` | objcopy used to rewrite Lean's libraries (default: `llvm-objcopy` on `PATH`, then Homebrew's and Debian's LLVM directories, then GNU `objcopy` on Linux, then rustup's `rust-objcopy`) |
 
 For builds through the compiler wrapper `scripts/leanprof-cc` (set as
@@ -145,7 +149,11 @@ than one clock tick (`< 1 ns` on an M5, `< 42 ns` on earlier Apple chips;
 `< 1 clock tick` outside the terminal). Read a field listed there as
 "below what leanprof can measure", never as 0.
 
-Sampled reports add `"sampled": true`. Compile reports from `elab` have
+Sampled reports add `"sampled": true`, `exe`, `exit_code`, `runtime`
+(the Lean runtime's self time by category: `category`, `self_ns`) and, for
+the project's own functions, `own_ns` (their self time plus that of code
+outside the project they called directly) and `own_top` (that code's three
+costliest functions: `name`, `ns`). Compile reports from `elab` have
 `"elab": true`, `"project"` (true with `--project`), `"unit": "ns"` or
 `"heartbeats"`, `threshold`, `timing` (`build_ns`, `profile_ns`,
 `report_ns`, `jobs`) and arrays:
@@ -221,9 +229,13 @@ archives contain.
 
 ### Paired measurement sessions
 
-`paired.json` (`"leanprof": "measure-pair"`, version 1) stores one chronological
+`paired.json` (`"leanprof": "measure-pair"`, version 2) stores one chronological
 session. `samples` contains `pair`, `side`, `time_ns`, `exit_code`,
-`stdout_hash`, `stderr_hash`, `output_hash`, and `output_present` for every run.
+`stdout_hash`, `stderr_hash`, `output_hash`, and `output_present` for every run
+(with `--scope`, `time_ns` is the region's time and `process_ns` the whole run's).
+`design` records the sequential rule (`max_runs`, `first_look`, `look_every`,
+`alpha`), `runs` the pairs measured, and `scope` and `min_change` what was
+asked; `judge` also reads version 1 sessions (one look after all pairs).
 The file also records resolved binary paths, before/after-checked binary
 fingerprints, per-side working directories, common arguments, warmup/run counts
 and per-pair machine load. No exact runtime metrics are inferred from plain

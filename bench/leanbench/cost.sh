@@ -64,6 +64,48 @@ for i in 1 2 3 4 5; do
   echo "$line"
 done
 
+# the fast-verdict defaults, end to end per verdict: edit Work.lean, then one
+# measure-pair command that builds the candidate (lake build), takes the base
+# from its cache (--base-rev HEAD, built by the first verdict of each exe) and
+# stops when the verdict is settled; with --scope on `workbench` (one action
+# per run) and on `work` (20 actions per run, the whole process)
+cp -R "$tmp/p" "$tmp/git"; cd "$tmp/git"
+printf '.lake\n' > .gitignore
+git init -q; git add -A; git -c user.name=lb -c user.email=lb@example.com commit -qm base
+for v in slow10 base; do
+  for exe in workbench work; do
+    sc=""; [ $exe = workbench ] && sc="--scope work"
+    line="fast $v $exe:"
+    for i in 1 2 3 4 5 6; do
+      sed "s/(← IO.getEnv \"LB_VARIANT\").getD \"base\"/\"$v\"/" "$proj/Work.lean" > Work.lean
+      echo "-- cost $v $exe $i" >> Work.lean
+      t0=$(now)
+      "$lp" measure-pair --base-rev HEAD --exe $exe $sc --out "$tmp/fast.json" > "$tmp/fast.txt" 2>&1
+      t1=$(now)
+      info=$(python3 -c "import json; j=json.load(open('$tmp/fast.json')); b=j['builds']; print(j['runs'], 'pairs, base', b['cache'], ', candidate build', round(b['candidate_build_s'], 2))")
+      line="$line $(el $t0 $t1) s ($info),"
+    done
+    echo "$line"
+  done
+done
+# LeanBench after the same kind of edit: lake build bench, then a baseline
+# run (the case study's verdict measures both sides) and a compare run (a
+# saved baseline would skip the first)
+line="LeanBench after an edit: build + baseline + compare:"
+for i in 1 2 3 4 5 6; do
+  sed "s/(← IO.getEnv \"LB_VARIANT\").getD \"base\"/\"slow10\"/" "$proj/Work.lean" > Work.lean
+  echo "-- cost lb $i" >> Work.lean
+  t0=$(now)
+  lake build bench >/dev/null 2>&1
+  t1=$(now)
+  lake exe bench --match work --format json --json-out "$tmp/b.json" >/dev/null 2>&1
+  t2=$(now)
+  lake exe bench --match work --compare "$tmp/b.json" --fail-on-regressions --regress-pct 10 >/dev/null 2>&1 || true
+  t3=$(now)
+  line="$line $(el $t0 $t1) + $(el $t1 $t2) + $(el $t2 $t3) s,"
+done
+echo "$line"
+
 # measure --scope (../scoped: the 20 actions in one profile! scope)
 cd "$root/bench/leanbench/scoped"
 lake build workscope >/dev/null 2>&1

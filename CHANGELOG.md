@@ -55,6 +55,65 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   with 20,000 and shown as faster, and the same text in other declarations
   of the file was added in too. `scripts/check-html-ranges.py` (CI) compares
   such a report with itself.
+### First run: `leanprof` with no arguments, samply from the installer
+
+- `leanprof` with no arguments in a Lake project reads the lakefile and
+  profiles the workload: the one `lean_exe`; else the test driver when it is
+  an executable; else compile time of the libraries (`elab --project
+  --compact`). Several executables are listed with the command for each and
+  none is chosen; `leanprof EXE -- ARGS` profiles one. It samples when samply
+  can (no rebuild), else runs `stat`, then prints the top three findings
+  (the project's functions by CPU, with the library code under them; copies,
+  allocation and closure work worth an exact count; the costliest
+  declarations for compile time) and the exact `run`/`explain`/`fix`
+  commands that go deeper. On a Mac: 8.6 s to the first report on a new
+  `lake new` project, after a 4.8 s install.
+- The installer offers samply 0.13.1, pinned and checked against its
+  SHA256, into `~/.local/share/leanprof/samply` (`--samply` without asking,
+  `--no-samply`, `--samply-only` later); leanprof uses it when no samply is on
+  `PATH` (`LEANPROF_SAMPLY` overrides). The installed launcher sets
+  `LEANPROF_HOME`.
+- `doctor` says what `leanprof` with no arguments would profile, where
+  samply is (or the command that fetches it), whether Linux perf events allow
+  sampling, and, for a missing C compiler, clang or objcopy, the install
+  command for the system (macOS, Debian/Ubuntu, Arch, Fedora). `run`, `stat`
+  and `--core` print the same when that is what failed.
+- `sample`'s report adds `exe`, `exit_code`, `runtime` (the runtime's self
+  time by category) and, for the project's own functions, `own_ns` and
+  `own_top`.
+- CI: Fresh install runs `leanprof` with no arguments on import-graph (three
+  executables, then one named) and on lean4-cli (a library), with samply
+  from the installer; Release installs samply the same way on all four
+  platforms.
+
+### Faster time verdicts: sequential `measure-pair`, `--scope`, `Leanprof.bench`
+
+- `measure-pair` stops as soon as the time verdict is settled — slower or
+  faster by more than `--min-change` (default 1%), or within ±1% — looking
+  after 6, 8, 10, … pairs, at most `--runs` (now 30). The rule is a
+  group-sequential sign test with exact boundaries and linear alpha
+  spending, so each of the three claims is wrong at most 2.5% of the time
+  however the session stopped (Tests: exact spent error, and by simulation a
+  true +1% median called slower 2.1% and within ±1% 2.2% of the time).
+  `--fixed` measures exactly `--runs` pairs. Sessions are version 2 and
+  record the design; `judge` reads both versions.
+- `measure-pair --scope NAME` times one region of a plain build: the program
+  wraps it in `Leanprof.bench "NAME" fun _ => ...` (new, `import
+  Leanprof.Bench`: two clock reads and a line appended to
+  `$LEANPROF_BENCH_OUT`, no probes) or writes the same `NAME<TAB>NS` lines
+  itself without the dependency.
+- `measure-pair --base-rev REV --exe NAME` builds the base at a git revision
+  once, keeps it in `.lake/leanprof/base/` by commit and build settings, and
+  builds the candidate with `lake build NAME`, so a loop of verdicts against
+  one base pays only the candidate's incremental build. The MCP tool takes
+  `base_rev`, `exe`, `scope`, `min_change` and `fixed`.
+- Measured on the LeanBench case study's trials (shared Mac, load 4–13):
+  sequential `measure-pair --scope` took 0.89 s per verdict end to end
+  against LeanBench's 1.09 s (7.1 s for the old 20 fixed pairs), with 0
+  false verdicts in 20 and the 2.4% slowdown caught 4 of 5; at load up to
+  15 it took 1.9–2.3 s against LeanBench's 1.06 s.
+- One warmup pair instead of three; `lake env` for both sides at once, and
+  the load average read in process instead of two `sysctl` per pair.
 
 ### Compile time: a project view and published profiles
 
@@ -189,23 +248,80 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   `explain` whose cause has a mechanical edit and applies it. The causes are
   `nested-array-element` (`Array.modify`), `map-value-reinserted` (`alter`
   or `modify` with the read line removed, or erase before inserting) and
-  `loop-over-updated-array` (an index loop). Every other cause is refused
-  with a reason. The check runs on a new git branch: build, tests, output
-  compared with the original's, `measure` of both versions, `measure-pair`
-  of both plain binaries, and `judge`. KEEP commits on the branch with the
-  counts, verdicts and paired interval in the message. DISCARD deletes the
-  branch. The checkout ends as it started, and a tree with uncommitted
+  `loop-over-updated-array` (an index loop), each only when the code shows
+  it computes the same values (see the review fixes below). Every other
+  cause is refused with a reason. The check runs in a git worktree of
+  `HEAD`: build, tests, output compared with the original's, `measure` of
+  both versions, `measure-pair` of both plain binaries, and `judge`. KEEP
+  commits with the counts, verdicts and paired interval in the message and
+  gives your repository a new branch at that commit. DISCARD creates no
+  branch. The checkout is never touched, and a tree with uncommitted
   changes is refused. See the [guide](docs/guide/fix.md).
 - Tests: each edit of `Examples/ExplainPatterns.lean` gives the fixed
-  declaration line for line. `scripts/fix-check.sh` (in CI) covers four
-  runs on the `Tests/Fix` fixture: KEEP (19,985 copies -> 1), DISCARD when
-  the output changes although the tests pass, a dry run, and a tree with
-  uncommitted changes.
+  declaration line for line. `scripts/fix-check.sh` (in CI) runs `fix` on
+  the `Tests/Fix` fixture: KEEP (19,985 copies -> 1, with git hooks that
+  must not run), a loop rewrite refused from the code, DISCARD when a test
+  fails or rewrites the file, TERM during the checks, a dry run, and a tree
+  with uncommitted changes.
 - On lean-compiler-backend `a623acc`, `fix --all` applied `explain`'s
   `Array.modify` to `CFG.build` and DISCARDed it: copies went from 119,516
   to 86,449, but allocations rose by 59,514, the same cost the hand-made fix
   (`8a0d286`) avoided with a second pass. On lean-regex `32af6f3`, no
   finding has a mechanical fix (all are `shared-on-entry`).
+
+### Review fixes: `fix` and the MCP server (review of 2026-10-25)
+
+- `fix` committed rewrites that change what the program computes when the
+  one workload it runs did not show it. `xs.set! i (xs[j]!.push v)` became
+  `xs.modify i (·.push v)` (it updates `xs[i]`, not `xs[j]`), and every
+  `for x in xs` loop became an index loop reading the current array. Now
+  `Array.modify` needs the same index on both sides, and the loop rewrite
+  needs a body that provably changes no element it has not visited yet: a
+  `let mut j := 0` counter, a flat body ending with `j := j + 1`, and `xs`
+  assigned only by `set!`/`set`/`modify` at `j` or `push`. Anything else is
+  refused with the reason. `Tests/Main.lean` checks 13 refused shapes;
+  `fix-check.sh` now expects `smooth` to be refused before any change, and
+  covers DISCARD with a test the edit fails.
+- `fix` checked out its branch and wrote the candidate into your checkout,
+  and a TERM or HUP while it built, tested or measured killed it before its
+  cleanup ran: the candidate stayed in the file and the branch stayed
+  checked out. Now every step after profiling runs in a git worktree of
+  `HEAD` (`.lake/leanprof/fix/worktree`, with your `.lake/packages` linked
+  and a copy of `.lake/build`); your repository only gets the branch, on
+  KEEP. INT, TERM and HUP are passed on to the running step, then the
+  worktree is removed and `fix` exits with 128 + the signal.
+  `fix-check.sh` sends TERM during the candidate's tests and checks the
+  checkout, the branches and the worktree list.
+- `fix`'s `git checkout` and `git commit` ran the repository's hooks: a
+  `pre-commit` hook could stage other contents after every check had
+  passed, and the commit then carried evidence for code that was never
+  measured. `fix` now runs git with `core.hooksPath=/dev/null`, DISCARDs an
+  edit whose file changed while it was checked, and refuses to report KEEP
+  unless the commit's parent is `HEAD`, it changes only that file, and the
+  file's committed content is the measured candidate. `fix-check.sh` installs
+  `pre-commit`, `post-checkout` and `post-commit` hooks for the KEEP run and
+  adds a test that rewrites the file.
+- MCP: the checks on paths the server writes were lexical, so a link in the
+  project (`out: "external/result.json"` with `external` pointing
+  elsewhere, or a path that is itself a link) wrote outside it. The nearest
+  existing directory above the path must now be inside the working
+  directory with links resolved, and the path must not be a link. `elab`'s
+  `files` went straight into `leanprof elab`'s options, so `--out FILE`
+  among them wrote anywhere: files starting with `-` are refused (also
+  `compare`'s and `judge`'s report paths). `scripts/mcp-check.py` checks
+  all four; see the [security review](docs/reviews/security-review.md).
+- MCP: `measure_pair` checked `base_cwd` and `candidate_cwd` only when they
+  were given, not their default, the top-level `cwd`. With `cwd` outside
+  any project and absolute paths to Lake-built binaries, `check_output` was
+  deleted in that directory before the first run. Every directory it runs
+  in or writes to, defaults included, must now be a Lake project, and
+  `check_output` must be inside both run directories.
+- Action: the comment step pasted the `comment-tag` input into its jq
+  program. A tag with `"` broke the lookup (the error was suppressed, so
+  each run posted another comment), and a tag with jq syntax could match,
+  then edit, another comment. The marker is now compared in Python, as
+  data. `scripts/comment-check.sh` (in CI) runs the step against a fake
+  `gh`; with the old step, both tags fail it.
 
 ### Smaller fixes and maintenance
 
