@@ -39,12 +39,16 @@ def monadicHead? (type : Expr) : TermElabM (Option Expr) := do
 syntax (name := profileTerm) "profile! " str ppSpace term : term
 
 /-- The runtime label: the name, then `\x1f` and the source position, which the
-report shows in its `where` column. -/
+report shows in its `where` column. Lean before 4.31 writes the `\x1f` into the C
+code as a hex escape, `\x1f`, which C reads on through the next hex digits (the
+`E` of `Examples/`): there the position starts with `./`, which the runtime
+drops. -/
 def labelWithPos (name : String) (stx : Syntax) : TermElabM String := do
   let file := (← getMainModule).toString.replace "." "/" ++ ".lean"
   let some pos := stx.getPos? | return name
   let line := (← getFileMap).toPosition pos |>.line
-  return s!"{name}\x1f{file}:{line}"
+  let hexEscape := Lean.version.major == 4 && Lean.version.minor < 31
+  return s!"{name}\x1f{if hexEscape then "./" else ""}{file}:{line}"
 
 /-- The `exitPure` variant for a value of type `type`: scalars keep their
 unboxed representation. -/

@@ -9,11 +9,11 @@
 
 enum {
     LPS_ARRAY_PUSH,      /* Array.push        -> lean_array_push */
-    LPS_ARRAY_SET,       /* Array.set!        -> lean_array_set -> lean_copy_expand_array_nonlinear */
+    LPS_ARRAY_SET,       /* Array.set!        -> lean_array_set -> lean_copy_expand_array_nonlinear (lean_copy_expand_array before 4.28) */
     LPS_STRING_PUSH,     /* String.push       -> lean_string_push (inline since 4.36: lean_string_push_cold) */
     LPS_STRING_APPEND,   /* String.append     -> lean_string_append */
     LPS_BYTE_ARRAY_PUSH, /* ByteArray.push    -> lean_byte_array_push */
-    LPS_BYTE_ARRAY_SET,  /* ByteArray.set!    -> lean_byte_array_set -> lean_copy_sarray_nonlinear (4.35+) */
+    LPS_BYTE_ARRAY_SET,  /* ByteArray.set!    -> lean_byte_array_set -> lean_copy_sarray_nonlinear (lean_copy_byte_array before 4.35) */
     LPS_OPS
 };
 

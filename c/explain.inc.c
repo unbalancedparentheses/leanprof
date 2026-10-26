@@ -162,9 +162,13 @@ __attribute__((noinline)) static void lpf_why_count(void *pc, lean_object *o) {
  * marked `noinline` are not split. */
 #define LP_NOSPLIT __attribute__((noinline))
 LEAN_EXPORT lean_obj_res leanprof_copy_expand_array_nonlinear(lean_obj_arg a, bool expand) LP_NOSPLIT;
+LEAN_EXPORT lean_obj_res leanprof_copy_expand_array(lean_obj_arg a, bool expand) LP_NOSPLIT;
 #if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 35)
 LEAN_EXPORT lean_obj_res leanprof_copy_sarray_nonlinear(lean_obj_arg a, size_t cap) LP_NOSPLIT;
 LEAN_EXPORT lean_obj_res leanprof_copy_string_nonlinear(lean_obj_arg s, size_t cap) LP_NOSPLIT;
+#else
+LEAN_EXPORT lean_obj_res leanprof_copy_byte_array(lean_obj_arg a) LP_NOSPLIT;
+LEAN_EXPORT lean_obj_res leanprof_copy_float_array(lean_obj_arg a) LP_NOSPLIT;
 #endif
 LEAN_EXPORT lean_object *leanprof_array_push(lean_obj_arg a, lean_obj_arg v) LP_NOSPLIT;
 LEAN_EXPORT lean_obj_res leanprof_byte_array_push(lean_obj_arg a, uint8_t b) LP_NOSPLIT;

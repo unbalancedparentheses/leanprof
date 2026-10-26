@@ -25,9 +25,7 @@ LEAN_EXPORT lean_object *leanprof_selfcheck_op(unsigned op, lean_object *x) {
     case LPS_STRING_PUSH: return lean_string_push(x, 'x');
     case LPS_STRING_APPEND: return lean_string_append(x, x); /* the caller holds another reference */
     case LPS_BYTE_ARRAY_PUSH: return lean_byte_array_push(x, 1);
-#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 35)
     case LPS_BYTE_ARRAY_SET: return lean_byte_array_set(x, lean_box(0), 1);
-#endif
     default: lean_dec(x); return NULL;
     }
 }

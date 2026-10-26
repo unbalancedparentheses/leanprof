@@ -28,8 +28,11 @@ if [ -z "$real" ]; then
 fi
 set -- \
   -Dlean_copy_expand_array_nonlinear=leanprof_copy_expand_array_nonlinear \
+  -Dlean_copy_expand_array=leanprof_copy_expand_array \
   -Dlean_copy_sarray_nonlinear=leanprof_copy_sarray_nonlinear \
   -Dlean_copy_string_nonlinear=leanprof_copy_string_nonlinear \
+  -Dlean_copy_byte_array=leanprof_copy_byte_array \
+  -Dlean_copy_float_array=leanprof_copy_float_array \
   -Dlean_array_push=leanprof_array_push \
   -Dlean_byte_array_push=leanprof_byte_array_push \
   -Dlean_float_array_push=leanprof_float_array_push \

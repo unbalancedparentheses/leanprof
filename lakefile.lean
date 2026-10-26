@@ -14,7 +14,8 @@ package leanprof where
 through leanprof's shims. Add them to `moreLeancArgs` of any executable whose
 copies and tasks you want observed. -/
 def copyFlags : Array String :=
-  #["copy_expand_array_nonlinear", "copy_sarray_nonlinear", "copy_string_nonlinear",
+  #["copy_expand_array_nonlinear", "copy_expand_array", "copy_sarray_nonlinear", "copy_string_nonlinear",
+    "copy_byte_array", "copy_float_array",
     "array_push", "byte_array_push", "float_array_push",
     "string_push", "string_push_cold", "string_append", "string_utf8_set",
     "task_spawn_core", "io_as_task", "io_wait", "task_get",
