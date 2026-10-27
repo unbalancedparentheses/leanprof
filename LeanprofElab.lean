@@ -819,7 +819,7 @@ structure Opts where
   report is compared with the previous one by the command (LeanprofCli.lean); here,
   `lake env`'s paths and the setup of a module that is not built are reused while the
   files that decide them are unchanged (`cachedLeanEnv`, `setupFile`), which saves
-  0.3-0.7 s a run. -/
+  0.2-0.7 s a run. -/
   sinceLast : Bool := false
   keepBase : Bool := false
   heartbeats : Bool := false

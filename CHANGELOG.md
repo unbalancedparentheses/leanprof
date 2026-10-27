@@ -19,7 +19,8 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   writes the same difference for any two reports.
 - `elab --since-last` reuses `lake env`'s paths and the setup of a module
   that is not built while the package's configuration, manifest, toolchain
-  and the file's imports are unchanged: about 0.3 s less per run, 0.7 s for
+  and the file's imports are unchanged: 0.2–0.45 s less per run on the files measured
+  ([VS Code guide](docs/guide/vscode.md#on-save)), about 0.7 s for
   a file outside the package's libraries.
 - `#leanprof` shows those differences as hints (`Δ +25.0 kHB since the last
   profile`, `Δ +2,000 copies since the last run`), with the cause in the

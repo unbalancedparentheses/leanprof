@@ -58,7 +58,7 @@ build [Array] in build (Foo/Bar.lean:17)`). Without a previous profile it
 says so, and the next run is compared with this one. Each run becomes the
 base of the next (`--keep-base` keeps the first). `elab --since-last` reuses
 `lake env`'s paths and the module's setup while the package's
-configuration and the file's imports are unchanged, which saves 0.3–0.7 s a
+configuration and the file's imports are unchanged, which saves 0.2–0.7 s a
 run, so it can run on every save.
 
 `#leanprof` shows these differences too, as hints at each declaration or

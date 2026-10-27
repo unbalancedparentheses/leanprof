@@ -106,12 +106,22 @@ time each profile took. **leanprof: Forget the on-save profiles** starts
 over (the next save is a first profile); **leanprof.onSave.keepBase**
 compares every save with the first instead of the previous one.
 
-How long a profile takes on save (`elab --since-last`, median of 3, Apple
-M5 Max, shared):
+How long a profile takes on save, against plain `lake env lean` on the
+same file (median of 3, Apple M5 Max shared with other work, so a few
+tenths of a second either way):
 
-| file | lines | heartbeats | plain `lean` | `elab --since-last` |
-|---|---|---|---|---|
-| MEASURED | | | | |
+| file | lines | heartbeats | `lake env lean` | `elab --heartbeats` | `elab --heartbeats --since-last` |
+|---|---|---|---|---|---|
+| leanprof `Examples/CopyBug.lean` | 37 | 0.7 M | 0.47 s | 0.63 s | 0.43 s |
+| leanprof `Leanprof/Regress.lean` | 430 | 15 M | 0.67 s | 0.94 s | 0.65 s |
+| leanprof `LeanprofElab.lean` | 1,610 | 95 M | 2.12 s | 2.95 s | 2.60 s |
+| a Mathlib project, `Coin.lean` | 85 | 5 M | 1.66 s | 2.47 s | 2.02 s |
+| a Mathlib project, `Kelly.lean` | 109 | 25 M | 1.79 s | 2.69 s | 2.59 s |
+
+Each save elaborates the whole file in a new process, loading its imports
+(most of the time with Mathlib), where the language server keeps them
+loaded and re-elaborates only from the edit; the profile runs after the
+server has already shown the file's errors.
 
 ## Why is this file slow?
 
