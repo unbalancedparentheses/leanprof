@@ -117,7 +117,13 @@ users than the rest of v0.2.0, and take priority over its long tail.
   heartbeats. Point the autoresearch loop at Mathlib's slowest files.
   Speedups are easy to verify: the proofs still check and heartbeat counts
   are exact. Results stay local branches until the maintainer decides to
-  propose them upstream.
+  propose them upstream. Under way: `elab --why` names causes, `fix --elab`
+  applies Lean's own edits through an experiment, `--max-heartbeats` is a
+  budget; on Batteries, kept edits cut three lemmas by 66 to 67% (25.2, 17.4
+  and 16.3 M heartbeats to 8.3, 6.2 and 6.0 M;
+  [case study](docs/case-studies/compile-time-fixes.md)). Still open: an
+  agent loop over Mathlib's slowest files acting on the hypotheses
+  (instance paths, the kernel), which `fix --elab` cannot apply.
 
 ## From measuring problems to solving them
 
