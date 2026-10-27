@@ -1411,8 +1411,8 @@ def measuresJson (acc : Acc) : IO (Array Json) := do
     let words := ((text.replace "\n" " ").splitOn " ").filter (· != "")
     let others := acc.measures.filter fun (f', l', _, _) => f' == f && sl ≤ l' && l' ≤ el
     -- what the search cost: `decreasing_tactic`, once per measure tried and call
-    let cost := ((acc.lines.get? s!"{f}:{sl}").map fun lc => lc.ops.fold (fun x (_, op) (_, t) =>
-      if (op.splitOn "decreasing_tactic").length > 1 then x + t else x) 0).getD 0
+    let cost : Float := ((acc.lines.get? s!"{f}:{sl}").map fun lc => lc.ops.fold (fun (x : Float) (_, op) (_, t) =>
+      if (op.splitOn "decreasing_tactic").length > 1 then x + t else x) (0 : Float)).getD 0
     let reason :=
       if others.size > 1 then "the declaration has several recursive functions (`mutual`, `where`): apply by hand"
       else if ["termination_by", "decreasing_by", "termination_by?", "partial_fixpoint"].any words.contains then
