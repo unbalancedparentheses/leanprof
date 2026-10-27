@@ -207,6 +207,7 @@ and the paired timing of the plain binaries (`none`: not timed, because the
 exact counts got worse). -/
 def combine (exact : Judge.Verdict) (paired : Option Judge.Verdict) : Outcome × Array String :=
   if !exact.worse.isEmpty then (.discard, exact.worse.map ("exact counts: " ++ ·))
+  else if !exact.coverage.isEmpty then (.inconclusive, exact.coverage.map ("exact counts: " ++ ·))
   else match paired with
     | none => (.discard, #["exact counts got worse"])
     | some p =>
@@ -219,7 +220,7 @@ def combine (exact : Judge.Verdict) (paired : Option Judge.Verdict) : Outcome ×
 
 /-- What `combine`'s verdict means (`Contract.Outcome`). -/
 def combineOutcome (exact : Judge.Verdict) (paired : Option Judge.Verdict) : Contract.Outcome :=
-  if !exact.worse.isEmpty then exact.outcome
+  if !exact.worse.isEmpty || !exact.coverage.isEmpty then exact.outcome
   else match paired with
     | none => .regression
     | some p =>
@@ -237,6 +238,7 @@ def Outcome.default : Outcome → Contract.Outcome
 heartbeat rule: the total must go down by more than 1% and 1,000). -/
 def heartbeatOutcome (v : Judge.Verdict) : Outcome × Array String :=
   if !v.worse.isEmpty then (.discard, v.worse)
+  else if !v.coverage.isEmpty then (.inconclusive, v.coverage)
   else if !v.better.isEmpty then (.keep, v.better)
   else (.discard, #["compile heartbeats did not go down by more than 1% and 1,000"])
 
@@ -1020,7 +1022,8 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     let exact := Judge.judge baseSum newSum s.min_change (judgeTime := false)
     let exactNotes := exact.notes.filter (!·.startsWith "time:")
     step "exact" (Json.mkObj [("summary", Json.str (tdir / "new.json").toString), ("base_summary", Json.str s.base_summary),
-      ("worse", toJson exact.worse), ("better", toJson exact.better), ("notes", toJson exactNotes)])
+      ("worse", toJson exact.worse), ("better", toJson exact.better), ("notes", toJson exactNotes),
+      ("coverage", toJson exact.coverage)])
     let allocText := match baseSum.allocs, newSum.allocs with
       | some (a, _, _), some (b, _, _) => s!", allocations {Judge.groupDigits a} -> {Judge.groupDigits b}"
       | _, _ => ""

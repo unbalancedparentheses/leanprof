@@ -34,6 +34,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `judge` reads summaries strictly: a missing or mistyped metric, output
   hash or stability flag is an error (exit 2) naming the field, never a
   zero or a stable output.
+- Copy counts that differ between runs (threads) are judged by their
+  range, as allocations were: `measure` records `copies_runs`.
+- Coverage gates verdicts: `measure` records `coverage` (copies counted or
+  undercounted, allocations and heartbeats counted or not, time measured
+  or too small). When the runtime's self-check warned, or allocations or
+  heartbeats were counted on one side only, `judge` gives no KEEP (outcome
+  `insufficient_evidence`, listed in `coverage`) and an experiment says
+  INCONCLUSIVE.
 - Provenance: reports and summaries record leanprof's and Lean's
   versions, the platform, the git revision with a fingerprint of
   uncommitted changes, the build flags, and the workload with the hashes of

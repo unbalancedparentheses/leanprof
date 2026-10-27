@@ -60,6 +60,11 @@ structure Summary where
   min : Float := 0
   max : Float := 0
   copies : Nat := 0
+  /-- the smallest and largest copy total over the runs (equal when stable) -/
+  copiesMin : Nat := 0
+  copiesMax : Nat := 0
+  /-- the runtime's self-check warned that copies may be undercounted -/
+  selfCheckWarning : String := ""
   sites : Std.HashMap String Nat := {}
   calls : Std.HashMap String Nat := {}
   /-- allocations by compiled Lean code: the last run's total, and the
@@ -128,6 +133,17 @@ def Summary.ofJson (j : Json) : Except String Summary := do
   let max : Float ← need time "time_ns." "max"
   let tooSmallRuns : Nat ← if time.getObjValD "too_small_runs" == Json.null then pure 0 else need time "time_ns." "too_small_runs"
   let copies : Nat ← need j "" "copies_total"
+  -- each run's total (judged by range when runs differ); summaries made
+  -- before it was recorded must say their counts were stable
+  let (copiesMin, copiesMax) ← match j.getObjVal? "copies_runs" with
+    | .ok (.arr _) => do
+      let runs : Array Nat ← need j "" "copies_runs"
+      pure (runs.foldl Nat.min copies, runs.foldl Nat.max copies)
+    | _ => do
+      let stable : Bool ← need j "" "copies_stable"
+      unless stable do throw "copies_stable is false but copies_runs is missing: the copy counts cannot be judged"
+      pure (copies, copies)
+  let selfCheckWarning : String ← need j "" "self_check_warning"
   let sites ← needKeyed j "copies" "copies"
   let calls ← needKeyed j "calls" "calls"
   let allocs ← if field "allocs_total" == Json.null then pure none else do
@@ -147,7 +163,8 @@ def Summary.ofJson (j : Json) : Except String Summary := do
   let core : Bool ← if field "core" == Json.null then pure false else need j "" "core"
   return {
     command := toJson command, scope := str j "scope", exitCode
-    outputSource, outputHash, outputStable, median, min, max, copies, sites, calls, allocs, allocSites, heartbeats,
+    outputSource, outputHash, outputStable, median, min, max, copies, copiesMin, copiesMax, selfCheckWarning,
+    sites, calls, allocs, allocSites, heartbeats,
     overloaded, loadAvg := (machine.getObjValAs? Float "load_avg_1m").toOption, core, tooSmallRuns,
     provenance := field "provenance" }
 
@@ -174,6 +191,9 @@ structure Verdict where
   invalid : Array String := #[]
   /-- time was not judged because the machine was overloaded while measuring -/
   overloaded : Bool := false
+  /-- what was not measured completely (the self-check warned, or a metric was
+  counted on one side only): no KEEP rests on such a measurement -/
+  coverage : Array String := #[]
 
 /-- `x` with two decimals. -/
 def fmt2 (x : Float) : String :=
@@ -250,9 +270,18 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) (a
   if !b.outputStable || !n.outputStable then
     invalid := invalid.push "output differs between runs, so changes to it cannot be detected (measure with --check-output)"
   worse := incompatible ++ correctness ++ invalid
-  -- copies: exact
-  if n.copies > b.copies then worse := worse.push s!"copies: {groupDigits b.copies} -> {groupDigits n.copies}"
-  else if n.copies < b.copies then better := better.push s!"copies: {groupDigits b.copies} -> {groupDigits n.copies}"
+  let mut coverage : Array String := #[]
+  for (side, s) in [("base", b), ("new", n)] do
+    unless s.selfCheckWarning.isEmpty do
+      coverage := coverage.push s!"copies may be undercounted in the {side} summary (the runtime's self-check: {s.selfCheckWarning})"
+  -- copies: exact; when a program's count varies between runs (threads),
+  -- only a change beyond that spread counts
+  let ct := s!"copies: {groupDigits b.copies} -> {groupDigits n.copies}"
+  let cspread := if b.copiesMin != b.copiesMax || n.copiesMin != n.copiesMax then
+    s!" (runs vary: base {groupDigits b.copiesMin}..{groupDigits b.copiesMax}, new {groupDigits n.copiesMin}..{groupDigits n.copiesMax})" else ""
+  if n.copiesMin > b.copiesMax then worse := worse.push (ct ++ cspread)
+  else if n.copiesMax < b.copiesMin then better := better.push (ct ++ cspread)
+  else if n.copies != b.copies then notes := notes.push (ct ++ cspread ++ " (within the runs' spread: not judged)")
   notes := notes ++ siteChanges "copies" b.sites n.sites
   -- allocations: exact; when a program's count varies between runs
   -- (threads), only a change beyond that spread counts
@@ -268,7 +297,7 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) (a
         (if nmax < bmin then s!" (fewer, but by less than 1% and {allocMinDrop}: not an improvement on its own)" else ""))
     notes := notes ++ siteChanges "allocations" b.allocSites n.allocSites
   | none, none => pure ()
-  | _, _ => notes := notes.push "allocations counted in only one summary; not compared (measure counts them unless --no-allocs)"
+  | _, _ => coverage := coverage.push "allocations counted in only one summary, so they cannot be compared (measure counts them unless --no-allocs)"
   -- compile heartbeats: exact, but editing one declaration moves its
   -- neighbours by a few, so only changes above 1% and 1,000 count. Judged
   -- on the total, since experiments move code between declarations.
@@ -286,7 +315,7 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) (a
       | none, some y => notes := notes.push s!"compile {k}: new, {kHB y}"
       | none, none => pure ()
   else if b.heartbeats.isSome != n.heartbeats.isSome then
-    notes := notes.push "compile heartbeats measured in only one summary; not compared"
+    coverage := coverage.push "compile heartbeats measured in only one summary, so they cannot be compared"
   -- calls: exact, but restructuring code changes them legitimately
   notes := notes ++ siteChanges "calls" b.calls n.calls
   -- time: only when the runs do not overlap and the median moved by at
@@ -311,8 +340,8 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) (a
   else if n.max < b.min || n.min > b.max then
     notes := notes.push s!"{t} (runs do not overlap, but the change is below --min-change {fmt2 minChange}%)"
   else notes := notes.push s!"{t} (within noise: base {fmtMs b.min}..{fmtMs b.max}, new {fmtMs n.min}..{fmtMs n.max})"
-  return { keep := worse.isEmpty && !better.isEmpty, worse, better, notes, correctness, incompatible, invalid,
-           overloaded := overloadedNotJudged, unsettled := overloadedNotJudged }
+  return { keep := worse.isEmpty && !better.isEmpty && coverage.isEmpty, worse, better, notes, correctness, incompatible,
+           invalid, overloaded := overloadedNotJudged, unsettled := overloadedNotJudged, coverage }
 
 /-! ## Paired sessions: a group-sequential sign test
 
@@ -537,6 +566,7 @@ def Verdict.outcome (v : Verdict) : Contract.Outcome :=
   else if !v.invalid.isEmpty then .measurementFailed
   else if !v.correctness.isEmpty then .correctnessFailure
   else if !v.worse.isEmpty then .regression
+  else if !v.coverage.isEmpty then .insufficientEvidence
   else if v.keep then .improved
   else if v.unsettled then .insufficientEvidence
   else .noImprovement
@@ -547,13 +577,14 @@ def Verdict.json (v : Verdict) : List (String × Json) :=
   v.outcome.json ++
   [("worse", toJson v.worse), ("better", toJson v.better), ("notes", toJson v.notes),
    ("correctness", toJson v.correctness), ("incompatible", toJson v.incompatible), ("invalid", toJson v.invalid),
-   ("unsettled", Json.bool v.unsettled), ("overloaded", Json.bool v.overloaded)]
+   ("unsettled", Json.bool v.unsettled), ("overloaded", Json.bool v.overloaded), ("coverage", toJson v.coverage)]
 
 /-- The verdict as `judge` prints it. -/
 def Verdict.render (v : Verdict) : String := Id.run do
   let mut out := if v.keep then "KEEP\n" else "DISCARD\n"
   for r in v.worse do out := out ++ s!"  - {r}\n"
   for r in v.better do out := out ++ s!"  + {r}\n"
+  for r in v.coverage do out := out ++ s!"  ? {r} (no KEEP on an incomplete measurement)\n"
   if v.worse.isEmpty && v.better.isEmpty then out := out ++ "  - no measurable improvement\n"
   for r in v.notes do out := out ++ s!"    {r}\n"
   return out

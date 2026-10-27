@@ -284,7 +284,14 @@ Lean code), `allocs_runs` (each run's total), `allocs_stable`,
 `alloc_bytes_total`, `allocs` (`key` "function in scope", `allocs`), and
 `heartbeats_total` and `heartbeats` (`key`, `heartbeats`) with
 `--heartbeats-files`. The allocation fields are `null` with `--no-allocs`;
-`judge` then does not compare allocations.
+`judge` then does not compare allocations. `copies_runs` holds each run's
+copy total (judged by range when they differ), and `coverage` says what
+was measured and how completely: `copies` (`counted`, or `undercounted`
+when the runtime's self-check warned), `allocations` and `heartbeats`
+(`counted` or `not_counted`), `time` (`measured` or `too_small`). `judge`
+gives no KEEP when the self-check warned or a metric was counted on one
+side only (outcome `insufficient_evidence`), and reads summaries strictly:
+a missing or mistyped metric is an error naming it.
 
 ## Live snapshot
 

@@ -192,6 +192,50 @@
     },
     "provenance": {
       "$ref": "common.schema.json#/$defs/provenance"
+    },
+    "copies_runs": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "description": "each run's copy total; judge compares their ranges when they differ"
+    },
+    "coverage": {
+      "type": "object",
+      "description": "what was measured, and how completely; judge gives no KEEP on a gap",
+      "properties": {
+        "copies": {
+          "enum": [
+            "counted",
+            "undercounted"
+          ]
+        },
+        "allocations": {
+          "enum": [
+            "counted",
+            "not_counted"
+          ]
+        },
+        "heartbeats": {
+          "enum": [
+            "counted",
+            "not_counted"
+          ]
+        },
+        "time": {
+          "enum": [
+            "measured",
+            "too_small"
+          ]
+        }
+      },
+      "required": [
+        "copies",
+        "allocations",
+        "heartbeats",
+        "time"
+      ]
     }
   },
   "required": [
@@ -206,6 +250,7 @@
     "machine",
     "copies_total",
     "copies",
-    "calls"
+    "calls",
+    "self_check_warning"
   ]
 }

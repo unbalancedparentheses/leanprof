@@ -1749,8 +1749,9 @@ def measureCmd (argv : List String) : IO UInt32 := do
   let allocRuns := reports.map allocTotal
   let allocsStable := allocRuns.all (· == allocTotal last)
   let outputStable := hashes.all (· == hashes.back!)
+  let copyRuns := reports.map copyTotal
   unless copiesStable do
-    IO.eprintln "leanprof: copy counts differ between runs (threads?); using the last run's"
+    IO.eprintln "leanprof: copy counts differ between runs (threads?); judge compares their ranges"
   if o.allocs && !allocsStable then
     IO.eprintln "leanprof: allocation counts differ between runs (threads?); judge compares their ranges"
   unless outputStable do
@@ -1782,7 +1783,14 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("machine", Json.mkObj [("load_avg_1m", match loadMax with | some l => toJson l | none => Json.null),
       ("cpus", match cpus with | some c => toJson c | none => Json.null), ("overloaded", Json.bool overloaded)]),
     ("copies_total", toJson (copyTotal last)), ("copies_stable", Json.bool copiesStable),
+    ("copies_runs", toJson copyRuns),
     ("self_check_warning", Json.str last.selfCheck),
+    -- what was measured, and how completely: judge gives no KEEP on a gap
+    ("coverage", Json.mkObj [
+      ("copies", Json.str (if last.selfCheck.isEmpty then "counted" else "undercounted")),
+      ("allocations", Json.str (if o.allocs then "counted" else "not_counted")),
+      ("heartbeats", Json.str (if o.hbFiles.isEmpty then "not_counted" else "counted")),
+      ("time", Json.str (if smallRuns > 0 then "too_small" else "measured"))]),
     ("copies", keyedArr "copies" (last.copies.toList.map fun (k, n) => (k, toJson n))),
     ("calls", keyedArr "calls" (last.scopes.toList.map fun (k, (_, c)) => (k, toJson c))),
     ("allocs_total", if o.allocs then toJson (allocTotal last) else Json.null),

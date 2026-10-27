@@ -108,6 +108,13 @@
     },
     "allow_incompatible": {
       "type": "boolean"
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "what was not measured completely (self-check warning, a metric on one side only): the outcome is then insufficient_evidence, never KEEP"
     }
   },
   "required": [
