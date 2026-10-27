@@ -234,8 +234,13 @@ def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
     let b ← timeTasks "phTasks4" (W.runTasks "taskWork4" 4 n W.taskWork4)
     let c ← timeTasks "phTasks8" (W.runTasks "taskWork8" 8 n W.taskWork8)
     emit w scale [a, b, c] [("taskWork2", 2), ("taskWork4", 4), ("taskWork8", 8), ("taskStep", 3 * n)]
+  | "all" =>
+    -- every workload in turn (bench/run.py builds `run --retime` from this run)
+    for x in ["tiny", "rec", "mix", "alloc", "copy", "tasks"] do
+      let rc ← runWorkload x scale
+      if rc != 0 then return rc
   | _ =>
-    IO.eprintln s!"unknown workload {w}: tiny, rec, mix, alloc, copy, tasks"
+    IO.eprintln s!"unknown workload {w}: tiny, rec, mix, alloc, copy, tasks, all"
     return 2
   return 0
 
