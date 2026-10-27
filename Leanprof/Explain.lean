@@ -1581,11 +1581,23 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
     let (text, js) ← explainSite cache c shares runNs
     unless o.json do IO.println text
     if let .arr a := js then entries := entries ++ a.map (·.setObjVal! "rank" (rank : Json))
+  -- source lines are matched against the files as they are now: a file that
+  -- changed since the report may no longer have them where they were
+  let mut stale : Array (String × String) := #[]
+  for f in (entries.map (jstr · "file")).toList.eraseDups do
+    if f.isEmpty then continue
+    if let some why ← Contract.staleSource o.report j f then stale := stale.push (f, why)
+  entries := entries.map fun e => e.setObjVal! "stale" (Json.bool (stale.any (·.1 == jstr e "file")))
+  unless o.json do
+    for (f, why) in stale do
+      IO.println s!"warning: {f} {why}: the lines above may not be the ones measured (profile again)"
   IO.FS.createDirAll ((o.out : FilePath).parent.getD ".")
   IO.FS.writeFile o.out ((Json.arr entries).compress ++ "\n")
   if o.json then
     IO.println (Json.mkObj [("schema", Contract.schema "explain"), ("report", o.report), ("sites", sites.size),
-      ("shown", toJson (min o.top sites.size)), ("tiny_sites", toJson tiny), ("findings", Json.arr entries)]).pretty
+      ("shown", toJson (min o.top sites.size)), ("tiny_sites", toJson tiny), ("findings", Json.arr entries),
+      ("stale_sources", Json.arr (stale.map fun (f, w) => Json.mkObj [("file", Json.str f), ("reason", Json.str w)])),
+      ("provenance", (j.getObjVal? "provenance").toOption.getD Json.null)]).pretty
   return 0
 
 end Leanprof.Explain

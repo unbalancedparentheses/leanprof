@@ -126,6 +126,39 @@ findings; `explain --json` prints the same findings in a document with its
 schema, with `sites` (copy sites in the report), `shown` (those explained,
 `--top`) and `tiny_sites` (left out for copying only empty or tiny values).
 
+### Provenance
+
+Reports and summaries made by leanprof (`run`, `stat`, `sample`, `elab`,
+`measure`, `measure-pair`, and the experiment's evidence; `explain --json`
+and `fix` carry the report's) record where they came from in `provenance`:
+
+| field | holds |
+|---|---|
+| `leanprof_version` | leanprof's version |
+| `lean` | the project's Lean: `version`, `commit` (`lean --version`) |
+| `platform` | `target` (the LLVM triple), `os` |
+| `git` | `rev`, `dirty`, and `dirty_fingerprint` (a hash of `git status` and `git diff HEAD`) when there are uncommitted changes; null outside a repository |
+| `build` | the mode and the flags that change what is measured (`--auto`, `--allocs`, `--core`, `--runs`, `--scope`, ...) |
+| `workload` | `executable`, `args`, `args_hash`, the binary's `binary_hash`, and `inputs`: each argument that names a file, with its hash |
+| `created` | when (UTC) |
+
+A program run with `LEANPROF_JSON` by itself writes no provenance (the
+runtime writes the one `leanprof run` passes in `LEANPROF_PROVENANCE`).
+
+`judge` refuses two summaries measured with another Lean version or on
+another platform: the outcome is `incompatible` (`--allow-incompatible`
+judges them anyway, and says so); another leanprof, other flags or another
+workload are notes. `compare` warns about the same differences and goes on
+(its exit code is unchanged); `judge --json` and `compare --json` include
+the check as `provenance` (`compatible`, `refusals`, `warnings`).
+Documents without provenance are not checked.
+
+`explain` warns when a source file changed after the report was written,
+or differs from the revision the report records: its lines may no longer be
+the ones measured (`stale` on each finding and `stale_sources` in
+`explain --json`). `fix` warns the same way before it edits, and the MCP
+`finding` tool returns a `stale_source` warning.
+
 ### Verdict outcomes
 
 `judge --json`, experiment evidence and `fix`'s result carry an `outcome`

@@ -75,6 +75,8 @@ structure Summary where
   /-- runs whose `--scope` time was too small to measure (what was left after
   subtracting the probes' cost came out at or below 0) -/
   tooSmallRuns : Nat := 0
+  /-- where the summary came from (`Contract.provenance`), null when not recorded -/
+  provenance : Json := Json.null
 
 def num (j : Json) (k : String) : Float :=
   match j.getObjVal? k with
@@ -115,7 +117,7 @@ def Summary.ofJson (j : Json) : Except String Summary := do
     overloaded := ((field "machine").getObjValAs? Bool "overloaded").toOption.getD false
     loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption
     core := (j.getObjValAs? Bool "core").toOption.getD false
-    tooSmallRuns := toNat (num time "too_small_runs") }
+    tooSmallRuns := toNat (num time "too_small_runs"), provenance := field "provenance" }
 
 /-- The verdict and its reasons. -/
 structure Verdict where
@@ -184,7 +186,8 @@ def siteChanges (what : String) (b n : Std.HashMap String Nat) (top : Nat := 10)
 
 /-- KEEP or DISCARD, from the summaries before (`b`) and after (`n`) a change
 (the rules are in the module docstring). -/
-def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : Verdict := Id.run do
+def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) (allowIncompatible : Bool := false) :
+    Verdict := Id.run do
   let mut worse : Array String := #[]
   let mut better : Array String := #[]
   let mut notes : Array String := #[]
@@ -194,6 +197,12 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : 
   let mut overloadedNotJudged := false
   if b.command != n.command then
     incompatible := incompatible.push s!"different commands measured: {b.command.compress} vs {n.command.compress}"
+  -- another Lean or platform: the numbers are not of the same code
+  let (_, refusals, provWarnings) := Contract.provenanceCheck (Json.mkObj [("provenance", b.provenance)])
+    (Json.mkObj [("provenance", n.provenance)])
+  if allowIncompatible then notes := notes ++ refusals.map (· ++ " (judged anyway: --allow-incompatible)")
+  else incompatible := incompatible ++ refusals
+  notes := notes ++ provWarnings
   if b.scope != n.scope then
     let what (s : String) := if s.isEmpty then "the whole process" else s!"scope {s}"
     incompatible := incompatible.push s!"different times measured: {what b.scope} vs {what n.scope}"

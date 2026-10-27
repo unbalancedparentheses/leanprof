@@ -153,6 +153,11 @@ scope_id = last["findings"][0]["id"] if last.get("findings") else "?"
 text, err = tool("finding", id=scope_id, path=large)
 check("finding: a scope, with where its time goes", not err and last["finding"]["kind"] == "scope"
       and last["cause"] and all(c["confidence"] == "measured" for c in last["cause"]) and last["before_after"] is None, last)
+shutil.copy(large, ".lake/leanprof/mcp-old.json")
+os.utime(".lake/leanprof/mcp-old.json", (1000000000, 1000000000))
+text, err = tool("finding", id=copy.get("id", "?"), path=".lake/leanprof/mcp-old.json")
+check("finding: a source changed since the report is a stale_source warning", not err and last["stale"] is True
+      and [w["code"] for w in last.get("warnings", [])] == ["stale_source"] and "may not be the ones measured" in text, last)
 text, err = tool("finding", id="copy-0000000000", path=large)
 check("finding: an unknown id is not_found", err and code() == "not_found", last)
 text, err = tool("elab", files=["Examples/CopyBug.lean"], heartbeats=True)

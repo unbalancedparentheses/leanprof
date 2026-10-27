@@ -196,13 +196,20 @@ def full(lp):
     run([lp, "run", "--allocs", "--counters", "--frees", "--json", f"{d}/run.json", "copybug", "--", "1000"])
     check_file("run --allocs --counters --frees", "run", f"{d}/run.json")
     run([lp, "run", "--json", f"{d}/run2.json", "copybug", "--", "2000"])
-    check_file("run", "run", f"{d}/run2.json")
+    r = check_file("run", "run", f"{d}/run2.json")
+    p = r.get("provenance", {})
+    check("run: provenance (Lean, platform, revision, flags, workload)",
+          p.get("lean", {}).get("version") and p.get("platform", {}).get("target") and "rev" in (p.get("git") or {"rev": 1})
+          and p.get("build", {}).get("mode") == "run" and p.get("workload", {}).get("executable") == "copybug"
+          and p["workload"]["args"] == ["2000"] and p["workload"]["binary_hash"], p)
     if shutil.which("samply"):
         p = run([lp, "sample", "--json", f"{d}/sample.json", "copybug", "--", "2000"], ok_codes=(0, 1, 2))
         if p.returncode == 0:
             check_file("sample", "run", f"{d}/sample.json")
     run([lp, "elab", "--heartbeats", "--out", f"{d}/elab.json", "Examples/CopyBug.lean"])
-    check_file("elab --heartbeats", "elab", f"{d}/elab.json")
+    e = check_file("elab --heartbeats", "elab", f"{d}/elab.json")
+    check("elab: provenance with the files' hashes", e.get("provenance", {}).get("build", {}).get("heartbeats") is True
+          and [i["path"] for i in e["provenance"]["workload"]["inputs"]] == ["Examples/CopyBug.lean"], e.get("provenance"))
 
     for k in ("1", "2"):
         run([lp, "measure", "--runs", "2", "--warmup", "0", "--out", f"{d}/m{k}.json", "copybug", "--", "300"])
@@ -225,6 +232,26 @@ def full(lp):
     j = stdout_json("judge", run([lp, "judge", "--json", f"{d}/m1.json", f"{d}/m-wrong.json"], ok_codes=(1,)))
     check("judge: changed output is a correctness_failure", j.get("outcome") == "correctness_failure"
           and j.get("measurement_valid") is True and j.get("correctness"), j)
+    j = stdout_json("judge", run([lp, "judge", "--json", f"{d}/m1.json", f"{d}/m2.json"], ok_codes=(0, 1)))
+    check("judge: the same program twice is compatible", j.get("provenance", {}).get("compatible") is True, j)
+    m2 = json.load(open(f"{d}/m2.json"))
+    m2["provenance"]["lean"]["version"] = "4.30.0"
+    json.dump(m2, open(f"{d}/m-lean.json", "w"))
+    j = stdout_json("judge", run([lp, "judge", "--json", f"{d}/m1.json", f"{d}/m-lean.json"], ok_codes=(1,)))
+    check("judge: another Lean version is incompatible, not a valid DISCARD",
+          j.get("outcome") == "incompatible" and j["provenance"]["compatible"] is False
+          and any("different Lean versions" in r for r in j.get("incompatible", [])), j)
+    j = stdout_json("judge", run([lp, "judge", "--json", "--allow-incompatible", f"{d}/m1.json", f"{d}/m-lean.json"],
+                                 ok_codes=(0, 1)))
+    check("judge --allow-incompatible: judged, and said so", j.get("outcome") != "incompatible"
+          and any("--allow-incompatible" in n for n in j.get("notes", [])), j)
+    r2 = json.load(open(f"{d}/run2.json"))
+    r2["provenance"]["platform"]["target"] = "x86_64-unknown-linux-gnu"
+    json.dump(r2, open(f"{d}/run-other.json", "w"))
+    p = run([lp, "compare", f"{d}/run2.json", f"{d}/run-other.json"], ok_codes=(0, 1))
+    check("compare: another platform is warned about", "warning: different platforms" in p.stdout, p.stdout[:500])
+    j = stdout_json("compare", run([lp, "compare", "--json", f"{d}/run2.json", f"{d}/run-other.json"], ok_codes=(0, 1)))
+    check("compare --json: the provenance check", j.get("provenance", {}).get("compatible") is False, j.get("provenance"))
     m2 = json.load(open(f"{d}/m2.json"))
     m2["command"] = ["other"]
     json.dump(m2, open(f"{d}/m-other.json", "w"))
@@ -234,7 +261,19 @@ def full(lp):
 
     j = check_doc("explain --json", "explain",
                   stdout_json("explain", run([lp, "explain", "--json", "--report", f"{d}/run2.json"])))
-    check("explain: one finding, ranked", len(j.get("findings", [])) >= 1 and j["findings"][0].get("rank") == 1, j)
+    check("explain: one finding, ranked, its source as profiled", len(j.get("findings", [])) >= 1
+          and j["findings"][0].get("rank") == 1 and j["findings"][0].get("stale") is False and j["stale_sources"] == []
+          and j["provenance"]["workload"]["executable"] == "copybug", j)
+    # a report older than its source: the lines may have moved
+    shutil.copy(f"{d}/run2.json", f"{d}/run-old.json")
+    os.utime(f"{d}/run-old.json", (1000000000, 1000000000))
+    j = check_doc("explain --json of an old report", "explain",
+                  stdout_json("explain", run([lp, "explain", "--json", "--report", f"{d}/run-old.json"])))
+    check("explain: a source changed since the report is stale", j["findings"][0].get("stale") is True
+          and j["stale_sources"][0]["file"] == "Examples/CopyBug.lean", j.get("stale_sources"))
+    p = run([lp, "explain", "--report", f"{d}/run-old.json"])
+    check("explain: and says so", "warning: Examples/CopyBug.lean modified after the report was written" in p.stdout,
+          p.stdout[-500:])
     p = run([lp, "compare", "--json", f"{d}/run.json", f"{d}/run2.json"], ok_codes=(1,))
     j = check_doc("compare --json (run reports)", "compare", stdout_json("compare", p))
     check("compare: the regression and the exit code agree", j.get("regressed") is True and p.returncode == 1, j)
@@ -270,8 +309,11 @@ def full(lp):
     check_file("live snapshot", "live", snap)
 
     # fix: a dry run of the last report (copybug's cause has no mechanical fix)
-    p = run([lp, "fix", "--dry-run", "--json", "--report", f"{d}/run2.json"], ok_codes=(0, 1))
+    p = run([lp, "fix", "--dry-run", "--json", "--report", f"{d}/run-old.json"], ok_codes=(0, 1))
     j = check_doc("fix --dry-run --json", "fix", stdout_json("fix", p))
+    check("fix: warns that the source changed since the report",
+          (j.get("stale_sources") or [{}])[0].get("file") == "Examples/CopyBug.lean"
+          , j)
     check("fix: status and exit code agree", j.get("status") in ("dry_run", "no_mechanical_fix")
           and j.get("exit_code") == p.returncode, j)
     check_file("fix result.json", "fix", ".lake/leanprof/fix/result.json")

@@ -3168,7 +3168,13 @@ static void lpf_json_too_small(FILE *f, const char *const *names, const double *
 static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy_sum *C, size_t nc, double tick,
                           double wall, uint64_t dropped) {
     double base = lpf_run_base(S, ns, tick, wall);
-    fprintf(f, "{\"version\":3,\"schema\":{\"name\":\"leanprof.run\",\"version\":1},\"wall_ns\":%.0f,\"probe_ns\":%.0f,\"overhead_ns\":%.1f,", wall, lpf_probe_ns, lpf_overhead_of(lpf_main_path()));
+    fprintf(f, "{\"version\":3,\"schema\":{\"name\":\"leanprof.run\",\"version\":1},");
+    /* where the report came from (revision, Lean, platform, flags,
+     * workload), as `leanprof run` and `stat` pass it: one JSON object */
+    const char *prov = getenv("LEANPROF_PROVENANCE");
+    if (prov != NULL && prov[0] == '{' && prov[strlen(prov) - 1] == '}' && strchr(prov, '\n') == NULL)
+        fprintf(f, "\"provenance\":%s,", prov);
+    fprintf(f, "\"wall_ns\":%.0f,\"probe_ns\":%.0f,\"overhead_ns\":%.1f,", wall, lpf_probe_ns, lpf_overhead_of(lpf_main_path()));
     fprintf(f, "\"run_ns\":%.0f,\"resolution_ns\":%.3f,", base, tick);
     if (lpf_alloc_ns > 0) fprintf(f, "\"alloc_ns\":%.2f,", lpf_alloc_ns);
     fprintf(f, "\"self_check\":{\"ok\":%s,\"lean\":", lpf_sc_msg[0] ? "false" : "true");

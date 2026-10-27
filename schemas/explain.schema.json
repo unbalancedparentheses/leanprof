@@ -107,7 +107,8 @@
             "type": "number"
           },
           "stale": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "the finding's file changed since the report (see stale_sources)"
           }
         },
         "required": [
@@ -137,10 +138,19 @@
           "file",
           "reason"
         ]
-      }
+      },
+      "description": "source files that changed since the report: their lines may not be the ones measured"
     },
     "provenance": {
-      "$ref": "common.schema.json#/$defs/provenance"
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/provenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "the report's provenance"
     }
   },
   "required": [

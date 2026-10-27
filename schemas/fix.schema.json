@@ -209,7 +209,34 @@
       "type": "string"
     },
     "stale_sources": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "reason"
+        ]
+      },
+      "description": "source files that changed since the report: their lines may not be the ones measured"
+    },
+    "provenance": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/provenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "the report's provenance"
     }
   },
   "required": [

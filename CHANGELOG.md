@@ -31,6 +31,13 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   stat, measure, sample, elab and whether its driver is bundled, cached or
   built on first use, `--auto`, `--core`), samply and perf, and each setup
   failure as an error with a code and a fix (`schemas/doctor.schema.json`).
+- Provenance: reports and summaries record leanprof's and Lean's
+  versions, the platform, the git revision with a fingerprint of
+  uncommitted changes, the build flags, and the workload with the hashes of
+  its binary and input files. `judge` refuses summaries of another Lean
+  version or platform (outcome `incompatible`; `--allow-incompatible`
+  judges them anyway); `compare` warns. `explain`, `fix` and the MCP
+  `finding` tool warn when a source file changed since the report.
 - Compact, queryable evidence: findings with stable ids (the same site
   keeps its id across reports). `run` and `report` return the costliest
   five first; the MCP `findings` tool filters them by kind, module,

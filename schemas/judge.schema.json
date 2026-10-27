@@ -105,6 +105,9 @@
     },
     "provenance": {
       "$ref": "common.schema.json#/$defs/provenance_check"
+    },
+    "allow_incompatible": {
+      "type": "boolean"
     }
   },
   "required": [

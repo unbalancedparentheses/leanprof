@@ -817,7 +817,10 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
       ("reasons", toJson reasons), ("mode", Json.str s.mode)] ++ cat.json ++ [
       ("base_commit", Json.str base), ("candidate_commit", Json.str cand), ("candidate_source", Json.str source),
       ("committed", match committed with | some x => Json.str x | none => Json.null),
-      ("seconds", toJson secs)] ++ (← steps.get).toList)
+      ("seconds", toJson secs),
+      ("provenance", ← Contract.provenance (← Contract.workload s.exe s.args) (Json.mkObj [("mode", Json.str s.mode),
+        ("runs", toJson s.runs), ("pairs", toJson s.pairs), ("min_change", toJson s.min_change)]))] ++
+      (← steps.get).toList)
     let ePath := tdir / "evidence.json"
     IO.FS.writeFile ePath (evidence.pretty ++ "\n")
     let r : TryRecord := {

@@ -98,14 +98,16 @@ def commands : List (String × String × String) := [
     "and build settings, and builds the candidate with `lake build NAME` in --candidate-cwd (default .).\n" ++
     "No probes are added. Saves every timing, exit status and output hash in one session,\n" ++
     "and prints `judge PAIR.json`'s verdict."),
-  ("judge", "[--min-change PCT] [--allow-overloaded] [--json] BASE.json NEW.json | PAIR.json",
+  ("judge", "[--min-change PCT] [--allow-overloaded] [--allow-incompatible] [--json] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, allocations, heartbeats or time got worse. Time counts only\n" ++
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
     "machine was overloaded while measuring (--allow-overloaded judges a paired session anyway, for a\n" ++
     "machine that is always shared; the verdict says so). --json prints the verdict as JSON (schemas/judge.schema.json):\n" ++
     "its outcome tells a valid DISCARD (regression, no_improvement, correctness_failure) from too little evidence\n" ++
-    "(insufficient_evidence) and from a measurement that cannot be judged (incompatible, measurement_failed)."),
+    "(insufficient_evidence) and from a measurement that cannot be judged (incompatible, measurement_failed).\n" ++
+    "Summaries measured with another Lean version or on another platform are incompatible (their provenance says so);\n" ++
+    "--allow-incompatible judges them anyway, and the verdict says so."),
   ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] [--explain NEW_EXPLAIN.json] [--max-chars N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
@@ -836,6 +838,15 @@ def publishReport (json : FilePath) : IO Unit := do
   if (← absPath json) == (← absPath lastReport) then return
   IO.FS.writeBinFile lastReport (← IO.FS.readBinFile json)
 
+/-- The provenance of a report of `run` or `stat` (`Contract.provenance`):
+the flags it was built with, and the instrumented binary and its inputs. -/
+def runProvenance (mode exe : String) (opts : RunOpts) (allocs frees : Bool) : IO Json := do
+  let build := Json.mkObj [("mode", Json.str mode), ("auto", match opts.auto with | some a => Json.str a | none => Json.null),
+    ("time_tiny", Json.bool opts.timeTiny), ("allocs", Json.bool allocs), ("counters", Json.bool opts.counters),
+    ("frees", Json.bool frees), ("core", Json.bool opts.core), ("deps", Json.bool opts.deps),
+    ("all_copies", Json.bool opts.allCopies)]
+  Leanprof.Contract.provenance (← Leanprof.Contract.workload exe opts.args (some (exePath exe))) build
+
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
   let some exe := opts.exe | throw <| IO.userError (usageFor "run")
@@ -847,7 +858,9 @@ def run (argv : List String) : IO UInt32 := do
   if rc != 0 then return rc
   -- written where asked (--json/--out), and always as the last report
   let json := opts.json.getD lastReport.toString
-  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)] ++
+  let prov ← runProvenance "run" exe opts opts.allocs opts.frees
+  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json),
+      ("LEANPROF_PROVENANCE", some prov.compress)] ++
     (if opts.allCopies then #[("LEANPROF_ALL_COPIES", some "1")] else #[])
   let rc ← try runInstrumented exe opts runEnv
     finally
@@ -1049,6 +1062,12 @@ def compare (argv : List String) : IO UInt32 := do
   let base ← loadReport basePath
   let new ← loadReport newPath
   let findings ← loadFindings explainPath
+  -- reports of another Lean version or platform are not of the same code: said first
+  let (provCheck, refusals, provWarnings) := Leanprof.Contract.provenanceCheck
+    (← IO.ofExcept (Json.parse (← IO.FS.readFile basePath))) (← IO.ofExcept (Json.parse (← IO.FS.readFile newPath)))
+  for w in refusals ++ provWarnings do
+    say s!"warning: {w}{if refusals.contains w then " (the reports may not be comparable)" else ""}"
+    notes.modify (·.push w)
   let mut regressions := 0
   let mut slowerDecls : Array String := #[]
   say s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
@@ -1154,7 +1173,7 @@ def compare (argv : List String) : IO UInt32 := do
       ("allocations", if base.allocs.isEmpty || new.allocs.isEmpty then Json.null else Json.arr allocs),
       ("total", if base.isElab && new.isElab && base.total > 0 then
           Json.mkObj [("base", toJson base.total), ("new", toJson new.total)] else Json.null),
-      ("notes", toJson (← notes.get))]).pretty
+      ("notes", toJson (← notes.get)), ("provenance", provCheck)]).pretty
   if regressions == 0 then
     say "no regressions"
     return 0
@@ -1538,7 +1557,10 @@ def sample (argv : List String) : IO UInt32 := do
   -- where the runtime's time went, for `leanprof` with no arguments' findings
   let runtime := (catT.toArray.qsort (fun a b => a.2 > b.2)).map fun (c, w) =>
     Json.mkObj [("category", Json.str c), ("self_ns", toJson (w * 1000))]
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload exe o.args (some bin))
+    (Json.mkObj [("mode", Json.str "sample"), ("rate", toJson o.rate)])
   let report := Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "run"), ("sampled", Json.bool true),
+    ("provenance", prov),
     ("exe", Json.str exe), ("exit_code", toJson rc.toNat),
     ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[]),
     ("runtime", Json.arr runtime)]
@@ -1740,8 +1762,15 @@ def measureCmd (argv : List String) : IO UInt32 := do
     discard <| IO.FS.withIsolatedStreams
       (elabCmd (["--heartbeats", "--out", hbPath.toString] ++ o.hbFiles.toList))
     hb := some ((← loadReport hbPath.toString).scopes.toList.map fun (k, (t, _)) => (k, t))
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload exe o.args (some (exePath exe)))
+    (Json.mkObj [("mode", Json.str "measure"), ("runs", toJson o.runs), ("warmup", toJson o.warmup),
+      ("scope", match o.scope with | some s => Json.str s | none => Json.null), ("allocs", Json.bool o.allocs),
+      ("core", Json.bool o.core), ("deps", Json.bool o.deps),
+      ("check_output", match o.checkOutput with | some f => Json.str f | none => Json.null),
+      ("ignore_lines", toJson o.ignoreLines)])
   let summary := Json.mkObj [
     ("version", toJson (1 : Nat)), ("schema", Leanprof.Contract.schema "measure"), ("leanprof", Json.str "measure"),
+    ("provenance", prov),
     ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs), ("core", Json.bool o.core),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("exit_code", toJson codes.back!.toNat),
@@ -2021,7 +2050,13 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let overloaded := match maxLoad, cpus with | some l, some c => l > c.toFloat | _, _ => false
   let finalHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
   unless finalHashes == binaryHashes do throw <| IO.userError "a benchmark binary changed during measurement"
+  let prov ← Leanprof.Contract.provenance
+    (← Leanprof.Contract.workload (binaries[1]!.fileName.getD "") o.args none)
+    (Json.mkObj [("mode", Json.str "measure-pair"), ("runs", toJson o.runs), ("fixed", Json.bool o.fixed),
+      ("warmup", toJson o.warmup), ("min_change", toJson o.minChange),
+      ("scope", match o.scope with | some s => Json.str s | none => Json.null)])
   let j := Json.mkObj [("version", toJson (2 : Nat)), ("schema", Leanprof.Contract.schema "measure-pair"), ("leanprof", "measure-pair"),
+    ("provenance", prov),
     ("mode", "plain"), ("runs", toJson changes.size), ("warmup", toJson o.warmup),
     ("design", design.json), ("min_change", toJson o.minChange),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
@@ -2054,12 +2089,16 @@ rules are in `Leanprof.Judge`). Exits 0 for KEEP. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
   let mut minChange : Float := 1
   let mut allowOverloaded := false
+  let mut allowIncompatible := false
   let mut json := false
   let mut argv := argv
   repeat
     match argv with
     | "--json" :: rest =>
       json := true
+      argv := rest
+    | "--allow-incompatible" :: rest =>
+      allowIncompatible := true
       argv := rest
     | "--min-change" :: v :: rest =>
       let some pct := parseDecimal? v | throw <| IO.userError "--min-change must be a percentage from 0 to 100"
@@ -2074,15 +2113,24 @@ def judgeCmd (argv : List String) : IO UInt32 := do
     | [pairPath] => do
       let j ← IO.ofExcept (Json.parse (← IO.FS.readFile pairPath))
       IO.ofExcept (Leanprof.Judge.judgePaired j minChange allowOverloaded)
-    | [basePath, newPath] => pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange)
+    | [basePath, newPath] =>
+      pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange (allowIncompatible := allowIncompatible))
     | _ => throw <| IO.userError (usageFor "judge")
+  -- whether the two summaries can be compared (another Lean or platform: refused above)
+  let provCheck ← match argv with
+    | [basePath, newPath] => do
+      let (j, _, _) := Leanprof.Contract.provenanceCheck (← IO.ofExcept (Json.parse (← IO.FS.readFile basePath)))
+        (← IO.ofExcept (Json.parse (← IO.FS.readFile newPath)))
+      pure j
+    | _ => pure Json.null
   if json then
     let inputs := match argv with
       | [p] => [("pair", Json.str p)]
       | xs => [("base", Json.str (xs.headD "")), ("new", Json.str (xs.getLastD ""))]
     IO.println (Json.mkObj ([("schema", Leanprof.Contract.schema "judge"), ("leanprof", Json.str "judge"),
       ("kind", Json.str (if argv.length == 1 then "paired" else "summaries")),
-      ("inputs", Json.mkObj inputs), ("min_change", toJson minChange), ("allow_overloaded", Json.bool allowOverloaded)] ++
+      ("inputs", Json.mkObj inputs), ("min_change", toJson minChange), ("allow_overloaded", Json.bool allowOverloaded),
+      ("allow_incompatible", Json.bool allowIncompatible), ("provenance", provCheck)] ++
       v.json)).pretty
   else IO.print v.render
   return if v.keep then 0 else 1
@@ -2629,8 +2677,9 @@ def statCmd (argv : List String) : IO UInt32 := do
   let rc ← buildWithShims exe opts.auto allocs (frees := frees) (extraEnv := tinyEnv opts) (deps := opts.deps)
   if rc != 0 then return rc
   let json := opts.json.getD lastReport.toString
+  let prov ← runProvenance "stat" exe opts allocs frees
   let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_STAT", some "1"), ("LEANPROF_JSON", some json),
-    ("LEANPROF_TRACE", opts.trace)]
+    ("LEANPROF_TRACE", opts.trace), ("LEANPROF_PROVENANCE", some prov.compress)]
   -- the first launch of a freshly linked binary is slower (on macOS, the
   -- system checks a new binary's signature: 2.3 s for a 106 MB compiler);
   -- launched once first, without running it (leanprof's runtime exits at

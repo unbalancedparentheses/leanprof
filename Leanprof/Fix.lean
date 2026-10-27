@@ -542,6 +542,17 @@ def fixBody (o : Opts) (runSelf : Array String → FilePath → IO IO.Process.Ou
     let s ← if ← (file : FilePath).pathExists then pure ((← IO.FS.readFile file).splitOn "\n").toArray else pure #[]
     srcCache.modify (·.insert file s)
     return s
+  -- an edit is made to a file as it is now: one that changed since the
+  -- report may not be the code that was measured
+  let reportJson ← IO.ofExcept (Json.parse (← IO.FS.readFile o.report))
+  let mut stale : Array Json := #[]
+  for file in (findings.map (jstr · "file")).toList.eraseDups do
+    if file.isEmpty then continue
+    if let some why ← Contract.staleSource o.report reportJson file then
+      IO.println s!"warning: {file} {why}: a fix is made to the file as it is now, not the code that was measured"
+      stale := stale.push (Json.mkObj [("file", Json.str file), ("reason", Json.str why)])
+  result.modify (· ++ [("stale_sources", Json.arr stale),
+    ("provenance", (reportJson.getObjVal? "provenance").toOption.getD Json.null)])
   let listed ← listFindings findings readSrc
   result.modify (· ++ [("report", Json.str o.report), ("tiny_sites", toJson tiny),
     ("findings", Json.arr (listed.map fun (k, f, r) => Json.mkObj [("n", toJson k), ("rank", f.getObjValD "rank"),

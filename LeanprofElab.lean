@@ -1522,8 +1522,13 @@ def main (argv : List String) : IO UInt32 := do
       (x, Json.mkObj (constJson s kind x t |>.map fun (k, v) => if k == "sites" then (k, toJson n) else (k, v)))))]
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
   let tEnd ← IO.monoNanosNow
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload "" (if o.project then #[] else o.files))
+    (Json.mkObj [("mode", Json.str "elab"), ("heartbeats", Json.bool o.heartbeats), ("project", Json.bool o.project),
+      ("globs", toJson o.globs), ("counts", Json.bool o.diagnostics), ("defs", Json.bool o.defs),
+      ("threshold", toJson o.thresholdValue), ("driver", Json.bool !le.driver.isEmpty), ("compact", Json.bool o.compact)])
   IO.FS.writeFile o.out
-    (Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "elab"), ("elab", Json.bool true), ("project", Json.bool o.project),
+    (Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "elab"), ("provenance", prov),
+      ("elab", Json.bool true), ("project", Json.bool o.project),
       ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
       ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("constants", Json.arr constants),
       ("files", Json.arr fileJson), ("copies", Json.arr #[]),
