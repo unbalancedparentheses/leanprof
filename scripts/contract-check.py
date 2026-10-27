@@ -336,15 +336,15 @@ def full(lp):
     src = open(spec).read()
     open(spec, "w").write(src.replace(":= by\n  intro v hv\n  unfold bucketOf\n  omega",
                                       ":=\n  fun v _ => Nat.mod_lt _ (by decide)"))
-    run([lp, "experiment", "start", "--no-test", "--id", "contract"], cwd=exp)
-    p = run([lp, "experiment", "try", "--working-tree", "--no-commit", "--json"], cwd=exp, ok_codes=(0, 1, 3))
+    run([lp, "experiment", "start", "--no-test", "--id", "contract"], cwd=exp, env=genv)
+    p = run([lp, "experiment", "try", "--working-tree", "--no-commit", "--json"], cwd=exp, env=genv, ok_codes=(0, 1, 3))
     j = check_doc("experiment try --json", "experiment-try", stdout_json("experiment try", p))
     check("experiment try: the outcome matches the verdict",
           {"KEEP": "improved"}.get(j.get("verdict"), j.get("outcome")) == j.get("outcome"), j)
     check_doc("experiment status --json", "experiment-status",
-              stdout_json("experiment status", run([lp, "experiment", "status", "--json"], cwd=exp)))
+              stdout_json("experiment status", run([lp, "experiment", "status", "--json"], cwd=exp, env=genv)))
     check_doc("experiment finish --json", "experiment-finish",
-              stdout_json("experiment finish", run([lp, "experiment", "finish", "--json"], cwd=exp)))
+              stdout_json("experiment finish", run([lp, "experiment", "finish", "--json"], cwd=exp, env=genv)))
     shutil.rmtree(exp, ignore_errors=True)
 
 
