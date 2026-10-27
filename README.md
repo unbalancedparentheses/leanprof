@@ -282,6 +282,20 @@ a base report when given one; the published
 [Batteries and Mathlib profiles](docs/profiles/README.md) are such pages
 ([compile time](docs/guide/compile-time.md)).
 
+### Memory of compilation: `build-memory`
+
+`leanprof build-memory` runs a real `lake build` with every `lean` process
+wrapped and reports each module's peak memory (resident set, and the
+private memory that is not shared `.olean` pages), split into its imports
+and its own elaboration; which modules ran together at the build's peak;
+the most jobs that keep the build under `--mem-limit`; and `--max-memory`, a
+per-module budget that fails CI. `--decls N` elaborates the heaviest
+modules serially and names the commands during which memory peaked, labeled
+approximate: when memory was reached, not who owns it. On Batteries the
+numbers agree with `/usr/bin/time -l` to about 1%
+([memory of compilation](docs/guide/compile-time.md#memory-of-compilation),
+[case study](docs/case-studies/build-memory.md)).
+
 ### CI: the GitHub Action
 
 The [Action](docs/guide/ci-and-regressions.md#github-action) profiles a pull
@@ -297,7 +311,7 @@ attributed, never estimated
 ### Agents: the MCP server
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
-`run`, `sample`, `stat`, `elab`, `measure`, `measure_pair`, `judge`,
+`run`, `sample`, `stat`, `elab`, `build_memory`, `measure`, `measure_pair`, `judge`,
 `compare`, `explain`, `hot`, `report`, the four `experiment_*` operations,
 and `live` and `dump` for a running program. Paths it writes must be inside
 the project, and the binaries it runs must be Lake-built
@@ -332,6 +346,7 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
 | A running program, live; the last seconds as a timeline | `leanprof top myapp`, `leanprof dump PID` |
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
+| Peak memory of each module in a real `lake build`, imports apart; the most jobs under a memory limit; a memory budget for CI | `leanprof build-memory [--mem-limit 8G] [--max-memory 6G]` |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |

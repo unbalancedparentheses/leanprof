@@ -1,0 +1,12 @@
+== bat-full
+load before: 14:10  up 14 days,  2:18, 31 users, load averages: 15.97 15.38 32.86
+load after: 14:11  up 14 days,  2:19, 31 users, load averages: 19.49 16.49 32.47
+== bat-j2
+load before: 14:12  up 14 days,  2:20, 31 users, load averages: 21.23 17.27 31.84
+load after: 14:12  up 14 days,  2:21, 31 users, load averages: 17.31 16.90 30.87
+== bat-j3
+load before: 14:12  up 14 days,  2:21, 31 users, load averages: 17.31 16.90 30.87
+load after: 14:13  up 14 days,  2:21, 31 users, load averages: 14.88 16.36 30.27
+== dog-cli
+load before: 14:28  up 14 days,  2:36, 32 users, load averages: 7.94 10.77 18.09
+load after: 14:28  up 14 days,  2:36, 32 users, load averages: 7.90 10.57 17.85

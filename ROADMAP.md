@@ -154,6 +154,17 @@ Ranked; the open ones are planned after v0.2.0.
   re-elaborating a file and attribute the delay to declarations.
 - [ ] **A heartbeat budget.** `elab --max-heartbeats N` in CI flags any
   declaration above N, so slow lemmas do not accumulate.
+- [x] **Memory of compilation.** `build-memory`: the peak memory of each
+  module's `lean` in a real `lake build`, imports apart, the modules running
+  together at the peak, the most jobs under a limit, a per-module budget for
+  CI, and the commands during which a serial run's peak rose
+  ([guide](docs/guide/compile-time.md#memory-of-compilation)). Still open:
+  - [ ] A jobs estimate from the dependency graph and measured durations
+    (which modules can run together), instead of any `j` heaviest at once.
+  - [ ] An exact private-memory peak on Linux (now `RssAnon` read every
+    20 ms), and the page cache a cgroup charges for the `.olean` files.
+  - [ ] Memory per command in the build itself: only a serial run is
+    attributed now, since parallel proofs share the process.
 
 ## v0.2.0: make any Lean project faster
 
