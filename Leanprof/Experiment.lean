@@ -217,6 +217,17 @@ def combine (exact : Judge.Verdict) (paired : Option Judge.Verdict) : Outcome ×
           "was not settled (more pairs, --pairs N, or a quieter machine may settle it)"])
       else (.discard, #["no measurable improvement: exact counts unchanged and paired time within the --min-change"])
 
+/-- The paired verdicts of several cases as one: slower on any case is worse; faster
+counts only where no case is slower; unsettled if any case is. Each reason names its
+case (`labels`). -/
+def combinePaired (vs : Array (String × Judge.Verdict)) : Judge.Verdict :=
+  let tag (l : String) (xs : Array String) := if vs.size == 1 then xs else xs.map (s!"{l}: " ++ ·)
+  let worse := vs.flatMap fun (l, v) => tag l v.worse
+  let better := vs.flatMap fun (l, v) => tag l v.better
+  let notes := vs.flatMap fun (l, v) => tag l v.notes
+  { keep := worse.isEmpty && !better.isEmpty, worse, better, notes,
+    unsettled := vs.any (·.2.unsettled) }
+
 /-- A compile-time verdict: from two heartbeat summaries (`Judge.judge`'s
 heartbeat rule: the total must go down by more than 1% and 1,000). -/
 def heartbeatOutcome (v : Judge.Verdict) : Outcome × Array String :=
@@ -273,8 +284,11 @@ structure State where
   mode : String
   exe : String := ""
   args : Array String := #[]
-  /-- the argument lists checked for identical behaviour; the first is the timed workload -/
+  /-- the argument lists checked for identical behaviour; the first is the workload, whose
+  exact counts are measured and whose time is judged (every case's with `time_all`) -/
   cases : Array (Array String) := #[]
+  /-- `start --time-all-cases`: paired timing of every case, not only the workload -/
+  time_all : Bool := false
   heldout : Array (Array String) := #[]
   check_outputs : Array String := #[]
   /-- lines of stdout and stderr containing any of these are not compared (a program's own timings) -/
@@ -492,6 +506,13 @@ def heartbeatsOf (path : FilePath) : IO (Std.HashMap String Float) := do
 
 def hbTotal (m : Std.HashMap String Float) : Float := m.fold (fun a _ v => a + v) 0
 
+/-- The files of an `elab` report whose profile stops at an error (`file: line: message`):
+their heartbeats are incomplete, so the report cannot show an improvement. -/
+def incompleteFiles (path : FilePath) : IO (Array String) := do
+  let j ← IO.ofExcept (Json.parse (← IO.FS.readFile path))
+  return (jarr j "files").filterMap fun f =>
+    if Explain.jnum f "errors" > 0 then some s!"{jstr f "file"}:{String.ofList (((jstr f "first_error").replace "\n" " ").toList.take 200)}" else none
+
 /-! ## The commands -/
 
 structure StartOpts where
@@ -512,6 +533,7 @@ structure StartOpts where
   base : String := "HEAD"
   id : Option String := none
   json : Bool := false
+  timeAll : Bool := false
 
 partial def parseStart (o : StartOpts) : List String → Except String StartOpts
   | [] => .ok o
@@ -544,6 +566,7 @@ partial def parseStart (o : StartOpts) : List String → Except String StartOpts
     unless pct ≥ 0 && pct ≤ 100 do throw "--min-change must be a percentage from 0 to 100"
     parseStart { o with minChange := pct } rest
   | "--no-deps" :: rest => parseStart { o with deps := false } rest
+  | "--time-all-cases" :: rest => parseStart { o with timeAll := true } rest
   | "--base" :: r :: rest => parseStart { o with base := r } rest
   | "--id" :: i :: rest =>
     if validId i then parseStart { o with id := some i } rest
@@ -589,6 +612,15 @@ def baseRoot (c : Ctx) (s : State) : FilePath := expDir c s / "base"
 def candRoot (c : Ctx) (s : State) : FilePath := expDir c s / "candidate"
 def baseDir (c : Ctx) (s : State) : FilePath := under (baseRoot c s) s.pkg_prefix
 def candDir (c : Ctx) (s : State) : FilePath := under (candRoot c s) s.pkg_prefix
+
+/-- What was timed, for the verdict: the workload only, or every case. -/
+def timedText (s : State) : String :=
+  if s.time_all || s.cases.size ≤ 1 then
+    s!"time judged on {if s.cases.size ≤ 1 then "the workload" else s!"every one of the {s.cases.size} cases"}"
+  else
+    s!"exact counts and time measured on case 0 only (`{" ".intercalate (s.cases[0]?.getD s.args).toList}`); " ++
+      s!"the other {s.cases.size - 1} case(s) were checked for identical behaviour, not timed " ++
+      "(`start --time-all-cases` times each)"
 
 def checkArgs (s : State) : Array String :=
   (match s.check_outputs[0]? with | some f => #["--check-output", f] | none => #[]) ++
@@ -650,7 +682,7 @@ def startCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     id, created := ← nowText, top := top.toString, pkg_prefix := pre
     mode := if o.exe.isSome then "exe" else "library", exe := o.exe.getD "", args := o.args
     cases, heldout, check_outputs := o.checkOutputs, ignore_lines := o.ignoreLines, inputs, protect
-    runs := o.runs, pairs := o.pairs, min_change := o.minChange, deps := o.deps
+    runs := o.runs, pairs := o.pairs, min_change := o.minChange, deps := o.deps, time_all := o.timeAll
     start_commit := commit, base_commit := commit }
   IO.println s!"leanprof experiment start: {id}, base {commit.take 12} ({o.base}){if pre.isEmpty then "" else s!", package in {pre}"}"
   IO.println s!"  in a git worktree of the base ({baseRoot c s}); the steps' output is in {log.path}"
@@ -953,6 +985,13 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
       match bh, nh with
       | .error e, _ | _, .error e => return ← finish .error #[s!"counting heartbeats failed:\n{e}"]
       | .ok bh, .ok nh =>
+        -- a profile that stops at an error counts fewer heartbeats: never an improvement
+        let bad := (← incompleteFiles cache).map ("base: " ++ ·) ++
+          (← incompleteFiles (tdir / "heartbeats-new.json")).map ("candidate: " ++ ·)
+        unless bad.isEmpty do
+          step "heartbeats" (Json.mkObj [("why", Json.str why), ("files", toJson files), ("incomplete", toJson bad)])
+          return ← finish .inconclusive (#["the heartbeat profile stops at an error, so its counts are incomplete " ++
+            "(compile heartbeats not judged)"] ++ bad.extract 0 5)
         let v := Judge.judge { heartbeats := some bh } { heartbeats := some nh } s.min_change (judgeTime := false)
         let (out, reasons) := heartbeatOutcome v
         step "heartbeats" (Json.mkObj [("why", Json.str why), ("files", toJson files),
@@ -1007,20 +1046,30 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
       step "timing" (Json.mkObj [("skipped", Json.str "the exact counts got worse")])
       let (out, reasons) := combine exact none
       return ← finish out reasons
-    -- 7. paired timing of the plain binaries
-    let paired := tdir / "paired.json"
-    let args := s.cases[0]?.getD s.args
-    let r ← c.runSelf (#["measure-pair", "--base", s.base_bin, "--candidate", (tdir / "candidate-bin").toString,
-      "--base-cwd", bdir.toString, "--candidate-cwd", cdir.toString, "--runs", toString s.pairs,
-      "--min-change", toString s.min_change, "--out", paired.toString] ++ checkArgs s ++ #["--"] ++ args) cdir
-    log.write "leanprof measure-pair" r
-    if r.exitCode != 0 then return ← finish .error #[s!"measure-pair failed:\n{tailOf (r.stdout ++ r.stderr)}"]
-    let pv ← IO.ofExcept (Judge.judgePaired (← IO.ofExcept (Json.parse (← IO.FS.readFile paired))) s.min_change o.allowOverloaded)
-    step "timing" (Json.mkObj [("session", Json.str paired.toString), ("worse", toJson pv.worse),
+    -- 7. paired timing of the plain binaries: the workload (case 0), or every case
+    let timed : Array Nat := if s.time_all then (List.range (max 1 s.cases.size)).toArray else #[0]
+    let mut verdicts : Array (String × Judge.Verdict) := #[]
+    let mut sessions : Array Json := #[]
+    for k in timed do
+      let paired := tdir / (if timed.size == 1 then "paired.json" else s!"paired-{k}.json")
+      let args := s.cases[k]?.getD s.args
+      let r ← c.runSelf (#["measure-pair", "--base", s.base_bin, "--candidate", (tdir / "candidate-bin").toString,
+        "--base-cwd", bdir.toString, "--candidate-cwd", cdir.toString, "--runs", toString s.pairs,
+        "--min-change", toString s.min_change, "--out", paired.toString] ++ checkArgs s ++ #["--"] ++ args) cdir
+      log.write s!"leanprof measure-pair (case {k})" r
+      if r.exitCode != 0 then return ← finish .error #[s!"measure-pair failed on case {k}:\n{tailOf (r.stdout ++ r.stderr)}"]
+      let v ← IO.ofExcept (Judge.judgePaired (← IO.ofExcept (Json.parse (← IO.FS.readFile paired))) s.min_change o.allowOverloaded)
+      verdicts := verdicts.push (s!"case {k} ({argsText args})", v)
+      sessions := sessions.push (Json.mkObj [("case", toJson k), ("args", toJson args), ("session", Json.str paired.toString),
+        ("worse", toJson v.worse), ("better", toJson v.better), ("unsettled", Json.bool v.unsettled)])
+    let pv := combinePaired verdicts
+    step "timing" (Json.mkObj [("timed_cases", toJson timed), ("of_cases", toJson s.cases.size),
+      ("what", Json.str (timedText s)), ("sessions", Json.arr sessions), ("worse", toJson pv.worse),
       ("better", toJson pv.better), ("notes", toJson pv.notes), ("unsettled", Json.bool pv.unsettled)])
     let timeLine := (pv.worse ++ pv.better ++ pv.notes.filter (·.startsWith "paired time")).toList.head?.getD ""
-    say "time" timeLine
+    say "time" s!"{timeLine} ({timedText s})"
     let (out, reasons) := combine exact (some pv)
+    let reasons := reasons.push (timedText s)
     if out == .keep then keep reasons (some (tdir / "new.json")) (some (tdir / "candidate-bin"))
     else finish out reasons
   catch e =>

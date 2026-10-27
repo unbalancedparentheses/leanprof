@@ -110,13 +110,24 @@ $ leanprof explain --elab --top 3
 Stating it takes the declaration from 17,424 to 6,155 kHB
 ([case study](../case-studies/compile-time-fixes.md)).
 
-`--why` turns on two Lean options while elaborating, `tactic.simp.trace`
-(each `simp` reports its `simp only` list, as `simp?` does) and
-`showInferredTerminationBy`; they cost a little, so compare heartbeats from
-runs made the same way. The driver records each `simp` call's whole source
-range (Lean's message covers only its first word) and where each command
-ends; without the driver (`--no-driver`, or no driver for that Lean) the
-lists are reported but not applied. `elab.json` has them as
+`--why` turns on two Lean options while elaborating: `showInferredTerminationBy`
+for the file, and `tactic.simp.trace` (each `simp` reports its `simp only`
+list, as `simp?` does) for each `simp` call separately, by the driver. Set
+for a whole file, `tactic.simp.trace` stops Lean 4.35 at a `simpa` whose
+term has an antiquotation (Mathlib's `simpa using congr($h + 1)`: "Unknown
+constant `term.pseudo.antiquot`"), and everything after it went uncounted;
+the driver leaves the option off for such calls. Without the driver
+(`--no-driver`, or no driver for that Lean) there are no `simp only`
+lists. The options cost a little, so compare heartbeats from runs made the
+same way. The driver also records each `simp` call's whole source range
+(Lean's message covers only its first word) and where each command ends.
+
+A profile that stops at an error in some file is incomplete: what comes
+after the error is not counted. `elab.json` says so (`"complete": false`,
+and each file's `errors` and `first_error`), `--why` says so, and nothing
+judges such a profile as an improvement: `experiment` (and so `fix --elab`)
+returns INCONCLUSIVE, and `judge` does not compare the heartbeats of a
+`measure --heartbeats-files` summary made from one. `elab.json` has them as
 `simp_suggestions` and `termination_suggestions`, and failed instance
 searches per declaration as `instances_failed`.
 

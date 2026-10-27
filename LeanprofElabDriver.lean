@@ -148,10 +148,19 @@ def whyOpt : Name := `leanprof.why
 /-- The source ranges recorded for `--why`: start and end byte, syntax kind. -/
 abbrev Ranges := IO.Ref (Array (Nat × Nat × Name))
 
+/-- Whether `stx` contains an antiquotation (`$h`, as in Mathlib's `congr($h + 1)`). -/
+partial def hasAntiquot (stx : Syntax) : Bool :=
+  stx.isAntiquot || stx.getArgs.any hasAntiquot
+
 def wrapTactic (ranges : Ranges) (t : Tactic.Tactic) : Tactic.Tactic := fun stx => do
   if simpKinds.contains stx.getKind && (← getOptions).getBool whyOpt then
     if let (some s, some e) := (stx.getPos? (canonicalOnly := true), stx.getTailPos? (canonicalOnly := true)) then
       ranges.modify (·.push (s.byteIdx, e.byteIdx, stx.getKind))
+    -- `tactic.simp.trace` per call, not for the whole file: on a call with an antiquotation
+    -- (`simpa using congr($h + 1)`) Lean 4.35 fails with "Unknown constant
+    -- `term.pseudo.antiquot`", which would stop the profile there
+    return ← withOptions (·.setBool `tactic.simp.trace (!hasAntiquot stx)) <|
+      withSource tacticCls stx (t stx)
   withSource tacticCls stx (t stx)
 
 def wrapTerm (t : Term.TermElab) : Term.TermElab := fun stx ty => withSource termCls stx (t stx ty)
@@ -367,9 +376,10 @@ def run (a : Args) : IO UInt32 := do
               `Meta.isDefEq.delta.unfoldLeftRight, `Meta.Tactic.simp.rewrite] do
       opts := opts.setBool (`trace ++ c) true
     if a.counts then opts := opts.setBool `diagnostics true |>.set `diagnostics.threshold (0 : Nat)
-  -- `--why`: every `simp` says which lemmas it used, as `Try this: simp only [...]`, and every
-  -- recursive definition whose termination measure Lean had to search for says which it found
-  if a.why then opts := opts.setBool `tactic.simp.trace true |>.setBool `showInferredTerminationBy true
+  -- `--why`: every recursive definition whose termination measure Lean had to search for
+  -- says which it found; every `simp` says which lemmas it used (`tactic.simp.trace`, set
+  -- per call by `wrapTactic`)
+  if a.why then opts := opts.setBool `showInferredTerminationBy true
   if let some s := setup? then opts := opts.mergeBy (fun _ _ v => v) s.options.toOptions
   opts := Elab.async.setIfNotSet opts true
   opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true

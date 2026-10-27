@@ -124,6 +124,8 @@ def cases : List (String × Bool × String) :=
        !kept [("a", 10000000), ("b", 50000), ("c", 100000)] [("a", 10000000), ("b", 30000), ("c", 103000)] &&
        !kept [("a", 10000000), ("b", 50000)] [("a", 10000000), ("b", 30000), ("c", 100)] &&
        !kept [("a", 10000000), ("b", 50000)] [("a", 10000000), ("b", 49500)] &&
-       !worse [("a", 10000000), ("b", 50000)] [("a", 10000000), ("b", 30000)], "")]
+       !worse [("a", 10000000), ("b", 50000)] [("a", 10000000), ("b", 30000)], ""),
+   ("judge: an incomplete heartbeat profile is no improvement",
+     (Judge.judge (hb [("a", 100000)]) { (hb [("a", 10000)]) with heartbeatsComplete := false } (judgeTime := false)).better.isEmpty, "")]
 
 end Tests.ElabWhy

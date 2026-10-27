@@ -732,6 +732,7 @@ def tools : Array Json := #[
       ("no_test", bProp "run no tests even if the project has a Lake test driver"),
       ("runs", nProp "measure runs (default 3)"), ("pairs", nProp "most measure-pair pairs (default 30)"),
       ("min_change", sProp "smallest time change in percent that counts (default 1)"),
+      ("time_all_cases", bProp "time every case in pairs, not only the workload (the first case)"),
       ("base", sProp "the base revision (default HEAD)"), ("id", sProp "experiment id (default: the time)")]) [],
   tool "experiment_try" ("Try one candidate in its own git worktree: build, proof-preservation guard (sorry, axioms, " ++
     "implemented_by, extern, changed theorem statements, tests or expected outputs), tests, identical behaviour on every " ++
@@ -966,7 +967,8 @@ def callTool (name : String) (a : Json) : IO Json := do
         for f in argStrs a "check_output" do xs := xs ++ #["--check-output", ← projectPath cwd "check_output" f]
         for g in argStrs a "protect" do xs := xs ++ #["--protect", g]
         for t in argStrs a "ignore_lines" do xs := xs ++ #["--ignore-lines", t]
-        xs := xs ++ flag "no_test" "--no-test" ++ num "runs" "--runs" ++ num "pairs" "--pairs" ++
+        xs := xs ++ flag "no_test" "--no-test" ++ flag "time_all_cases" "--time-all-cases" ++
+          num "runs" "--runs" ++ num "pairs" "--pairs" ++
           (← opt "min_change" "--min-change") ++ (← opt "base" "--base") ++ (← opt "id" "--id")
         pure (xs ++ #["--"] ++ argStrs a "args")
       | "experiment_try" => do

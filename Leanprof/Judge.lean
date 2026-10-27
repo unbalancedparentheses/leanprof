@@ -69,6 +69,8 @@ structure Summary where
   allocs : Option (Nat × Nat × Nat) := none
   allocSites : Std.HashMap String Nat := {}
   heartbeats : Option (Std.HashMap String Float) := none
+  /-- every file of the heartbeat profile elaborated to its end -/
+  heartbeatsComplete : Bool := true
   /-- the machine ran more jobs than it has CPUs while measuring -/
   overloaded : Bool := false
   loadAvg : Option Float := none
@@ -114,6 +116,7 @@ def Summary.ofJson (j : Json) : Except String Summary := do
     calls := toNatMap (keyedMap (field "calls") "calls")
     allocs, allocSites := toNatMap (keyedMap (field "allocs") "allocs")
     heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats")
+    heartbeatsComplete := (j.getObjValAs? Bool "heartbeats_complete").toOption.getD true
     overloaded := ((field "machine").getObjValAs? Bool "overloaded").toOption.getD false
     loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption
     core := (j.getObjValAs? Bool "core").toOption.getD false
@@ -216,7 +219,9 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) : 
   -- compile heartbeats: exact, but editing one declaration moves its
   -- neighbours by a few, so only changes above 1% and 1,000 count. Judged
   -- on the total, since experiments move code between declarations.
-  if let (some bh, some nh) := (b.heartbeats, n.heartbeats) then
+  if b.heartbeats.isSome && n.heartbeats.isSome && !(b.heartbeatsComplete && n.heartbeatsComplete) then
+    notes := notes.push "compile heartbeats: a profile stops at an error, so its counts are incomplete; not compared"
+  else if let (some bh, some nh) := (b.heartbeats, n.heartbeats) then
     let kHB (x : Float) := s!"{fmt2 (x / 1000)} kHB"
     let (x, y) := (bh.fold (fun a _ v => a + v) 0, nh.fold (fun a _ v => a + v) 0)
     let margin := max (x * 0.01) 1000

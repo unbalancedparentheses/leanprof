@@ -51,6 +51,19 @@ Compile time first: most Lean users wait on elaboration, not on programs.
 
 ### Fixed
 
+- `elab --why` set `tactic.simp.trace` for whole files, and Lean 4.35 then
+  stopped at a `simpa` with an antiquotation (`simpa using congr($h + 1)`:
+  "Unknown constant `term.pseudo.antiquot`"), so two Mathlib profiles were
+  cut short. The driver now sets it per `simp` call and leaves it off for
+  such calls (without the driver, `--why` has no `simp only` lists).
+- An incomplete profile is never an improvement: `elab.json` has
+  `complete`; `experiment` (and `fix --elab`) returns INCONCLUSIVE when a
+  heartbeat profile stops at an error; `measure --heartbeats-files` records
+  `heartbeats_complete` and `judge` does not compare incomplete heartbeats.
+- `experiment` timed only the first case while checking all of them, and
+  did not say so. Each verdict now says which case was timed, and `start
+  --time-all-cases` (MCP: `time_all_cases`) times every case: slower on any
+  is a DISCARD.
 - `elab` takes the name a declaration declares from the source: a doc
   comment and `set_option ... in` before a long name could push it past the
   200-character description, and six of Mathlib's `def

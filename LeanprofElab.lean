@@ -887,7 +887,9 @@ def traceArgs (o : Opts) : Array String := Id.run do
       "-Dweak.trace.Meta.isDefEq.delta.unfoldRight=true", "-Dweak.trace.Meta.isDefEq.delta.unfoldLeftRight=true",
       "-Dweak.trace.Meta.Tactic.simp.rewrite=true", "-Dpp.fullNames=true"]
     if o.diagnostics then args := args ++ #["-Ddiagnostics=true", "-Ddiagnostics.threshold=0"]
-  if o.why then args := args ++ #["-Dtactic.simp.trace=true", "-DshowInferredTerminationBy=true"]
+  -- (no `tactic.simp.trace` here: set for the whole file it stops Lean at a `simp` with an
+  -- antiquotation; the driver sets it per call)
+  if o.why then args := args.push "-DshowInferredTerminationBy=true"
   return args
 
 /-- The driver's arguments for `o` (it takes the same options as `lean`, as flags). -/
@@ -1711,6 +1713,9 @@ def main (argv : List String) : IO UInt32 := do
           ("text", Json.str c.src.text), ("amount", toJson c.total), ("count", toJson c.count)])),
       ("threshold", toJson o.thresholdValue), ("counts", Json.bool (o.defs && o.diagnostics)),
       -- `--why`: Lean's `simp only` list for each `simp` call
+      -- every file elaborated to its end: costs of a file with an error stop at it, so an
+      -- incomplete profile must never count as fewer heartbeats
+      ("complete", Json.bool failed.isEmpty),
       ("why", Json.bool o.why), ("simp_suggestions", Json.arr suggestions),
       ("termination_suggestions", Json.arr measures),
       ("timing", Json.mkObj [("build_ns", toJson (tBuilt - tStart)), ("profile_ns", toJson (tProfiled - tBuilt)),

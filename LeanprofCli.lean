@@ -141,7 +141,7 @@ def commands : List (String × String × String) := [
     "experiment`: the build, the proof-preservation guard, the tests and the heartbeats of the changed modules\n" ++
     "and their dependents. Edits that break their file or make their declaration dearer are dropped and the rest\n" ++
     "tried again (at most --rounds, default 4). KEEP: a commit with the evidence on a new local branch."),
-  ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
+  ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--time-all-cases] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
     "One experiment, from baseline to verdict. `start` records the base (HEAD, or --base REV) in a git\n" ++
     "worktree under .lake/leanprof/experiments/ID: the build (default targets and EXE), the tests (--test CMD,\n" ++
     "or `lake test` with a test driver), the behaviour on every case (ARGS, ARGS with each file of --inputs DIR\n" ++
@@ -1688,11 +1688,15 @@ def measureCmd (argv : List String) : IO UInt32 := do
     IO.eprintln "leanprof: output differs between runs; judge will reject every change (use --check-output FILE)"
   -- compile cost per declaration, exact
   let mut hb : Option (List (String × Float)) := none
+  let mut hbComplete := true
   if !o.hbFiles.isEmpty then
     let hbPath := dir / "measure-elab.json"
     discard <| IO.FS.withIsolatedStreams
       (elabCmd (["--heartbeats", "--out", hbPath.toString] ++ o.hbFiles.toList))
     hb := some ((← loadReport hbPath.toString).scopes.toList.map fun (k, (t, _)) => (k, t))
+    hbComplete := ((← Leanprof.Experiment.incompleteFiles hbPath).isEmpty)
+    unless hbComplete do
+      IO.eprintln "leanprof measure: a --heartbeats-files profile stops at an error; judge will not compare its heartbeats"
   let summary := Json.mkObj [
     ("version", toJson (1 : Nat)), ("leanprof", Json.str "measure"),
     ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs), ("core", Json.bool o.core),
@@ -1714,6 +1718,7 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("allocs_stable", if o.allocs then Json.bool allocsStable else Json.null),
     ("alloc_bytes_total", if o.allocs then toJson (last.allocBytes) else Json.null),
     ("allocs", if o.allocs then keyedArr "allocs" (last.allocs.toList.map fun (k, n) => (k, toJson n)) else Json.null),
+    ("heartbeats_complete", Json.bool hbComplete),
     ("heartbeats_total", match hb with
       | some xs => toJson (xs.foldl (fun a (_, t) => a + t) (0 : Float))
       | none => Json.null),

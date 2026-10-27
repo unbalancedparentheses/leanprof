@@ -498,6 +498,8 @@ def text (r : Json) (top : Nat := 10) : String := Id.run do
       out := out ++ "       suggested  " ++ ((wrap s!"{ind}{sg}" ind).drop ind.length).toString ++ "\n"
   if !any && !(jarr r "simp_suggestions").isEmpty then
     out := out ++ "\n  (no `simp` call costs 2% or more of its declaration)\n"
+  if !(r.getObjValAs? Bool "complete").toOption.getD true then
+    out := out ++ "\n  (the profile stops at an error in some file: what comes after it is not counted)\n"
   if !(r.getObjValAs? Bool "why").toOption.getD false then
     out := out ++ "\n  (`leanprof elab --why` adds Lean's own `simp only` list for each `simp`)\n"
   return out

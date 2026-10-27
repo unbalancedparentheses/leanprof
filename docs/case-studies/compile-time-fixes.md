@@ -109,8 +109,14 @@ them), `elab --heartbeats --why`, 3 at a time: 2,936 M heartbeats in all.
 | `RingTheory/Etale/QuasiFinite` | 445 |
 | `AlgebraicGeometry/EllipticCurve/Projective/Formula` | 442 |
 
-\* stops at an error with `--why` only (`Unknown constant
-term.pseudo.antiquot`, at one call each); the costs after it are missing.
+\* in this run, the profile stopped at an error that `--why` caused
+(`Unknown constant term.pseudo.antiquot`, at one `simpa using
+congr($...)` each): with `tactic.simp.trace` set for the whole file, Lean
+fails on a `simpa` whose term has an antiquotation, and the costs after it
+went uncounted. Since fixed: the driver sets the option per call and leaves
+it off for such calls, `elab.json` marks an incomplete profile
+(`"complete": false`), and an experiment or `fix --elab` never judges one
+as an improvement.
 
 What `--why` found there differs from Batteries. No declaration has an
 inferred measure to state. 407 of 662 `simp` calls have a mechanical `simp
