@@ -54,7 +54,10 @@ then the loaded condition (and `reps` with `yes`) first waits
 until the load is below 0.4 of the CPU count (with no limit: a first
 limit of 30 minutes let one `reps` file start at load 86, now in
 results/aborted/ too), so that the added
-load is the `yes` processes.
+load is the `yes` processes. The first `reps` files against `pct2` ran
+the base twice (the script hard-coded the base into Work.lean, so
+LB_VARIANT was ignored): they are in results/aborted/ as
+`*-variant-ignored.jsonl`, and were collected again.
 """
 import argparse, fcntl, json, math, os, random, shutil, statistics, subprocess, sys, time
 
@@ -270,7 +273,8 @@ def cmd_reps(a):
     `workbench` and a copy of it (or the variant), each run repeating the
     region `repeat` times, under the lock, with `yes` processes."""
     g, _ = setup()
-    write_variant(g, "base", "reps")
+    # Work.lean as committed: the variant comes from LB_VARIANT at run time
+    shutil.copy(os.path.join(PROJ, "Work.lean"), os.path.join(g, "Work.lean"))
     run(["lake", "build", "workbench"], g)
     os.makedirs(os.path.join(WORK, "reps"), exist_ok=True)
     bins = [os.path.join(WORK, "reps", "a"), os.path.join(WORK, "reps", "b")]
