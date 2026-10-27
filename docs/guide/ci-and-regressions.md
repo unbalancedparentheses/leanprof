@@ -381,7 +381,9 @@ whose boundaries are computed exactly from the Binomial(n, ½) walk of the
 signs, with the error spent linearly in the pairs measured (Lan–DeMets
 spending). Over all the looks of a session the interval misses the true
 median by more on either side at most 2.5% of the time, however the session
-stopped, so each claim — slower than `+min-change`, faster than
+stopped, provided the pairs are independent and each pair's change has the
+same median (the assumptions of any sign test; see the paragraph on
+independence below), so each claim — slower than `+min-change`, faster than
 `-min-change`, within `±min-change` — is wrong at most 2.5% of the time; any
 false claim of a change in either direction, at most 5%. `judge` on a saved
 session recomputes the same interval (the session records its design) and
@@ -400,21 +402,22 @@ append `NAME<TAB>NANOSECONDS` to the file named by `$LEANPROF_BENCH_OUT`
 is summed). Nothing else is instrumented. A run that reports no such region
 is an error.
 
-**Repetitions.** With `--scope`, each run repeats the region and the fastest
-repetition is the run's time: `Leanprof.bench` reads `$LEANPROF_BENCH_REPEAT`
+**Repetitions (opt-in).** `--repeat N` (with `--scope`) has each run repeat
+the region N times in a row: `Leanprof.bench` reads `$LEANPROF_BENCH_REPEAT`
 (a program writing the lines itself may honour it, tagging each line with
-`<TAB>K`, its repetition, or ignore it). A loaded machine stalls a run now and
-then, and puts a whole process on a slower core; the fastest of several
-repetitions takes most of that out of the pair. `--repeat N` fixes the count;
-the default, `auto`, chooses it after the warmup pair and before any measured
-pair, from the 1-minute load over the CPU count: 1 below half, 5 below three
-quarters, else 10, and no more than 100 ms of the region per run. The choice
-is fixed for the session, so the error bounds above hold as for any fixed
-design. On the shared 18-core Mac, with one repetition 88% of sessions on
-identical binaries were still unsettled after 30 pairs at load 12, and 99% at
-load 14; with ten, 0.1% and 4% ([bench/verdicts](../../bench/verdicts/RESULTS.md)).
-The region must be safe to run more than once (its last result is returned);
-`--repeat 1` turns repetitions off. The session also records each run's whole-process time
+`<TAB>K`, its repetition, or ignore it). The run's time is then the fastest
+repetition, or with `--repeat-stat median` their median; the session and
+`judge`'s verdict say which, and how many. A loaded machine stalls a run now
+and then and puts a whole process on a slower core; the fastest of several
+repetitions takes most of that out of a pair, at N times the region's cost
+per run ([bench/verdicts](../../bench/verdicts/RESULTS.md) measures both).
+It changes what is estimated: the median paired change of the fastest (or
+median) repetition, not of a single run, which for a region whose time does
+not depend on what ran before is the same change. The region must be
+repeatable: no state carried from one repetition to the next (a cache the
+first one fills, input it consumes), or the repetitions time different work;
+put such setup outside the region. The count is fixed before the session, so
+the error bounds above hold as for any session. The session also records each run's whole-process time
 (`process_ns`). Overload
 during any sampled boundary disables the timing verdict, unless you pass
 `--allow-overloaded`: on a machine that is never below its CPU count (the

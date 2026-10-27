@@ -14,14 +14,16 @@ leanprof: after the region, if `LEANPROF_BENCH_OUT` names a file, append
 `NAME<TAB>NANOSECONDS<LF>` to it. A region that runs several times in one
 process is summed.
 
-Repetitions: when `LEANPROF_BENCH_REPEAT` is a number `N` above 1 (set by
-`measure-pair --scope`, default 5), the region runs `N` times in a row and
-each run appends `NAME<TAB>NANOSECONDS<TAB>K` with `K` from 0 to `N - 1`.
-`measure-pair` sums each `K` over the process and keeps the smallest sum:
-a stall of the machine during one repetition does not reach the verdict.
-The region must then be safe to run more than once (its result is the last
-run's); `measure-pair --repeat 1` turns this off. A program that writes the
-lines itself may ignore the variable: lines without `K` are one repetition.
+Repetitions, only when asked for: when `LEANPROF_BENCH_REPEAT` is a number
+`N` above 1 (set by `measure-pair --scope NAME --repeat N`), the region runs
+`N` times in a row and each run appends `NAME<TAB>NANOSECONDS<TAB>K` with `K`
+from 0 to `N - 1`. `measure-pair` sums each `K` over the process and takes
+the fastest sum (or, `--repeat-stat median`, the median). The region must
+then be repeatable: no state carried from one repetition to the next (a
+cache filled by the first, input consumed by it), or the repetitions time
+different work; put such setup outside the region. Its result is the last
+repetition's. A program that writes the lines itself may ignore the
+variable: lines without `K` are one repetition.
 -/
 
 public section

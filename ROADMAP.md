@@ -252,7 +252,8 @@ Still to do:
     timing-only mode on plain builds.
   - [x] Cheaper paired verdicts: `measure-pair` took 7.1 s per verdict at 20
     pairs against LeanBench's 0.74 s. Now it stops when settled (a
-    group-sequential sign test, each claim wrong at most 2.5%), `--scope`
+    group-sequential sign test, each claim wrong at most 2.5% for
+    independent pairs), `--scope`
     times one `Leanprof.bench` region and `--base-rev` caches the base:
     0.89 s end to end against LeanBench's 1.09 s on the same trials at load
     4–13 (0/20 false, 2.4% caught 4/5); still 1.9–2.3 s against 1.06 s at

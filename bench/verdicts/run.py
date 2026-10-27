@@ -23,8 +23,8 @@ The protocol, fixed before its first run (2026-10-26) and not changed after:
   (identical code, 60 trials), `pct1`, `pct2`, `pct5` (1%, 2% and 5% more of
   the same work, 30 trials each).
 * Configurations, in every trial, in an order rotated by the trial number:
-  `auto` (measure-pair defaults: repetitions chosen from the load), `r1`
-  (`--repeat 1`, one region per run: the default before this change), and
+  `r1` (measure-pair's defaults: one region per run), `r5` (`--repeat 5`:
+  the region five times per run, the fastest counting; opt-in), and
   `lb` (LeanBench, 20 samples: `lake build bench`, a baseline run of the base
   build and a compare run of the candidate; slower when the mean grew by 5%
   or more, its threshold in the case study). Wall time is end to end: the
@@ -43,7 +43,9 @@ The protocol, fixed before its first run (2026-10-26) and not changed after:
 * One uncounted warmup trial first (`base`, every configuration) builds the
   caches. No trial is rerun: a failed command is recorded as an error.
 
-Amended once, before any complete run: the first loaded run (2026-10-26
+Amended before any complete run, twice. The configurations were `auto`
+(repetitions chosen from the load, then the default) and `r1`; review made
+repetitions opt-in, so they became `r1` (the default) and `r5`. And the first loaded run (2026-10-26
 21:13) was stopped after 4 trials, because other work had taken the
 machine's load to 160–250 (on 18 CPUs; verdicts took 4–43 s); its rows are
 in results/aborted/, with the two `reps` files collected during it. Since
@@ -63,7 +65,7 @@ WORK = os.path.join(HERE, ".work")
 LP = os.environ.get("LEANPROF_BIN", os.path.join(ROOT, ".lake", "build", "bin", "leanprof"))
 LOCK = os.path.expanduser("~/.leanprof-bench.lock")
 VARIANTS = {"base": 60, "pct1": 30, "pct2": 30, "pct5": 30}
-CONFIGS = ["auto", "r1", "lb"]
+CONFIGS = ["r1", "r5", "lb"]
 OLD = '(← IO.getEnv "LB_VARIANT").getD "base"'
 ENV = dict(os.environ, PATH=os.path.expanduser("~/.elan/bin") + os.pathsep + os.environ.get("PATH", ""))
 ENV.pop("LB_VARIANT", None)
@@ -137,8 +139,8 @@ def lp_session(g, cfg, tmp):
     out = os.path.join(tmp, f"{cfg}-{time.monotonic_ns()}.json")
     cmd = [LP, "measure-pair", "--base-rev", "HEAD", "--exe", "workbench", "--candidate-cwd", g,
            "--scope", "work", "--out", out]
-    if cfg == "r1":
-        cmd += ["--repeat", "1"]
+    if cfg == "r5":
+        cmd += ["--repeat", "5"]
     la = load()
     p, wall = run(cmd, g)
     j = json.load(open(out))
@@ -427,7 +429,7 @@ def cmd_summary(a):
                 f"{r0['host']}, {r0['cpus']} CPUs, {rows[0]['time']} to {rows[-1]['time']}; "
                 f"1-minute load at the start of each trial {min(loads):.1f}–{max(loads):.1f} "
                 f"(median {statistics.median(loads):.1f}). {len(rows)} trials.", ""]
-        out += ["| | `measure-pair`, repetitions by load (`auto`, new default) | `measure-pair --repeat 1` (old default) | LeanBench at 5% |",
+        out += ["| | `measure-pair --scope` (default: one region per run) | `measure-pair --scope --repeat 5` (fastest of 5) | LeanBench at 5% |",
                 "|---|---|---|---|"]
         def cell(cfg, fn):
             return fn([r[cfg] for r in rows if cfg in r], [r["variant"] for r in rows if cfg in r])

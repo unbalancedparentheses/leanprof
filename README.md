@@ -258,7 +258,8 @@ lean-regex, candidate builds took 1–2 s because the base's build is kept
 allocations, calls, heartbeats, output hash and time; `judge` says KEEP or
 DISCARD from two summaries, exact counts first. `measure-pair` interleaves
 two plain binaries in AB/BA order and stops once the verdict is settled (a
-group-sequential sign test: each claim wrong at most 2.5% of the time);
+group-sequential sign test: each claim wrong at most 2.5% of the time,
+assuming independent pairs whose changes share one median);
 `judge PAIR.json` gives the paired 95% interval of the median change.
 `--scope NAME` times one `Leanprof.bench` region instead of the whole
 process, and `--base-rev REV --exe NAME` builds the base at a revision once

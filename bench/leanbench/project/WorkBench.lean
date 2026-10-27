@@ -3,7 +3,7 @@ import Work
 (default 1) are one region whose time is appended to `$LEANPROF_BENCH_OUT`
 as `work<TAB>NANOSECONDS`, the protocol `Leanprof.bench "work"` follows, for
 `leanprof measure-pair --scope work`. Start-up and setup are not timed. With
-`LEANPROF_BENCH_REPEAT=N` (set by `measure-pair --scope`, default 5) the
+`LEANPROF_BENCH_REPEAT=N` (set by `measure-pair --scope work --repeat N`) the
 region runs N times and each line ends in `<TAB>K`, its repetition. -/
 def main : IO Unit := do
   Work.setup

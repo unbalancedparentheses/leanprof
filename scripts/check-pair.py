@@ -125,16 +125,25 @@ raise SystemExit(config.get('exit_code', 0))
            '--base-cwd', dirs['base'], '--candidate-cwd', dirs['candidate'], '--out', result, '--scope', 'work']
     proc = invoke(rep + ['--repeat', '5'] + tail)
     data = json.loads(result.read_text())
-    assert data['repeat'] == 5 and data['repeat_rule'] == 'given' and data['runs'] == 8, (data['repeat'], data['runs'])
+    assert data['repeat'] == 5 and data['runs'] == 8, (data['repeat'], data['runs'])
     assert len(order.read_text().splitlines()) == 18  # and one warmup pair
     assert {r['time_ns'] for r in data['samples']} == {1_000_000, 1_100_000}
     assert all(len(r['reps_ns']) == 5 for r in data['samples'])
     assert 'fastest of 5 repetitions per run' in proc.stdout, proc.stdout
-    # auto (the default): chosen from the load after the warmup pair, 1 to 10
-    proc = invoke(rep + tail)
+    assert data['repeat_statistic'] == 'fastest'
+    # the median of the repetitions instead (opt-in too)
+    proc = invoke(rep + ['--repeat', '5', '--repeat-stat', 'median'] + tail)
     data = json.loads(result.read_text())
-    assert data['repeat_rule'] == 'auto' and 1 <= data['repeat'] <= 10, data['repeat']
-    assert all(len(r.get('reps_ns', [0])) == data['repeat'] for r in data['samples'])
+    assert data['repeat_statistic'] == 'median'
+    assert {r['time_ns'] for r in data['samples']} == {2_000_000, 2_200_000}, {r['time_ns'] for r in data['samples']}
+    assert 'median of 5 repetitions per run' in proc.stdout, proc.stdout
+    # the default: no repetitions (one region per run)
+    (dirs['base'] / 'config.json').write_text(json.dumps({'side': 'base', 'bench_reps': [7]}))
+    (dirs['candidate'] / 'config.json').write_text(json.dumps({'side': 'candidate', 'bench_reps': [7]}))
+    invoke(rep + ['--fixed', '--runs', '6'] + tail)
+    data = json.loads(result.read_text())
+    assert data['repeat'] == 1 and data['repeat_statistic'] == 'single'
+    assert not any('reps_ns' in r for r in data['samples'])
     (dirs['base'] / 'config.json').write_text(json.dumps({'side': 'base', 'bench_reps': [4, 3, 2]}))
     (dirs['candidate'] / 'config.json').write_text(json.dumps({'side': 'candidate', 'bench_reps': [4, 3, 2]}))
     invoke(rep + ['--repeat', '3', '--fixed', '--runs', '6'] + tail)

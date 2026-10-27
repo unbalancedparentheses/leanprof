@@ -49,6 +49,11 @@ BEGIN {
 FNR == NR {
     if ($0 ~ /^(LEAN_EXPORT )?[A-Za-z_0-9* ]+ leanprof_(enter|exit)_pure[a-z0-9_]*\(.*\);[ \t]*$/)
         lastproto = FNR
+    if (match($0, /^static lean_object\* _init_[A-Za-z_0-9]+\(/)) {
+        init = substr($0, RSTART + 26, RLENGTH - 27)
+    } else if ($0 ~ /^(LEAN_EXPORT |static |lean_object\* |uint)/ && $0 ~ /\(/ && $0 !~ /=/) {
+        init = ""
+    }
     for (i = 1; i <= n; i++) {
         if (index($0, lits[i]) == 0) continue
         if (match($0, /lean_string_object [A-Za-z_0-9]+_value *=/)) {
@@ -56,8 +61,11 @@ FNR == NR {
             sub(/ *=$/, "", obj)
             keys[++nkeys] = "(const void *)&" obj
         } else if (match($0, /[A-Za-z_0-9]+ *= *lean_mk_string_unchecked\(/)) {
+            # inside `_init_X()` the constant is X (set from it at module
+            # initialization); else the variable assigned
             obj = substr($0, RSTART, RLENGTH)
             sub(/ *=.*$/, "", obj)
+            if (init != "") obj = init
             keys[++nkeys] = "(const void *)" obj
         }
         break
