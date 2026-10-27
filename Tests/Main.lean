@@ -267,8 +267,6 @@ def lightScopeTests (sanitized : Bool) : StateT Nat IO Unit := do
     s!"holds_tiny={holds}"
   try IO.FS.removeFile "light-wrap.json" catch _ => pure ()
 
--- a long `do` block: Lean before 4.28 elaborates it past the default depth
-set_option maxRecDepth 2048 in
 /-- Retained memory (`run --retained`): the scenario of Examples/Retained.lean
 runs as a child with LEANPROF_RETAINED=1, and its report must say exactly
 what it keeps, where, and what holds it. -/
@@ -333,6 +331,8 @@ def retainedTests (sanitized : Bool) : StateT Nat IO Unit := do
     (toString tmp)
   check "retained: a heap walk near the peak" (sanitized || str r "peak_walk" == "taken") (str r "peak_walk")
 
+-- a long `do` block: Lean before 4.28 elaborates it past the default depth
+set_option maxRecDepth 2048 in
 def tests : StateT Nat IO Unit := do
   let n500 ← opaqueNat 500
   let n300 ← opaqueNat 300
