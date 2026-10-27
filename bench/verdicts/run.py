@@ -42,6 +42,14 @@ The protocol, fixed before its first run (2026-10-26) and not changed after:
   throughout, so no other agent's timing run shares the machine with it.
 * One uncounted warmup trial first (`base`, every configuration) builds the
   caches. No trial is rerun: a failed command is recorded as an error.
+
+Amended once, before any complete run: the first loaded run (2026-10-26
+21:13) was stopped after 4 trials, because other work had taken the
+machine's load to 160–250 (on 18 CPUs; verdicts took 4–43 s); its rows are
+in results/aborted/, with the two `reps` files collected during it. Since
+then the loaded condition (and `reps` with `yes`) first waits, at most 30
+minutes, until the load is below 0.4 of the CPU count, so that the added
+load is the `yes` processes.
 """
 import argparse, fcntl, json, math, os, random, shutil, statistics, subprocess, sys, time
 
@@ -215,10 +223,16 @@ def cmd_trials(a):
                "sha256": hashlib.sha256(open(LP, "rb").read()).hexdigest()[:16]}
     out = open(path, "a")
     yes = []
+    if a.condition == "loaded":
+        # the machine itself first (at most 30 minutes): the added load is
+        # to be the `yes` processes, not something else
+        t0 = time.monotonic()
+        while load() >= 0.4 * cpus and time.monotonic() - t0 < 1800:
+            time.sleep(10)
     outer = Lock().__enter__() if a.condition == "loaded" else None
     try:
         if a.condition == "loaded":
-            yes = [subprocess.Popen(["yes"], stdout=subprocess.DEVNULL) for _ in range(a.yes)]
+            yes =[subprocess.Popen(["yes"], stdout=subprocess.DEVNULL) for _ in range(a.yes)]
             log(f"{a.yes} yes processes; waiting 60 s for the load to settle")
             time.sleep(60)
         for i, variant in enumerate(["warmup"] + order):
@@ -261,8 +275,11 @@ def cmd_reps(a):
     bf = os.path.join(WORK, "reps", "bench.tmp")
     os.makedirs(RES, exist_ok=True)
     path = os.path.join(RES, f"reps-yes{a.yes}-{a.variant}.jsonl")
+    t0 = time.monotonic()
+    while a.yes and load() >= 0.4 * os.cpu_count() and time.monotonic() - t0 < 1800:
+        time.sleep(10)
     with Lock():
-        yes = [subprocess.Popen(["yes"], stdout=subprocess.DEVNULL) for _ in range(a.yes)]
+        yes =[subprocess.Popen(["yes"], stdout=subprocess.DEVNULL) for _ in range(a.yes)]
         try:
             time.sleep(60 if a.yes else 0)
             rows = []
@@ -500,6 +517,10 @@ def main():
     sub.add_parser("simulate")
     sub.add_parser("summary")
     a = ap.parse_args()
+    # a TERM (or HUP) still stops the `yes` processes and releases the lock
+    import signal
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda *_: sys.exit(1))
     {"trials": cmd_trials, "reps": cmd_reps, "simulate": cmd_simulate, "summary": cmd_summary}[a.cmd](a)
 
 

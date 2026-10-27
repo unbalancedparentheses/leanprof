@@ -64,6 +64,9 @@ enum { LP_LABEL, LP_FN, LP_INTERNAL, LP_TASK };
  * LP_PATH_PURE is what `profile!` on a pure term compiles to: a call before
  * the term and one after it, with no closure (see leanprof_enter_pure). */
 enum { LP_PATH_DIRECT, LP_PATH_HOOK, LP_PATH_SCOPE, LP_PATH_ENTER, LP_PATH_PURE, LP_PATHS };
+/* The token of a pure scope compiled out by scripts/leanprof-untimed.awk
+ * (`leanprof_enter_pure` returns 0) */
+#define LP_COMPILED_OUT 2
 
 typedef struct {
     /* What every enter and exit touches comes first, in the first two cache
@@ -1153,7 +1156,7 @@ static __attribute__((noinline)) uint64_t lpf_cal_enter_pure(lean_obj_arg site, 
     return 0;
 }
 static __attribute__((noinline)) uint64_t lpf_cal_exit_pure(uint64_t tok, uint64_t v) {
-    (void)tok;
+    if (LEAN_UNLIKELY(tok == LP_COMPILED_OUT)) return v; /* as leanprof_exit_pure does */
     lpf_exit();
     return v;
 }
@@ -1341,7 +1344,10 @@ LEAN_EXPORT lean_obj_res leanprof_exit(lean_obj_arg unit) {
 /* `profile!` on a pure term: `exitPure (enterPure site) e`. No closure is
  * built and nothing is boxed: the term runs between the two calls, its value
  * passes through `exit` unchanged (one variant per scalar type, so scalars
- * stay unboxed). The token only orders the calls. */
+ * stay unboxed). The token only orders the calls, except that a scope
+ * compiled out (`leanprof run --retime`, scripts/leanprof-untimed.awk) has
+ * the token LP_COMPILED_OUT and no frame: where the C compiler did not
+ * remove the call to `exit`, it returns at once. */
 LEAN_EXPORT uint64_t leanprof_enter_pure(lean_obj_arg site, b_lean_obj_arg key) {
     lean_dec(site); /* a string literal: persistent, so this costs a compare */
     lpf_enter(key, LP_LABEL, LP_PATH_PURE);
@@ -1349,7 +1355,7 @@ LEAN_EXPORT uint64_t leanprof_enter_pure(lean_obj_arg site, b_lean_obj_arg key) 
 }
 #define LP_EXIT_PURE(name, T)                                    \
     LEAN_EXPORT T name(uint64_t tok, T v) {                      \
-        (void)tok;                                               \
+        if (LEAN_UNLIKELY(tok == LP_COMPILED_OUT)) return v;     \
         lpf_exit();                                              \
         return v;                                                \
     }

@@ -127,6 +127,36 @@ if [ -n "$timed" ]; then
     fi
   fi
 fi
+# LEANPROF_UNTIMED=FILE (`leanprof run --retime`): the `profile!` scopes
+# listed in FILE (name<TAB>position per line) are compiled out of pure terms,
+# so that their callers are timed without their probes
+# (leanprof-untimed.awk). The rewrite goes to a temporary copy, after the
+# tiny-function one when both apply.
+if [ -n "${LEANPROF_UNTIMED:-}" ] && [ -f "$LEANPROF_UNTIMED" ]; then
+  case " $* " in
+    *" -c "*)
+      usrc=
+      for a in "$@"; do
+        case "$a" in *.c) [ -f "$a" ] && usrc=$a ;; esac
+      done
+      if [ -n "$usrc" ] && grep -q 'leanprof_enter_pure(' "$usrc" &&
+          { [ -n "$tmpdir" ] || tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/leanprof-cc.XXXXXX")"; }; then
+        uout="$tmpdir/untimed-$(basename "$usrc")"
+        if awk -v list="$LEANPROF_UNTIMED" -f "$(cd "$(dirname "$0")" && pwd)/leanprof-untimed.awk" \
+            "$usrc" "$usrc" > "$uout" && grep -q '^#define LEANPROF_COMPILED_OUT' "$uout"; then
+          for a in "$@"; do
+            shift
+            if [ "$a" = "$usrc" ]; then set -- "$@" "$uout"; else set -- "$@" "$a"; fi
+          done
+          # the original's directory, for quoted includes (once is enough)
+          case " $* " in
+            *" -iquote "*) ;;
+            *) set -- -iquote "$(dirname "$usrc")" "$@" ;;
+          esac
+        fi
+      fi ;;
+  esac
+fi
 # When linking, export symbols so the report can name functions,
 # find the toolchain's static libraries (gmp, libuv, ...), and link
 # leanprof's runtime into projects that do not depend on leanprof

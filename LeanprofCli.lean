@@ -36,7 +36,7 @@ open Leanprof.Regress (mdCode mdProse htmlCode)
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--time-tiny] [--retime] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time, except functions too small to time, which --time-tiny includes; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
@@ -49,7 +49,10 @@ def commands : List (String × String × String) := [
     "libraries, by linking against copies rewritten with llvm-objcopy (cached in .lake/leanprof/core).\n" ++
     "--all-copies lists copies of constants and of empty or tiny values row by row (summarized\n" ++
     "by default). --trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
-    "--cwd DIR runs EXE in DIR (for programs that read the current directory)."),
+    "--cwd DIR runs EXE in DIR (for programs that read the current directory).\n" ++
+    "--retime: when `profile!` scopes on pure terms turned out too small to time (their probes change\n" ++
+    "the code of the scopes that call them), build and run again with those scopes compiled out: the\n" ++
+    "second report times their callers without them; their calls and estimated times are the first run's."),
   ("stat", "[--auto | --auto-all] [--time-tiny] [--no-allocs] [--no-frees] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
     "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
@@ -441,6 +444,9 @@ def guardedOutput (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
 structure RunOpts where
   auto : Option String := none
   timeTiny : Bool := false
+  /-- run twice: the second time with the `profile!` scopes the first run
+  found too small to time compiled out (`runRetime`) -/
+  retime : Bool := false
   trace : Option String := none
   json : Option String := none
   keep : Bool := false
@@ -464,6 +470,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--auto" :: rest => parseRun { opts with auto := some "1" } rest
   | "--auto-all" :: rest => parseRun { opts with auto := some "all" } rest
   | "--time-tiny" :: rest => parseRun { opts with timeTiny := true } rest
+  | "--retime" :: rest => parseRun { opts with retime := true } rest
   | "--trace" :: f :: rest => parseRun { opts with trace := some f } rest
   | "--json" :: f :: rest => parseRun { opts with json := some f } rest
   -- `--out` as in the other commands: where this command's report goes
@@ -823,25 +830,29 @@ def publishReport (json : FilePath) : IO Unit := do
   if (← absPath json) == (← absPath lastReport) then return
   IO.FS.writeBinFile lastReport (← IO.FS.readBinFile json)
 
-def run (argv : List String) : IO UInt32 := do
-  let opts ← IO.ofExcept (parseRun {} argv)
-  let some exe := opts.exe | throw <| IO.userError (usageFor "run")
-  let coreEnv ← if opts.core then
-      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees).toString)]
-    else pure #[]
-  clearReports opts.json
-  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees (coreEnv ++ tinyEnv opts) opts.deps
+/-- One build and run of `run`: the report goes to `json`; `extraEnv` is
+added to the build's environment; with `keep`, the instrumented build stays. -/
+def runOnce (exe : String) (opts : RunOpts) (coreEnv : Array (String × Option String)) (json : String)
+    (keep : Bool) (extraEnv : Array (String × Option String) := #[]) : IO UInt32 := do
+  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees (coreEnv ++ tinyEnv opts ++ extraEnv)
+    opts.deps
   if rc != 0 then return rc
-  -- written where asked (--json/--out), and always as the last report
-  let json := opts.json.getD lastReport.toString
   let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)] ++
     (if opts.allCopies then #[("LEANPROF_ALL_COPIES", some "1")] else #[])
-  let rc ← try runInstrumented exe opts runEnv
+  try runInstrumented exe opts runEnv
     finally
-      unless opts.keep do
+      unless keep do
         cleanupInstrumented exe
-  publishReport json
-  return rc
+
+/-- The `profile!` scopes of a report that went light (too small to time:
+`timed_calls` below `calls`), as `name` and `pos`, with their rows. -/
+def lightScopes (report : Json) : Array (String × String × Json) :=
+  ((report.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[]).filterMap fun s =>
+    let name := (s.getObjValAs? String "name").toOption.getD ""
+    let pos := (s.getObjValAs? String "pos").toOption.getD ""
+    let auto := (s.getObjValAs? Bool "auto").toOption.getD false
+    if !auto && !name.isEmpty && !pos.isEmpty && (s.getObjVal? "timed_calls").toOption.isSome then
+      some (name, pos, s) else none
 
 /-! ## compare -/
 
@@ -929,6 +940,86 @@ def groupDigits (n : Nat) : String :=
     groupDigits (n / 1000) ++ "," ++ (if r < 10 then "00" else if r < 100 then "0" else "") ++ toString r
 termination_by n
 decreasing_by omega
+
+/-- `run --retime`: run once; if `profile!` scopes on pure terms turned out
+too small to time, build again with them compiled out (scripts/leanprof-cc,
+LEANPROF_UNTIMED) and run again. The second report is the result: the
+scopes that called them are timed without their probes. It lists the
+compiled-out scopes under `compiled_out`, with the first run's calls and
+estimated times, and names any scope whose calls differ between the runs
+(a program that does not do the same work each time). -/
+def runRetime (exe : String) (opts : RunOpts) (coreEnv : Array (String × Option String)) : IO UInt32 := do
+  let json := opts.json.getD lastReport.toString
+  let first := (".lake" : FilePath) / "leanprof" / "retime-first.json"
+  IO.FS.createDirAll (first.parent.getD ".")
+  let rc ← runOnce exe opts coreEnv first.toString false
+  if rc != 0 then
+    publishReport first
+    return rc
+  let r1 ← IO.ofExcept (Json.parse (← IO.FS.readFile first))
+  let light := lightScopes r1
+  if light.isEmpty then
+    IO.eprintln "leanprof: no `profile!` scope was too small to time: the report above stands"
+    IO.FS.writeBinFile json (← IO.FS.readBinFile first)
+    publishReport json
+    return rc
+  let list := (".lake" : FilePath) / "leanprof" / "untimed.txt"
+  IO.FS.writeFile list (String.join (light.toList.map fun (n, p, _) => s!"{n}\t{p}\n"))
+  let names := ", ".intercalate (light.toList.map fun (n, p, _) => s!"{n} ({p})")
+  let them := if light.size == 1 then "it" else "them"
+  IO.eprintln s!"leanprof: {light.size} scope{if light.size == 1 then "" else "s"} too small to time: {names}; building and running again with {them} compiled out"
+  let rc ← runOnce exe opts coreEnv json opts.keep #[("LEANPROF_UNTIMED", some (← absPath list).toString)]
+  unless ← (json : FilePath).pathExists do return rc
+  let r2 ← IO.ofExcept (Json.parse (← IO.FS.readFile json))
+  let rows2 := (r2.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[]
+  let key (s : Json) : String :=
+    s!"{(s.getObjValAs? String "name").toOption.getD ""}@{(s.getObjValAs? String "pos").toOption.getD ""}"
+  let calls (s : Json) : Nat := (s.getObjValAs? Nat "calls").toOption.getD 0
+  let mut calls1 : Std.HashMap String Nat := {}
+  for s in (r1.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[] do
+    calls1 := calls1.insert (key s) (calls1.getD (key s) 0 + calls s)
+  -- a scope that is still there was not compiled out (not a pure term, or
+  -- written differently in the C code): it stays timed, as in the first run
+  let still := light.filter fun (n, p, _) => rows2.any (key · == s!"{n}@{p}")
+  let out := light.filter fun (n, p, _) => !rows2.any (key · == s!"{n}@{p}")
+  let mut calls2 : Std.HashMap String Nat := {}
+  for s in rows2 do calls2 := calls2.insert (key s) (calls2.getD (key s) 0 + calls s)
+  let mut differ : Array String := #[]
+  for (k, c) in calls2.toList do
+    if let some c1 := calls1.get? k then
+      if c1 != c then differ := differ.push s!"{k} ({c1} then {c})"
+  let entry (n p : String) (s : Json) : Json := Json.mkObj [("name", Json.str n), ("pos", Json.str p),
+    ("calls", s.getObjValD "calls"), ("timed_calls", s.getObjValD "timed_calls"),
+    ("total_ns", s.getObjValD "total_ns"), ("self_ns", s.getObjValD "self_ns")]
+  let r2 := r2.setObjVal! "compiled_out" (Json.arr (out.map fun (n, p, s) => entry n p s))
+    |>.setObjVal! "retime" (Json.mkObj [("first_run", Json.str first.toString),
+      ("not_compiled_out", Json.arr (still.map fun (n, p, _) => Json.str s!"{n}@{p}")),
+      ("calls_differ", Json.arr (differ.map Json.str))])
+  IO.FS.writeFile json (r2.compress ++ "\n")
+  publishReport json
+  unless out.isEmpty do
+    IO.eprintln s!"leanprof: second run: the callers of {", ".intercalate (out.toList.map (·.1))} are timed without their probes; their calls (exact) and estimated times are the first run's, in the report's `compiled_out`"
+    for (n, p, s) in out do
+      IO.eprintln s!"  {n} ({p}): {groupDigits (calls s)} calls, about {fmtTime ((s.getObjValAs? Float "total_ns").toOption.getD 0)} in the first run"
+  unless still.isEmpty do
+    IO.eprintln s!"leanprof: not compiled out (not a pure term?), still timed: {", ".intercalate (still.toList.map fun (n, p, _) => s!"{n} ({p})")}"
+  unless differ.isEmpty do
+    IO.eprintln s!"leanprof: warning: calls differ between the two runs, so the counts above are not the same run's: {", ".intercalate differ.toList}"
+  return rc
+
+def run (argv : List String) : IO UInt32 := do
+  let opts ← IO.ofExcept (parseRun {} argv)
+  let some exe := opts.exe | throw <| IO.userError (usageFor "run")
+  let coreEnv ← if opts.core then
+      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees).toString)]
+    else pure #[]
+  clearReports opts.json
+  if opts.retime then return ← runRetime exe opts coreEnv
+  -- written where asked (--json/--out), and always as the last report
+  let json := opts.json.getD lastReport.toString
+  let rc ← runOnce exe opts coreEnv json opts.keep
+  publishReport json
+  return rc
 
 /-- What a row of `Regress.Explanation` is, in words. -/
 def whatLabel : String → String
