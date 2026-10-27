@@ -112,6 +112,9 @@ def cases : List (String × Bool × String) :=
      FixElab.errorPositions "error: ././A/B.lean:12:4: unsolved goals\nok" == #[("A/B.lean", 12)] &&
        FixElab.blame #[{ e with file := "A/B.lean", line := 3 }, { e with file := "A/B.lean", line := 11 },
          { e with file := "A/C.lean", line := 1 }] #[("A/B.lean", 12)] == #[1], ""),
+   ("fix --elab: declarations whose value changed",
+     FixElab.guardBlamed #["guard: statement_dependency_changed A.B.homEquiv._proof_11: x", "guard: sorry_dependency t"] ==
+       #["A.B.homEquiv"] && FixElab.keyNames "F.lean homEquiv" "A.B.homEquiv" && !FixElab.keyNames "F.lean Equiv" "A.B.homEquiv", ""),
    ("fix --elab: declarations that got dearer",
      FixElab.dearer #["compile A.lean t: 1.00 kHB -> 2.50 kHB", "compile A.lean u: 3.00 kHB -> 1.00 kHB",
        "compile heartbeats: 1 kHB"] == #["A.lean t"], ""),

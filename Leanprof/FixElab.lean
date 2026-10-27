@@ -183,6 +183,23 @@ def dearer (notes : Array String) : Array String := notes.filterMap fun n => do
     return key
   | _ => none
 
+/-- The declarations the guard found changed in a way it cannot accept as a mere
+speedup (`statement_dependency_changed Foo.bar._proof_3: ...`: an edit inside a
+definition changes the definition's value), as the declarations the source names:
+generated parts (`._proof_3`, `.eq_1`) belong to the declaration they are in. -/
+def guardBlamed (reasons : Array String) : Array String := reasons.filterMap fun r => do
+  let r := if r.startsWith "guard: " then (r.drop 7).toString else r
+  guard (r.startsWith "statement_dependency_changed ")
+  let name := (((r.drop 29).toString.splitOn " ").head!.splitOn ":").head!
+  let parts := (name.splitOn ".").takeWhile fun p => !(p.startsWith "_" || p.startsWith "eq_" || p == "eq_def")
+  guard (!parts.isEmpty)
+  return ".".intercalate parts
+
+/-- Whether an edit's declaration (its `compare` key, `file name`) is `name` (fully qualified). -/
+def keyNames (key name : String) : Bool :=
+  let d := ((key.splitOn " ").drop 1 |> " ".intercalate)
+  !d.isEmpty && (name == d || name.endsWith ("." ++ d))
+
 /-! ## The command -/
 
 structure Opts where
@@ -362,6 +379,16 @@ def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO 
     if verdict == "KEEP" then
       kept := some (cand, ev)
       break
+    -- an edit inside a definition changes its value: the guard cannot call that a speedup
+    let blamed := guardBlamed (((ev.getObjVal? "guard" >>= (·.getObjVal? "reasons") >>= Json.getArr?).toOption.getD #[]).filterMap
+      (·.getStr?.toOption))
+    if verdict == "INCONCLUSIVE" && !blamed.isEmpty then
+      let drop := (List.range cur.size).filter fun i => blamed.any (keyNames cur[i]!.key)
+      if drop.isEmpty then break
+      IO.println (s!"  dropping {drop.length} edit(s) in declarations whose value changed: " ++
+        ", ".intercalate (drop.map fun i => cur[i]!.range))
+      cur := (cur.toList.zipIdx.filter fun (_, i) => !drop.contains i).map (·.1) |>.toArray
+      continue
     if verdict != "DISCARD" then break
     -- what to drop: the edits in declarations that no longer build, or that got dearer
     let tryN := jnum ev "try"
