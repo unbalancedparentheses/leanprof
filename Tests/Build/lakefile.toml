@@ -1,0 +1,13 @@
+# The project `scripts/build-check.sh` runs `leanprof build` on. No dependency
+# on leanprof. Demo.Heavy is the slow module; Demo.Leaf imports it but uses
+# only what Demo.Base defines, so its import can be narrowed to Demo.Base;
+# both are slow, so they make the critical path.
+name = "builddemo"
+defaultTargets = ["Demo", "demo"]
+
+[[lean_lib]]
+name = "Demo"
+
+[[lean_exe]]
+name = "demo"
+root = "Main"

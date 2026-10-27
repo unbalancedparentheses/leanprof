@@ -6,7 +6,7 @@ copybug server`:
     python3 scripts/mcp-check.py .lake/build/bin/leanprof
 
 It runs copybug twice through the `run` tool and checks the answers of
-initialize, tools/list, run, report, hot, explain, compare, judge, live,
+initialize, tools/list, run, report, hot, explain, compare, judge, live, build,
 the experiment tools (on a copy of Tests/Experiment),
 dump, ping, an unknown tool, an unknown method and a malformed line.
 """
@@ -59,7 +59,7 @@ check("initialize", r["result"]["protocolVersion"] == "2025-06-18" and "tools" i
 send({"jsonrpc": "2.0", "method": "notifications/initialized"})  # no reply expected
 
 names = {t["name"] for t in call("tools/list")["result"]["tools"]}
-want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
+want = {"run", "sample", "stat", "elab", "build", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
         "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
 
@@ -251,6 +251,19 @@ check("experiment_start refuses an output file outside the project", err and "in
 text, err = tool("experiment_finish", cwd=exp)
 check("experiment_finish", not err and '"experiment-finish"' in text, text)
 shutil.rmtree(exp, ignore_errors=True)
+
+# build: a measured clean build of Tests/Build (no experiments, so no git needed)
+bdir = tempfile.mkdtemp(prefix="leanprof-mcp-build-")
+shutil.copytree("Tests/Build", bdir, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".lake"))
+text, err = tool("build", cwd=bdir, clean=True, html="timeline.html")
+report = json.load(open(os.path.join(bdir, ".lake/leanprof/build.json"))) if not err else {}
+check("build: critical path and timeline", not err and "Critical path:" in text and report.get("leanprof") == "build"
+      and report["critical_path"]["steps"] and os.path.exists(os.path.join(bdir, "timeline.html")), text)
+text, err = tool("build", cwd=bdir, targets=["--clean"])
+check("build refuses an option as a target", err and "not a file name" in text, text)
+text, err = tool("build", cwd=bdir, html="../outside.html")
+check("build refuses an HTML file outside the project", err and "inside the project" in text, text)
+shutil.rmtree(bdir, ignore_errors=True)
 
 check("ping", call("ping")["result"] == {})
 r = call("tools/call", {"name": "nope", "arguments": {}})

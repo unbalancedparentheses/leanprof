@@ -196,6 +196,7 @@
   "where: Examples/CopyBug.lean lines 21, 22"
  ],
  "help.commands": [
+  "build",
   "compare",
   "doctor",
   "dump",

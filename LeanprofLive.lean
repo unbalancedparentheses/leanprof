@@ -674,6 +674,18 @@ def tools : Array Json := #[
   tool "elab" "Compile cost per line and declaration of Lean files (elaboration, kernel, compiler), optionally in exact heartbeats."
     [("files", aProp "Lean files"), ("heartbeats", bProp "count heartbeats (deterministic) instead of time"),
      ("top", nProp "lines shown")] ["files"],
+  tool "build" ("Measure a real `lake build`: each process Lake runs (module, C compile, link) with start, end, " ++
+    "peak memory and CPU time; the critical path with each job's slack; jobs running over time and where the build " ++
+    "was serialized; the estimated rebuild after touching each module. validate: touch that many modules in a git " ++
+    "worktree and compare real rebuilds with the estimates. imports: try removing that many imports there, kept only " ++
+    "if the build (proofs included) passes, with the measured rebuild gain. JSON in .lake/leanprof/build.json.")
+    [("targets", aProp "Lake targets (default: the package's default targets)"),
+     ("clean", bProp "remove .lake/build first, so the whole package is rebuilt and measured"),
+     ("jobs", nProp "workers for the scheduling simulation (default: the hardware threads)"),
+     ("validate", nProp "modules to touch and rebuild in a worktree, to check the estimates"),
+     ("imports", nProp "imports to try removing in a worktree"),
+     ("json", sProp "report file (default .lake/leanprof/build.json)"), ("html", sProp "also write the timeline page here"),
+     ("top", nProp "rows per section (default 10)")] [],
   tool "measure" "Run an executable several times with probes into one summary, for judge."
     (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)"),
       ("core", bProp "also count copies and allocations inside Lean's own libraries")])
@@ -837,6 +849,20 @@ def callTool (name : String) (a : Json) : IO Json := do
     let (rc, out, err) ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
     return textResult s!"{out}\n{tailText err 10}" (rc != 0)
+  | "build" =>
+    let targets := argStrs a "targets"
+    for t in targets do notOption t
+    let json ← projectPath cwd "json" (argStr a "json" |>.getD ".lake/leanprof/build.json")
+    let html ← match argStr a "html" with
+      | some h => pure #["--html", ← projectPath cwd "html" h]
+      | none => pure #[]
+    let num (k f : String) : Array String := match argNat a k with
+      | some n => if n > 0 then #[f, toString n] else #[]
+      | none => #[]
+    let (rc, out, err) ← runSelf (#["build", "--quiet", "--json", json, "--top", toString ((argNat a "top").getD 10)] ++
+      (if argBool a "clean" then #["--clean"] else #[]) ++ num "jobs" "--jobs" ++ num "validate" "--validate" ++
+      num "imports" "--imports" ++ html ++ targets) cwd
+    return textResult s!"{out}\n{tailText err 10}" (rc != 0 && out.isEmpty)
   | "measure" =>
     let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++

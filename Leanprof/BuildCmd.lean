@@ -158,30 +158,76 @@ def withImports (a : Analysis) (direct : Std.HashMap String (Array String)) (m :
     else j
   return jobs
 
-def candidates (a : Analysis) (noop : Float) (direct : Std.HashMap String (Array String)) (roots : Array String) :
-    Nat × Array Cand := Id.run do
-  let leanIds : Std.HashSet String := a.jobs.foldl (init := {}) fun h j => if j.kind == "lean" then h.insert j.name else h
+/-- What a module's `.ilean` says it uses: the modules of the declarations
+its source names, and how many declarations it defines. (Instances,
+notations and macros it relies on without naming them are not there.) -/
+def readIlean (p : FilePath) : IO (Option (Array String × Nat)) := do
+  unless ← p.pathExists do return none
+  let some j := (Json.parse (← IO.FS.readFile p)).toOption | return none
+  let decls := match j.getObjVal? "decls" with
+    | .ok (.obj kvs) => kvs.toList.length
+    | _ => 0
+  let mut used : Array String := #[]
+  if let .ok (.obj refs) := j.getObjVal? "references" then
+    for (k, v) in refs.toList do
+      if (jarr v "usages").isEmpty then continue
+      let some kj := (Json.parse k).toOption | continue
+      let m := jstr (kj.getObjValD "c") "m"
+      unless m.isEmpty || used.contains m do used := used.push m
+  return some (used, decls)
+
+/-- Why imports were not candidates, counted. -/
+structure Skipped where
+  needed : Nat := 0
+  redundant : Nat := 0
+  reexport : Nat := 0
+  noIlean : Nat := 0
+
+/-- The imports whose removal changes the measured graph, each with what
+the module would import instead: the modules of the declarations it names
+that it would no longer reach (from its `.ilean`). An import whose own
+declarations the module names is needed and left out; so are the imports of
+modules that define nothing (they exist to re-export). Ranked by the
+estimated gain on the clean build's critical path plus on the rebuild after
+touching the import. -/
+def candidates (a : Analysis) (noop : Float) (direct : Std.HashMap String (Array String)) (roots : Array String)
+    (uses : Std.HashMap String (Array String × Nat)) : Nat × Skipped × Array Cand := Id.run do
+  let leanJob : Std.HashMap String Job := a.jobs.foldl (init := {}) fun h j => if j.kind == "lean" then h.insert j.name j else h
   let mut out := #[]
   let mut considered := 0
+  let mut sk : Skipped := {}
   for m in roots do
     let ds := (direct.get? m).getD #[]
+    let some jm0 := leanJob.get? m | continue
     for imp in ds do
-      unless leanIds.contains imp do continue
+      unless leanJob.contains imp do continue
       considered := considered + 1
-      let jobs' := withImports a direct m (ds.filter (· != imp))
+      let some (used, decls) := uses.get? m | sk := { sk with noIlean := sk.noIlean + 1 }; continue
+      if decls == 0 then sk := { sk with reexport := sk.reexport + 1 }; continue
+      if used.contains imp then sk := { sk with needed := sk.needed + 1 }; continue
+      -- what `m` reaches without `imp`; the modules it names among the rest come in its place
+      let rest := ds.filter (· != imp)
+      let mut reach : Std.HashSet String := {}
+      for d in rest do
+        reach := reach.insert d
+        if let some jd := leanJob.get? d then
+          for x in jd.imports do reach := reach.insert x
+      let extra := used.filter fun u => u != m && jm0.imports.contains u && !reach.contains u
+      let jobs' := withImports a direct m (rest ++ extra)
       let some jm := jobs'.find? fun j => j.kind == "lean" && j.name == m | continue
       -- still imported through another import: nothing changes
-      if jm.imports.contains imp then continue
+      if jm.imports.contains imp then sk := { sk with redundant := sk.redundant + 1 }; continue
       let freed := (jobs'.filter fun j => j.kind == "lean" && a.jobs[j.id]!.imports.contains imp && !j.imports.contains imp).size
       let (_, cp') := cpm jobs'
       let a' : Analysis := { a with jobs := jobs' }
       let (_, _, before) := rebuildEstimate a noop imp
       let (_, _, after) := rebuildEstimate a' noop imp
-      out := out.push { m, imp, cpGain := a.cpmLen - cp', rebuildGain := before - after, freed }
-  return (considered, out.qsort fun x y => x.cpGain + x.rebuildGain > y.cpGain + y.rebuildGain)
+      out := out.push { m, imp, extra, cpGain := a.cpmLen - cp', rebuildGain := before - after, freed }
+  return (considered, sk, out.qsort fun x y => x.cpGain + x.rebuildGain > y.cpGain + y.rebuildGain)
 
 def candJson (c : Cand) : Json :=
-  Json.mkObj [("module", Json.str c.m), ("import", Json.str c.imp), ("modules_freed", toJson c.freed),
+  Json.mkObj [("module", Json.str c.m), ("import", Json.str c.imp), ("replace_with", toJson c.extra),
+    ("modules_freed", toJson c.freed),
     ("critical_path_gain_s", toJson (r3 c.cpGain)), ("clean_gain_s", toJson (r3 c.cleanGain)),
     ("rebuild_gain_s", toJson (r3 c.rebuildGain))]
 
@@ -200,9 +246,11 @@ def tryCand (o : Opts) (projAbs : String) (work exp : FilePath) (a : Analysis) (
   let fields (xs : List (String × Json)) : Json := xs.foldl (fun j (k, v) => j.setObjVal! k v) base
   say o s!"imports: {c.m} without `import {c.imp}`: rebuild after touching {c.imp}, as it is"
   let (b1, b2) ← touchAndBuild o work exp fileI (1000 + 2 * k)
+  -- the modules it names in place of the import; if that fails (an instance
+  -- or a notation it uses without naming it), what the import itself imports
+  let below := ((direct.get? c.imp).getD #[]).filter fun d => !((direct.get? c.m).getD #[]).contains d
   let attempts : Array (Array String) :=
-    #[#[]] ++ (let ds := ((direct.get? c.imp).getD #[]).filter fun d => !((direct.get? c.m).getD #[]).contains d
-      if ds.isEmpty then #[] else #[ds])
+    #[c.extra] ++ (if below.isEmpty || below == c.extra then #[] else #[below])
   let mut result : Json := fields [("verdict", Json.str "does not build"), ("replaced_by", toJson (#[] : Array String))]
   for extra in attempts do
     let some edited := withoutImport orig c.imp extra | return fields [("verdict", Json.str "import not found in the header")]
@@ -363,15 +411,21 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
       if o.validate > 0 then
         report := report ++ [("validation", ← validate o a noopS projAbs wdir exp roots)]
       if o.imports > 0 then
-        let (considered, cands) := candidates a noopS direct roots
+        let mut uses : Std.HashMap String (Array String × Nat) := {}
+        for j in a.jobs do
+          if j.kind == "lean" && j.output.endsWith ".olean" then
+            if let some u ← readIlean ((j.output.dropEnd 6).toString ++ ".ilean") then uses := uses.insert j.name u
+        let (considered, sk, cands) := candidates a noopS direct roots uses
         -- the clean build's estimate, simulated with the workers, for those that may be tried
         let cands := (cands.extract 0 (3 * o.imports)).map fun c =>
           let ds := ((direct.get? c.m).getD #[]).filter (· != c.imp)
-          let jobs' := withImports a direct c.m ds
+          let jobs' := withImports a direct c.m (ds ++ c.extra)
           { c with cleanGain := a.simulated - simulate (simOf jobs' ((List.range jobs'.size).toArray)) a.workers a.latency }
         let tried ← (cands.extract 0 o.imports |>.filter (fun c => c.cpGain + c.rebuildGain > 0)).mapIdxM fun i c =>
           tryCand o projAbs wdir exp a direct c settle.sorries i
         report := report ++ [("imports", Json.mkObj [("considered", toJson considered),
+          ("needed", toJson sk.needed), ("redundant", toJson sk.redundant), ("reexport", toJson sk.reexport),
+          ("no_ilean", toJson sk.noIlean),
           ("candidates", Json.arr (cands.map candJson)), ("tried", Json.arr tried)])]
     finally
       unless o.keep do Experiment.removeWorktree wt
@@ -383,7 +437,8 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
   IO.println s!"\nJSON: {jsonPath}"
   writeHtml r
   if run.exitCode != 0 then
-    IO.eprintln s!"leanprof build: `{cmd}` failed (exit code {run.exitCode}):\n{tailOf ("\n".intercalate run.lines.toList) 20}"
+    let errs := run.lines.filter fun l => !l.startsWith "trace:" && (parseLakeLine l |>.map (·.1) |>.all (fun v => v != "Ran" && v != "Replayed"))
+    IO.eprintln s!"leanprof build: `{cmd}` failed (exit code {run.exitCode}):\n{tailOf ("\n".intercalate errs.toList) 20}"
     return 1
   return 0
 

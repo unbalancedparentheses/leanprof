@@ -110,6 +110,8 @@ jobs:
           sh scripts/version-smoke.sh .lake/build/bin/leanprof "$TOOLCHAIN" $sample
       - name: leanprof elab builds its driver for this Lean once, and reuses it
         run: sh scripts/driver-cache-check.sh .lake/build/bin/leanprof "$TOOLCHAIN"
+      - name: leanprof build on a project using this Lean (its Lake, its toolchain programs)
+        run: sh scripts/build-check.sh "$TOOLCHAIN"
       - name: Report
         if: always()
         env:

@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Build import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -791,6 +791,58 @@ def experimentTests : StateT Nat IO Unit := do
       | .ok s => s.baseline == #[sig] && s.test == some "lake test" && s.runs == 3
       | .error _ => false) ""
 
+/-- `leanprof build`'s pure parts (Leanprof/Build.lean); the whole command
+runs in scripts/build-check.sh. -/
+def buildTests : StateT Nat IO Unit := do
+  check "build: Lake's job lines give the verb and the job"
+    (Build.parseLakeLine "✔ [2/13] Built P.A (433ms)" == some ("Built", "P.A") &&
+      Build.parseLakeLine "ℹ [5/13] Built P.A:c.o (with exports) (1.2s)" == some ("Built", "P.A:c.o (with exports)") &&
+      Build.parseLakeLine "✔ [6/13] Ran p/P:default" == some ("Ran", "p/P:default") &&
+      Build.parseLakeLine "✖ [3/17] Building Demo.Heavy (1m 3s)" == some ("Building", "Demo.Heavy") &&
+      Build.parseLakeLine "error: Demo/Heavy.lean:7:41: [x] y" == none) ""
+  check "build: module jobs are told from target jobs"
+    (Build.isModuleJob "Demo.Heavy" && !Build.isModuleJob "P.A:c.o (with exports)" && !Build.isModuleJob "p/P:default")
+    ""
+  check "build: response files, quoted with escapes"
+    (Build.rspArgs "\"-o\"\n\"/a b/x.o\"\n\"say \\\"hi\\\"\" plain\n" == #["-o", "/a b/x.o", "say \"hi\"", "plain"]) ""
+  check "build: modules and packages from build paths"
+    (Build.moduleOfIr "/p/.lake/build/ir/Foo/Bar.c" == some "Foo.Bar" &&
+      Build.moduleOfOlean "/p/.lake/packages/batteries/.lake/build/lib/lean/Batteries/Data.olean" == some "Batteries.Data" &&
+      Build.packageOf "/p/.lake/packages/batteries/.lake/build/ir/X.c" == "batteries" && Build.packageOf "/p/.lake/build/ir/X.c" == "") ""
+  let src := "/- header -/\nmodule\n\npublic import A.B C.D -- two\nimport E\n\ndef x := 1\nimport F\n"
+  check "build: an import removed from a header, another put in its place"
+    (Build.withoutImport src "C.D" #["G"] == some "/- header -/\nmodule\n\npublic import A.B -- two\npublic import G\nimport E\n\ndef x := 1\nimport F\n" &&
+      Build.withoutImport src "E" == some "/- header -/\nmodule\n\npublic import A.B C.D -- two\n\ndef x := 1\nimport F\n" &&
+      Build.withoutImport src "F" == none) (toString (Build.withoutImport src "C.D" #["G"]))
+  check "build: a touch adds a public definition to a module file"
+    ((Build.touched "module\ndef x := 1" 3).endsWith "\npublic def leanprofTouch3 : Nat := 3\n" &&
+      (Build.touched "def x := 1\n" 4).endsWith "\n\ndef leanprofTouch4 : Nat := 4\n") ""
+  -- a diamond: 0 → (1, 2) → 3, and 4 independent; durations 1, 2, 1, 1, 1
+  let mk (id : Nat) (s e : Float) (deps : Array Nat) : Build.Job :=
+    { id, kind := "lean", name := s!"M{id}", start := s, stop := e, deps }
+  let jobs := #[mk 0 0 1 #[], mk 1 1 3 #[0], mk 2 1 2 #[0], mk 3 3 4 #[1, 2], mk 4 0 1 #[]]
+  let (slack, len) := Build.cpm jobs
+  check "build: critical-path method: length and slack"
+    (len == 4 && slack == #[0, 0, 1, 0, 3]) s!"{len} {slack}"
+  check "build: the observed critical path follows the dependency that ended last"
+    ((Build.observedPath jobs).map (·.1) == #[0, 1, 3]) s!"{Build.observedPath jobs}"
+  let sim := Build.simOf jobs #[0, 1, 2, 3, 4]
+  check "build: simulation with enough workers is the critical path"
+    (Build.simulate sim 8 0 == 4 && Build.simulate sim 8 0.5 == 5) s!"{Build.simulate sim 8 0.5}"
+  check "build: one worker runs everything in a row"
+    (Build.simulate sim 1 0 == 6) s!"{Build.simulate sim 1 0}"
+  check "build: a job outside the subset passes its dependencies on"
+    ((Build.simOf jobs #[0, 3]).map (·.deps) == #[#[], #[0]]) ""
+  let prof := Build.profile jobs
+  check "build: jobs running over time"
+    (prof == #[(0, 2), (1, 2), (2, 1), (3, 1), (4, 0)] && Build.timeAt prof 5 == #[1, 2, 2]) s!"{prof}"
+  check "build: serialized stretches"
+    (Build.serialized prof 0 4 1 == #[(2, 4)]) s!"{Build.serialized prof 0 4 1}"
+  -- lanes are assigned in start order (the order of a build's jobs)
+  let byStart := #[mk 0 0 1 #[], mk 1 0 1 #[], mk 2 1 3 #[0], mk 3 1 2 #[0], mk 4 3 4 #[2, 3]]
+  check "build: each job on the lowest free lane"
+    ((Build.assignLanes byStart).map (·.lane) == #[0, 1, 0, 1, 0]) s!"{(Build.assignLanes byStart).map (·.lane)}"
+
 def main (args : List String) : IO UInt32 := do
   -- a light scope (cheap calls) whose estimate is then raised by costlier
   -- calls, called cheaply again from a parent; checked by the tests above
@@ -800,7 +852,7 @@ def main (args : List String) : IO UInt32 := do
     let _ ← IO.lazyPure fun _ => wrapLoop k (2 * 65536)
     let _ ← IO.lazyPure fun _ => wrapParent 60000
     return 0
-  let ((), failures) ← (do tests; experimentTests).run 0
+  let ((), failures) ← (do tests; experimentTests; buildTests).run 0
   if failures == 0 then
     IO.println "all tests passed"
     return 0

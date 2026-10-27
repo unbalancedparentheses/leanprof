@@ -178,7 +178,7 @@ def commands : List (String × String × String) := [
     "Ask a program running with the flight recorder (LEANPROF_FLIGHT, LEANPROF_SLOW_MS) for a Perfetto\n" ++
     "trace of its last seconds (SIGUSR1) and print its path."),
   ("mcp", "",
-    "Model Context Protocol server on stdio for AI agents: tools to run, sample, stat, elab, measure and\n" ++
+    "Model Context Protocol server on stdio for AI agents: tools to run, sample, stat, elab, build, measure and\n" ++
     "measure_pair targets, read reports, list hot scopes/copies/allocations with file:line, compare,\n" ++
     "judge (measure summaries or a paired session), and\n" ++
     "query (live) or dump (dump) a running program."),

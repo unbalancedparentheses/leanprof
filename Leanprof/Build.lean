@@ -826,12 +826,14 @@ def render (r : Json) (top : Nat) : String := Id.run do
   unless im.isNull do
     out := out.push ""
     let cands := jarr im "candidates"
-    out := out.push s!"Imports: {jnatv im "considered"} imports considered, {cands.size} would change the graph; the best {(jarr im "tried").size} tried in a worktree"
+    out := out.push s!"Imports: {jnatv im "considered"} imports of rebuilt modules considered: {jnatv im "needed"} name declarations of the module they import, {jnatv im "reexport"} are in modules that define nothing (they re-export), {jnatv im "redundant"} are reached through another import too{if jnatv im "no_ilean" > 0 then s!", {jnatv im "no_ilean"} without an .ilean" else ""}; {cands.size} candidates shown, the best {(jarr im "tried").size} tried in a worktree"
+    let names (k : String) (c : Json) := ", ".intercalate ((jarr c k).filterMap (·.getStr?.toOption)).toList
     for c in cands.extract 0 top do
-      out := out.push s!"  {jstr c "module"} imports {jstr c "import"}: estimated {fmtS (jfloat c "clean_gain_s")} off the clean build, {fmtS (jfloat c "rebuild_gain_s")} off a rebuild after touching {jstr c "import"} ({jnatv c "modules_freed"} {if jnatv c "modules_freed" == 1 then "module no longer depends" else "modules no longer depend"} on it)"
+      let instead := if (jarr c "replace_with").isEmpty then "" else s!" (importing {names "replace_with" c} instead)"
+      out := out.push s!"  {jstr c "module"} without `import {jstr c "import"}`{instead}: estimated {fmtS (jfloat c "clean_gain_s")} off the clean build, {fmtS (jfloat c "rebuild_gain_s")} off a rebuild after touching {jstr c "import"} ({jnatv c "modules_freed"} {if jnatv c "modules_freed" == 1 then "module no longer depends" else "modules no longer depend"} on it)"
     for t in jarr im "tried" do
       let verdict := jstr t "verdict"
-      out := out.push s!"  tried: {jstr t "module"} without `import {jstr t "import"}`{if (jarr t "replaced_by").isEmpty then "" else s!" (importing {", ".intercalate ((jarr t "replaced_by").filterMap (·.getStr?.toOption)).toList} instead)"}: {verdict}"
+      out := out.push s!"  tried: {jstr t "module"} without `import {jstr t "import"}`{if (jarr t "replaced_by").isEmpty then "" else s!" (importing {names "replaced_by" t} instead)"}: {verdict}"
       if verdict == "builds" then
         out := out.push s!"    rebuild after touching {jstr t "import"}: {fmtS (jfloat t "before_s")} before, {fmtS (jfloat t "after_s")} after (measured, mean of {jnatv t "samples"} builds each); clean build estimated {fmtS (jfloat t "clean_gain_s")} shorter"
       unless (jstr t "reason").isEmpty do out := out.push s!"    {jstr t "reason"}"
