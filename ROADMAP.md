@@ -13,8 +13,12 @@ Neighbours, and how leanprof should compare with each:
 | [LeanBench](https://github.com/alok/LeanBench) | benchmark harness, saved baselines | match its cost per verdict at any load (0.89 s against its 1.09 s at load 4–13, but 1.9–2.3 s against 1.06 s at load up to 15) and its named benchmarks, keep exact copies and allocations, compare by interleaved runs ([case study](docs/case-studies/leanbench.md)) |
 | [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler), `trace.profiler` | elaboration time, source navigation, all of Mathlib published | connect compile-time and runtime diagnosis; refresh comparisons against current native capture |
 
-Status (2026-10-26): M1–M9 are largely done, and everything checked below
-is on `main`. What remains is in the next sections: two bigger bets, from
+Status (2026-10-27): v0.1.0 is released, M1–M9 are largely done, and
+everything checked below is on `main`. Items marked *(in progress)* are on
+a branch not yet merged. The order below follows two independent reviews of
+what to do next ([Codex and Kimi, 2026-10-27](docs/reviews/next-steps-2026-10-27.md)):
+make the verdicts trustworthy, show verified speedups on real projects, then
+compile time across whole projects. What remains is in the next sections: two bigger bets, from
 measuring problems to solving them, v0.2.0, and the work after it. Each
 item comes from profiling real projects with leanprof (see
 [case studies](docs/case-studies/)) or from using it in agent loops.
@@ -122,8 +126,26 @@ users than the rest of v0.2.0, and take priority over its long tail.
   Batteries in 17 s) and `leanprof experiment` judges library changes by
   heartbeats. Point the autoresearch loop at Mathlib's slowest files.
   Speedups are easy to verify: the proofs still check and heartbeat counts
-  are exact. Results stay local branches until the maintainer decides to
-  propose them upstream.
+  repeat nearly exactly. Results stay local branches until the maintainer
+  decides to propose them upstream.
+  - [ ] *(in progress)* Causes and fixes per declaration: `elab --why`,
+    `fix --elab` checked by `experiment`, a heartbeat budget for CI.
+  - [ ] *(in progress)* **Whole-project build time.** Real `lake build`
+    task timings (not inferred from the import graph): the critical path,
+    each module's slack, parallelism over time, the measured rebuild cost
+    of touching each module, and import removals accepted only after a
+    build proves them.
+  - [ ] *(in progress)* **Project-wide compile-time fixes.** Cross-file
+    candidates (make a definition irreducible, an instance's priority, a
+    `@[simp]` lemma tried often and rarely used), each verified by
+    `experiment` on every affected module, with declarations that got worse
+    reported. Attributed costs overlap: "accounts for N heartbeats" is never
+    presented as "saves N".
+  - [ ] *(in progress)* **Compilation memory.** Peak memory per module in a
+    real build, imports separated from the module's own work, the largest
+    `-j` under a memory limit, a `--max-memory` budget for CI; per
+    declaration only where it can be measured soundly (serially), labelled
+    approximate.
 
 ## From measuring problems to solving them
 
@@ -144,16 +166,23 @@ Ranked; the open ones are planned after v0.2.0.
   --heartbeats --counts` at base and head, and explain's cause for each
   copy site that copies more (`compare`, `report-md`, `Tests/Regress`;
   [guide](docs/guide/ci-and-regressions.md#why-it-got-worse)).
-- [ ] **Feedback on every save.** In the editor, re-profile what changed and
-  show the difference inline ("this edit added 2,000 copies", "+30%
-  heartbeats in this lemma"); with static copy detection (above), warn
-  before anything runs.
-- [ ] **Retained memory.** Which allocation site holds the memory at peak,
-  and what keeps it alive; for long-running programs and servers.
-- [ ] **Why a file is slow in the editor.** Profile the language server
-  re-elaborating a file and attribute the delay to declarations.
-- [ ] **A heartbeat budget.** `elab --max-heartbeats N` in CI flags any
-  declaration above N, so slow lemmas do not accumulate.
+- [ ] *(in progress)* **Retained memory.** Which allocation site holds the
+  memory at peak, and what keeps it alive; sites with sustained growth worth
+  investigating (not necessarily leaks: caches grow too). Heap walks only
+  while no other thread can change the heap.
+- [ ] *(in progress)* **A heartbeat budget.** `elab --max-heartbeats N` in
+  CI flags any declaration above N, so slow lemmas do not accumulate.
+- [ ] *(in progress)* **Compile time against the previous run.** `elab
+  --heartbeats --since-last FILE`: the declarations that changed and why
+  (the unfolds, instances and `simp` lemmas whose counts moved), for
+  agents and scripts.
+- [ ] More `fix` causes: `stored-then-updated`, `multi-threaded-global`, and
+  the retained-memory causes (a value kept in a global `IO.Ref`, a forced
+  thunk).
+
+Not planned for now: editor features (re-profiling on every save in VS
+Code, the language server's delay per declaration). The existing `#leanprof`
+hints and VS Code extension are kept as they are.
 
 ## v0.2.0: make any Lean project faster
 
@@ -172,8 +201,8 @@ Already on `main` (and so in v0.1.0), delivered ahead of this release:
   compared on stdout, stderr, exit code and output files; KEEP, DISCARD,
   ERROR or INCONCLUSIVE with its evidence; `scripts/experiment-check.sh` in
   CI; run on lean-regex.
-- [x] **No KEEP for a change that weakens what it must preserve.**
-  `experiment try` runs the proof-preservation auditor on the changed
+- [x] **No KEEP for the changes the audit can see weakening what must be
+  preserved.** `experiment try` runs the proof-preservation auditor on the changed
   modules and their dependents: DISCARD for tests, expected outputs,
   inputs, `sorry`, new axioms, `implemented_by`, `extern`, `unsafe`,
   `partial`, removed theorems; INCONCLUSIVE for a changed statement. In
@@ -196,6 +225,23 @@ Already on `main` (and so in v0.1.0), delivered ahead of this release:
 
 Still to do:
 
+- [ ] **Verdicts that fail closed.** *(in progress)* Missing metrics, a
+  self-check warning, a measurement mode that did not count, or copy counts
+  that vary between runs give INCONCLUSIVE, never KEEP; summaries are
+  validated strictly when read; copy counts that vary are judged by their
+  per-run ranges, as allocations are.
+- [ ] **Explicit goals per experiment.** Choose what "faster" means (time,
+  heartbeats, memory) with limits on the others, instead of a fixed policy
+  (`judge` rejects any allocation increase today); test known trade-offs
+  between time and allocations.
+- [ ] **Several workloads per verdict.** `experiment` checks every case's
+  output but times only the first: time each case, or a declared
+  performance suite, and say which were timed. Several input sizes and named
+  benchmarks per summary.
+- [ ] **Timed regions that repeat honestly.** *(in progress)* Repetition of
+  a `Leanprof.bench` region is opt-in, the region must be repeatable, and
+  the summary says how many repetitions and which statistic (fastest or
+  median) the verdict used.
 - [ ] `leanprof` with no arguments in any project: finds the executable (or
   the tests, or compile time for a library), profiles it and prints the top
   three findings with source and fixes. Never picks an ambiguous workload
@@ -208,7 +254,7 @@ Still to do:
 - [ ] `leanprof autoresearch`: sets the project up (workload, tests, output
   check) and starts the loop in Claude Code, or prints the next steps. The
   loop ships as a Claude Code command.
-- [ ] **Stable machine-readable contracts.** Version CLI JSON and MCP
+- [ ] *(in progress)* **Stable machine-readable contracts.** Version CLI JSON and MCP
   structured results with shared schemas and contract tests, built on the
   typed report module from the consolidation below. Return typed findings,
   metric units, measurement mode, coverage, uncertainty, artifact IDs and
@@ -220,16 +266,17 @@ Still to do:
   module (the JSON helpers are repeated per module today), `c/` split behind
   `c/internal.h`, CI checks as local scripts, formatters and linters,
   `research/` renamed `autoresearch/`.
-- [ ] **Provenance and freshness.** Attach source revision and dirty-tree
+- [ ] *(in progress)* **Provenance and freshness.** Attach source revision and dirty-tree
   fingerprints, executable hashes (`measure-pair` already records them),
   Lean/tool versions, build flags, platform, workload/input hashes and
-  measurement settings to every summary and experiment. Check compatibility
-  and source freshness before comparing or advising; link source ranges to the
+  measurement settings to every summary and experiment, with content hashes
+  (untracked files included) or the evidence marked unverifiable. Check
+  compatibility and source freshness before comparing or advising; link source ranges to the
   exact snapshot measured. (Replaces the earlier "run manifest" item.)
 - [ ] **Proof-preserving optimizations of verified code.** An equivalence
   check, so that optimizing a function its theorems mention can pass the
   guard instead of being INCONCLUSIVE.
-- [ ] **Calibrate verdicts.** Publish false-positive rates, detection rates for
+- [ ] *(in progress)* **Calibrate verdicts.** Publish false-positive rates, detection rates for
   seeded 1%, 2% and 5% changes, inconclusive outcomes and total experiment cost
   on quiet and loaded hosts, with fixed protocols (not reruns until KEEP).
   Then Linux instruction counts.
@@ -258,7 +305,8 @@ Still to do:
     timing-only mode on plain builds.
   - [x] Cheaper paired verdicts: `measure-pair` took 7.1 s per verdict at 20
     pairs against LeanBench's 0.74 s. Now it stops when settled (a
-    group-sequential sign test, each claim wrong at most 2.5%), `--scope`
+    group-sequential sign test, each claim wrong at most 2.5% if the pairs
+    are independent), `--scope`
     times one `Leanprof.bench` region and `--base-rev` caches the base:
     0.89 s end to end against LeanBench's 1.09 s on the same trials at load
     4–13 (0/20 false, 2.4% caught 4/5); still 1.9–2.3 s against 1.06 s at
@@ -309,9 +357,27 @@ Still to do:
   Matching the constant the IR appends (`"_"`) together with the lambda's
   binders would; so would positions from the IR, if Lean emitted them.
 
+- [ ] **One measured run-time lint first.** Closures that `@[specialize]`
+  would remove, kept only when the closure applications counted by
+  `--counters` and the paired time both improve. Boxing, `Nat` versus
+  `UInt64` and non-tail recursion only after that, since each has semantic
+  traps (overflow, code size, recursion that is fine as is).
+- [ ] **Lean's blind spots.** Copies inside precompiled Lean code, and
+  exact source positions from the IR instead of text matching; both need
+  runtime hooks or line information from Lean itself (see Upstream).
+- [ ] **Toolchain upgrade comparison.** Profile on two Lean versions and
+  separate what changed: elaboration, kernel, compiler, generated code, and
+  the profiler's own trace format. After provenance is solid.
+
+Deferred: per-commit profile history (incomparable numbers without fixed
+workloads; CI artifacts and provenance cover most of it), per-function
+hardware counters on Linux, and the Linux probe cost (23 ns against 5–8 ns
+on the Mac), which is worth reducing only if profiles show it changes a
+conclusion.
+
 ### Agents
 
-- [ ] **Discovery without guesswork.** Machine-readable project and capability
+- [ ] *(in progress)* **Discovery without guesswork.** Machine-readable project and capability
   discovery (`doctor --json` or an MCP tool): Lean version, targets and modes,
   instrumentation coverage, required dependencies, actionable setup failures.
 - [ ] **Bounded, recoverable jobs.** Job IDs for long builds and profiles,
@@ -319,11 +385,14 @@ Still to do:
   artifact retrieval. Literal argument arrays in explicit working directories;
   documented trust boundaries; explicit authorization for destructive or
   external actions. Cleanup tested after failure and cancellation.
-- [ ] **Compact, queryable evidence.** A small ranked summary first, then
+- [ ] *(in progress)* **Compact, queryable evidence.** A small ranked summary first, then
   filter/page by module, declaration, operation or finding ID; one finding's
   source, causal evidence, confidence and before/after deltas without
   re-reading the whole trace. Full raw artifacts kept; truncation and missing
   data reported, never silently dropped.
+- [ ] **`leanprof autoresearch` after the contracts.** Packaged once the
+  contracts and the verdict policy are stable; a launcher alone adds
+  little. Tested with one complete improvement loop.
 - [ ] **Hypotheses tied to evidence.** For each suggested fix: the observed
   cause, supporting locations, expected affected metric, semantic constraints
   and a concrete validation experiment. Observations kept apart from
