@@ -125,6 +125,12 @@ def cases : List (String × Bool × String) :=
        !kept [("a", 10000000), ("b", 50000)] [("a", 10000000), ("b", 30000), ("c", 100)] &&
        !kept [("a", 10000000), ("b", 50000)] [("a", 10000000), ("b", 49500)] &&
        !worse [("a", 10000000), ("b", 50000)] [("a", 10000000), ("b", 30000)], ""),
+   ("experiment: a case slower in pairs outweighs the workload faster",
+     let fast : Judge.Verdict := { keep := true, worse := #[], better := #["paired time -5%"], notes := #[] }
+     let slow : Judge.Verdict := { keep := false, worse := #["paired time +4%"], better := #[], notes := #[] }
+     let v := Experiment.combinePaired #[("case 0", fast), ("case 1", slow)]
+     !v.keep && v.worse == #["case 1: paired time +4%"] &&
+       (Experiment.combinePaired #[("case 0", fast)]).better == #["paired time -5%"], ""),
    ("judge: an incomplete heartbeat profile is no improvement",
      (Judge.judge (hb [("a", 100000)]) { (hb [("a", 10000)]) with heartbeatsComplete := false } (judgeTime := false)).better.isEmpty, "")]
 

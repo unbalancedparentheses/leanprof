@@ -106,6 +106,7 @@ echo "-- the working tree: Array.modify, and a value that moves only beyond the 
 perl -0pi -e "$modify" Exp/Buckets.lean
 perl -0pi -e 's/let i := bucketOf v k/let i := if v == 200000 then 1 else bucketOf v k/' Exp/Buckets.lean
 "$lp" experiment try --working-tree --message "Array.modify in buckets" > "$out/try.txt" 2>&1 || fail "working tree: not KEEP (exit $?)"
+grep -q "measured on case 0 only" "$out/try.txt" || fail "working tree: the verdict does not say which case was timed"
 cat "$out/try.txt"
 clean "working tree"
 git log -1 --format=%B > "$out/message.txt"
