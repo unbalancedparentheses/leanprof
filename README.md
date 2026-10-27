@@ -25,48 +25,91 @@ many, how many bytes, how much time, why the value was shared, and the fix.
 
 ## Why leanprof, and not the alternatives
 
-- **It sees the costs that are specific to Lean.** Copies of shared values,
-  allocations, failed reuse and closure calls, counted exactly per function,
-  with the cause read from the compiler's IR and the fix written with your
-  own names; `leanprof fix` applies the mechanical ones and keeps an edit
-  only when the output, the tests and the measurements agree. samply, perf,
-  [LeanProfiler](https://github.com/lean-dojo/LeanProfiler),
-  [LeanBench](https://github.com/alok/LeanBench) and
-  [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
-  report time only.
-- **It says why a pull request got slower.** Copies, allocations and calls
-  are exact counts, so CI can fail on "+1 copy" without noise; the comment
-  names the declaration that got more expensive and the unfold, instance
-  search, `simp` lemma or `grind` theorem behind it. Against LeanBench it
-  caught a 2.4% slowdown 4 times in 5 (LeanBench at its 5% threshold: 0 in
-  5), with no false verdict in 20 unchanged runs
-  ([case study](docs/case-studies/leanbench.md)).
-- **It checks a change before you keep it.** `leanprof experiment` builds a
-  candidate, refuses one that weakens a proof or a test, compares its
-  behaviour on every input you give, and judges exact counts before time.
-- **Its probes cost nanoseconds, not microseconds.** About 5–8 ns per scope
-  on the Mac and 23 ns on Linux, measured at startup and subtracted;
+samply, perf, [LeanProfiler](https://github.com/lean-dojo/LeanProfiler),
+[LeanBench](https://github.com/alok/LeanBench) and
+[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
+report time. leanprof also reports what makes Lean code slow, and carries a
+finding through to a checked change.
+
+**The costs specific to Lean, which no other profiler sees**
+
+- **Copies of shared values.** `Array`, `ByteArray`, `FloatArray` and
+  `String` updates that copy because something else still refers to the
+  value: counted per function, with the line, bytes, time and why the value
+  was shared (`shared`, `multi-threaded`, `persistent`).
+- **Why, and the fix.** `explain` reads the compiler's IR to name where the
+  second reference comes from ("`acc` is stored in `history` at line 20"),
+  `--why` confirms it at run time, and the fix is written as code with your
+  own names (`Array.modify`, swapping an element out, `alter` on a map).
+- **Copies without running anything.** `explain --static` flags likely copies
+  across a whole package, libraries included: all 16 copying examples and
+  none of 18 alternatives; on lean-compiler-backend, 97% of the copies were
+  in flagged functions. A run report then marks which flags it confirmed.
+- **Allocations, failed in-place reuse, closure calls, freeing pauses, peak
+  memory** per function and call site; `--core` counts them inside Lean's
+  own libraries too.
+
+**Time, measured cheaply**
+
+- **Probes cost nanoseconds, not microseconds:** about 5–8 ns per scope on
+  the Mac and 23 ns on Linux, measured at startup and subtracted;
   LeanProfiler's span costs 4.6 µs at first and 88.5 µs once its events
   accumulate. With scopes placed where LeanProfiler's spans are, leanprof is
   within 0.5 points of it or better on every benchmark workload
   ([results](bench/RESULTS.md)).
-- **Nothing to change in your project.** It profiles any Lake project from
-  outside: every function with `--auto`, dependencies included, and puts
-  your normal build back afterwards. LeanProfiler and LeanBench need code in
-  your project.
-- **Sampling that knows Lean.** It runs samply and adds Lean names,
-  file:line, the runtime's share (allocation, freeing, copying) and which of
-  your functions library code ran under. On Linux it rebuilds the stacks
-  perf cuts short: deep recursion 1.2 points off its true share, against
-  samply's 14.8.
-- **Run time and compile time in one tool.** Compile cost per declaration,
-  term and tactic by exact source range on every supported Lean, in
-  heartbeats, the definitions unfolded behind it, repeated work, and a
+- **Sampling that knows Lean:** samply underneath, plus Lean names,
+  file:line, specializations under the declaration that caused them, and the
+  runtime's share (allocation, freeing, copying). On Linux it rebuilds the
+  stacks perf cuts short: deep recursion 1.2 points off its true share,
+  against samply's 14.8.
+- **Nothing to change in your project:** any Lake project, from outside,
+  every function with `--auto`, dependencies included, and your normal
+  build put back afterwards. LeanProfiler and LeanBench need code in your
+  project.
+
+**Compile time, with causes**
+
+- Cost per declaration, term and tactic by exact source range on every
+  supported Lean, in heartbeats (nearly the same on every run, so a
+  regression on a shared machine is real), with the definitions unfolded,
+  instances tried and `simp` lemmas used behind it, each with file:line.
+- Whole projects in parallel (all of Batteries in 17 s, against 103–152 s
+  for lean-source-profiler one file at a time) and a
   [viewer](docs/profiles/README.md) from project to tactic; full profiles
   cost 1.3–1.9 times less per file than lean-source-profiler's detailed
   mode.
-- **Built for agents.** An MCP server, ranked findings as JSON, paired
-  verdicts, experiments with evidence files, and an
+
+**From a finding to a checked change, which no other tool does**
+
+- **`leanprof fix`** applies a mechanical fix only where the code shows it
+  computes the same values, in an isolated worktree: build, tests, output
+  compared, both versions measured, and a commit with the evidence only on
+  KEEP. Your checkout is never touched.
+- **`leanprof experiment`** judges any candidate change against a baseline:
+  it must build, pass the proof-preservation audit (a `sorry`, a new axiom,
+  a removed theorem or a changed test is refused), pass the tests, and
+  behave identically on every input you give; then exact counts first,
+  heartbeats for proof-only changes, paired timing last. In Lean the
+  cheapest fake speedup is deleting a proof obligation; this refuses it.
+- **Paired time verdicts:** `measure-pair` interleaves the two versions and
+  stops as soon as the verdict is settled (each claim wrong at most 2.5% of
+  the time if the pairs are independent).
+
+**CI that says why**
+
+- Copies, allocations and calls are exact counts, so CI can fail on "+1
+  copy" without noise. The pull request comment names the declaration that
+  got more expensive and the unfold, instance search, `simp` lemma or
+  `grind` theorem behind it, and explain's cause for each copy site that
+  copies more. Against LeanBench it caught a 2.4% slowdown 4 times in 5
+  (LeanBench at its 5% threshold: 0 in 5), with no false verdict in 20
+  unchanged runs ([case study](docs/case-studies/leanbench.md)).
+
+**Built for agents**
+
+- An MCP server with run, sample, explain, static copies, elab, measure,
+  paired timing, judge, fix and the experiment tools, restricted to Lake
+  projects ([security review](docs/reviews/security-review.md)), and an
   [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
   that made a compiler written in Lean 22% faster, merged after review.
 
