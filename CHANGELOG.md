@@ -11,7 +11,8 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `leanprof run --retained` follows every object compiled Lean code
   allocates to its free: live objects and bytes per allocation site at the
   program's peak and at exit, each site's largest size, and the sites whose
-  live bytes keep growing over the run (leak-like growth).
+  live bytes keep growing over the run (sustained growth worth
+  investigating, not necessarily a leak: caches grow by design).
 - Heap walks say what keeps objects alive: each object's chain of holders
   (an `Array`, an `IO.Ref`, a closure, a `Thunk`, a `Task`) down to its root,
   a global variable named from the program's symbols, a local on the stack

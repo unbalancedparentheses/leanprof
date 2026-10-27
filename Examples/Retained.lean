@@ -68,4 +68,11 @@ def scenario (n : Nat) : IO Unit := do
     logPairs (1000 * n) (r * 1000)
     IO.sleep 3
 
+/-- With a task running: no heap walk may run (the report says they were skipped). -/
+def taskScenario (n : Nat) : IO Unit := do
+  let t := Task.spawn fun _ => (tempPairs (1000 * n)).length
+  let xs := hookCells (300 * n)
+  Leanprof.retainedSnapshot
+  IO.println s!"{t.get} {xs.length}"
+
 end RetainedTest

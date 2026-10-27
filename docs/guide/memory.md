@@ -241,17 +241,21 @@ what keeps it alive (exit heap walk at 273.5 ms, 1.9 MiB of tracked objects live
 - **When walks run.** At exit; at `Leanprof.retainedSnapshot`, which a server
   or a test can call at a moment worth seeing (the first eight are kept);
   and near the peak: when tracked live bytes first pass 256 KiB and then each
-  25% above the last walk, keeping the walk that saw the most. Walks near the
-  peak only run while one thread uses tracked objects (Lean 4.35 runs `main`
-  on a second thread, a hand-over that counts as one), never after a task
-  was spawned (another thread could free what a walk reads), and only while
-  walks so far took under a quarter of the run (`LEANPROF_RETAINED_WALKS=all`
-  lifts the limit, `=0` turns them off). The report says why there was none.
+  25% above the last walk, keeping the walk that saw the most. A walk reads
+  objects while the program is stopped where it called into leanprof, so
+  no walk runs once two threads have used tracked objects at the same time
+  or a task was spawned: another thread could change or free what the walk
+  reads (Lean 4.35 runs `main` on a second thread after the initializers, a
+  hand-over that counts as one thread). The report then says each walk was
+  skipped and why, and keeps the live counts per site. Walks near the peak
+  also stop once walks took a quarter of the run (`LEANPROF_RETAINED_WALKS=all`
+  lifts the limit, `=0` turns them off).
 - **Growth.** Every site's live bytes are sampled over the run (64 samples,
   every 20 ms and then half as often each time they fill;
   `LEANPROF_RETAINED_SAMPLE_MS`). A site is *growing* when its live bytes
   rose in two of three samples of the second half of the run, by at least
-  64 KiB and 10%, and end near their largest: in a server, a leak. A batch
+  64 KiB and 10%, and end near their largest: sustained growth worth
+  investigating (a cache can grow by design; one never trimmed is a leak). A batch
   program that builds its result until it exits grows too. `leanprof top
   --retained` shows the sites holding the most, with their change per second.
 - **Fixes.** Chains with a known cause get one: a value kept in a global

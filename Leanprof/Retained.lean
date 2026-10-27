@@ -137,7 +137,7 @@ def hotLines (j : Json) (limit : Nat) : Array String :=
   | none => #[notTracked]
 
 /-- Findings for `explain`: the largest retention chains with their causes
-and fixes, then leak-like growth. `filter` keeps rows whose function contains it. -/
+and fixes, then sustained growth. `filter` keeps rows whose function contains it. -/
 def findings (j : Json) (filter : String := "") (limit : Nat := 5) : Array String := Id.run do
   let some r := section? j | return #[]
   let has (p : Json) := filter.isEmpty || ((str p "function").splitOn filter).length > 1
@@ -153,8 +153,8 @@ def findings (j : Json) (filter : String := "") (limit : Nat := 5) : Array Strin
   for s in (arr r "sites").filter fun s => bool s "growing" && has s do
     let g := obj s "growth"
     out := out.push (s!"GROWING {placed (str s "function") (str s "where")}: its live objects kept rising, " ++
-      s!"{fmtBytes (num g "from")} -> {fmtBytes (num g "to")} over the second half of the run. In a long-running " ++
-      "program this is a leak: find what holds them in the RETAINED rows (or take Leanprof.retainedSnapshot later in the run).")
+      s!"{fmtBytes (num g "from")} -> {fmtBytes (num g "to")} over the second half of the run. Sustained growth worth investigating: a cache that grows " ++
+      "by design is fine, one that is never trimmed is not; the RETAINED rows (or a Leanprof.retainedSnapshot later in the run) say what holds them.")
   return out
 
 /-- Findings as JSON, for `explain --json`. -/

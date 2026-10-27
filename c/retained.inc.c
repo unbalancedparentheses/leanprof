@@ -135,6 +135,7 @@ static _Thread_local uint8_t lpf_ret_here;
  * task was spawned. Lean 4.35 runs `main` on a second thread after the module
  * initializers ran on the first: a hand-over, not sharing. */
 static void *lpf_ret_owner;
+static const void *lpf_ret_owner_thread;  /* its lpf_thread: when it exits, the next thread takes over */
 static int lpf_ret_shared;
 static _Thread_local uint32_t lpf_ret_count;
 
@@ -419,14 +420,26 @@ static int lpf_ret_plausible(lean_object *o, uint32_t size_flags) {
 static void lpf_ret_auto_walk(void);
 static uint64_t lpf_ret_walk_at = 256 * 1024; /* tracked live bytes that start the next walk */
 
+/* A thread comes back after another took over: sharing, unless the other
+ * one has exited since (Lean 4.35's first thread frees what `main` left,
+ * after joining the thread that ran it). */
 static __attribute__((noinline)) void lpf_ret_note_slow(void) {
     if (lpf_ret_here) {
-        LP_ST(lpf_ret_shared, 1);
+        if (LP_LD(lpf_ret_owner) != NULL) LP_ST(lpf_ret_shared, 1);
     } else {
         lpf_ret_here = 1;
         __atomic_add_fetch(&lpf_ret_threads, 1, __ATOMIC_RELAXED);
     }
+    LP_ST(lpf_ret_owner_thread, (const void *)lpf_thread_get());
     LP_ST(lpf_ret_owner, (void *)&lpf_ret_here);
+}
+
+/* lpf_thread_retire: thread `t` exits. */
+static void lpf_ret_thread_exit(const void *t) {
+    if (LP_LD(lpf_ret_owner_thread) == t) {
+        LP_ST(lpf_ret_owner, NULL);
+        LP_ST(lpf_ret_owner_thread, NULL);
+    }
 }
 
 static inline void lpf_ret_note_thread(void) {
@@ -1402,11 +1415,21 @@ static void lpf_ret_auto_walk(void) {
     pthread_mutex_unlock(&lpf_ret_walk_lock);
 }
 
+/* Walks need the heap to hold still: the walker reads objects after letting
+ * go of the table's locks, and another thread could change or free them
+ * meanwhile (catching a fault does not make such a read correct). So no
+ * walk runs once two threads have used tracked objects at once or a task
+ * was spawned (lpf_ret_shared); the report says each walk was skipped. */
+static unsigned lpf_ret_snaps_skipped;
+static int lpf_ret_exit_skipped;
+
 /* `Leanprof.retainedSnapshot`: a walk now (the first LP_RET_SNAPS are kept). */
 LEAN_EXPORT lean_obj_res leanprof_retained_snapshot(void) {
     if (!LP_RET_TRACKING()) return lean_box(0);
     pthread_mutex_lock(&lpf_ret_walk_lock);
-    if (lpf_ret_nsnaps < LP_RET_SNAPS) {
+    if (LP_LD(lpf_ret_shared)) {
+        lpf_ret_snaps_skipped++;
+    } else if (lpf_ret_nsnaps < LP_RET_SNAPS) {
         lpf_ret_clear_stack();
         lpf_ret_walk *w = lpf_ret_walk_now("snapshot", 1);
         if (w != NULL) lpf_ret_snaps[lpf_ret_nsnaps++] = w;
@@ -1449,7 +1472,9 @@ static void lpf_ret_init(void) {
 static void lpf_ret_finish(void) {
     if (!LP_LD(lpf_ret_on)) return;
     pthread_mutex_lock(&lpf_ret_walk_lock);
-    lpf_ret_exit_walk = lpf_ret_walk_now("exit", 0);
+    /* task workers and other threads can still run at exit */
+    if (LP_LD(lpf_ret_shared)) lpf_ret_exit_skipped = 1;
+    else lpf_ret_exit_walk = lpf_ret_walk_now("exit", 0);
     pthread_mutex_unlock(&lpf_ret_walk_lock);
     LP_ST(lpf_ret_ser_next, 0);
     lpf_ret_sample(lpf_now());
@@ -1745,6 +1770,10 @@ static void lpf_ret_print(FILE *f, double tick, int allocs_counted) {
         fputc('\n', f);
         lpf_ret_print_walk(f, lpf_ret_exit_walk, tick, 5);
     }
+    if (lpf_ret_exit_skipped || lpf_ret_snaps_skipped > 0)
+        fprintf(f, "\n(heap walks skipped:%s%s; threads or tasks used tracked objects at the same time, and a walk "
+                   "could read objects another thread changes or frees. The live counts per site above are kept.)\n",
+                lpf_ret_exit_skipped ? " the one at exit" : "", lpf_ret_snaps_skipped > 0 ? ", Leanprof.retainedSnapshot" : "");
 }
 
 static void lpf_ret_json_walk(FILE *f, const lpf_ret_walk *w, double tick) {
@@ -1880,7 +1909,8 @@ static void lpf_ret_json(FILE *f, double tick) {
         if (!first) fputc(',', f);
         lpf_ret_json_walk(f, lpf_ret_exit_walk, tick);
     }
-    fprintf(f, "],\"walks_skipped\":%u,\"peak_walk\":\"%s\",\"snapshots_dropped\":%u}", lpf_ret_walks_skipped,
+    fprintf(f, "],\"walks_skipped\":%u,\"snapshots_skipped\":%u,\"exit_walk\":\"%s\",\"peak_walk\":\"%s\",\"snapshots_dropped\":%u}",
+            lpf_ret_walks_skipped, lpf_ret_snaps_skipped, lpf_ret_exit_skipped ? "threads" : "taken",
             lpf_ret_peak_walk != NULL ? "taken"
             : !lpf_ret_auto           ? "off"
             : LP_LD(lpf_ret_shared) ? "threads"

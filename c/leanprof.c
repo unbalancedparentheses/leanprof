@@ -3716,6 +3716,7 @@ fail:
  * key's destructor) gets a record again, and gives it back the same way. */
 static void lpf_thread_retire(void *p) {
     lpf_thread *t = p;
+    lpf_ret_thread_exit(t); /* --retained: the next thread to use objects takes over */
     lpf_self = t; /* thread-local storage may already be torn down, and come back zeroed */
     while (t->depth > 0) lpf_exit();
     lpf_self = NULL;

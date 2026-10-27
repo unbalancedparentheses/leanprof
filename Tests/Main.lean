@@ -330,6 +330,14 @@ def retainedTests (sanitized : Bool) : StateT Nat IO Unit := do
     (nat tmp "objects" == 10000 && nat tmp "bytes" == 240000 && (sanitized || str (rootOf tmp) "kind" == "stack"))
     (toString tmp)
   check "retained: a heap walk near the peak" (sanitized || str r "peak_walk" == "taken") (str r "peak_walk")
+  -- with a task spawned, another thread could change what a walk reads: none runs, and the report says so
+  let child ← IO.Process.output { cmd := app.toString, args := #["--retained-task"], env }
+  let text ← try IO.FS.readFile "retained-test.json" catch _ => pure ""
+  try IO.FS.removeFile "retained-test.json" catch _ => pure ()
+  let r := ((Lean.Json.parse text).toOption.bind fun j => (j.getObjVal? "retained").toOption).getD .null
+  check "retained: no heap walk while a task may run, and the report says each was skipped"
+    (child.exitCode == 0 && (arr r "walks").isEmpty && nat r "snapshots_skipped" == 1 && str r "exit_walk" == "threads" &&
+      nat (site "hookCells") "exit_objects" ≥ 0) s!"{child.stderr} {text.take 300}"
 
 -- a long `do` block: Lean before 4.28 elaborates it past the default depth
 set_option maxRecDepth 2048 in
@@ -860,6 +868,9 @@ def main (args : List String) : IO UInt32 := do
   -- the retained-memory scenario, run as a child with LEANPROF_RETAINED=1
   if args.head? == some "--retained" then
     RetainedTest.scenario ((args[1]? >>= String.toNat?).getD 1)
+    return 0
+  if args.head? == some "--retained-task" then
+    RetainedTest.taskScenario 1
     return 0
   -- a light scope (cheap calls) whose estimate is then raised by costlier
   -- calls, called cheaply again from a parent; checked by the tests above
