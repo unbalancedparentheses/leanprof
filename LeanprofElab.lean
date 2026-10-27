@@ -688,7 +688,11 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
       -- commands sharing a line (`variable (x) in` puts its inner `variable` at the position of
       -- the declaration it wraps): the line is named after the one that declares something
       if c.name.isEmpty || ((declName c.name).isNone && (declName name).isSome) then
-        c := { c with name, declared := (declName (text.replace "\n" " ")).getD "" }
+        -- the name declared, from the source when there is one: a description is cut at 200
+        -- characters, which a doc comment and `set_option ... in` before a long name can reach
+        -- (six `def UniversalCo…` of Mathlib were one declaration to `compare`)
+        let fromSrc := if a.src.isEmpty then none else declName ((clean (sourceLine a.src ln)).replace "\n" " ")
+        c := { c with name, declared := (fromSrc <|> declName (text.replace "\n" " ")).getD "" }
   if !a.files.isEmpty then a := { a with files := a.files.modify (a.files.size - 1) fun (k, _) => (k, f) }
   -- tactic steps, by the line each is on: found in the source after the command's start,
   -- in the order Lean ran them; a step nested in one on the same line is not counted again

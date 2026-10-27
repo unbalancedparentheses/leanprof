@@ -123,4 +123,35 @@ declarations are unification: `isDefEq` unfolding instance paths
 cause stands out. Those are hypotheses for a person; the advice for
 instance paths no longer suggests making them irreducible.
 
-MATHLIB_FIX_RESULT
+### `fix --elab` on `UniversalFactorizationRing`
+
+```
+leanprof fix --elab --no-test --top 10 --rounds 5 --report ufr-why.json   # that file's suggestions only
+```
+
+The 10 costliest `simp only` lists of the file (3.9 to 16.6 M heartbeats
+each), in three rounds, each a full experiment (the build of Mathlib from
+the cache, the guard, the heartbeats of the file and of the 4 modules that
+import it, about 20 minutes a round on the shared machine):
+
+| round | edits | verdict | what happened |
+|---|---:|---|---|
+| 1 | 10 | DISCARD | the file no longer builds: two of Lean's lists (lines 251 and 273, 16.6 and 16.5 M) hit `maximum recursion depth` when run as `simp only`; `fix --elab` drops the two edits the build log names |
+| 2 | 8 | INCONCLUSIVE | the guard: two edits inside `homEquiv`, a definition, change its value (`homEquiv._proof_8`, `_proof_11`), which a proof-only speedup must not do; `fix --elab` drops them |
+| 3 | 6 | KEEP | build ok, guard PASS on 5 modules, heartbeats 1,236,825 → 1,223,907 kHB (−1.0%) |
+
+| declaration | before (kHB) | after (kHB) |
+|---|---:|---:|
+| six `def UniversalCoprimeFactorizationRing.…` (lines 583 to 618), one key in this run: a leanprof bug, since fixed | 24,870 | 14,144 |
+| `…exists_liesOver_residueFieldMap_bijective` | 35,547 | 34,426 |
+| `…homEquiv_comp_fst` | 7,841 | 7,305 |
+| `…homEquiv_comp_snd` | 7,841 | 7,305 |
+
+Four header commands (`open`, `universe`, `public section`) moved by about
+5 kHB each, up and down: the cost of a file's first commands shifts when
+the module's elaboration changes. Branch
+`leanprof-fix/elab-UniversalFactorizationRing`, in
+`mathlib-compile-time.bundle`.
+
+The round-1 and round-2 failures are the reason `fix --elab` checks every
+edit: one in five of these lists did not survive as written.

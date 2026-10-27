@@ -49,6 +49,14 @@ Compile time first: most Lean users wait on elaboration, not on programs.
   one), and imports modules one at a time when they cannot be imported
   together (Batteries' test modules).
 
+### Fixed
+
+- `elab` takes the name a declaration declares from the source: a doc
+  comment and `set_option ... in` before a long name could push it past the
+  200-character description, and six of Mathlib's `def
+  UniversalCoprimeFactorizationRing.…` were one key (`UniversalCo`) to
+  `compare` and `experiment`.
+
 ## [0.1.0] - 2026-10-26
 
 The first release: a profiler for Lean 4 programs and their compile times,
