@@ -6,6 +6,49 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+Compile time first: most Lean users wait on elaboration, not on programs.
+
+### Added
+
+- `leanprof elab --why`: for the costliest declarations, the causes the
+  profile shows and a change to try, observed facts and suggestions kept
+  apart. Causes: a costly `simp` (with Lean's own `simp only [...]` list for
+  each call, from `tactic.simp.trace`), a termination measure Lean searched
+  for (`decreasing_tactic` run once per measure tried, with the measure it
+  found, from `showInferredTerminationBy`), definitions `isDefEq` or `whnf`
+  unfolded, instance searches that failed (new in `elab.json`:
+  `instances_failed` per declaration), costly instances, `decide` (with
+  `decide +kernel` or `rfl`, and why `native_decide` is not a fix), the
+  kernel, repeated work and `grind`. Also `leanprof explain --elab` (or
+  `--report` an elab report), `--json`, and over MCP (`elab` with `why`,
+  `explain` on an elab report). `elab.json` gains `simp_suggestions` and
+  `termination_suggestions`.
+- `leanprof elab --max-heartbeats N`: every declaration above N thousand
+  heartbeats (`maxHeartbeats`' unit), exit 1 if there is one; in
+  `elab.json` as `budget`. `report-md --max-heartbeats N`, the Action's
+  `max-heartbeats` input and the MCP `elab` tool's `max_heartbeats` do the
+  same in CI.
+- `leanprof fix --elab [FILE.lean...]`: applies the mechanical edits `--why`
+  finds (`simp` → Lean's `simp only` list; Lean's inferred `termination_by`
+  after a recursive declaration) as one commit, judged by `leanprof
+  experiment`: build, proof-preservation guard, tests, heartbeats of the
+  changed modules and their dependents. Edits whose file no longer builds or
+  whose declaration got dearer are dropped and the rest tried again. A KEEP
+  is a commit with the evidence on a new local branch; the checkout is not
+  touched. `scripts/experiment-check.sh` runs it on `Tests/FixElab`.
+- [Case study](docs/case-studies/compile-time-fixes.md): Batteries and
+  Mathlib, heartbeats before and after.
+
+### Changed
+
+- `judge` and `experiment` keep a change that makes some declarations
+  cheaper by more than 1% and 1,000 heartbeats each and none dearer, even
+  when that is less than 1% of a large module's total.
+- The proof-preservation auditor records symbolic links other than Lean
+  sources by their target instead of refusing the project (Batteries has
+  one), and imports modules one at a time when they cannot be imported
+  together (Batteries' test modules).
+
 ## [0.1.0] - 2026-10-26
 
 The first release: a profiler for Lean 4 programs and their compile times,

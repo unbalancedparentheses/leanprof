@@ -188,7 +188,7 @@ code=0
 cat "$out/fixelab.txt"
 [ "$code" = 0 ] || fail "fix --elab: exit code $code, expected 0 (KEEP)"
 grep -q "guard      PASS" "$(ls .lake/leanprof/fix/message.txt)" || fail "fix --elab: no guard evidence in the message"
-git show leanprof-fix/simp-only-FixElab > "$out/fixelab-commit.txt" 2>&1 || fail "fix --elab: no branch"
+git show leanprof-fix/elab-FixElab > "$out/fixelab-commit.txt" 2>&1 || fail "fix --elab: no branch"
 grep -q "^+  simpa only using Nat.max_eq_right h" "$out/fixelab-commit.txt" || fail "fix --elab: the commit lacks the simpa only edit"
 grep -q "KEEP against" "$out/fixelab-commit.txt" || fail "fix --elab: no evidence in the commit message"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse main)" ] || fail "fix --elab: the checkout moved"

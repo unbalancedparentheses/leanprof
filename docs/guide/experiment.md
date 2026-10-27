@@ -105,7 +105,17 @@ a 95% median interval, at least `--min-change` percent (default 1).
 
 A library's verdict comes from heartbeats: KEEP when the total of the
 changed modules and their dependents went down by more than 1% and 1,000,
-DISCARD otherwise. The base's heartbeats are cached by commit.
+DISCARD otherwise. In a large module 1% can be more than a whole
+declaration, so a change is also kept when, declaration by declaration, some
+went down by more than 1% and 1,000 each, none went up by as much, none
+appeared or disappeared, and the total went down by more than 1,000
+(heartbeats are exact, so this needs no noise margin beyond the one for
+neighbours that move by a few heartbeats when one declaration is edited).
+The base's heartbeats are cached by commit.
+
+The guard imports the audited modules together; modules that cannot be
+imported together (Batteries' test modules each declare `foo`) are imported
+one at a time and their evidence put together.
 
 ### The guard
 

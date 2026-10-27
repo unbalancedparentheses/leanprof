@@ -348,6 +348,9 @@ def hasArrow (line : String) : Bool := (line.splitOn " ↦ ").length > 1
 def isDiagMessage (data : String) : Bool :=
   diagHeader data && hasArrow data
 
+/-- How Lean starts the message that names the termination measure it inferred. -/
+def measureHeader : String := "Inferred termination measure:"
+
 /-- One message's `data`, read a line at a time: as a trace, and when it
 starts like `diagnostics` output, as that too. -/
 structure MsgData where
@@ -362,8 +365,10 @@ structure MsgData where
   edit (`Try this: simp only [...]`, with `tactic.simp.trace`). -/
   full : String := ""
 
-/-- Does a message starting with this line suggest an edit (Lean's `TryThis`)? -/
-def suggestionHeader (line : String) : Bool := line.startsWith "Try this:"
+/-- Does a message starting with this line suggest an edit (Lean's `TryThis`, or the
+termination measure it inferred, with `showInferredTerminationBy`)? -/
+def suggestionHeader (line : String) : Bool :=
+  line.startsWith "Try this:" || line.startsWith measureHeader
 
 def MsgData.addLine (d : MsgData) (line : String) : MsgData :=
   let ⟨trace, lines, diagHead, diagArrow, diag, head, full⟩ := d
@@ -471,6 +476,12 @@ structure Acc where
   driver elaborated (`--why`): (file, line, column) of its start ↦ (end line, end
   column, syntax kind). A suggestion's message covers only the tactic's first word. -/
   tacRanges : Std.HashMap (String × Nat × Nat) (Nat × Nat × String) := {}
+  /-- The termination measures Lean inferred (`--why`): file, line, column of the
+  function's name, and the `termination_by` clause. -/
+  measures : Array (String × Nat × Nat × String) := #[]
+  /-- Where each command starts and ends, when Lean says (`--why`): (file, line) ↦
+  (column, end line, end column). -/
+  cmdEnds : Std.HashMap (String × Nat) (Nat × Nat × Nat) := {}
 
 /-- `s` without whitespace. -/
 def squash (s : String) : String := String.ofList (s.toList.filter fun c => !c.isWhitespace)
@@ -634,6 +645,11 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
   if root.cls == "Elab.command" then
     let s := posOf "pos"
     let e := if (m.getObjVal? "endPos").toOption.isSome then posOf "endPos" else s
+    if e != s then
+      -- the outermost command at a position ends last
+      let (_, el, ec) := a.cmdEnds.getD (file, s.1) (s.2, 0, 0)
+      if e.1 > el || (e.1 == el && e.2 > ec) then
+        a := { a with cmdEnds := a.cmdEnds.insert (file, s.1) (s.2, e.1, e.2) }
     let le (x y : Nat × Nat) : Bool := x.1 < y.1 || (x.1 == y.1 && x.2 ≤ y.2)
     let within := fun ((s', e', _) : (Nat × Nat) × (Nat × Nat) × Float) => le s s' && le e' e
     let inner : Float := (a.commands.filter within).foldl (fun x c => x + c.2.2) 0
@@ -778,7 +794,8 @@ def Acc.merge (a b : Acc) : Acc := Id.run do
   for (k, v) in b.tacticRanges do
     unless r.tacticRanges.contains k do r := { r with tacticRanges := r.tacticRanges.insert k v }
   r := { r with suggestions := r.suggestions ++ b.suggestions,
-                tacRanges := b.tacRanges.fold (·.insert · ·) r.tacRanges }
+                tacRanges := b.tacRanges.fold (·.insert · ·) r.tacRanges,
+                measures := r.measures ++ b.measures, cmdEnds := b.cmdEnds.fold (·.insert · ·) r.cmdEnds }
   for (k, c) in b.lines do
     -- lines are per file: no two files share a key
     r := { r with lines := r.lines.insert k c }
@@ -866,7 +883,7 @@ def traceArgs (o : Opts) : Array String := Id.run do
       "-Dweak.trace.Meta.isDefEq.delta.unfoldRight=true", "-Dweak.trace.Meta.isDefEq.delta.unfoldLeftRight=true",
       "-Dweak.trace.Meta.Tactic.simp.rewrite=true", "-Dpp.fullNames=true"]
     if o.diagnostics then args := args ++ #["-Ddiagnostics=true", "-Ddiagnostics.threshold=0"]
-  if o.why then args := args.push "-Dtactic.simp.trace=true"
+  if o.why then args := args ++ #["-Dtactic.simp.trace=true", "-DshowInferredTerminationBy=true"]
   return args
 
 /-- The driver's arguments for `o` (it takes the same options as `lean`, as flags). -/
@@ -1003,7 +1020,10 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
       let at_ (k : String) : Nat × Nat :=
         (((m.getObjVal? k >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0,
          ((m.getObjVal? k >>= (·.getObjVal? "column")) >>= Json.getNat?).toOption.getD 0)
-      if suggestionHeader d then
+      if d.startsWith measureHeader then
+        let (l, c) := at_ "pos"
+        acc.modify fun a => { a with measures := a.measures.push (file, l, c, (d.drop measureHeader.length).toString) }
+      else if suggestionHeader d then
         let (l, c) := at_ "pos"
         acc.modify fun a => { a with suggestions := a.suggestions.push (file, l, c, d) }
       else if d.startsWith "leanprof-range " then
@@ -1361,6 +1381,46 @@ def suggestionsJson (acc : Acc) : IO (Array Json) := do
       ("variants", toJson variants.length), ("not_applicable", Json.str reason)])
   return out
 
+/-- The termination measures Lean inferred (`--why`), one per recursive declaration: where
+the declaration is and ends, the `termination_by` clause to add after it, what Lean's search
+for it cost (`decreasing_tactic`, run for each measure it tried), and why it cannot be added
+mechanically, when it cannot. -/
+def measuresJson (acc : Acc) : IO (Array Json) := do
+  let mut srcs : Std.HashMap String (Array String) := {}
+  let mut out := #[]
+  for (f, l, c, text) in acc.measures do
+    unless srcs.contains f do
+      srcs := srcs.insert f (((← try IO.FS.readFile f catch _ => pure "").splitOn "\n").toArray)
+    let lines := srcs.getD f #[]
+    let measure := ElabWhy.collapse text
+    -- the command it is in: the one that starts closest above it and ends after it
+    let mut best : Option (Nat × Nat × Nat × Nat) := none
+    for ((f', sl), (sc, el, ec)) in acc.cmdEnds do
+      if f' == f && sl ≤ l && (el > l || (el == l && ec ≥ c)) then
+        if best.all (·.1 < sl) then best := some (sl, sc, el, ec)
+    let some (sl, sc, el, ec) := best
+      | out := out.push (Json.mkObj [("pos", Json.str s!"{f}:{l}"), ("at", Json.str s!"{f}:{l}:{c + 1}"),
+          ("measure", Json.str measure), ("amount", toJson (0 : Float)),
+          ("not_applicable", Json.str "where the declaration ends is unknown (elaborated without leanprof-elab-driver): apply by hand")])
+        continue
+    let text := sliceSource lines sl sc el ec
+    let words := ((text.replace "\n" " ").splitOn " ").filter (· != "")
+    let others := acc.measures.filter fun (f', l', _, _) => f' == f && sl ≤ l' && l' ≤ el
+    -- what the search cost: `decreasing_tactic`, once per measure tried and call
+    let cost := ((acc.lines.get? s!"{f}:{sl}").map fun lc => lc.ops.fold (fun x (_, op) (_, t) =>
+      if (op.splitOn "decreasing_tactic").length > 1 then x + t else x) 0).getD 0
+    let reason :=
+      if others.size > 1 then "the declaration has several recursive functions (`mutual`, `where`): apply by hand"
+      else if ["termination_by", "decreasing_by", "termination_by?", "partial_fixpoint"].any words.contains then
+        "the declaration already has a termination clause"
+      else if measure.contains '✝' then "the measure names an inaccessible variable: name it first"
+      else if !measure.startsWith "termination_by" then "Lean's message is not a `termination_by` clause"
+      else ""
+    out := out.push (Json.mkObj [("pos", Json.str s!"{f}:{sl}"), ("at", Json.str s!"{f}:{l}:{c + 1}"),
+      ("measure", Json.str measure), ("insert", Json.str s!"{f}:{el}:{ec + 1}"), ("indent", toJson sc),
+      ("amount", toJson cost), ("not_applicable", Json.str reason)])
+  return out
+
 /-! ## The command -/
 
 /-- Hardware threads, or 0 (`System.Platform.Internal.getHardwareConcurrency`, which
@@ -1627,6 +1687,7 @@ def main (argv : List String) : IO UInt32 := do
       (x, Json.mkObj (constJson s kind x t |>.map fun (k, v) => if k == "sites" then (k, toJson n) else (k, v)))))]
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
   let suggestions ← if o.why then suggestionsJson acc else pure #[]
+  let measures ← if o.why then measuresJson acc else pure #[]
   let tEnd ← IO.monoNanosNow
   let report :=
     (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true), ("project", Json.bool o.project),
@@ -1647,6 +1708,7 @@ def main (argv : List String) : IO UInt32 := do
       ("threshold", toJson o.thresholdValue), ("counts", Json.bool (o.defs && o.diagnostics)),
       -- `--why`: Lean's `simp only` list for each `simp` call
       ("why", Json.bool o.why), ("simp_suggestions", Json.arr suggestions),
+      ("termination_suggestions", Json.arr measures),
       ("timing", Json.mkObj [("build_ns", toJson (tBuilt - tStart)), ("profile_ns", toJson (tProfiled - tBuilt)),
         ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])])
   -- `--max-heartbeats N`: every declaration above the budget, also in the report

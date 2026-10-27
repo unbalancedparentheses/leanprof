@@ -81,6 +81,10 @@ def cases : List (String × Bool × String) :=
      ElabWhy.layout "simp only [a]" 4 == "simp only [a]" &&
        (let ls := (ElabWhy.layout ("simp only [" ++ ", ".intercalate ((List.range 12).map (s!"Mathlib.Lemma.number{·}")) ++ "]") 4).splitOn "\n"
         ls.length > 1 && ls.head!.length + 4 ≤ 100 && (ls.drop 1).all fun l => l.length ≤ 100 && l.startsWith "        M"), ""),
+   ("elab --why: instance paths are not offered irreducible",
+     ElabWhy.instancePath "Semiring.toMonoid" && ElabWhy.instancePath "instAddNat" &&
+       !ElabWhy.instancePath "Foo.total" &&
+       ((ElabWhy.unfoldAdvice "Semiring.toMonoid" "Mathlib/Algebra/Ring/Defs.lean:141").splitOn "irreducible`").length == 1, ""),
    ("elab --why: a source range", ElabWhy.splitRange "A/B.lean:12:3-14:20" == some ("A/B.lean", 12, 3, 14, 20), ""),
    ("elab --why: the causes of a declaration",
      causes.contains "simp-set" && causes.contains "decide" && causes.contains "unfold" &&

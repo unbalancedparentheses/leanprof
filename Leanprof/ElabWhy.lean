@@ -57,24 +57,34 @@ def suggestionText (msg : String) : String :=
   let t := collapse (if msg.startsWith "Try this:" then (msg.drop 9).toString else msg)
   if t.startsWith "[apply] " then (t.drop 8).toString else t
 
-/-- The entries of the first `[...]` list after `only`, split at the commas
-outside brackets: the lemmas a suggestion keeps. -/
-def onlyLemmas (s : String) : Array String := Id.run do
-  let parts := s.splitOn " only "
-  let some rest := parts[1]? | return #[]
-  unless rest.startsWith "[" do return #[]
+/-- A suggestion taken apart at its `only [...]` list: the text before ` only [`, the
+entries of the list (split at the commas outside brackets) and the text after its `]`. -/
+def splitOnly (s : String) : Option (String × Array String × String) := Id.run do
+  let parts := s.splitOn " only ["
+  if parts.length < 2 then return none
+  let head := parts[0]!
+  let rest := " only [".intercalate (parts.drop 1)
   let mut out : Array String := #[]
   let mut cur : List Char := []
   let mut depth := 0
-  for c in (rest.drop 1).toString.toList do
-    if depth == 0 && c == ']' then break
+  let mut cs := rest.toList
+  let mut closed := false
+  while !cs.isEmpty do
+    let c := cs.head!
+    cs := cs.tail!
+    if depth == 0 && c == ']' then closed := true; break
     if c == '[' || c == '(' || c == '{' || c == '⟨' then depth := depth + 1
     if c == ']' || c == ')' || c == '}' || c == '⟩' then depth := depth - 1
     if depth == 0 && c == ',' then
       out := out.push (trim (String.ofList cur.reverse)); cur := []
     else cur := c :: cur
+  unless closed do return none
   let last := trim (String.ofList cur.reverse)
-  return if last.isEmpty then out else out.push last
+  return some (head, (if last.isEmpty then out else out.push last), String.ofList cs)
+
+/-- The entries of the first `[...]` list after `only`: the lemmas a suggestion keeps. -/
+def onlyLemmas (s : String) : Array String :=
+  ((splitOnly s).map (·.2.1)).getD #[]
 
 /-- Whether the source `original` of a `simp` call can be replaced by Lean's
 suggestion for it, mechanically: the replacement, or why not. `variants` is the
@@ -96,25 +106,32 @@ def simpEdit? (original suggestion : String) (variants : Nat := 1) : Except Stri
   return suggestion
 
 /-- `text`, which starts at column `col` (from 0), laid out within `width`
-columns: the `only [...]` list broken after commas, continued 4 columns right
-of the tactic (inside the brackets a line break means nothing to Lean). -/
+columns where it can be: the `only [...]` list broken after its commas, and a
+` using ...` that does not fit moved to a line of its own, each continued 4 columns
+right of the tactic (inside the brackets, and before `using`, a line break means
+nothing to Lean). The rest is left as Lean printed it. -/
 def layout (text : String) (col : Nat) (width : Nat := 100) : String := Id.run do
   if col + text.length ≤ width then return text
+  let some (head, items, tail) := splitOnly text | return text
   let indent := String.ofList (List.replicate (col + 4) ' ')
-  let parts := text.splitOn ", "
-  let mut out := ""
-  let mut lineLen := col
+  let mut out := head ++ " only ["
+  let mut lineLen := col + out.length
   let mut first := true
-  for p in parts do
+  for p in items do
     let piece := if first then p else ", " ++ p
-    if !first && lineLen + piece.length > width then
+    -- room for the closing `,` or `]`
+    if !first && lineLen + piece.length + 1 > width then
       out := out ++ ",\n" ++ indent ++ p
       lineLen := indent.length + p.length
     else
       out := out ++ piece
       lineLen := lineLen + piece.length
     first := false
-  return out
+  out := out ++ "]"
+  lineLen := lineLen + 1
+  if tail.startsWith " using " && lineLen + tail.length > width then
+    return out ++ "\n" ++ indent ++ (tail.drop 1).toString
+  return out ++ tail
 
 /-! ## Reading a report -/
 
@@ -177,7 +194,8 @@ structure Finding where
   amount : Float
   observed : Array String
   suggestion : String
-  /-- `mechanical`: an edit Lean computed (`leanprof fix --elab` applies and checks it);
+  /-- `mechanical`: an edit Lean computed (`leanprof fix --elab` applies and checks it: a
+  `simp only` list, or the `termination_by` measure it inferred);
   `hypothesis`: a change to try, unchecked. -/
   basis : String := "hypothesis"
   /-- what it is about: a constant (`` `Foo.bar` ``), a tactic -/
@@ -195,9 +213,21 @@ def Finding.toJson (f : Finding) (total : Float) : Json :=
     (if f.range.isEmpty then [] else [("range", Json.str f.range)]) ++
     (if f.replacement.isEmpty then [] else [("replacement", Json.str f.replacement)]))
 
+/-- A class's parent projection or an instance (`Semiring.toMonoid`, `instAddNat`):
+unfolding it is unification comparing two ways of reaching an instance. -/
+def instancePath (name : String) : Bool :=
+  let last := (name.splitOn ".").getLast!
+  last.startsWith "inst" ||
+    (last.startsWith "to" && ((last.drop 2).toString.toList.head?.map Char.isUpper).getD false)
+
 /-- What to try for a definition `isDefEq` or `whnf` unfolds at a high cost. -/
 def unfoldAdvice (name where_ : String) : String :=
-  if name == "Decidable.decide" then
+  if instancePath name then
+    s!"`{name}` is an instance or a class's parent projection: unification is comparing two ways " ++
+      "of reaching the same instance. Find where the term's instance comes from (an argument given " ++
+      "explicitly, a coercion), and give the instance the statement expects, or a shortcut instance " ++
+      "for the path it takes; making it irreducible is not an option"
+  else if name == "Decidable.decide" then
     "`decide` evaluates the proposition by unfolding: see the decide finding, if any, or state the fact as a lemma"
   else if inProject where_ then
     s!"`{name}` is defined in this project: if proofs should not see through it, make it " ++
@@ -225,7 +255,8 @@ def repeatedAdvice (cls op : String) : String :=
 
 /-- The findings for one declaration (`sc`, a scope of the report), costliest
 first. `ranges` and `suggestions` are those inside the declaration. -/
-def findingsOf (hb : Bool) (sc : Json) (ranges suggestions : Array Json) : Array Finding := Id.run do
+def findingsOf (hb : Bool) (sc : Json) (ranges suggestions : Array Json) (measures : Array Json := #[]) :
+    Array Finding := Id.run do
   let total := jnum sc "total_ns"
   if total <= 0 then return #[]
   let amt := fmtAmt hb
@@ -343,8 +374,28 @@ def findingsOf (hb : Bool) (sc : Json) (ranges suggestions : Array Json) : Array
         "itself: proofs by evaluation (`decide`, `rfl` on large terms) and terms that unfold a definition many " ++
         "times cost here. A lemma that states the computed value, used by `rw` or `simp only`, avoids the " ++
         "reduction" ++ (if top.isEmpty then "; `--counts` names what the kernel unfolded" else "") }
+  -- a termination measure Lean searched for: `decreasing_tactic` once per measure tried
+  let mut measured := false
+  if let some m := measures[0]? then
+    let a := jnum m "amount"
+    let reason := jstr m "not_applicable"
+    let runs := (jarr sc "repeated").filter fun rp => has (jstr rp "op") "decreasing_tactic"
+    let n := runs.foldl (fun x rp => x + jnum rp "count") 0
+    if a ≥ total * 0.1 then
+      measured := true
+      out := out.push {
+        cause := "termination", amount := a, basis := if reason.isEmpty then "mechanical" else "hypothesis"
+        range := jstr m "insert", replacement := if reason.isEmpty then jstr m "measure" else ""
+        observed := #[s!"`decreasing_tactic` ran {n.toUInt64}× for {amt a} ({share a}): with no `termination_by`, " ++
+            "Lean tries measures until one works, proving the recursive calls for each",
+          s!"the measure Lean found (`showInferredTerminationBy`): `{jstr m "measure"}`"]
+        suggestion := (if reason.isEmpty then
+            s!"state it after the proof: `{jstr m "measure"}`; Lean then proves the calls for that measure only " ++
+              "(`leanprof fix --elab` adds it and checks the proof and the heartbeats)"
+          else s!"state it after the proof: `{jstr m "measure"}`; not added automatically: {reason}") }
   -- repeated operations
-  for rp in (((jarr sc "repeated").filter fun rp => jnum rp "count" ≥ 3 && jnum rp "total" ≥ total * 0.1).toList.take 2) do
+  for rp in (((jarr sc "repeated").filter fun rp =>
+      jnum rp "count" ≥ 3 && jnum rp "total" ≥ total * 0.1 && !(measured && has (jstr rp "op") "decreasing_tactic")).toList.take 2) do
     let a := jnum rp "total"
     out := out.push {
       cause := "repeated", amount := a,
@@ -397,11 +448,15 @@ def analyze (r : Json) (top : Nat := 10) : Array (Json × Array Finding) := Id.r
   for s in jarr r "simp_suggestions" do
     let o := owner (jstr s "pos")
     suggOf := suggOf.insert o ((suggOf.getD o #[]).push s)
+  let mut measOf : Std.HashMap String (Array Json) := {}
+  for m in jarr r "termination_suggestions" do
+    let o := owner (jstr m "pos")
+    measOf := measOf.insert o ((measOf.getD o #[]).push m)
   let sorted := scopes.qsort fun a b => jnum a "total_ns" > jnum b "total_ns" ||
     (jnum a "total_ns" == jnum b "total_ns" && jstr a "pos" < jstr b "pos")
   return (sorted.toList.take top).toArray.map fun sc =>
     let pos := jstr sc "pos"
-    (sc, findingsOf hb sc (rangesOf.getD pos #[]) (suggOf.getD pos #[]))
+    (sc, findingsOf hb sc (rangesOf.getD pos #[]) (suggOf.getD pos #[]) (measOf.getD pos #[]))
 
 def whyJson (r : Json) (top : Nat := 10) : Json :=
   let hb := jstr r "unit" == "heartbeats"

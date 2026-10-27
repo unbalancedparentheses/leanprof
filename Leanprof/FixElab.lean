@@ -6,13 +6,19 @@ import Leanprof.ElabWhy
 /-!
 # `leanprof fix --elab`: compile-time fixes, applied and checked
 
-`leanprof elab --why` records, for each `simp` call, Lean's own list of the
-lemmas it used (`tactic.simp.trace`, what `simp?` prints) and the call's
-whole source range. Replacing `simp` by `simp only [those lemmas]` is
-mechanical, and whether it helps is measurable exactly: the proof must
-still check and the heartbeats must go down.
+`leanprof elab --why` records two edits Lean computes itself:
 
-`fix --elab` takes the costliest such calls, writes the edits as one commit
+* for each `simp` call, Lean's own list of the lemmas it used
+  (`tactic.simp.trace`, what `simp?` prints) and the call's whole source
+  range: `simp` becomes `simp only [those lemmas]`;
+* for each recursive declaration without `termination_by`, the measure
+  Lean's search found (`showInferredTerminationBy`): stating it skips the
+  search, which proves the recursive calls once for every measure it tries.
+
+Both are mechanical, and whether they help is measurable exactly: the proof
+must still check and the heartbeats must go down.
+
+`fix --elab` takes the costliest such edits, writes them as one commit
 on top of HEAD (git plumbing with a separate index: the checkout is not
 touched), and judges that commit with `leanprof experiment` (library mode):
 the build of the package (the proofs are checked again), the
@@ -45,6 +51,9 @@ structure SimpEdit where
   amount : Float
   /-- the `compare` key of the declaration it is in (`file name`) -/
   key : String := ""
+  /-- `simp`: a call replaced by its `simp only` list; `termination`: Lean's inferred
+  `termination_by` inserted after a declaration (`original` empty) -/
+  kind : String := "simp"
   deriving Inhabited, Repr
 
 def SimpEdit.range (e : SimpEdit) : String := s!"{e.file}:{e.line}:{e.col + 1}-{e.endLine}:{e.endCol + 1}"
@@ -72,6 +81,20 @@ def editsOf (r : Json) : Array SimpEdit := Id.run do
       file := f, line := l, col := c - 1, endLine := el, endCol := ec - 1
       original := jstr s "original", replacement := jstr s "suggestion", amount := jnum s "amount"
       key := keyOf f l }
+  -- Lean's inferred termination measures, inserted on a line of their own after the declaration
+  for m in jarr r "termination_suggestions" do
+    unless (jstr m "not_applicable").isEmpty do continue
+    let some (f, l, c) := (do
+        let parts := (jstr m "insert").splitOn ":"
+        guard (parts.length ≥ 3)
+        let n := parts.length
+        pure (":".intercalate (parts.take (n - 2)), ← parts[n - 2]!.toNat?, ← parts[n - 1]!.toNat?)) | continue
+    if c == 0 then continue
+    let indent := String.ofList (List.replicate (jnum m "indent").toUInt64.toNat ' ')
+    out := out.push {
+      file := f, line := l, col := c - 1, endLine := l, endCol := c - 1, original := ""
+      replacement := "\n" ++ indent ++ jstr m "measure", amount := jnum m "amount"
+      key := keyOf f (ElabWhy.splitPos (jstr m "pos")).2, kind := "termination" }
   return out.qsort fun a b => a.amount > b.amount || (a.amount == b.amount && a.range < b.range)
 
 /-- `src` (a file's text) with `edits` (all in that file, not overlapping) applied: each
@@ -93,7 +116,7 @@ def applyEdits (src : String) (edits : Array SimpEdit) : Except String String :=
         [String.ofList ((at_ e.endLine).take e.endCol)])
     unless cur == e.original do
       throw s!"{e.range}: the source is no longer `{e.original}` (it reads `{cur}`): profile again"
-    let text := pre ++ ElabWhy.layout e.replacement e.col ++ post
+    let text := pre ++ (if e.kind == "simp" then ElabWhy.layout e.replacement e.col else e.replacement) ++ post
     lines := lines.extract 0 (e.line - 1) ++ (text.splitOn "\n").toArray ++ lines.extract e.endLine lines.size
   return "\n".intercalate lines.toList
 
@@ -101,7 +124,8 @@ def applyEdits (src : String) (edits : Array SimpEdit) : Except String String :=
 and what they become. -/
 def lineEdit (lines : Array String) (e : SimpEdit) : Fix.Edit :=
   let at_ (i : Nat) : List Char := (lines[i - 1]?.getD "").toList
-  let text := String.ofList ((at_ e.line).take e.col) ++ ElabWhy.layout e.replacement e.col ++
+  let text := String.ofList ((at_ e.line).take e.col) ++
+    (if e.kind == "simp" then ElabWhy.layout e.replacement e.col else e.replacement) ++
     String.ofList ((at_ e.endLine).drop e.endCol)
   { first := e.line, count := e.endLine - e.line + 1, lines := (text.splitOn "\n").toArray }
 
@@ -216,7 +240,9 @@ def commitFiles (top : FilePath) (dir : FilePath) (contents : Array (String × S
   return c
 
 def describeEdit (e : SimpEdit) (hb : Bool) : String :=
-  s!"{e.range}  {ElabWhy.fmtAmt hb e.amount}  `{ElabWhy.collapse e.original}` -> `{e.replacement}`"
+  if e.kind == "termination" then
+    s!"{e.file}:{e.line}:{e.col + 1}  {ElabWhy.fmtAmt hb e.amount}  add `{ElabWhy.collapse e.replacement}` (Lean's inferred measure)"
+  else s!"{e.range}  {ElabWhy.fmtAmt hb e.amount}  `{ElabWhy.collapse e.original}` -> `{e.replacement}`"
 
 def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.Process.Output) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
@@ -251,7 +277,8 @@ def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO 
     throw <| IO.userError s!"{report} was made without --why, so it has no `simp only` lists: run `leanprof elab --heartbeats --why FILE.lean...`, or give the files"
   let hb := jstr r "unit" == "heartbeats"
   let all := jarr r "simp_suggestions"
-  let skipped := all.filter fun s => !(jstr s "not_applicable").isEmpty
+  let measures := jarr r "termination_suggestions"
+  let skipped := (all ++ measures).filter fun s => !(jstr s "not_applicable").isEmpty
   -- calls in this package, still as the report saw them
   let mut edits : Array SimpEdit := #[]
   let mut stale : Array String := #[]
@@ -267,14 +294,14 @@ def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO 
   let overlaps (a b : SimpEdit) : Bool :=
     a.file == b.file && !(upTo a.endLine a.endCol b.line b.col || upTo b.endLine b.endCol a.line a.col)
   let picked := ((edits.foldl (fun acc e => if acc.any (overlaps e) then acc else acc.push e) #[]).toList.take o.top).toArray
-  IO.println (s!"leanprof fix --elab: {all.size} `simp` call(s) with Lean's `simp only` list in {report}; " ++
-    s!"{picked.size} to try, costliest first (`--top {o.top}`):")
+  IO.println (s!"leanprof fix --elab: {all.size} `simp` call(s) with Lean's `simp only` list and " ++
+    s!"{measures.size} inferred termination measure(s) in {report}; {picked.size} edit(s) to try, costliest first (`--top {o.top}`):")
   for e in picked do IO.println s!"  {describeEdit e hb}"
   unless skipped.isEmpty do
     IO.println s!"  not mechanical: {skipped.size} (`leanprof explain --report {report}` says why for the costly ones)"
   for s in stale do IO.println (wrap s!"  stale: {s}" "    ")
   if picked.isEmpty then
-    IO.println "leanprof fix --elab: no `simp` call to replace"
+    IO.println "leanprof fix --elab: no edit to make"
     return 1
   -- the edits, file by file
   let byFile (es : Array SimpEdit) : IO (Except String (Array (String × String))) := do
@@ -321,7 +348,7 @@ def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO 
       | .ok t => pure t
       | .error e => IO.println s!"leanprof fix --elab: {e}"; break
     let rel := texts.map fun (f, t) => (pre ++ f, t)
-    let cand ← commitFiles top dir rel s!"leanprof fix --elab: simp only, {cur.size} call(s) (candidate)"
+    let cand ← commitFiles top dir rel s!"leanprof fix --elab: {cur.size} edit(s) (candidate)"
     IO.println s!"\nround {round}: {cur.size} edit(s), candidate {cand.take 12}"
     let tr ← runSelf #["experiment", "try", cand, "--json", "--id", id] cwd
     log s!"leanprof experiment try (round {round})" tr
@@ -361,12 +388,21 @@ def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO 
     let hbStep := (steps.getObjVal? "heartbeats").toOption.getD Json.null
     let guard := (steps.getObjVal? "guard").toOption.getD Json.null
     let files := (cur.map (·.file)).toList.eraseDups
-    let subject := s!"simp only at {cur.size} call(s) in {", ".intercalate (files.take 3)}{if files.length > 3 then ", ..." else ""}"
+    let simps := cur.filter (·.kind == "simp")
+    let terms := cur.filter (·.kind == "termination")
+    let what := ", ".intercalate ((if simps.isEmpty then [] else [s!"simp only at {simps.size} call(s)"]) ++
+      (if terms.isEmpty then [] else [s!"termination_by in {terms.size} declaration(s)"]))
+    let subject := s!"{what} in {", ".intercalate (files.take 3)}{if files.length > 3 then ", ..." else ""}"
     let msg := s!"{subject}\n\n" ++
-      "Each `simp` is replaced by Lean's own list of the lemmas it used (`simp?`, `tactic.simp.trace`),\n" ++
-      "so it no longer searches the whole simp set:\n\n" ++
-      "\n".intercalate (cur.toList.map fun e => s!"  {e.range}: {ElabWhy.collapse e.original} -> {e.replacement}") ++
-      s!"\n\nleanprof fix --elab, checked by leanprof experiment {id} (try {(jnum ev "try").toUInt64}): KEEP against {head.take 12}\n" ++
+      (if simps.isEmpty then "" else
+        "Each `simp` is replaced by Lean's own list of the lemmas it used (`simp?`, `tactic.simp.trace`),\n" ++
+        "so it no longer searches the whole simp set:\n\n" ++
+        "\n".intercalate (simps.toList.map fun e => s!"  {e.range}: {ElabWhy.collapse e.original} -> {e.replacement}") ++ "\n\n") ++
+      (if terms.isEmpty then "" else
+        "Each recursive declaration states the termination measure Lean inferred for it\n" ++
+        "(`showInferredTerminationBy`), so Lean no longer searches for one:\n\n" ++
+        "\n".intercalate (terms.toList.map fun e => s!"  after {e.file}:{e.line}:{e.col + 1}: {ElabWhy.collapse e.replacement}") ++ "\n") ++
+      s!"\nleanprof fix --elab, checked by leanprof experiment {id} (try {(jnum ev "try").toUInt64}): KEEP against {head.take 12}\n" ++
       s!"  build      ok\n  guard      {jstr guard "status"}: {(jarr guard "modules").size} module(s) audited\n" ++
       s!"  heartbeats {ElabWhy.fmtAmt true (jnum hbStep "base_total")} -> {ElabWhy.fmtAmt true (jnum hbStep "candidate_total")} " ++
       s!"in the changed modules and their dependents\n" ++
@@ -375,7 +411,7 @@ def fixElabCmd (argv : List String) (runSelf : Array String → FilePath → IO 
     let msgFile := dir / "message.txt"
     IO.FS.writeFile msgFile msg
     let sha ← git #["commit-tree", tree, "-p", head, "-F", msgFile.toString]
-    let stem := o.branch.getD s!"leanprof-fix/simp-only-{((files.head!.splitOn "/").getLast!.replace ".lean" "")}"
+    let stem := o.branch.getD s!"leanprof-fix/elab-{((files.head!.splitOn "/").getLast!.replace ".lean" "")}"
     let mut branch := stem
     if o.branch.isNone then
       let mut n := 2

@@ -146,8 +146,17 @@ Ranked; the open ones are planned after v0.2.0.
   and what keeps it alive; for long-running programs and servers.
 - [ ] **Why a file is slow in the editor.** Profile the language server
   re-elaborating a file and attribute the delay to declarations.
-- [ ] **A heartbeat budget.** `elab --max-heartbeats N` in CI flags any
-  declaration above N, so slow lemmas do not accumulate.
+- [x] **A heartbeat budget.** `elab --max-heartbeats N` lists every
+  declaration above N and exits 1; `report-md --max-heartbeats` and the
+  Action's `max-heartbeats` input fail CI on it
+  ([guide](docs/guide/ci-and-regressions.md#a-heartbeat-budget)).
+- [x] **Compile-time explanations with fixes.** `elab --why` (and `explain
+  --elab`, JSON, MCP) names the cause of each costly declaration, observed
+  and suggested apart; `fix --elab` applies the mechanical ones (Lean's
+  `simp only` lists and inferred `termination_by` measures) and keeps them
+  only on an experiment's KEEP. Still open: mechanical edits for the
+  hypotheses (`decreasing_by` proofs, `decide +kernel`, local instances),
+  which need a person or an agent and the experiment loop.
 
 ## v0.2.0: make any Lean project faster
 

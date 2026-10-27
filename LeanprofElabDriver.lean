@@ -229,6 +229,8 @@ structure Ctx where
   fullNames : Bool
   /-- Describe only commands and source nodes: a compact profile reads nothing else. -/
   compact : Bool
+  /-- `--why`: commands' end positions too. -/
+  why : Bool := false
 
 /-- The source between two byte positions on one line, at most 100 characters. -/
 def excerpt (src : String) (s e : Nat) : String :=
@@ -289,11 +291,14 @@ partial def render (c : Ctx) (root : Option String) (depth : Nat) (wrap : Messag
   | _ => return out
 
 /-- Print `lines` as a `lean --json` message at `pos`. -/
-def emit (c : Ctx) (pos : String.Pos.Raw) (lines : Array String) : IO Unit := do
+def emit (c : Ctx) (pos : String.Pos.Raw) (lines : Array String) (endPos : Option String.Pos.Raw := none) :
+    IO Unit := do
   let p := c.fm.toPosition pos
-  IO.println (Json.mkObj [("severity", "information"),
-    ("pos", Json.mkObj [("line", p.line), ("column", p.column)]),
-    ("data", Json.str ("\n".intercalate lines.toList))]).compress
+  let q := endPos.map c.fm.toPosition
+  IO.println (Json.mkObj (([("severity", Json.str "information"),
+    ("pos", Json.mkObj [("line", p.line), ("column", p.column)])] : List (String × Json)) ++
+    (match q with | some q => [("endPos", Json.mkObj [("line", q.line), ("column", q.column)])] | none => []) ++ [
+    ("data", Json.str ("\n".intercalate lines.toList))])).compress
 
 /-- Print one retained trace as a `lean --json` message at `pos`. -/
 def emitTrace (c : Ctx) (pos : String.Pos.Raw) (t : TraceElem) : IO Unit := do
@@ -305,7 +310,9 @@ def emitTrace (c : Ctx) (pos : String.Pos.Raw) (t : TraceElem) : IO Unit := do
     | .withContext _ (.trace d _ _) | .trace d _ _ => d.cls == `Elab.command
     | _ => false
   let lines ← render c (if isCommand then root else none) 0 id #[] t.msg
-  unless lines.isEmpty do emit c pos lines
+  -- with `--why`, where the command ends (`lean --json` gives it too): `elab --why` inserts
+  -- a `termination_by` after it
+  unless lines.isEmpty do emit c pos lines (if isCommand && c.why then t.ref.getTailPos? else none)
 
 /-! ## Running the frontend -/
 
@@ -360,8 +367,9 @@ def run (a : Args) : IO UInt32 := do
               `Meta.isDefEq.delta.unfoldLeftRight, `Meta.Tactic.simp.rewrite] do
       opts := opts.setBool (`trace ++ c) true
     if a.counts then opts := opts.setBool `diagnostics true |>.set `diagnostics.threshold (0 : Nat)
-  -- `--why`: every `simp` says which lemmas it used, as `Try this: simp only [...]`
-  if a.why then opts := opts.setBool `tactic.simp.trace true
+  -- `--why`: every `simp` says which lemmas it used, as `Try this: simp only [...]`, and every
+  -- recursive definition whose termination measure Lean had to search for says which it found
+  if a.why then opts := opts.setBool `tactic.simp.trace true |>.setBool `showInferredTerminationBy true
   if let some s := setup? then opts := opts.mergeBy (fun _ _ v => v) s.options.toOptions
   opts := Elab.async.setIfNotSet opts true
   opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
@@ -380,7 +388,8 @@ def run (a : Args) : IO UInt32 := do
   let cmdState := Command.mkState (instrument ranges env) {} opts'
   let cmdState := { cmdState with infoState.enabled := true }
   let first ← Language.Lean.processCommands inputCtx parserState cmdState
-  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact }
+  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact,
+                   why := a.why }
   -- messages and traces of each snapshot as it completes, in order
   let lastPos ← IO.mkRef (0 : String.Pos.Raw)
   let errors ← IO.mkRef false

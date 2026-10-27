@@ -175,12 +175,12 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `run` | build with probes (`auto`, `allocs`, `counters`, `frees`, `core`), run, summarize the report |
 | `sample` | samply: CPU per Lean declaration with file:line |
 | `stat` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks |
-| `elab` | compile cost per line and declaration, or exact heartbeats |
+| `elab` | compile cost per line and declaration, or exact heartbeats; `why`: the causes of the costliest declarations, observed and suggested apart, with Lean's own `simp only` lists and inferred termination measures; `max_heartbeats`: every declaration above a budget (`OVER BUDGET`) |
 | `measure` | repeated runs into one summary, for `judge` |
 | `measure_pair` | two prebuilt binaries run in alternating AB/BA order (no builds, no probes) into one paired session, for `judge` |
 | `report` | summary of a saved report or live snapshot |
 | `hot` | hottest scopes, copies, allocations, tasks or waits, with file:line |
-| `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted) |
+| `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted). On an `elab` report: why its costliest declarations are slow, as `elab --why` |
 | `compare` | regressions between two reports (exact for copies and calls) |
 | `judge` | KEEP or DISCARD from two `measure` summaries (`base`, `new`) or one paired session (`pair`); `min_change` in percent |
 | `experiment_start`, `experiment_try`, `experiment_finish`, `experiment_status` | [`leanprof experiment`](experiment.md): record a baseline, try a commit or the working tree (verdict and evidence JSON), run the held-out inputs; tests are the project's Lake test driver (no shell command), paths must be inside the project |
