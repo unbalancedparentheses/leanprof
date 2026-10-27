@@ -93,7 +93,8 @@ def setup : IO Unit := do
   let a := (Array.range n).map fun i => (i * 2654435761 % 1000003).toUInt64
   let cfg := cfgOf v
   let k := cfg.extraPm * (cfg.units + cfg.check) * n / 1000 % Nat.max n 1
-  cfgRef.set { cfg with part := a.extract 0 k }
+  -- (no array at all for the other variants: their allocation counts are published)
+  cfgRef.set (if cfg.extraPm > 0 then { cfg with part := a.extract 0 k } else cfg)
   arrRef.set a
 
 /-- The benchmarked action. -/

@@ -708,7 +708,7 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
     open(path, "w").write("\n".join(L) + "\n")
 
 
-HEAD_TOOLS = [("profile", "leanprof `profile!`"), ("auto", "leanprof `run --auto`"),
+HEAD_TOOLS = [("profile", "leanprof `profile!`"), ("retime", "leanprof `run --retime`"), ("auto", "leanprof `run --auto`"),
               ("sample", "leanprof `sample`"), ("samply", "samply"),
               ("phases", "leanprof `profile!` at LeanProfiler's spans"), ("leanprofiler", "LeanProfiler")]
 
@@ -751,7 +751,7 @@ def headline(L, res, configs):
         ref = (wr["configs"].get("samply") or {}).get("share_mae_pp")
         if ref is None:
             continue
-        for c in ("profile", "auto", "sample"):
+        for c in ("profile", "retime", "auto", "sample"):
             v = (wr["configs"].get(c) or {}).get("share_mae_pp")
             if v is not None and v > ref + 0.5:
                 worse.append(f"`{w}`: {dict(HEAD_TOOLS)[c]} {v:.1f} pp against samply's {ref:.1f} pp")
