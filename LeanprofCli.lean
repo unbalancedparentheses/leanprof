@@ -8,6 +8,7 @@ import Leanprof.Regress
 import Leanprof.Workload
 import Leanprof.ElabWhy
 import Leanprof.FixElab
+import Leanprof.ProjectFix
 import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
@@ -124,7 +125,7 @@ def commands : List (String × String × String) := [
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
     "#leanprof hovers. On an elab report (--elab: .lake/leanprof/elab.json), why the costliest declarations are\n" ++
     "slow to compile and what to try (as `elab --why`)."),
-  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] | --elab [FILE.lean...] [--report FILE] [--top N] [--rounds N] [--test CMD | --no-test] [--dry-run] [--branch NAME]",
+  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] | --elab [FILE.lean...] [--report FILE] [--top N] [--rounds N] [--test CMD | --no-test] [--dry-run] [--branch NAME] | --elab --project [--report FILE] [--top N] [--only N,...] [--dry-run] [--test CMD | --no-test] [--build-runs N] [--jobs N] [--lock FILE] [--out FILE]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
     "inserted back, an index loop for a loop over the array it updates), then check it: on a new git\n" ++
@@ -140,8 +141,18 @@ def commands : List (String × String × String) := [
     "(from `elab --heartbeats --why` of FILE.lean..., or --report FILE), as one commit judged by `leanprof\n" ++
     "experiment`: the build, the proof-preservation guard, the tests and the heartbeats of the changed modules\n" ++
     "and their dependents. Edits that break their file or make their declaration dearer are dropped and the rest\n" ++
-    "tried again (at most --rounds, default 4). KEEP: a commit with the evidence on a new local branch."),
-  ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--time-all-cases] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
+    "tried again (at most --rounds, default 4). KEEP: a commit with the evidence on a new local branch.\n" ++
+    "--elab --project: project-wide changes. From `elab --project --heartbeats --counts --why` (run first, or\n" ++
+    "--report FILE), list hypotheses with their evidence (a definition unfolded in many files: irreducible, or\n" ++
+    "reducible when failed instance searches name it; an instance tried often and rarely used: a lower priority;\n" ++
+    "a simp lemma tried often and rarely used: no @[simp]; Lean's inferred termination measures; a repeated\n" ++
+    "instance search: a shortcut instance, not tried), ranked by files and exact counts, never by the overlapping\n" ++
+    "attributed heartbeats. Each of the first --top mechanical ones (or --only N,...) is one commit judged by\n" ++
+    "`experiment try --keep-base` against HEAD (build, guard, tests, heartbeats of the defining module and every\n" ++
+    "module importing it), then the plain `lake build` of those modules is timed in both worktrees (--build-runs,\n" ++
+    "default 3, each side; --lock FILE holds an flock while timing). Reports per module and per declaration,\n" ++
+    "dearer ones included. KEEP: a commit on a new local branch. Evidence: .lake/leanprof/fix/project-fixes.json."),
+  ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--time-all-cases] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--keep-base] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
     "One experiment, from baseline to verdict. `start` records the base (HEAD, or --base REV) in a git\n" ++
     "worktree under .lake/leanprof/experiments/ID: the build (default targets and EXE), the tests (--test CMD,\n" ++
     "or `lake test` with a test driver), the behaviour on every case (ARGS, ARGS with each file of --inputs DIR\n" ++
@@ -156,7 +167,8 @@ def commands : List (String × String × String) := [
     "Without --exe the measure is `elab --heartbeats` on the changed modules and their dependents.\n" ++
     "Exit code 0 KEEP, 1 DISCARD, 2 ERROR, 3 INCONCLUSIVE; evidence in tries/N/evidence.json (--json prints it).\n" ++
     "A KEEP becomes the base; from the working tree it is committed on the current branch with the evidence\n" ++
-    "in the message (--no-commit: not), a commit gets a git note (refs/notes/leanprof-experiments).\n" ++
+    "in the message (--no-commit: not), a commit gets a git note (refs/notes/leanprof-experiments);\n" ++
+    "--keep-base: a KEEP leaves the base as it was (to judge alternatives against one base).\n" ++
     "`finish` runs the held-out cases on the final base and removes the worktrees; exit 1 if they differ."),
   ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [--ranges N] [--keep N] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
@@ -2797,6 +2809,9 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
     -- a signal ends the current step; `fix` then removes its worktree
     guardSignals 0
     Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+    if rest.contains "--elab" && rest.contains "--project" then
+      return ← Leanprof.ProjectFix.fixProjectCmd (rest.filter fun a => a != "--elab" && a != "--project") fun args cwd => do
+        Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)
     if rest.contains "--elab" then
       return ← Leanprof.FixElab.fixElabCmd (rest.filter (· != "--elab")) fun args cwd => do
         Leanprof.Fix.capture (← IO.appPath).toString args #[("LEANPROF_QUIET", some "1")] (cwd := some cwd)

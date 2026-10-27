@@ -1,0 +1,7 @@
+# The project `scripts/experiment-check.sh` runs `leanprof fix --elab --project`
+# on (see PF/Defs.lean). No dependency on leanprof.
+name = "projectfixesdemo"
+defaultTargets = ["PF"]
+
+[[lean_lib]]
+name = "PF"

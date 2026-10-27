@@ -753,6 +753,9 @@ structure TryOpts where
   message : Option String := none
   allowOverloaded : Bool := false
   json : Bool := false
+  /-- a KEEP leaves the base where it is: each candidate is judged against the same base
+  (`fix --elab --project` tries alternatives, not a sequence) -/
+  keepBase : Bool := false
 
 partial def parseTry (o : TryOpts) : List String → Except String TryOpts
   | [] => .ok o
@@ -763,6 +766,7 @@ partial def parseTry (o : TryOpts) : List String → Except String TryOpts
   | "--message" :: m :: rest => parseTry { o with message := some m } rest
   | "--allow-overloaded" :: rest => parseTry { o with allowOverloaded := true } rest
   | "--json" :: rest => parseTry { o with json := true } rest
+  | "--keep-base" :: rest => parseTry { o with keepBase := true } rest
   | a :: rest =>
     if a.startsWith "-" then .error s!"unknown or incomplete experiment try option: {a}"
     else if o.rev.isSome then .error s!"one candidate at a time: {o.rev.get!} and {a}"
@@ -857,7 +861,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
     IO.FS.writeFile msgFile msg
     let mut committed : Option String := none
     let mut newBase := cand
-    if source == "working-tree" && o.commit then
+    if source == "working-tree" && o.commit && !o.keepBase then
       let head ← git #["rev-parse", "HEAD"]
       if parent == some head then
         let tree ← git #["rev-parse", s!"{cand}^\{tree}"]
@@ -871,6 +875,9 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
         say "commit" s!"not committed: HEAD moved from {(parent.getD "").take 12} to {head.take 12} during the try"
     else if source != "working-tree" then
       discard <| gitRaw #["notes", "--ref=leanprof-experiments", "add", "-f", "-F", msgFile.toString, cand] (cwd := top)
+    if o.keepBase then
+      say "base" s!"kept at {base.take 12} (--keep-base)"
+      return ← finish .keep reasons committed
     if let some b := bin then copyFile b (expDir c s / "base-bin")
     stRef.modify fun st => { st with
       base_commit := newBase
@@ -995,6 +1002,7 @@ def tryCmd (c : Ctx) (argv : List String) : IO UInt32 := do
         let v := Judge.judge { heartbeats := some bh } { heartbeats := some nh } s.min_change (judgeTime := false)
         let (out, reasons) := heartbeatOutcome v
         step "heartbeats" (Json.mkObj [("why", Json.str why), ("files", toJson files),
+          ("base_report", Json.str cache.toString), ("candidate_report", Json.str (tdir / "heartbeats-new.json").toString),
           ("base_total", toJson (hbTotal bh)), ("candidate_total", toJson (hbTotal nh)),
           ("worse", toJson v.worse), ("better", toJson v.better),
           ("notes", toJson (v.notes.filter (!·.startsWith "time:")))])

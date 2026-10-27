@@ -1106,6 +1106,9 @@ structure Loc where
   /-- A definition, theorem or opaque constant (something `whnf` can unfold),
   not a structure, inductive type, constructor or recursor. -/
   unfoldable : Bool := true
+  /-- found only as the one declaration of the profiled files whose name ends so (a name
+  printed relative to an open namespace): a guess, which may be another constant -/
+  bySuffix : Bool := false
 
 /-- `Foo.bar`, `«a b».c`, `_private.M.0.f` as a `Name`. -/
 def parseName (s : String) : Name := Id.run do
@@ -1326,6 +1329,10 @@ def ownDiagnostics (named : Std.HashMap String (Array (Nat × String))) (lines :
 /-- How many causes, repeated operations and counters `elab.json` keeps per line. -/
 def causeLimit : Nat := 20
 
+/-- The files and lines a constant or a repeated operation is listed with in `elab.json`
+(`site_files`, `site_keys`, `by_file`), at most. -/
+def siteLimit : Nat := 40
+
 /-- The `diagnostics` counters kept per line, each cut at `causeLimit / 2` (`simp_tried` is
 `simp_used` and `simp_failed` together). -/
 def countCounters : List String := ["unfolds", "kernel", "instances", "simp_used", "simp_failed", "grind_instances"]
@@ -1513,13 +1520,14 @@ def main (argv : List String) : IO UInt32 := do
   let locOf (s : String) : Option Loc := match locs.get? s with
     | some l => some l
     | none =>
-      let found := (findDecl? localDecls (userName s)) <|>
+      match findDecl? localDecls (userName s) with
+      | some (k, u) => some { pos := k, unfoldable := u }
+      | none =>
         -- printed relative to an open namespace (`grind`'s counters): the one declaration
         -- of the profiled files whose name ends so
         match localDecls.toList.filter (·.1.endsWith ("." ++ userName s)) with
-        | [(_, v)] => some v
+        | [(_, (k, u))] => some { pos := k, unfoldable := u, bySuffix := true }
         | _ => none
-      found.map fun (k, u) => { pos := k, unfoldable := u }
   -- `whnf` reduces applications of anything (structures, variables): keep only
   -- constants that unfold
   let keep (s : String) (c : ConstCost) : Bool :=
@@ -1612,7 +1620,8 @@ def main (argv : List String) : IO UInt32 := do
     let l := locOf s
     [("name", Json.str (userName s)), ("kind", Json.str kind), ("amount", toJson amount), ("count", toJson count),
      ("sites", toJson (sites s)), ("where", Json.str ((l.map (·.pos)).getD "")),
-     ("path", Json.str ((l.map (·.path)).getD ""))]
+     ("path", Json.str ((l.map (·.path)).getD ""))] ++
+    (if (l.map (·.bySuffix)).getD false then [("located_by_suffix", Json.bool true)] else [])
   -- commands that declare nothing (`variable (x) in`, `open ... in`, `attribute ...`): the
   -- file, the command's text and which of the commands with that text it is, in line order,
   -- so that `compare` matches them when lines move
@@ -1658,7 +1667,9 @@ def main (argv : List String) : IO UInt32 := do
       Json.mkObj [("problem", Json.str p), ("count", toJson n), ("amount", toJson x)]))]
   let repeated := reps.map fun ((cls, op), oc) => Json.mkObj [("class", Json.str cls), ("op", Json.str op),
     ("count", toJson oc.count), ("total", toJson oc.total), ("first_at", Json.str oc.firstAt),
-    ("files", toJson oc.files.size)]
+    ("files", toJson oc.files.size),
+    ("by_file", Json.arr (((oc.files.toArray.qsort fun a b => a.2.1 > b.2.1 || (a.2.1 == b.2.1 && a.1 < b.1)).toList.take
+      siteLimit).toArray.map fun (f, (n, t)) => Json.mkObj [("file", Json.str f), ("count", toJson n), ("total", toJson t)]))]
   -- per file, for `leanprof html`'s module view: the repeated operations done there (what
   -- they cost in that file) and the definitions behind the file's work
   let mut fileReps : Std.HashMap String (Array (Float × Json)) := {}
@@ -1677,10 +1688,20 @@ def main (argv : List String) : IO UInt32 := do
     fileConsts := fileConsts.insert f m
   let topOf (xs : Array (Float × Json)) : Json :=
     Json.arr (((xs.qsort (fun a b => a.1 > b.1)).toList.take 10).toArray.map (·.2))
+  -- where each constant was reached, for `fix --elab --project`: the files (sites per file)
+  -- and the first lines, each list cut at `siteLimit`
+  let siteJson (c : ConstCost) : List (String × Json) :=
+    let keys := c.sites.toArray.qsort (· < ·)
+    let byFile := keys.foldl (fun (m : Std.HashMap String Nat) k => m.insert (splitPos k).1 (m.getD (splitPos k).1 0 + 1)) {}
+    let fs := byFile.toArray.qsort fun a b => a.2 > b.2 || (a.2 == b.2 && a.1 < b.1)
+    [("files", toJson byFile.size),
+     ("site_files", Json.arr ((fs.toList.take siteLimit).toArray.map fun (f, n) =>
+       Json.mkObj [("file", Json.str f), ("sites", toJson n)])),
+     ("site_keys", toJson ((keys.toList.take siteLimit).toArray))]
   let constants := (consts.qsort fun a b => a.2.cost > b.2.cost || (a.2.cost == b.2.cost && a.1 < b.1)).map fun (s, c) =>
     let l := locOf s
     Json.mkObj (constJson s c.kind c.cost c.count ++
-      [("module", Json.str ((l.map (·.module)).getD ""))] ++
+      [("module", Json.str ((l.map (·.module)).getD ""))] ++ siteJson c ++
       (["unfolds", "kernel", "instances", "simp_used", "simp_tried", "simp_failed", "grind_instances"].filterMap fun ctr =>
         (c.diag.get? ctr).map fun n => (ctr, toJson n)))
   let fileJson := (acc.files.qsort (·.1 < ·.1)).map fun (f, c) => Json.mkObj [("file", Json.str f),

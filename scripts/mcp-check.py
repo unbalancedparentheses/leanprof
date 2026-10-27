@@ -60,7 +60,7 @@ send({"jsonrpc": "2.0", "method": "notifications/initialized"})  # no reply expe
 
 names = {t["name"] for t in call("tools/list")["result"]["tools"]}
 want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
-        "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
+        "experiment_start", "experiment_try", "experiment_finish", "experiment_status", "project_fixes"}
 check("tools/list", want <= names, names)
 
 text, err = tool("run", executable="copybug", args=["1000"], json=".lake/leanprof/mcp-small.json")
@@ -257,6 +257,12 @@ text, err = tool("experiment_status", cwd=exp, id="../../x")
 check("experiment_status refuses an id that is a path", err and "not an experiment id" in text, text)
 text, err = tool("experiment_start", cwd=exp, executable="bench", check_output=["../outside.txt"])
 check("experiment_start refuses an output file outside the project", err and "inside the project" in text, text)
+text, err = tool("project_fixes", cwd=exp, dry_run=True)
+check("project_fixes: the hypotheses of a project report", not err and "candidate(s) from" in text, text)
+text, err = tool("project_fixes", cwd=exp, dry_run=True, only="1;rm")
+check("project_fixes refuses only that is not numbers", err and "candidate numbers" in text, text)
+text, err = tool("project_fixes", cwd=exp, dry_run=True, report="../elab.json")
+check("project_fixes refuses a report outside the project", err and "inside the project" in text, text)
 text, err = tool("experiment_finish", cwd=exp)
 check("experiment_finish", not err and '"experiment-finish"' in text, text)
 shutil.rmtree(exp, ignore_errors=True)

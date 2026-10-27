@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.ElabWhy
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.ElabWhy import Tests.ProjectFix
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -802,6 +802,7 @@ def main (args : List String) : IO UInt32 := do
     return 0
   let compileTime : StateT Nat IO Unit := do
     for (name, ok, detail) in Tests.ElabWhy.cases do check name ok detail
+    for (name, ok, detail) in Tests.ProjectFix.cases do check name ok detail
   let ((), failures) ← (do tests; experimentTests; compileTime).run 0
   if failures == 0 then
     IO.println "all tests passed"

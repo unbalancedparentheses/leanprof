@@ -746,6 +746,20 @@ def tools : Array Json := #[
     [("keep_worktrees", bProp "keep the base and candidate worktrees"), ("id", sProp "experiment id (default: the current one)")] [],
   tool "experiment_status" "The experiment's configuration, base and tries so far (JSON)."
     [("id", sProp "experiment id (default: the current one)")] [],
+  tool "project_fixes" ("Project-wide compile-time changes, verified (`leanprof fix --elab --project`). From an " ++
+    "`elab --project --heartbeats --counts --why` report (made first unless report is given): hypotheses with their " ++
+    "evidence (a definition unfolded in many files: irreducible, or reducible; an instance tried often, used rarely: " ++
+    "a lower priority; a simp lemma tried often, used rarely: no @[simp]; Lean's inferred termination measures; " ++
+    "shortcut instances, not tried), ranked by files and exact counts; attributed heartbeats overlap and are not " ++
+    "savings. Unless dry_run, each of the first top mechanical ones is one commit judged by an experiment against " ++
+    "HEAD (build, proof-preservation guard, tests, heartbeats per declaration and module of the defining module and " ++
+    "its dependents, plain lake build time of those modules): KEEP, DISCARD or INCONCLUSIVE with the net effect, " ++
+    "dearer declarations included. KEEP: a commit on a new local branch.")
+    [("report", sProp "elab --project report (default: profile the project first)"),
+     ("dry_run", bProp "list the hypotheses and the edits only"), ("top", nProp "mechanical candidates to try (default 5)"),
+     ("only", sProp "the candidates to try, by number: 1,3"), ("no_test", bProp "run no tests"),
+     ("build_runs", nProp "timed plain builds of the affected modules, each side (default 3; 0: none)"),
+     ("jobs", nProp "files profiled at a time")] [],
   tool "live" ("What a running program is doing now: its latest live snapshot (it must run with LEANPROF_LIVE), " ++
     "with rates over a short interval and the scopes each thread is inside.")
     [("pid", sProp "process id (snapshot in $TMPDIR/leanprof-PID.live.json, from LEANPROF_LIVE=1)"),
@@ -988,6 +1002,20 @@ def callTool (name : String) (a : Json) : IO Json := do
       | "experiment_try", 3 => "INCONCLUSIVE\n" | "experiment_try", _ => "ERROR\n"
       | _, _ => ""
     return textResult s!"{verdict}{out}\n{tailText err 10}" (rc == 2 || (name != "experiment_try" && rc != 0 && out.isEmpty))
+  | "project_fixes" =>
+    let report ← match argStr a "report" with
+      | some r => pure #["--report", ← projectPath cwd "report" r]
+      | none => pure #[]
+    let only ← match argStr a "only" with
+      | some o =>
+        unless !o.isEmpty && o.all (fun c => c.isDigit || c == ',') do throw <| IO.userError s!"only takes candidate numbers: 1,3 (not {o})"
+        pure #["--only", o]
+      | none => pure #[]
+    let num (k f : String) := (argNat a k).map (#[f, toString ·]) |>.getD #[]
+    let (rc, out, err) ← runSelf (#["fix", "--elab", "--project"] ++ report ++ only ++
+      (if argBool a "dry_run" then #["--dry-run"] else #[]) ++ (if argBool a "no_test" then #["--no-test"] else #[]) ++
+      num "top" "--top" ++ num "build_runs" "--build-runs" ++ num "jobs" "--jobs") cwd
+    return textResult s!"{out}\n{tailText err 10}" (rc == 2)
   | "live" =>
     let path ← match argStr a "path", argStr a "pid" with
       | some p, _ => pure (inDir cwd p)

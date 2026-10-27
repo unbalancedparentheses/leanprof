@@ -22,6 +22,11 @@
 #     --dry-run                             -> Lean's simp only lists, nothing changed
 #     the costliest simp calls              -> KEEP: simp only, on a new branch, with
 #                                              the evidence in the commit message
+#   fix --elab --project on Tests/ProjectFixes (cross-file hypotheses)
+#     --dry-run                             -> the hypotheses with their evidence, the edits
+#     `double` made irreducible             -> DISCARD: rfl and decide in two modules break
+#     the inferred termination measures     -> KEEP on a new branch, per declaration and
+#                                              module, with the plain build time
 #
 # After each step the checkout must be clean (the checks run in git worktrees
 # under .lake/leanprof/experiments). Exits 1 on any unexpected result. CI runs
@@ -194,6 +199,43 @@ grep -q "KEEP against" "$out/fixelab-commit.txt" || fail "fix --elab: no evidenc
 [ "$(git rev-parse HEAD)" = "$(git rev-parse main)" ] || fail "fix --elab: the checkout moved"
 [ "$(git worktree list | wc -l)" -eq 1 ] || fail "fix --elab: worktrees left: $(git worktree list)"
 clean "fix --elab"
+
+echo
+echo "== fix --elab --project: cross-file hypotheses, each checked by an experiment"
+pf=$(mktemp -d "${TMPDIR:-/tmp}/leanprof-projectfix.XXXXXX")
+cp -R "$root/Tests/ProjectFixes/." "$pf/"
+rm -rf "$pf/.lake"
+cd "$pf"
+git init -q -b main
+printf '.lake\n' > .gitignore
+git add -A
+git commit -q -m "fixture"
+lake build >/dev/null 2>&1 || fail "fix --elab --project: the fixture does not build"
+code=0
+"$lp" fix --elab --project --dry-run > "$out/projectfix.txt" 2>&1 || code=$?
+cat "$out/projectfix.txt"
+[ "$code" = 0 ] || fail "fix --elab --project --dry-run: exit code $code"
+grep -q "irreducible  double  (PF/Defs.lean:13)" "$out/projectfix.txt" || fail "fix --elab --project: no irreducible hypothesis"
+grep -q "simp-attr  double_of_big" "$out/projectfix.txt" || fail "fix --elab --project: no simp-attr hypothesis"
+grep -q "+attribute \[irreducible\] double" "$out/projectfix.txt" || fail "fix --elab --project --dry-run: no edit"
+grep -q "not what the change would save\|inclusive and overlapping" "$out/projectfix.txt" || fail "fix --elab --project: overlap not stated"
+clean "fix --elab --project --dry-run"
+code=0
+"$lp" fix --elab --project --no-test --build-runs 1 > "$out/projectfix.txt" 2>&1 || code=$?
+cat "$out/projectfix.txt"
+[ "$code" = 0 ] || fail "fix --elab --project: exit code $code, expected 0 (a KEEP)"
+grep -q "#1 irreducible double: DISCARD" "$out/projectfix.txt" || fail "fix --elab --project: irreducible double not discarded (it breaks rfl and decide)"
+grep -q "termination 2 recursive declarations: KEEP" "$out/projectfix.txt" || fail "fix --elab --project: the inferred measures not kept"
+grep -q "declarations: 2 cheaper, 0 dearer" "$out/projectfix.txt" || fail "fix --elab --project: no per-declaration effect"
+grep -q "plain lake build of" "$out/projectfix.txt" || fail "fix --elab --project: no plain build time"
+git show leanprof-fix/project-termination > "$out/projectfix-commit.txt" 2>&1 || fail "fix --elab --project: no branch"
+grep -q "^+termination_by" "$out/projectfix-commit.txt" || fail "fix --elab --project: the commit lacks termination_by"
+grep -q "KEEP against" "$out/projectfix-commit.txt" || fail "fix --elab --project: no evidence in the commit message"
+python3 -c "import json,sys; r=json.load(open(sys.argv[1])); t=r['tried']; sys.exit(0 if len(t)==3 and all('verdict' in x for x in t) and t[2].get('declarations_dearer')==[] else 1)" \
+  .lake/leanprof/fix/project-fixes.json || fail "fix --elab --project: the evidence file"
+[ "$(git rev-parse HEAD)" = "$(git rev-parse main)" ] || fail "fix --elab --project: the checkout moved"
+[ "$(git worktree list | wc -l)" -eq 1 ] || fail "fix --elab --project: worktrees left: $(git worktree list)"
+clean "fix --elab --project"
 
 [ $failed = 0 ] && echo "experiment-check: all passed"
 exit $failed
