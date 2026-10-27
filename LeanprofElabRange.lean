@@ -82,6 +82,9 @@ partial def dropInPrefix (text : String) : String :=
 module when it changes): `elab` builds the driver from it for a project on another Lean. -/
 def driverSource : String := include_str "LeanprofElabDriver.lean"
 
+/-- The driver's memory readings (`--memory`), compiled with it. -/
+def memstatSource : String := include_str "c/memstat.c"
+
 def driverExe : String := "leanprof-elab-driver" ++ (if System.Platform.isWindows then ".exe" else "")
 
 /-- The driver built with leanprof (next to this program), or `LEANPROF_ELAB_DRIVER`. -/
@@ -122,7 +125,7 @@ def hexHash (s : String) : String := String.ofList (Nat.toDigits 16 (hash s).toN
 `cacheDir/drivers/COMMIT-KEY/`, the key naming this driver source and that Lean's
 directory (the driver is linked against that Lean's shared library, where it is). -/
 def cachedDriverDir (sysroot : FilePath) (commit : String) : IO FilePath :=
-  return (← cacheDir) / "drivers" / s!"{commit.take 12}-{hexHash (driverSource ++ "\x00" ++ sysroot.toString)}"
+  return (← cacheDir) / "drivers" / s!"{commit.take 12}-{hexHash (driverSource ++ memstatSource ++ "\x00" ++ sysroot.toString)}"
 
 /-- The core shared libraries of the Lean at `sysroot` (`libInit_shared`,
 `libleanshared`, `libleanshared_1`, ...), as linker flags: the driver's code calls
@@ -149,6 +152,7 @@ def buildDriver (sysroot : FilePath) (commit : String) (dir : FilePath) : IO (Ex
     IO.FS.createDirAll stage
     let src := stage / "LeanprofElabDriver.lean"
     IO.FS.writeFile src driverSource
+    IO.FS.writeFile (stage / "memstat.c") memstatSource
     let lib := sysroot / "lib" / "lean"
     -- that Lean's own library and compiler, not those of the project or of leanprof's `run`
     let env : Array (String × Option String) :=
@@ -156,7 +160,7 @@ def buildDriver (sysroot : FilePath) (commit : String) (dir : FilePath) : IO (Ex
     let steps : List (String × Array String) := [
       ((sysroot / "bin" / "lean").toString, #["-c", (stage / "driver.c").toString, src.toString]),
       ((sysroot / "bin" / "leanc").toString, #["-O3", "-o", (stage / driverExe).toString, (stage / "driver.c").toString,
-        "-rdynamic", "-L", lib.toString, s!"-Wl,-rpath,{lib}"] ++ (← sharedLibFlags lib))]
+        (stage / "memstat.c").toString, "-rdynamic", "-L", lib.toString, s!"-Wl,-rpath,{lib}"] ++ (← sharedLibFlags lib))]
     for (cmd, args) in steps do
       let out ← IO.Process.output { cmd, args, env, cwd := stage }
       if out.exitCode != 0 then
