@@ -11,10 +11,20 @@
      user_us, sys_us    CPU time of the process (and of its children, if any)
      maxrss             peak resident set size, in bytes (wait4's ru_maxrss:
                         bytes on macOS, KiB on Linux, converted here)
-     footprint_peak     macOS only: the peak physical footprint, the memory
-                        the system charges to the process (dirty and
-                        compressed pages; not clean pages of mapped files
-                        such as .olean files). -1 elsewhere.
+     private_peak       the peak of the process's private memory, which no
+                        other process shares: on macOS the physical
+                        footprint's lifetime peak (what the system charges
+                        to the process: dirty and compressed pages, not the
+                        clean pages of mapped files such as .olean files),
+                        exact; on Linux the largest RssAnon (anonymous
+                        resident pages) seen by reading /proc/PID/status
+                        every 20 ms, so a shorter spike can be missed.
+                        -1 when unknown.
+     private_sampled    true when private_peak was sampled (Linux)
+
+   With LEANPROF_BUILD_LIVE (a directory), it also keeps the child's memory
+   now in DIR/PID, `RSS PRIVATE FILE`, rewritten every 100 ms and removed
+   when the child exits: what `build-memory` adds up while the build runs.
      exit, signal       how it ended
      cwd, args          what ran (args without argv[0])
      lean_path          LEAN_PATH as the process saw it
@@ -96,6 +106,46 @@ static void put_str(buf *b, const char *s) {
   puts_(b, "\"");
 }
 
+/* The child's memory now: resident set and private memory (macOS: physical
+   footprint; Linux: RssAnon), in bytes; -1 when unknown. */
+static void child_memory(pid_t pid, long long *rss, long long *priv) {
+#ifdef __APPLE__
+  struct rusage_info_v4 ri;
+  if (proc_pid_rusage(pid, RUSAGE_INFO_V4, (rusage_info_t *)&ri) == 0) {
+    *rss = (long long)ri.ri_resident_size;
+    *priv = (long long)ri.ri_phys_footprint;
+  }
+#else
+  char path[64];
+  snprintf(path, sizeof path, "/proc/%d/status", (int)pid);
+  FILE *f = fopen(path, "r");
+  if (!f) return;
+  char line[256];
+  long long kb;
+  while (fgets(line, sizeof line, f)) {
+    if (strncmp(line, "VmRSS:", 6) == 0 && sscanf(line + 6, "%lld", &kb) == 1) *rss = kb * 1024;
+    else if (strncmp(line, "RssAnon:", 8) == 0 && sscanf(line + 8, "%lld", &kb) == 1) *priv = kb * 1024;
+  }
+  fclose(f);
+#endif
+}
+
+/* The source file a `lean` command line compiles: its argument ending in
+   `.lean` that is not an option's value; "-" when there is none. */
+static const char *source_of(int argc, char **argv) {
+  for (int i = 1; i < argc; i++) {
+    const char *a = argv[i];
+    if (!strcmp(a, "-o") || !strcmp(a, "-i") || !strcmp(a, "-c") || !strcmp(a, "-b") ||
+        !strcmp(a, "--setup") || !strcmp(a, "--bc") || !strcmp(a, "--ilean")) {
+      i++;
+      continue;
+    }
+    size_t n = strlen(a);
+    if (a[0] != '-' && n > 5 && !strcmp(a + n - 5, ".lean")) return a;
+  }
+  return "-";
+}
+
 int main(int argc, char **argv) {
   const char *real = getenv("LEANPROF_REAL_LEAN");
   const char *log = getenv("LEANPROF_BUILD_LOG");
@@ -135,16 +185,43 @@ int main(int argc, char **argv) {
     perror("leanprof-lean-wrap: exec");
     _exit(127);
   }
+  /* poll the child until it exits: its memory now, for the live readings,
+     and on Linux the largest RssAnon */
   long long footprint = -1;
-#ifdef __APPLE__
-  /* the child's footprint can be read until it is reaped: wait without reaping */
-  {
+  const char *live = getenv("LEANPROF_BUILD_LIVE");
+  char livefile[4096] = "", livetmp[4200] = "";
+  if (live && *live) {
+    snprintf(livefile, sizeof livefile, "%s/%d", live, (int)child);
+    snprintf(livetmp, sizeof livetmp, "%s.tmp", livefile);
+  }
+  for (unsigned tick = 0;; tick++) {
     siginfo_t si;
-    int r;
-    do r = waitid(P_PID, (id_t)child, &si, WEXITED | WNOWAIT);
-    while (r < 0 && errno == EINTR);
+    memset(&si, 0, sizeof si);
+    int r = waitid(P_PID, (id_t)child, &si, WEXITED | WNOWAIT | WNOHANG);
+    if (r == 0 && si.si_pid == child) break;
+    if (r < 0 && errno != EINTR) break;
+    long long rss = -1, priv = -1;
+    child_memory(child, &rss, &priv);
+#ifndef __APPLE__
+    if (priv > footprint) footprint = priv;
+#endif
+    /* every 100 ms: `RSS PRIVATE FILE`, replaced whole (rename) */
+    if (*livefile && tick % 5 == 0 && rss >= 0) {
+      FILE *f = fopen(livetmp, "w");
+      if (f) {
+        fprintf(f, "%lld %lld %s\n", rss, priv, source_of(argc, argv));
+        fclose(f);
+        rename(livetmp, livefile);
+      }
+    }
+    usleep(20000);
+  }
+  if (*livefile) unlink(livefile);
+#ifdef __APPLE__
+  /* exact: the footprint's lifetime peak, readable until the child is reaped */
+  {
     struct rusage_info_v4 ri;
-    if (r == 0 && proc_pid_rusage(child, RUSAGE_INFO_V4, (rusage_info_t *)&ri) == 0)
+    if (proc_pid_rusage(child, RUSAGE_INFO_V4, (rusage_info_t *)&ri) == 0)
       footprint = (long long)ri.ri_lifetime_max_phys_footprint;
   }
 #endif
@@ -167,7 +244,12 @@ int main(int argc, char **argv) {
   putf(&b, ",\"user_us\":%lld", (long long)ru.ru_utime.tv_sec * 1000000LL + ru.ru_utime.tv_usec);
   putf(&b, ",\"sys_us\":%lld", (long long)ru.ru_stime.tv_sec * 1000000LL + ru.ru_stime.tv_usec);
   putf(&b, ",\"maxrss\":%lld", maxrss);
-  putf(&b, ",\"footprint_peak\":%lld", footprint);
+  putf(&b, ",\"private_peak\":%lld", footprint);
+#ifdef __APPLE__
+  puts_(&b, ",\"private_sampled\":false");
+#else
+  puts_(&b, ",\"private_sampled\":true");
+#endif
   putf(&b, ",\"exit\":%lld", (long long)(WIFEXITED(status) ? WEXITSTATUS(status) : -1));
   putf(&b, ",\"signal\":%lld", (long long)(WIFSIGNALED(status) ? WTERMSIG(status) : 0));
   char cwd[4096];

@@ -91,8 +91,10 @@ structure Proc where
   sysUs : Nat
   /-- peak resident set size, bytes -/
   maxrss : Nat
-  /-- macOS: peak physical footprint, bytes; none elsewhere -/
-  footprint : Option Nat
+  /-- peak private memory, bytes: macOS's physical footprint (exact), Linux's
+  RssAnon (sampled every 20 ms); none when unknown -/
+  priv : Option Nat
+  privSampled : Bool
   exit : Int
   signal : Nat
   cwd : String
@@ -109,10 +111,11 @@ def strField (j : Json) (k : String) : String := (j.getObjValAs? String k).toOpt
 
 def Proc.ofJson? (j : Json) : Option Proc := do
   let args ← (j.getObjValAs? (Array String) "args").toOption
-  let fp := (j.getObjValAs? Int "footprint_peak").toOption.getD (-1)
+  let fp := (j.getObjValAs? Int "private_peak").toOption.getD (-1)
   return { startUs := natField j "start_us", stopUs := natField j "end_us", userUs := natField j "user_us",
            sysUs := natField j "sys_us", maxrss := natField j "maxrss",
-           footprint := if fp < 0 then none else some fp.toNat,
+           priv := if fp < 0 then none else some fp.toNat,
+           privSampled := (j.getObjValAs? Bool "private_sampled").toOption.getD false,
            exit := (j.getObjValAs? Int "exit").toOption.getD 0, signal := natField j "signal",
            cwd := strField j "cwd", leanPath := strField j "lean_path", args }
 
@@ -149,14 +152,18 @@ structure Module where
   proc : Proc
   /-- the peak of `lean` on the module's header alone -/
   importRss : Option Nat := none
-  importFootprint : Option Nat := none
+  importPriv : Option Nat := none
   deriving Inhabited
 
 def Module.wallUs (m : Module) : Nat := m.proc.stopUs - m.proc.startUs
 
 /-- What is left of the peak once the imports' peak is taken out (approximate). -/
 def Module.ownRss (m : Module) : Option Nat := m.importRss.map (m.proc.maxrss - ·)
-def Module.ownFootprint (m : Module) : Option Nat := do (← m.proc.footprint) - (← m.importFootprint)
+def Module.ownPriv (m : Module) : Option Nat := do (← m.proc.priv) - (← m.importPriv)
+/-- The rest of the resident peak: pages of mapped files (`.olean` files, the
+`lean` binary), which processes share. Approximate: the two peaks need not be
+at the same moment. -/
+def Module.shared (m : Module) : Nat := m.proc.maxrss - m.proc.priv.getD 0
 
 /-- `A/B/C.lean` relative to `cwd` as `A.B.C`. -/
 def moduleOfPath (cwd file : String) : String :=
@@ -266,37 +273,46 @@ def fakeSysroot (sysroot dir wrapper : FilePath) : IO Unit := do
   link #[wrapper] (dir / "bin")
   IO.FS.rename (dir / "bin" / "leanprof-lean-wrap") (dir / "bin" / "lean")
 
-/-- Resident memory of the `lean` processes the wrappers started, sampled once
-with `ps`: the total, and the files they compile. -/
-def sampleOnce (fakeLean : String) : IO (Nat × Array String) := do
-  let out ← try IO.Process.output { cmd := "ps", args := #["-A", "-o", "pid=,ppid=,rss=,args="] }
-    catch _ => return (0, #[])
-  let rows := (out.stdout.splitOn "\n").filterMap fun l =>
-    match (l.splitOn " ").filter (· != "") with
-    | pid :: ppid :: rss :: args => some (pid, ppid, rss.toNat?.getD 0, args)
-    | _ => none
-  let wrappers := rows.filterMap fun (pid, _, _, args) => if args.head? == some fakeLean then some pid else none
-  let mut total := 0
-  let mut files := #[]
-  for (_, ppid, rss, args) in rows do
-    if wrappers.contains ppid then
-      total := total + rss * 1024
-      if let some f := sourceOf args.toArray then files := files.push f
-  return (total, files)
+/-- The `lean` processes running now, from the wrappers' live readings
+(`DIR/PID`: `RSS PRIVATE FILE`): resident set, private memory, file. -/
+def readLive (dir : FilePath) : IO (Array (Nat × Nat × String)) := do
+  let entries ← try dir.readDir catch _ => return #[]
+  let mut out := #[]
+  for e in entries do
+    if e.fileName.endsWith ".tmp" then continue
+    let text ← try IO.FS.readFile e.path catch _ => continue
+    match (text.trimAscii.toString.splitOn " ") with
+    | rss :: priv :: file =>
+      out := out.push (rss.toNat?.getD 0, priv.toNat?.getD 0, " ".intercalate file)
+    | _ => pure ()
+  return out
 
-/-- The largest sample: bytes, the files then compiling, and the number of samples. -/
+/-- The memory of the `lean` processes running together, sampled while the build runs. -/
 structure Sampled where
-  peak : Nat := 0
-  files : Array String := #[]
+  /-- the largest sum of their resident sets (shared pages counted once per process) -/
+  rssPeak : Nat := 0
+  rssFiles : Array String := #[]
+  /-- the largest sum of their private memory plus the largest shared part of one of them:
+  shared pages counted once, when the processes map the same files -/
+  estPeak : Nat := 0
+  estFiles : Array String := #[]
   samples : Nat := 0
 
+def Sampled.add (s : Sampled) (live : Array (Nat × Nat × String)) : Sampled :=
+  let rss : Nat := live.foldl (fun a (r, _, _) => a + r) 0
+  let priv : Nat := live.foldl (fun a (_, p, _) => a + p) 0
+  let shared : Nat := live.foldl (fun a (r, p, _) => max a (r - p)) 0
+  let files := live.map (·.2.2)
+  let s := { s with samples := s.samples + 1 }
+  let s := if rss > s.rssPeak then { s with rssPeak := rss, rssFiles := files } else s
+  if priv + shared > s.estPeak then { s with estPeak := priv + shared, estFiles := files } else s
+
 /-- Sample every `periodMs` until `stop` is set. -/
-partial def sampler (fakeLean : String) (stop : IO.Ref Bool) (periodMs : UInt32) : IO Sampled := do
+partial def sampler (dir : FilePath) (stop : IO.Ref Bool) (periodMs : UInt32) : IO Sampled := do
   let rec loop (s : Sampled) : IO Sampled := do
     if ← stop.get then return s
-    let (t, fs) ← sampleOnce fakeLean
-    let s := if t > s.peak then { s with peak := t, files := fs, samples := s.samples + 1 }
-      else { s with samples := s.samples + 1 }
+    let live ← readLive dir
+    let s := if live.isEmpty then s else s.add live
     IO.sleep periodMs
     loop s
   loop {}
@@ -324,13 +340,15 @@ def concurrentPeak (ms : Array Module) : Nat × Array Nat × Nat := Id.run do
       bestSet := set
   return (best, bestSet, most)
 
-/-- The largest number of jobs `j ≤ maxJobs` for which the `j` heaviest peaks add up
-to at most `limit` (0: the heaviest module alone is above it), and that sum. Any
-`j` modules may run together, so this bounds the build's memory from above,
-whatever modules run together. -/
-def safeJobs (peaks : Array Nat) (limit maxJobs : Nat) : Nat × Nat := Id.run do
+/-- The largest number of jobs `j ≤ maxJobs` for which `base` plus the `j` largest
+peaks is at most `limit` (0: not even one fits), and that total. Any `j` modules
+may run together, so with resident peaks (`base` 0) this bounds the build's
+memory from above whatever modules run together, counting the pages of shared
+`.olean` files once per process; with private peaks and `base` the largest
+shared part, it estimates the memory with those pages counted once. -/
+def safeJobs (peaks : Array Nat) (limit maxJobs : Nat) (base : Nat := 0) : Nat × Nat := Id.run do
   let sorted := peaks.qsort (· > ·)
-  let mut sum := 0
+  let mut sum := base
   let mut j := 0
   for p in sorted do
     if j ≥ maxJobs || sum + p > limit then break
@@ -496,7 +514,7 @@ def measureImports (wrapper : FilePath) (real : String) (dir : FilePath) (ms : A
       let procs ← readLog log
       if let some (p : Proc) := procs[0]? then
         if rc == 0 then
-          out := out.set! k { out[k]! with importRss := some p.maxrss, importFootprint := p.footprint }
+          out := out.set! k { out[k]! with importRss := some p.maxrss, importPriv := p.priv }
     i := i + batch.length
   return out
 
@@ -505,11 +523,17 @@ def measureImports (wrapper : FilePath) (real : String) (dir : FilePath) (ms : A
 def platformName : String :=
   if System.Platform.isOSX then "macOS" else if System.Platform.isWindows then "Windows" else "Linux"
 
+/-- What private memory is on this platform. -/
+def privName : String :=
+  if System.Platform.isOSX then "footprint" else "anonymous"
+
+def optJson (v : Option Nat) : Json := match v with | some n => toJson n | none => Json.null
+
 def moduleJson (m : Module) : Json :=
-  let opt (v : Option Nat) : Json := match v with | some n => toJson n | none => Json.null
   Json.mkObj [("module", Json.str m.name), ("file", Json.str m.file), ("peak_rss", toJson m.proc.maxrss),
-    ("footprint_peak", opt m.proc.footprint), ("imports_rss", opt m.importRss),
-    ("imports_footprint", opt m.importFootprint), ("own_rss", opt m.ownRss), ("own_footprint", opt m.ownFootprint),
+    ("private_peak", optJson m.proc.priv), ("private_sampled", Json.bool m.proc.privSampled),
+    ("imports_rss", optJson m.importRss), ("imports_private", optJson m.importPriv),
+    ("own_rss", optJson m.ownRss), ("own_private", optJson m.ownPriv),
     ("wall_ms", toJson (m.wallUs / 1000)), ("cpu_ms", toJson ((m.proc.userUs + m.proc.sysUs) / 1000)),
     ("exit", toJson m.proc.exit), ("start_ms", toJson (m.proc.startUs / 1000)), ("end_ms", toJson (m.proc.stopUs / 1000))]
 
@@ -534,7 +558,7 @@ def serialText (s : Serial) (top : Nat) : Array String := Id.run do
     out := out.push s!"    the peak was reached during line {c.line}{if c.name.isEmpty then "" else s!" ({c.name})"}"
   let risers := (s.commands.filter (·.peakRise > 0)).qsort (fun a b => a.peakRise > b.peakRise)
   if risers.isEmpty then return out.push "    no command raised the peak above what the imports reached"
-  out := out.push "    commands during which the process's peak rose (approximate: when memory was reached, not who owns it):"
+  out := out.push "    commands during which the process's peak rose (when memory was reached, not who owns it):"
   out := out.push s!"    {rpad "peak rise" 10} {rpad "resident after" 14} {rpad "heartbeats" 12}  line  command"
   for c in risers.toList.take top do
     out := out.push s!"    {rpad (fmtBytes c.peakRise) 10} {rpad (fmtBytes c.rssAfter) 14} {rpad (toString (c.heartbeats / 1000) ++ "k") 12}  {rpad (toString c.line) 4}  {if c.name.isEmpty then c.text else c.name}"
@@ -548,32 +572,45 @@ structure Result where
   serial : Array Serial := #[]
   jobs : Option Nat := none
 
+def listNames (names : Array String) : String :=
+  s!"{", ".intercalate (names.toList.take 6)}{if names.size > 6 then s!", and {names.size - 6} more" else ""}"
+
 def report (o : Opts) (r : Result) (ncpu : Nat) : String × Json × Bool := Id.run do
   let ms := r.modules.qsort (fun a b => a.proc.maxrss > b.proc.maxrss)
   let (concPeak, concSet, most) := concurrentPeak ms
-  let hasFp := ms.any (·.proc.footprint.isSome)
+  let hasPriv := ms.any (·.proc.priv.isSome)
+  let sampledPriv := ms.any (·.proc.privSampled)
   let mut out := #[s!"leanprof build-memory: {ms.size} {if ms.size == 1 then "module" else "modules"} compiled by `lake build`, at most {most} at a time ({platformName}, {ncpu} CPUs{match r.jobs with | some j => s!", --jobs {j}" | none => ""})"]
   if r.buildExit != 0 then out := out.push s!"  the build failed (exit code {r.buildExit}): only the modules it compiled are measured"
   if ms.isEmpty then
     out := out.push "  no module was compiled: everything was up to date (--clean rebuilds the project's own modules)"
   else
-    out := out.push s!"\n  peak memory of each module's `lean` process (resident set{if hasFp then "; footprint: what macOS charges the process, without the clean pages of mapped .olean files" else ""}):"
-    out := out.push s!"  {rpad "peak RSS" 10}{if hasFp then rpad "footprint" 11 else ""} {rpad "imports" 10} {rpad "own" 10} {rpad "wall" 8}  module"
+    out := out.push s!"\n  peak memory of each module's `lean` process:"
+    out := out.push s!"  {rpad "peak RSS" 10}{if hasPriv then rpad privName 11 else ""} {rpad "imports" 10} {rpad "own" 10} {rpad "wall" 8}  module"
     for m in ms.toList.take o.top do
       let imp := match m.importRss with | some v => fmtBytes v | none => "-"
       let own := match m.ownRss with | some v => fmtBytes v | none => "-"
-      let fp := if hasFp then rpad (match m.proc.footprint with | some v => fmtBytes v | none => "-") 11 else ""
-      out := out.push s!"  {rpad (fmtBytes m.proc.maxrss) 10}{fp} {rpad imp 10} {rpad own 10} {rpad (fmtSecs m.wallUs) 8}  {m.name}{if m.proc.exit != 0 then s!"  (exit {m.proc.exit})" else ""}"
+      let pv := if hasPriv then rpad (match m.proc.priv with | some v => fmtBytes v | none => "-") 11 else ""
+      out := out.push s!"  {rpad (fmtBytes m.proc.maxrss) 10}{pv} {rpad imp 10} {rpad own 10} {rpad (fmtSecs m.wallUs) 8}  {m.name}{if m.proc.exit != 0 then s!"  (exit {m.proc.exit})" else ""}"
     if ms.size > o.top then out := out.push s!"  ... {ms.size - o.top} more in the JSON report"
+    out := out.push "  peak RSS: resident set, with the pages of mapped .olean files, which processes share"
+    if hasPriv then
+      out := out.push (if System.Platform.isOSX then
+        "  footprint: what macOS charges the process (its private memory), without the mapped files"
+        else s!"  anonymous: private memory (RssAnon){if sampledPriv then ", the largest of readings every 20 ms" else ""}")
     if ms.any (·.importRss.isSome) then
-      out := out.push "  imports: the peak of `lean` on the module's header alone (the environment after its imports);\n  own: the rest of the peak, approximately the module's own elaboration"
+      out := out.push "  imports: the peak of `lean` on the module's header alone (the environment after its imports)"
+      out := out.push "  own: the rest of the peak, approximately the module's own elaboration"
     -- concurrency
-    out := out.push s!"\n  concurrency: the peaks of the modules running at the same time add up to at most {fmtBytes concPeak}"
-    let names := concSet.map (ms[·]!.name)
-    out := out.push s!"    ({String.intercalate ", " (names.toList.take 8)}{if names.size > 8 then s!", and {names.size - 8} more" else ""})"
+    out := out.push s!"\n  modules running at the same time: their peaks add up to at most {fmtBytes concPeak}"
+    out := out.push s!"    ({listNames (concSet.map (ms[·]!.name))})"
     if let some s := r.sampled then
       if s.samples > 0 then
-        out := out.push s!"    sampled every 0.2 s ({s.samples} samples): {fmtBytes s.peak} resident in `lean` processes at most"
+        out := out.push s!"  sampled every 0.2 s while the build ran ({s.samples} samples):"
+        out := out.push s!"    resident sets added up: {fmtBytes s.rssPeak} at most"
+        if hasPriv then
+          out := out.push s!"    private memory added up, plus the largest shared part once: {fmtBytes s.estPeak} at most"
+          out := out.push s!"    ({listNames (s.estFiles.map fun f => ((ms.find? (·.file == f)).map (·.name)).getD f)})"
   -- limit and jobs
   let mut limitJ := Json.null
   if let some lim := o.memLimit then
@@ -584,13 +621,23 @@ def report (o : Opts) (r : Result) (ncpu : Nat) : String × Json × Bool := Id.r
       for m in near do
         out := out.push s!"    {if m.proc.maxrss > lim then "ABOVE" else "near "} {fmtBytes m.proc.maxrss} ({m.proc.maxrss * 100 / lim}% of the limit): {m.name}"
     let (j, sum) := safeJobs (ms.map (·.proc.maxrss)) lim ncpu
-    if ms.isEmpty then pure ()
-    else if j == 0 then
-      out := out.push s!"    jobs: none: the heaviest module alone needs {fmtBytes ms[0]!.proc.maxrss}"
-    else
-      out := out.push s!"    jobs: at most {j} at once keeps the build under the limit: the {j} heaviest peaks add up to {fmtBytes sum}"
-      out := out.push s!"    (Lake runs as many jobs as Lean has threads: `LEAN_NUM_THREADS={j} lake build`; `leanprof build-memory --clean --jobs {j}` checks it)"
-    limitJ := Json.mkObj [("limit", toJson lim), ("safe_jobs", toJson j), ("heaviest_sum", toJson sum),
+    let shared := ms.foldl (fun a m => max a m.shared) 0
+    let (je, sume) := safeJobs (ms.map (·.proc.priv.getD 0)) lim ncpu shared
+    if !ms.isEmpty then
+      let all := min ncpu ms.size
+      if j == 0 then
+        out := out.push s!"    jobs: the heaviest module alone needs {fmtBytes ms[0]!.proc.maxrss} resident"
+      else if j == all then
+        out := out.push s!"    jobs: any number fits: the {j} largest resident peaks add up to {fmtBytes sum}"
+      else
+        out := out.push s!"    jobs: at most {j} at once is safe: the {j} largest resident peaks add up to {fmtBytes sum}"
+      if hasPriv && je > j then
+        out := out.push s!"    with the shared .olean pages counted once (the {je} largest private peaks plus the largest shared part, {fmtBytes shared}): {if je == all then "any number" else toString je} jobs, {fmtBytes sume}; an estimate, not a bound"
+      if j > 0 && j < all then
+        out := out.push s!"    Lake runs as many jobs as it has Lean threads: `LEAN_NUM_THREADS={j} lake build` (each `lean` then has {j} threads too); `leanprof build-memory --clean --jobs {j}` runs the build that way, with each `lean` at its usual threads, and measures it"
+    limitJ := Json.mkObj [("limit", toJson lim), ("safe_jobs", toJson j), ("largest_rss_sum", toJson sum),
+      ("estimated_jobs", if hasPriv then toJson je else Json.null),
+      ("estimated_sum", if hasPriv then toJson sume else Json.null), ("largest_shared", toJson shared),
       ("near", Json.arr (near.map (Json.str ·.name)))]
   -- budget
   let mut failed := false
@@ -606,21 +653,21 @@ def report (o : Opts) (r : Result) (ncpu : Nat) : String × Json × Bool := Id.r
       Json.mkObj [("module", Json.str m.name), ("peak_rss", toJson m.proc.maxrss)]))]
   -- per command
   if !r.serial.isEmpty then
-    out := out.push "\n  memory per command, in a serial elaboration (one command at a time, no parallel proofs):"
+    out := out.push "\n  memory per command, in a serial elaboration (one command at a time, no parallel proofs; approximate):"
     for s in r.serial do out := out ++ serialText s 10
   let j := Json.mkObj [("kind", Json.str "build-memory"), ("version", toJson (1 : Nat)),
     ("platform", Json.str platformName), ("cpus", toJson ncpu), ("jobs", match r.jobs with | some j => toJson j | none => Json.null),
     ("build_exit", toJson r.buildExit.toNat), ("max_concurrent", toJson most),
-    ("concurrent_peak", Json.mkObj [("sum_of_peaks", toJson concPeak), ("modules", Json.arr (names concSet ms))]),
+    ("concurrent_peak", Json.mkObj [("sum_of_peaks", toJson concPeak),
+      ("modules", Json.arr (concSet.map (Json.str ms[·]!.name)))]),
     ("sampled", match r.sampled with
-      | some s => Json.mkObj [("peak_rss", toJson s.peak), ("samples", toJson s.samples),
-          ("files", Json.arr (s.files.map Json.str))]
+      | some s => Json.mkObj [("rss_sum", toJson s.rssPeak), ("rss_files", Json.arr (s.rssFiles.map Json.str)),
+          ("private_sum_plus_shared", toJson s.estPeak), ("private_files", Json.arr (s.estFiles.map Json.str)),
+          ("samples", toJson s.samples)]
       | none => Json.null),
     ("mem_limit", limitJ), ("budget", budgetJ),
     ("modules", Json.arr (ms.map moduleJson)), ("declarations", Json.arr (r.serial.map serialJson))]
   return ("\n".intercalate out.toList, j, failed)
-where
-  names (set : Array Nat) (ms : Array Module) : Array Json := set.map (Json.str ms[·]!.name)
 
 /-! ## The command -/
 
@@ -629,25 +676,33 @@ def ncpus : IO Nat := do
   let out ← try IO.Process.output { cmd, args } catch _ => return 1
   return out.stdout.trimAscii.toString.toNat?.getD 1
 
-/-- Build with every `lean` wrapped; the build's exit code and the records. -/
-def wrappedBuild (o : Opts) (le : Leanprof.Elab.LeanEnv) (work : FilePath) : IO (UInt32 × Array Proc × Option Sampled) := do
+/-- Run `lake build TARGETS` with every `lean` wrapped (`c/leanwrap.c`), sampling
+the memory of the running ones every 0.2 s when `sample`: Lake's exit code, the
+wrapper's records and the samples. `extraEnv` is added to Lake's environment
+(`LEAN_NUM_THREADS` sets its parallelism; `LEANPROF_CHILD_NUM_THREADS` the
+threads of each `lean`, empty for Lean's default). Usable for anything that
+needs each `lean` process of a real build (its time, CPU and memory). -/
+def wrappedBuild (le : Leanprof.Elab.LeanEnv) (work : FilePath) (targets : Array String)
+    (extraEnv : Array (String × Option String)) (sample : Bool) : IO (UInt32 × Array Proc × Option Sampled) := do
   let wrapper ← buildWrapper
   let sys := work / "sysroot"
   fakeSysroot le.sysroot sys wrapper
   let log := work / "lean.jsonl"
   if ← log.pathExists then IO.FS.removeFile log
+  let live := work / "live"
+  if ← live.pathExists then IO.FS.removeDirAll live
+  IO.FS.createDirAll live
   let real := (le.sysroot / "bin" / "lean").toString
-  let threads := (← IO.getEnv "LEAN_NUM_THREADS").getD ""
+  -- absolute: `lean` runs in each package's directory
+  let logAbs := (← IO.FS.realPath work) / "lean.jsonl"
+  let liveAbs ← IO.FS.realPath live
   let env : Array (String × Option String) :=
-    #[("LAKE_OVERRIDE_LEAN", some "1"), ("LEAN_SYSROOT", some sys.toString),
-      ("LEANPROF_REAL_LEAN", some real), ("LEANPROF_BUILD_LOG", some log.toString)] ++
-    (match o.jobs with
-     | some j => #[("LEAN_NUM_THREADS", some (toString j)), ("LEANPROF_CHILD_NUM_THREADS", some threads)]
-     | none => #[])
+    #[("LAKE_OVERRIDE_LEAN", some "1"), ("LEAN_SYSROOT", some (← IO.FS.realPath sys).toString),
+      ("LEANPROF_REAL_LEAN", some real), ("LEANPROF_BUILD_LOG", some logAbs.toString),
+      ("LEANPROF_BUILD_LIVE", if sample then some liveAbs.toString else none)] ++ extraEnv
   let stop ← IO.mkRef false
-  let fakeLean := (sys / "bin" / "lean").toString
-  let samp ← if o.sample then some <$> IO.asTask (prio := .dedicated) (sampler fakeLean stop 200) else pure none
-  let child ← IO.Process.spawn { cmd := "lake", args := #["build"] ++ o.targets, env, stdin := .null }
+  let samp ← if sample then some <$> IO.asTask (prio := .dedicated) (sampler live stop 200) else pure none
+  let child ← IO.Process.spawn { cmd := "lake", args := #["build"] ++ targets, env, stdin := .null }
   let rc ← child.wait
   stop.set true
   let sampled ← match samp with
@@ -680,7 +735,10 @@ def main (argv : List String) : IO UInt32 := do
           if ← b.pathExists then
             IO.eprintln "leanprof: --clean: removing .lake/build so that the project's modules are compiled again"
             IO.FS.removeDirAll b
-        wrappedBuild o le work
+        let threads := (← IO.getEnv "LEAN_NUM_THREADS").getD ""
+        wrappedBuild le work o.targets (match o.jobs with
+          | some j => #[("LEAN_NUM_THREADS", some (toString j)), ("LEANPROF_CHILD_NUM_THREADS", some threads)]
+          | none => #[]) o.sample
     let mut ms ← modulesOf procs
     if o.imports && !ms.isEmpty then
       IO.eprintln s!"leanprof: measuring the imports of {ms.size} {if ms.size == 1 then "module" else "modules"} (lean on each header alone)"

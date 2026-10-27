@@ -178,7 +178,12 @@ for pid in ["-1", "0", "../../etc/x"]:
 # a running program: live snapshot and flight-recorder dump
 env = dict(os.environ, LEANPROF_LIVE="1", LEANPROF_FLIGHT=".lake/leanprof", LEANPROF_QUIET="1")
 server = subprocess.Popen([".lake/build/bin/server", "0", "20"], env=env, stdout=subprocess.DEVNULL)
-time.sleep(1.5)
+# its first snapshot: 1.5 s on a quiet machine, more on a loaded one
+for _ in range(20):
+    time.sleep(0.5)
+    if os.path.exists(os.path.join(tempfile.gettempdir(), f"leanprof-{server.pid}.live.json")):
+        break
+time.sleep(1)
 text, err = tool("live", pid=str(server.pid), seconds=1)
 check("live", not err and "handle" in text and "calls/s" in text and "now  thread" in text, text)
 text, err = tool("dump", pid=str(server.pid))
