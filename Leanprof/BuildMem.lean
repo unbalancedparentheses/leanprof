@@ -632,7 +632,7 @@ def report (o : Opts) (r : Result) (ncpu : Nat) : String × Json × Bool := Id.r
       else
         out := out.push s!"    jobs: at most {j} at once is safe: the {j} largest resident peaks add up to {fmtBytes sum}"
       if hasPriv && je > j then
-        out := out.push s!"    with the shared .olean pages counted once (the {je} largest private peaks plus the largest shared part, {fmtBytes shared}): {if je == all then "any number" else toString je} jobs, {fmtBytes sume}; an estimate, not a bound"
+        out := out.push s!"    with the shared .olean pages counted once (the {je} largest private peaks plus the largest shared part, {fmtBytes shared}): {if je == all then "any number of" else toString je} jobs, {fmtBytes sume}; an estimate, not a bound"
       if j > 0 && j < all then
         out := out.push s!"    Lake runs as many jobs as it has Lean threads: `LEAN_NUM_THREADS={j} lake build` (each `lean` then has {j} threads too); `leanprof build-memory --clean --jobs {j}` runs the build that way, with each `lean` at its usual threads, and measures it"
     limitJ := Json.mkObj [("limit", toJson lim), ("safe_jobs", toJson j), ("largest_rss_sum", toJson sum),

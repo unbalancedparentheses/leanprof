@@ -159,8 +159,11 @@ def buildDriver (sysroot : FilePath) (commit : String) (dir : FilePath) : IO (Ex
       #[("LEAN_PATH", none), ("LEAN_SYSROOT", some sysroot.toString), ("LEAN_CC", none), ("LEAN_CFLAGS", none)]
     let steps : List (String × Array String) := [
       ((sysroot / "bin" / "lean").toString, #["-c", (stage / "driver.c").toString, src.toString]),
+      -- with the system's compiler: `leanc` has no system headers (`mach/mach.h`)
+      ("cc", #["-c", "-O2", "-fPIC", "-I", (sysroot / "include").toString, (stage / "memstat.c").toString,
+        "-o", (stage / "memstat.o").toString]),
       ((sysroot / "bin" / "leanc").toString, #["-O3", "-o", (stage / driverExe).toString, (stage / "driver.c").toString,
-        (stage / "memstat.c").toString, "-rdynamic", "-L", lib.toString, s!"-Wl,-rpath,{lib}"] ++ (← sharedLibFlags lib))]
+        (stage / "memstat.o").toString, "-rdynamic", "-L", lib.toString, s!"-Wl,-rpath,{lib}"] ++ (← sharedLibFlags lib))]
     for (cmd, args) in steps do
       let out ← IO.Process.output { cmd, args, env, cwd := stage }
       if out.exitCode != 0 then

@@ -674,6 +674,19 @@ def tools : Array Json := #[
   tool "elab" "Compile cost per line and declaration of Lean files (elaboration, kernel, compiler), optionally in exact heartbeats."
     [("files", aProp "Lean files"), ("heartbeats", bProp "count heartbeats (deterministic) instead of time"),
      ("top", nProp "lines shown")] ["files"],
+  tool "build_memory" ("Run `lake build` with every `lean` process measured: each module's peak memory (resident " ++
+    "set; on macOS also the footprint), split into its imports and its own elaboration, which modules ran at the " ++
+    "same time, the most jobs that fit a memory limit, and a per-module budget. Only modules Lake compiles are " ++
+    "measured (clean rebuilds the project's own). decls elaborates the heaviest modules serially and names the " ++
+    "commands during which memory peaked (approximate). The JSON report is saved (default .lake/leanprof/build-memory.json).")
+    [("mem_limit", sProp "memory available to the build, e.g. 8G: flags modules near it and gives the most jobs that fit"),
+     ("max_memory", sProp "budget per module, e.g. 6G: an error when a module's peak is above it"),
+     ("jobs", nProp "Lake's parallel jobs for this build (default: one per CPU)"),
+     ("clean", bProp "remove .lake/build first, so every module of the project is compiled and measured"),
+     ("imports", bProp "measure each module's imports apart (default true)"),
+     ("decls", nProp "elaborate the N heaviest modules serially and report memory per command"),
+     ("targets", aProp "Lake targets to build (default: the default targets)"),
+     ("top", nProp "modules shown (default 20)"), ("out", sProp "where to save the JSON report")] [],
   tool "measure" "Run an executable several times with probes into one summary, for judge."
     (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)"),
       ("core", bProp "also count copies and allocations inside Lean's own libraries")])
@@ -837,6 +850,27 @@ def callTool (name : String) (a : Json) : IO Json := do
     let (rc, out, err) ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
     return textResult s!"{out}\n{tailText err 10}" (rc != 0)
+  | "build_memory" =>
+    let targets := argStrs a "targets"
+    for t in targets do
+      if t.startsWith "-" then throw <| IO.userError s!"not a Lake target: {t}"
+    let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/build-memory.json")
+    let size (k : String) : IO (Array String) := do
+      match argStr a k with
+      | some v =>
+        if v.startsWith "-" then throw <| IO.userError s!"not a size: {v}"
+        return #[s!"--{k.replace "_" "-"}", v]
+      | none => return #[]
+    let args := #["build-memory", "--out", outFile, "--top", toString ((argNat a "top").getD 20)] ++
+      (← size "mem_limit") ++ (← size "max_memory") ++
+      (match argNat a "jobs" with | some j => #["--jobs", toString j] | none => #[]) ++
+      (match argNat a "decls" with | some n => #["--decls", toString n] | none => #[]) ++
+      (if argBool a "clean" then #["--clean"] else #[]) ++
+      (if (a.getObjVal? "imports" >>= Json.getBool?).toOption == some false then #["--no-imports"] else #[]) ++
+      (if targets.isEmpty then #[] else #["--"] ++ targets)
+    let (rc, out, err) ← runSelf args cwd
+    -- exit 1: a module above max_memory (the report says which); else the build's own failure
+    return textResult s!"{out}\n{tailText err 15}" (rc != 0 && rc != 1 || out.isEmpty)
   | "measure" =>
     let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++

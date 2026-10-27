@@ -297,9 +297,10 @@ partial def parse (o : Opts) : List String → Except String Opts
   | a :: rest =>
     if a.startsWith "-" then .error s!"unknown option {a}" else parse { o with files := o.files.push a } rest
 
-/-- `run` (also `sample`), `elab` or `measure`. -/
+/-- `run` (also `sample`), `elab`, `measure` or `build-memory`. -/
 def kindOf (j : Json) : String :=
-  if str j "leanprof" == "measure" then "measure"
+  if str j "kind" == "build-memory" then "build-memory"
+  else if str j "leanprof" == "measure" then "measure"
   else if flag j "elab" then "elab"
   else if flag j "sampled" then "sample"
   else "run"

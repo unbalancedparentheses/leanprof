@@ -1,5 +1,6 @@
 /* The memory of the running process, for `leanprof-elab-driver --memory`
-   (per-command memory of a serial elaboration). Linked into the driver.
+   (per-command memory of a serial elaboration). Linked into the driver,
+   compiled by the system's `cc` (Lean's `leanc` has no system headers).
 
    leanprof_mem_stat(which):
      0  resident set size now, in bytes
@@ -16,11 +17,8 @@
 #ifdef __APPLE__
 #include <mach/mach.h>
 #else
-/* Lean's own `leanc` compiles this on Linux, and its sysroot has only the C
-   headers Lean's generated code includes: the few POSIX calls, declared here */
-int open(const char *path, int flags, ...);
-long read(int fd, void *buf, unsigned long n);
-int close(int fd);
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 #ifdef __APPLE__
@@ -40,7 +38,7 @@ static uint64_t lpf_mem_stat(uint32_t which) {
 /* a field of /proc/self/status in kB, as bytes */
 static uint64_t lpf_status_field(const char *name) {
   static char text[8192];
-  int fd = open("/proc/self/status", 0 /* O_RDONLY */);
+  int fd = open("/proc/self/status", O_RDONLY);
   if (fd < 0) return 0;
   long len = 0, k;
   while (len < (long)sizeof text - 1 && (k = read(fd, text + len, sizeof text - 1 - (unsigned long)len)) > 0) len += k;

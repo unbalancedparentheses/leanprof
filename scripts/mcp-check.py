@@ -59,7 +59,7 @@ check("initialize", r["result"]["protocolVersion"] == "2025-06-18" and "tools" i
 send({"jsonrpc": "2.0", "method": "notifications/initialized"})  # no reply expected
 
 names = {t["name"] for t in call("tools/list")["result"]["tools"]}
-want = {"run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
+want = {"run", "sample", "stat", "elab", "build_memory", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge", "live", "dump",
         "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
 
@@ -159,6 +159,14 @@ check("run refuses a report path through a symbolic link out of the project",
 text, err = tool("measure", executable="copybug", args=["10"], runs=1, out=".lake/leanprof/mcp-link.json")
 check("measure refuses a summary path that is a symbolic link",
       err and "inside the project" in text and not os.path.exists(os.path.join(outside_dir, "link-target.json")), text)
+# build_memory: an option cannot pass as a target or a size
+text, err = tool("build_memory", targets=["--out=/tmp/x"])
+check("build_memory refuses an option as a target", err and "not a Lake target" in text, text)
+text, err = tool("build_memory", max_memory="--clean")
+check("build_memory refuses an option as a size", err and "not a size" in text, text)
+text, err = tool("build_memory", out=os.path.join(outside_dir, "bm.json"))
+check("build_memory refuses an output file outside the project", err and "inside the project" in text, text)
+
 # options among elab's files (`--out FILE` would write anywhere)
 text, err = tool("elab", files=["--out", os.path.join(outside_dir, "elab.json"), "Examples/CopyBug.lean"])
 check("elab refuses an option among its files",

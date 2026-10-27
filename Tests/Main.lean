@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.BuildMem
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -697,6 +697,7 @@ def tests : StateT Nat IO Unit := do
   Tests.Elab.run fun n ok d => check n ok d
   -- why a declaration or copy site got worse (Tests/Regress.lean)
   Tests.Regress.run fun n ok d => check n ok d
+  Tests.BuildMem.run fun n ok d => check n ok d
   -- `leanprof` with no arguments: the targets of a lakefile, and what it profiles
   let leanCfg := "import Lake\nopen Lake DSL\n\npackage p where\n  -- testDriver := \"commented\"\n" ++
     "  moreLeancArgs := #[\"--x\"] /- lean_exe hidden -/\n\n@[default_target] lean_lib P\n\n" ++

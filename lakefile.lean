@@ -154,7 +154,7 @@ input_file leanwrapSrc where
 
 /-- `leanprof build-memory`, a library so `needs` rebuilds it when the wrapper changes. -/
 lean_lib LeanprofBuildMem where
-  roots := #[`Leanprof.BuildMem]
+  roots := #[`Leanprof.BuildMem, `Tests.BuildMem]
   needs := #[leanwrapSrc]
 
 /-- `leanprof elab`, imported by the command, and its tests (run by `tests`), with those of
