@@ -3008,7 +3008,7 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
             fprintf(f,
                     "%s%s call%s scopes too small to time (%s): the calls around them change the code they sit in, "
                     "so %s time is off whatever leanprof subtracts, and so is a sample of this build; remove "
-                    "those profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`\n",
+                    "those profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`, or run `leanprof run --retime`, which compiles them out in a second run\n",
                     rows, nholds > 3 ? " and others" : "", nholds == 1 ? "s" : "", held,
                     nholds == 1 ? "its" : "their");
         /* self time also holds what runs inside a scope without probes: Lean's

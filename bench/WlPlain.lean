@@ -182,7 +182,7 @@ def emit (workload : String) (scale : Nat) (phases : List (Phase × UInt64))
   let ps := phases.map fun (p, _) => s!"\{\"name\":\"{p.name}\",\"wall_ns\":{p.wall},\"cpu_ns\":{p.cpu}}"
   IO.println s!"BENCH_JSON \{\"workload\":\"{workload}\",\"scale\":{scale},\"phases\":[{", ".intercalate ps}],\"calls\":{jsonObj calls},\"allocs\":{jsonObj allocs},\"copies\":{jsonObj copies},\"checksum\":{sum}}"
 
-def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
+partial def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
   -- `* 0` of a clock read: the compiler cannot treat the sizes as constants
   let z := (← IO.monoMsNow) * 0
   let sc (n : Nat) : Nat := n * scale / 100 + z
