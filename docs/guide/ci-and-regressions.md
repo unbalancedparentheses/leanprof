@@ -398,7 +398,23 @@ each run can do little work. Wrap it in `Leanprof.bench "NAME" fun _ => ...`
 append `NAME<TAB>NANOSECONDS` to the file named by `$LEANPROF_BENCH_OUT`
 (both use `IO.monoNanosNow`; a region that runs several times in one process
 is summed). Nothing else is instrumented. A run that reports no such region
-is an error. The session also records each run's whole-process time
+is an error.
+
+**Repetitions.** With `--scope`, each run repeats the region and the fastest
+repetition is the run's time: `Leanprof.bench` reads `$LEANPROF_BENCH_REPEAT`
+(a program writing the lines itself may honour it, tagging each line with
+`<TAB>K`, its repetition, or ignore it). A loaded machine stalls a run now and
+then, and puts a whole process on a slower core; the fastest of several
+repetitions takes most of that out of the pair. `--repeat N` fixes the count;
+the default, `auto`, chooses it after the warmup pair and before any measured
+pair, from the 1-minute load over the CPU count: 1 below half, 5 below three
+quarters, else 10, and no more than 100 ms of the region per run. The choice
+is fixed for the session, so the error bounds above hold as for any fixed
+design. On the shared 18-core Mac, with one repetition 88% of sessions on
+identical binaries were still unsettled after 30 pairs at load 12, and 99% at
+load 14; with ten, 0.1% and 4% ([bench/verdicts](../../bench/verdicts/RESULTS.md)).
+The region must be safe to run more than once (its last result is returned);
+`--repeat 1` turns repetitions off. The session also records each run's whole-process time
 (`process_ns`). Overload
 during any sampled boundary disables the timing verdict, unless you pass
 `--allow-overloaded`: on a machine that is never below its CPU count (the
