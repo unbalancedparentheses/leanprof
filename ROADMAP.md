@@ -143,6 +143,38 @@ users than the rest of v0.2.0, and take priority over its long tail.
     declaration only where it can be measured soundly (serially), labelled
     approximate.
 
+## Autoresearch that finds more and breaks nothing
+
+The loop today is an agent following a Claude Code command, with
+`leanprof experiment` judging each change. Ranked by what they would change
+most; none needs a dedicated machine. Not planned: a memory of past
+experiments inside leanprof.
+
+- [ ] **Differential testing.** Generate inputs (random sizes, edge cases,
+  malformed data) and compare base and candidate outputs on thousands of
+  them, beyond the inputs the user gives. A wrong but faster change is the
+  main risk of an unattended loop; this catches the ones the tests miss.
+  Reported as the number of inputs compared, never as proof.
+- [ ] **Start from evidence.** A ranked list of targets from static copies,
+  `explain` and `elab --why`, ordered by measured cost and by whether a
+  mechanical fix exists. Mechanical ones go through `leanprof fix` with no
+  model call; the agent spends its effort on the ones that need judgement.
+- [ ] **Several candidates at once.** Exact counts and heartbeats do not
+  depend on load, so candidates build and are judged in parallel worktrees;
+  only the final paired timing runs one at a time.
+- [ ] **Compile-time autoresearch on Mathlib.** Heartbeats repeat nearly
+  exactly and Lean checks the proofs, so it is the cleanest setting for an
+  unattended loop; builds on the project-wide compile-time fixes above.
+- [ ] **Wins that combine.** Check KEEPs together (two changes that each
+  help can interact), bisect a combination that regresses, and produce a
+  patch series with the evidence on each commit, ready for review.
+- [ ] **A budget and a stop rule.** A time or token budget, and stopping
+  after N tries in a row with nothing kept, so overnight runs are
+  predictable.
+- [ ] **`leanprof autoresearch` as one command**, on a project it has not
+  seen: sets up the workload, tests and output check, then starts the loop
+  (also listed under Agents below).
+
 ## From measuring problems to solving them
 
 Ranked; the open ones are planned after v0.2.0.
