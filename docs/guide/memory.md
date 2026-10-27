@@ -1,12 +1,13 @@
 # Memory, frees and `leanprof stat`
 
-Three things, from least to most effort:
+Four things, from least to most effort:
 
 | | how | cost | gives |
 |---|---|---|---|
 | Summary | `leanprof stat EXE` | probes for copies, allocations and frees | one screen: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes |
 | Memory over time | always on | one memory reading per ms, at scope exits | peak memory, peak and rise per scope, a memory track in the timeline |
 | Frees | `--frees` / `LEANPROF_FREES=1` / `freeFlags` | every freeing call is timed | objects freed and freeing pauses per call site and scope, atomic decrements of shared-between-threads objects |
+| Retained memory | `run --retained` | every object followed to its free; heap walks | live objects per allocation site at the peak and at exit, what holds them, sites that keep growing ([below](#retained-memory-what-holds-it)) |
 
 ## `leanprof stat`
 
@@ -183,3 +184,115 @@ A Lean-specific use: values passed to a task are marked multi-threaded, and
 from then on every reference-count change on them is atomic. A large
 `mt decs` count at a site in a parallel program names the code paying for
 that.
+
+## Retained memory: what holds it
+
+```
+leanprof run --retained EXE [-- ARGS]
+```
+
+follows every object compiled Lean code allocates from its allocation to
+its free (it implies `--allocs` and `--frees`). On
+[Examples/Retained.lean](../../Examples/Retained.lean), which keeps memory in
+four known ways:
+
+```
+retained memory (objects compiled Lean code allocated, by allocation site; --retained)
+  live: peak 1.8 MiB in 80609 objects at 258.1 ms; at exit 1.8 MiB in 80608 objects
+  frees not seen: 3 objects (107 B) were freed in precompiled code or the runtime; found when their address was reused or a walk read them
+    at peak    objects     at exit    objects  trend     in scope           function  (where)
+    1.8 MiB      80001     1.8 MiB      80000  growing   -                  RetainedTest.logPairs  (Examples/Retained.lean:43)
+    7.0 KiB        300     7.0 KiB        300            -                  RetainedTest.hookCells  (Examples/Retained.lean:28)
+    4.7 KiB        200     4.7 KiB        200            -                  RetainedTest.lazyCells  (Examples/Retained.lean:33)
+    4.4 KiB        101     4.4 KiB        101            -                  RetainedTest.keepPairs  (Examples/Retained.lean:21)
+  growing: RetainedTest.logPairs kept rising over the second half of the run, 948.6 KiB -> 1.8 MiB (rose in 23 of 23 samples)
+
+what keeps it alive (exit heap walk at 273.5 ms, 1.9 MiB of tracked objects live; took 10.7 ms)
+     1.8 MiB  80000 constructor from RetainedTest.logPairs (Examples/Retained.lean:43)
+              held by IO.Ref from RetainedTest.initFn <- global RetainedTest.log (Examples/Retained.lean:14)
+              fix: Kept in a global IO.Ref (an `initialize` value): it lives until the Ref is set to something else, ...
+     7.0 KiB  300 constructor from RetainedTest.hookCells (Examples/Retained.lean:28)
+              held by closure of RetainedTest.scenario <- IO.Ref from ... <- global RetainedTest.hook (Examples/Retained.lean:12)
+              fix: Captured by a closure, which keeps every value it captured alive as long as it lives. ...
+     4.7 KiB  200 constructor from RetainedTest.lazyCells (Examples/Retained.lean:33)
+              held by Thunk from RetainedTest.scenario <- IO.Ref from RetainedTest.initFn <- global RetainedTest.lazy
+     2.3 KiB  100 constructor from RetainedTest.keepPairs (Examples/Retained.lean:21)
+              held by Array from RetainedTest.keepPairs <- IO.Ref from ... <- global RetainedTest.cache
+```
+
+- **Live per site.** Each allocation site (the compiled function, and the
+  innermost `profile!` scope) has its live objects and bytes at the
+  program's peak of tracked live bytes, at exit, and its own largest. A
+  growing array or string keeps the site that made it (the runtime moves it
+  into a larger object); an array or string copied from a shared one is
+  charged to the copying call.
+- **What holds it.** A heap walk reads every tracked object and follows
+  constructor fields, array elements, closure arguments, thunks, refs and
+  task results. Each object gets one holder (the first found; an object
+  shared by two holders shows under one), and each chain ends at a root: a
+  global variable (the program's data, scanned for pointers and named from
+  its symbols; Lean's `initialize` values and closed terms are globals), a
+  local on the stack of the walking thread (scanned conservatively, so a
+  stale word can look like a local; named by the function whose frame holds
+  it), a module constant, or nothing leanprof can see (another thread's
+  stack, the runtime's own structures, an object precompiled code made).
+  Runs of one kind of holder (the cells of one list) count once, and a chain
+  shows the four holders nearest the object.
+- **When walks run.** At exit; at `Leanprof.retainedSnapshot`, which a server
+  or a test can call at a moment worth seeing (the first eight are kept);
+  and near the peak: when tracked live bytes first pass 256 KiB and then each
+  25% above the last walk, keeping the walk that saw the most. Walks near the
+  peak only run while one thread uses tracked objects (Lean 4.35 runs `main`
+  on a second thread, a hand-over that counts as one), never after a task
+  was spawned (another thread could free what a walk reads), and only while
+  walks so far took under a quarter of the run (`LEANPROF_RETAINED_WALKS=all`
+  lifts the limit, `=0` turns them off). The report says why there was none.
+- **Growth.** Every site's live bytes are sampled over the run (64 samples,
+  every 20 ms and then half as often each time they fill;
+  `LEANPROF_RETAINED_SAMPLE_MS`). A site is *growing* when its live bytes
+  rose in two of three samples of the second half of the run, by at least
+  64 KiB and 10%, and end near their largest: in a server, a leak. A batch
+  program that builds its result until it exits grows too. `leanprof top
+  --retained` shows the sites holding the most, with their change per second.
+- **Fixes.** Chains with a known cause get one: a value kept in a global
+  `IO.Ref` (it lives until the Ref is set to something else), a forced
+  `Thunk` (it keeps its value), a closure (it keeps what it captured), a
+  `Task` (it keeps its result).
+
+The same is in the JSON report (`retained`: totals, `sites`, `walks` with
+`paths`, each with `held_by`, `root` and `hint`), `leanprof explain`
+(RETAINED and GROWING findings), the HTML report's Retained tab and the MCP
+server (`run` with `retained`, `hot` with kind `retained`, `report`,
+`explain`). `Leanprof.retainedLive` gives the tracked live bytes so far
+(`none` when not tracking).
+
+What it cannot see, and says:
+
+- **Frees inside precompiled code.** Lean's precompiled libraries and the
+  runtime free objects that compiled code made (a list passed to
+  `List.toArray`, a value a library function consumes). leanprof does not
+  see those frees. Such an object stays in its table until its address is
+  allocated again through the shims, or a walk reads its header and finds a
+  freed block; both count as `frees not seen`, per site. Until then the
+  object counts as live, so the peak can be an overestimate. `--core` also
+  routes the precompiled libraries' frees through leanprof.
+- **Objects made by precompiled code** are not tracked, except the ones the
+  runtime makes for a call from compiled code (`Array.replicate`,
+  `Array.mk`, `Array.toList`, `String.mk`, `String.data`, `IO.mkRef`, a
+  grown array or string), which count at that call. A chain through an
+  untracked object still shows it, as `(made where leanprof does not look)`.
+- **A constructor cell reused in place** (Lean's reset/reuse) keeps the site
+  that first allocated it.
+- **Sites are compiled functions.** The C compiler inlines small functions
+  into their callers, so a two-line helper's allocations can show under its
+  caller.
+- **Threads.** Live counts are exact for a single thread; with several,
+  each site's value at the peak can be off by what another thread changed
+  at that moment.
+
+Cost: every allocation and free also updates a table of live objects, about
+25 ns each on top of `--allocs --frees`, and a walk takes about 150 ns per
+live object (M5 Max). A program making 4 million allocations, 1.8 million of
+them alive at exit (`--allocs --frees` 0.074 s, plain 0.043 s), took 0.45 s
+with `--retained`, most of it the exit walk. The table takes 23 to 46 bytes
+per live object.

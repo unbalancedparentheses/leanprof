@@ -142,8 +142,11 @@ Ranked; the open ones are planned after v0.2.0.
   show the difference inline ("this edit added 2,000 copies", "+30%
   heartbeats in this lemma"); with static copy detection (above), warn
   before anything runs.
-- [ ] **Retained memory.** Which allocation site holds the memory at peak,
-  and what keeps it alive; for long-running programs and servers.
+- [x] **Retained memory.** Which allocation site holds the memory at peak,
+  and what keeps it alive; for long-running programs and servers
+  (`run --retained`: live objects per site at the peak and at exit, heap
+  walks naming the chain of holders down to a global or a local, growing
+  sites in the report and in `top`; [memory guide](docs/guide/memory.md#retained-memory-what-holds-it)).
 - [ ] **Why a file is slow in the editor.** Profile the language server
   re-elaborating a file and attribute the delay to declarations.
 - [ ] **A heartbeat budget.** `elab --max-heartbeats N` in CI flags any
@@ -282,7 +285,9 @@ Still to do:
 - [ ] **Broaden memory coverage.** Identify core-library and precompiled code
   coverage; add RC-operation costs, retained-memory attribution and object
   lifetime analysis beyond allocation counts and peak-live metrics. Report
-  unobserved activity as such, never as a measured zero.
+  unobserved activity as such, never as a measured zero. Retained-memory
+  attribution is done (`run --retained`, which counts the frees it did not
+  see); left: RC-operation costs and object lifetimes.
 - [x] **Navigate large projects.** `leanprof html` drills from project to
   folder, module, declaration, term and tactic, and compares each level with
   a base report ([compile time](docs/guide/compile-time.md#a-whole-project-in-the-browser)).

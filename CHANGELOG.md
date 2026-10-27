@@ -6,6 +6,36 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Retained memory
+
+- `leanprof run --retained` follows every object compiled Lean code
+  allocates to its free: live objects and bytes per allocation site at the
+  program's peak and at exit, each site's largest size, and the sites whose
+  live bytes keep growing over the run (leak-like growth).
+- Heap walks say what keeps objects alive: each object's chain of holders
+  (an `Array`, an `IO.Ref`, a closure, a `Thunk`, a `Task`) down to its root,
+  a global variable named from the program's symbols, a local on the stack
+  (scanned conservatively, named by function), or a module constant. Walks
+  run near the peak (single-threaded programs, kept under a quarter of the
+  run), at exit, and at `Leanprof.retainedSnapshot`. Known causes get a fix:
+  a value kept in a global `IO.Ref`, a forced thunk, a capturing closure.
+- In the text and JSON report (`retained`), `leanprof explain` (RETAINED and
+  GROWING findings, `retained` in `--json`), the MCP server (`run` with
+  `retained`, `report`, `hot` kind `retained`, `explain`), the HTML report
+  (a Retained tab) and `leanprof top --retained`. A report without it says
+  retained memory was not tracked.
+- Frees made inside Lean's precompiled libraries and runtime are not seen;
+  leanprof finds those objects freed when their address is reused or a walk
+  reads them, and says how many. Objects the runtime makes for compiled code
+  (`Array.replicate`, `Array.mk`, `Array.toList`, `String.mk`, `IO.mkRef`,
+  grown arrays and strings) are tracked at the call.
+- Cost: about 25 ns per allocation and free on top of `--allocs --frees`,
+  and about 150 ns per live object per walk (a 4-million-allocation program:
+  0.074 s with `--allocs --frees`, 0.45 s with `--retained`, most of it the
+  walk over 1.8 million objects alive at exit).
+- `Examples/Retained.lean` (`lake exe retained`) keeps memory in known ways;
+  the tests check the exact counts, holders and roots.
+
 ## [0.1.0] - 2026-10-26
 
 The first release: a profiler for Lean 4 programs and their compile times,

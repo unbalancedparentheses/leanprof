@@ -1727,11 +1727,15 @@ static void lpf_ret_print(FILE *f, double tick, int allocs_counted) {
     if (lpf_ret_peak_walk != NULL) {
         fputc('\n', f);
         lpf_ret_print_walk(f, lpf_ret_peak_walk, tick, 8);
+        if (lpf_ret_walks_skipped > 0)
+            fprintf(f, "  (%u walks closer to the peak were skipped to keep walks under a quarter of the run; "
+                       "LEANPROF_RETAINED_WALKS=all takes them)\n", lpf_ret_walks_skipped);
     } else {
         fprintf(f, "\n(no heap walk near the peak: %s)\n",
                 !lpf_ret_auto ? "turned off by LEANPROF_RETAINED_WALKS=0"
                 : LP_LD(lpf_ret_shared) ? "threads or tasks used tracked objects at the same time, and another thread could free what a walk reads"
-                                             : "tracked live bytes stayed under 256 KiB");
+                : lpf_ret_walks_skipped > 0 ? "each would have taken walks past a quarter of the run; LEANPROF_RETAINED_WALKS=all takes them"
+                                            : "tracked live bytes stayed under 256 KiB");
     }
     for (unsigned k = 0; k < lpf_ret_nsnaps; k++) {
         fputc('\n', f);
@@ -1791,6 +1795,40 @@ static void lpf_ret_json_walk(FILE *f, const lpf_ret_walk *w, double tick) {
     fprintf(f, "]}");
 }
 
+/* `"retained":{...},` in a live snapshot (`leanprof top`): live bytes now,
+ * and the sites holding the most, from the counters (the live thread reads
+ * no objects). Nothing when not tracking. */
+static void lpf_ret_live_json(FILE *f) {
+    if (!LP_LD(lpf_ret_on)) return;
+    uint32_t ns = __atomic_load_n(&lpf_ret_nsites, __ATOMIC_ACQUIRE);
+    enum { TOP = 16 };
+    const lpf_ret_site *top[TOP] = {0};
+    for (uint32_t id = 0; id < ns; id++) {
+        const lpf_ret_site *s = lpf_ret_site_at(id);
+        if (s == NULL || LP_LD(s->live_b) <= 0) continue;
+        for (int k = 0; k < TOP; k++)
+            if (top[k] == NULL || LP_LD(s->live_b) > LP_LD(top[k]->live_b)) {
+                memmove(&top[k + 1], &top[k], (TOP - 1 - k) * sizeof top[0]);
+                top[k] = s;
+                break;
+            }
+    }
+    fprintf(f, "\"retained\":{\"live_bytes\":%lld,\"live_objects\":%lld,\"peak_bytes\":%lld,\"sites\":[",
+            (long long)LP_LD(lpf_ret_live_b), (long long)LP_LD(lpf_ret_live_n), (long long)LP_LD(lpf_ret_peak_b));
+    for (int k = 0; k < TOP && top[k] != NULL; k++) {
+        char fn[256], where[512];
+        lpf_symbol_name(top[k]->pc, fn, sizeof fn);
+        lpf_where(fn, where, sizeof where);
+        fprintf(f, "%s{\"name\":", k ? "," : "");
+        lpf_json_str(f, fn);
+        fprintf(f, ",\"where\":");
+        lpf_json_str(f, where);
+        fprintf(f, ",\"live_bytes\":%lld,\"live_objects\":%lld}", (long long)LP_LD(top[k]->live_b),
+                (long long)LP_LD(top[k]->live_n));
+    }
+    fprintf(f, "]},");
+}
+
 /* `,"retained":{...}` inside the report object (only when tracking). */
 static void lpf_ret_json(FILE *f, double tick) {
     if (!LP_LD(lpf_ret_on)) return;
@@ -1842,7 +1880,7 @@ static void lpf_ret_json(FILE *f, double tick) {
         if (!first) fputc(',', f);
         lpf_ret_json_walk(f, lpf_ret_exit_walk, tick);
     }
-    fprintf(f, "],\"peak_walk\":\"%s\",\"snapshots_dropped\":%u}",
+    fprintf(f, "],\"walks_skipped\":%u,\"peak_walk\":\"%s\",\"snapshots_dropped\":%u}", lpf_ret_walks_skipped,
             lpf_ret_peak_walk != NULL ? "taken"
             : !lpf_ret_auto           ? "off"
             : LP_LD(lpf_ret_shared) ? "threads"

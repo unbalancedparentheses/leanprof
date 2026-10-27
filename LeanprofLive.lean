@@ -207,6 +207,29 @@ def render (label : String) (prev? : Option Json) (cur : Json) (width height : N
     | none => 0
   let sign := if rssRate >= 0 then "+" else "-"
   out := out.push s!"cpu {fixed cores 2} cores   memory {fmtBytes (num mem "rss")} resident ({sign}{fmtBytes rssRate.abs}/s), {fmtBytes (num mem "commit")} committed, peak {fmtBytes (num mem "peak_rss")}"
+  -- retained memory (`--retained`): live bytes of tracked objects, and the
+  -- sites holding the most, with their change since the last frame
+  match cur.getObjVal? "retained" with
+  | .ok ret@(.obj _) =>
+    -- the call sites of one function are one row
+    let byName (j : Json) : Array (String × String × Float) :=
+      (arr (obj j "retained") "sites").foldl (init := #[]) fun acc s =>
+        match acc.findIdx? (·.1 == str s "name") with
+        | some i => acc.modify i fun (n, w, b) => (n, w, b + num s "live_bytes")
+        | none => acc.push (str s "name", str s "where", num s "live_bytes")
+    let now := (byName cur).qsort fun a b => a.2.2 > b.2.2
+    let before := (prev?.map byName).getD #[]
+    out := out.push s!"retained {fmtBytes (num ret "live_bytes")} live in {fmtCount (num ret "live_objects")} tracked objects, peak {fmtBytes (num ret "peak_bytes")}"
+    for x in now.extract 0 3 do
+      let (name, wh, b) : String × String × Float := x
+      let b0 : Float := match before.find? (·.1 == name) with
+        | some (_, _, v) => v
+        | none => 0
+      let perSec : Float := if r.hasPrev then (b - b0) / r.dt else 0
+      let sg := if perSec < (0 : Float) then "-" else "+"
+      let w := if wh.isEmpty then "" else s!"  ({wh})"
+      out := out.push s!"  {fmtBytes b} ({sg}{fmtBytes perSec.abs}/s)  {name}{w}"
+  | _ => pure ()
   match cur.getObjVal? "flight" with
   | .ok f@(.obj _) =>
     let slow := num f "slow_ms"

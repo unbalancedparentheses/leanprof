@@ -2,6 +2,7 @@
  "all.allocs>0": true,
  "all.copies": 1999,
  "all.frees": true,
+ "all.retained_absent": true,
  "all.reuse>0": true,
  "auto.calls": {
   "build": 1,
@@ -221,6 +222,68 @@
   true
  ],
  "measure.scope.missing": 2,
+ "retained.exit": [
+  [
+   "RetainedTest.hookCells",
+   300
+  ],
+  [
+   "RetainedTest.keepPairs",
+   101
+  ],
+  [
+   "RetainedTest.lazyCells",
+   200
+  ],
+  [
+   "RetainedTest.logPairs",
+   80000
+  ]
+ ],
+ "retained.growing": [
+  "RetainedTest.logPairs"
+ ],
+ "retained.holders": [
+  [
+   "RetainedTest.hookCells",
+   "constructor",
+   [
+    "closure",
+    "IO.Ref"
+   ],
+   "global",
+   "RetainedTest.hook"
+  ],
+  [
+   "RetainedTest.keepPairs",
+   "constructor",
+   [
+    "Array",
+    "IO.Ref"
+   ],
+   "global",
+   "RetainedTest.cache"
+  ],
+  [
+   "RetainedTest.lazyCells",
+   "constructor",
+   [
+    "Thunk",
+    "IO.Ref"
+   ],
+   "global",
+   "RetainedTest.lazy"
+  ],
+  [
+   "RetainedTest.logPairs",
+   "constructor",
+   [
+    "IO.Ref"
+   ],
+   "global",
+   "RetainedTest.log"
+  ]
+ ],
  "run.copies": [
   [
    "buildWithHistory (in Std.Legacy.Range.forIn'.loop)",

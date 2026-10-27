@@ -223,6 +223,16 @@ def facts():
     out["all.allocs>0"] = sum(x["allocs"] for x in a["allocations"]) > 0
     out["all.reuse>0"] = sum(x["checks"] for x in a.get("reuse", [])) > 0
     out["all.frees"] = "frees" in a and "memory" in a
+    out["all.retained_absent"] = "retained" not in a  # not tracked: absent, not zero
+    # --retained: live objects per site and what holds them (Examples/Retained.lean)
+    sh(LP, "run", "--retained", "--json", "/tmp/smoke-retained.json", "retained")
+    rt = load("/tmp/smoke-retained.json")["retained"]
+    out["retained.exit"] = sorted((x["function"], x["exit_objects"]) for x in rt["sites"]
+                                  if x["function"].startswith("RetainedTest.") and x["exit_objects"] >= 100)
+    ex = [w for w in rt["walks"] if w["when"] == "exit"][0]
+    out["retained.holders"] = sorted((p["function"], p["kind"], [h["kind"] for h in p["held_by"]], p["root"]["kind"],
+                                      p["root"]["name"]) for p in ex["paths"] if p["objects"] >= 100)
+    out["retained.growing"] = sorted(x["function"] for x in rt["sites"] if x["growing"])
     # --auto: one row per declaration
     sh(LP, "run", "--auto", "--json", "/tmp/smoke-auto.json", "copybug", "--", "2000")
     au = load("/tmp/smoke-auto.json")
