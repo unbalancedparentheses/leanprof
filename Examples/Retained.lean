@@ -10,6 +10,8 @@ namespace RetainedTest
 
 initialize cache : IO.Ref (Array (Nat × Nat)) ← IO.mkRef #[]
 initialize hook : IO.Ref (Nat → Nat) ← IO.mkRef id
+/-- Lean before 4.28 has no `Nonempty (Thunk α)`, which an `initialize` of a Ref needs. -/
+instance : Nonempty (Thunk (List Nat)) := ⟨Thunk.pure []⟩
 initialize lazy : IO.Ref (Thunk (List Nat)) ← IO.mkRef (Thunk.pure [])
 initialize log : IO.Ref (List (Nat × Nat)) ← IO.mkRef []
 
