@@ -62,7 +62,7 @@ static const char *lpf_sym_name(const void *pc);
 static int lpf_frees_seen;      /* memory.inc.c: the free hook ran */
 static int lpf_ret_on;          /* LEANPROF_RETAINED=1: 1 while tracking, 2 once the exit walk ran (report only) */
 #define LP_RET_TRACKING() (LP_LD(lpf_ret_on) == 1)
-static int lpf_ret_auto = 1;    /* walks near the peak (LEANPROF_RETAINED_WALKS=0: none) */
+static int lpf_ret_auto = 1;    /* walks near the peak: 1 within a time budget, 2 all (LEANPROF_RETAINED_WALKS=all), 0 none */
 
 /* ---- sites ---- */
 
@@ -185,9 +185,12 @@ typedef struct {
 } __attribute__((aligned(64))) lpf_ret_shard;
 static lpf_ret_shard lpf_ret_shards[LP_RET_SHARDS];
 
+/* A hash of the whole address. (Keeping each 64 KiB of addresses in one
+ * block of consecutive slots shares cache lines, but dense blocks made linear
+ * probing chains thousands of slots long: a run took 20 times longer.) */
 static inline uint64_t lpf_ret_mix(uintptr_t a) { return (uint64_t)(a >> 3) * 0x9e3779b97f4a7c15ull; }
-static inline lpf_ret_shard *lpf_ret_shard_of(uint64_t h) { return &lpf_ret_shards[h >> 58]; }
-static inline size_t lpf_ret_home(uint64_t h, size_t mask) { return (size_t)(h >> 16) & mask; }
+static inline lpf_ret_shard *lpf_ret_shard_of(uintptr_t a) { return &lpf_ret_shards[lpf_ret_mix(a) >> 58]; }
+static inline size_t lpf_ret_home(uintptr_t a, size_t mask) { return (size_t)(lpf_ret_mix(a) >> 16) & mask; }
 
 static inline void lpf_ret_lock_shard(lpf_ret_shard *s) {
     while (__atomic_exchange_n(&s->lock, 1, __ATOMIC_ACQUIRE))
@@ -201,7 +204,7 @@ static int lpf_ret_grow(lpf_ret_shard *s) {
     if (e == NULL) return 0;
     for (size_t i = 0; i < s->cap; i++) {
         if (s->e[i].key == 0) continue;
-        size_t j = lpf_ret_home(lpf_ret_mix(s->e[i].key), cap - 1);
+        size_t j = lpf_ret_home(s->e[i].key, cap - 1);
         while (e[j].key != 0) j = (j + 1) & (cap - 1);
         e[j] = s->e[i];
     }
@@ -213,15 +216,14 @@ static int lpf_ret_grow(lpf_ret_shard *s) {
 
 /* Enter `key`: 0 new, 1 replaced an entry (returned in *old), -1 not entered. */
 static int lpf_ret_put(uintptr_t key, uint32_t site, uint32_t size, lpf_ret_ent *old) {
-    uint64_t h = lpf_ret_mix(key);
-    lpf_ret_shard *s = lpf_ret_shard_of(h);
+    lpf_ret_shard *s = lpf_ret_shard_of(key);
     lpf_ret_lock_shard(s);
     if ((s->n + 1) * 10 > s->cap * 7 && !lpf_ret_grow(s)) {
         lpf_ret_unlock_shard(s);
         return -1;
     }
     size_t m = s->cap - 1;
-    for (size_t i = lpf_ret_home(h, m);; i = (i + 1) & m) {
+    for (size_t i = lpf_ret_home(key, m);; i = (i + 1) & m) {
         if (s->e[i].key == 0) {
             s->e[i] = (lpf_ret_ent){key, site, size};
             s->n++;
@@ -240,14 +242,13 @@ static int lpf_ret_put(uintptr_t key, uint32_t site, uint32_t size, lpf_ret_ent 
 /* Remove `key`, returning its entry. Linear probing with backward-shift
  * deletion: no tombstones. */
 static int lpf_ret_take(uintptr_t key, lpf_ret_ent *out) {
-    uint64_t h = lpf_ret_mix(key);
-    lpf_ret_shard *s = lpf_ret_shard_of(h);
+    lpf_ret_shard *s = lpf_ret_shard_of(key);
     lpf_ret_lock_shard(s);
     if (s->cap == 0) {
         lpf_ret_unlock_shard(s);
         return 0;
     }
-    size_t m = s->cap - 1, i = lpf_ret_home(h, m);
+    size_t m = s->cap - 1, i = lpf_ret_home(key, m);
     while (s->e[i].key != key) {
         if (s->e[i].key == 0) {
             lpf_ret_unlock_shard(s);
@@ -259,7 +260,7 @@ static int lpf_ret_take(uintptr_t key, lpf_ret_ent *out) {
     for (size_t j = i;;) {
         j = (j + 1) & m;
         if (s->e[j].key == 0) break;
-        size_t k = lpf_ret_home(lpf_ret_mix(s->e[j].key), m);
+        size_t k = lpf_ret_home(s->e[j].key, m);
         /* the entry at j stays if its home lies cyclically in (i, j] */
         if (i <= j ? (i < k && k <= j) : (i < k || k <= j)) continue;
         s->e[i] = s->e[j];
@@ -273,12 +274,11 @@ static int lpf_ret_take(uintptr_t key, lpf_ret_ent *out) {
 
 /* Change the size of an entry (an object resized in place). */
 static void lpf_ret_resize(uintptr_t key, uint32_t size) {
-    uint64_t h = lpf_ret_mix(key);
-    lpf_ret_shard *s = lpf_ret_shard_of(h);
+    lpf_ret_shard *s = lpf_ret_shard_of(key);
     lpf_ret_lock_shard(s);
     uint32_t site = UINT32_MAX, was = 0;
     if (s->cap > 0)
-        for (size_t m = s->cap - 1, i = lpf_ret_home(h, m); s->e[i].key != 0; i = (i + 1) & m)
+        for (size_t m = s->cap - 1, i = lpf_ret_home(key, m); s->e[i].key != 0; i = (i + 1) & m)
             if (s->e[i].key == key) {
                 site = s->e[i].site;
                 was = LP_RET_SIZE(s->e[i].size);
@@ -617,21 +617,29 @@ static void lpf_ret_guard(int on) {
     }
 }
 
+/* An object in a walk, in one record (each is read and written several
+ * times: one cache line, not ten arrays). */
+typedef struct {
+    uintptr_t addr;
+    void *sid;                  /* the step's id (see lpf_ret_step) */
+    void *rootw;                /* LR_GLOBAL: the global's address; LR_STACK: the function */
+    uint32_t site;              /* site id + 1 (lpf_ret_canon); 0: not tracked */
+    uint32_t size;              /* bytes (as in the table, with LP_RET_SMALL, until checked) */
+    uint32_t parent;            /* LP_NONE: no holder found */
+    uint32_t path;              /* LP_NONE: not computed */
+    uint8_t kind, state, rootk, dead;
+} lpf_ret_node;
+
+typedef struct {
+    uintptr_t key;
+    uint32_t idx;
+} lpf_ret_slot;
+
 /* The graph being walked. */
 typedef struct {
+    lpf_ret_node *nodes;
     size_t n, cap;
-    uintptr_t *addr;
-    uint32_t *site;             /* site id + 1; 0: not tracked */
-    uint32_t *size;
-    uint32_t *parent;           /* UINT32_MAX: none found */
-    uint32_t *path;             /* UINT32_MAX: not computed */
-    uint8_t *kind, *state;
-    void **sid;                 /* the step's id (see lpf_ret_step) */
-    uint8_t *rootk;
-    void **rootw;
-    /* address -> node */
-    uintptr_t *mkey;
-    uint32_t *mval;
+    lpf_ret_slot *map;          /* address -> node */
     size_t mcap;
     uintptr_t lo, hi;           /* address range of the nodes */
     /* interned paths */
@@ -639,30 +647,25 @@ typedef struct {
     size_t npaths, cappaths;
     uint32_t *pmap;
     size_t pmcap;
+    uint32_t *strip;            /* per path: the path less its last step (LP_NONE: not computed) */
 } lpf_ret_graph;
 
 #define LP_NONE UINT32_MAX
 
-static int lpf_ret_map_grow(lpf_ret_graph *g) {
-    size_t cap = g->mcap ? g->mcap * 2 : 1 << 16;
-    uintptr_t *k = calloc(cap, sizeof(uintptr_t));
-    uint32_t *v = malloc(cap * sizeof(uint32_t));
-    if (k == NULL || v == NULL) {
-        free(k);
-        free(v);
-        return 0;
-    }
+static int lpf_ret_map_grow(lpf_ret_graph *g, size_t want) {
+    size_t cap = g->mcap ? g->mcap : 1 << 16;
+    while (cap < 2 * want) cap *= 2;
+    if (cap == g->mcap) cap *= 2;
+    lpf_ret_slot *m = calloc(cap, sizeof(lpf_ret_slot));
+    if (m == NULL) return 0;
     for (size_t i = 0; i < g->mcap; i++) {
-        if (g->mkey[i] == 0) continue;
-        size_t j = lpf_ret_home(lpf_ret_mix(g->mkey[i]), cap - 1);
-        while (k[j] != 0) j = (j + 1) & (cap - 1);
-        k[j] = g->mkey[i];
-        v[j] = g->mval[i];
+        if (g->map[i].key == 0) continue;
+        size_t j = lpf_ret_home(g->map[i].key, cap - 1);
+        while (m[j].key != 0) j = (j + 1) & (cap - 1);
+        m[j] = g->map[i];
     }
-    free(g->mkey);
-    free(g->mval);
-    g->mkey = k;
-    g->mval = v;
+    free(g->map);
+    g->map = m;
     g->mcap = cap;
     return 1;
 }
@@ -670,53 +673,49 @@ static int lpf_ret_map_grow(lpf_ret_graph *g) {
 static inline uint32_t lpf_ret_map_get(const lpf_ret_graph *g, uintptr_t a) {
     if (a < g->lo || a > g->hi || g->mcap == 0) return LP_NONE;
     size_t m = g->mcap - 1;
-    for (size_t i = lpf_ret_home(lpf_ret_mix(a), m);; i = (i + 1) & m) {
-        if (g->mkey[i] == a) return g->mval[i];
-        if (g->mkey[i] == 0) return LP_NONE;
+    for (size_t i = lpf_ret_home(a, m);; i = (i + 1) & m) {
+        if (g->map[i].key == a) return g->map[i].idx;
+        if (g->map[i].key == 0) return LP_NONE;
     }
 }
 
 static uint32_t lpf_ret_node_add(lpf_ret_graph *g, uintptr_t a, uint32_t site, uint32_t size, uint8_t kind) {
     if (g->n >= LP_NONE - 1) return LP_NONE;
-    if ((g->n + 1) * 2 > g->mcap && !lpf_ret_map_grow(g)) return LP_NONE;
+    if ((g->n + 1) * 2 > g->mcap && !lpf_ret_map_grow(g, g->n + 1)) return LP_NONE;
     if (g->n == g->cap) {
         size_t cap = g->cap ? g->cap * 2 : 1 << 15;
-#define LP_GROW(f) do { void *p_ = realloc(g->f, cap * sizeof(*g->f)); if (p_ == NULL) return LP_NONE; g->f = p_; } while (0)
-        LP_GROW(addr); LP_GROW(site); LP_GROW(size); LP_GROW(parent); LP_GROW(path);
-        LP_GROW(kind); LP_GROW(state); LP_GROW(sid); LP_GROW(rootk); LP_GROW(rootw);
-#undef LP_GROW
+        lpf_ret_node *v = realloc(g->nodes, cap * sizeof(lpf_ret_node));
+        if (v == NULL) return LP_NONE;
+        g->nodes = v;
         g->cap = cap;
     }
     uint32_t i = (uint32_t)g->n++;
-    g->addr[i] = a;
-    g->site[i] = site;
-    g->size[i] = size;
-    g->parent[i] = LP_NONE;
-    g->path[i] = LP_NONE;
-    g->kind[i] = kind;
-    g->state[i] = 0;
-    g->sid[i] = NULL;
-    g->rootk[i] = LR_NONE;
-    g->rootw[i] = NULL;
-    size_t m = g->mcap - 1, j = lpf_ret_home(lpf_ret_mix(a), m);
-    while (g->mkey[j] != 0) j = (j + 1) & m;
-    g->mkey[j] = a;
-    g->mval[j] = i;
+    g->nodes[i] = (lpf_ret_node){a, NULL, NULL, site, size, LP_NONE, LP_NONE, kind, 0, LR_NONE, 0};
+    size_t m = g->mcap - 1, j = lpf_ret_home(a, m);
+    while (g->map[j].key != 0) j = (j + 1) & m;
+    g->map[j] = (lpf_ret_slot){a, i};
     if (g->lo == 0 || a < g->lo) g->lo = a;
     if (a > g->hi) g->hi = a;
     return i;
 }
 
 static void lpf_ret_graph_free(lpf_ret_graph *g) {
-    free(g->addr); free(g->site); free(g->size); free(g->parent); free(g->path);
-    free(g->kind); free(g->state); free(g->sid); free(g->rootk); free(g->rootw);
-    free(g->mkey); free(g->mval); free(g->paths); free(g->pmap);
+    free(g->nodes);
+    free(g->map);
+    free(g->paths);
+    free(g->pmap);
+    free(g->strip);
 }
 
+_Static_assert(sizeof(lpf_ret_path) % sizeof(uint64_t) == 0, "paths hash by words");
+
 static uint64_t lpf_ret_path_hash(const lpf_ret_path *p) {
-    uint64_t h = 0xcbf29ce484222325ull;
-    const unsigned char *b = (const unsigned char *)p;
-    for (size_t i = 0; i < sizeof *p; i++) h = (h ^ b[i]) * 0x100000001b3ull;
+    uint64_t h = 0, w;
+    for (size_t i = 0; i < sizeof *p; i += sizeof w) {
+        memcpy(&w, (const char *)p + i, sizeof w);
+        h = (h ^ w) * 0x9e3779b97f4a7c15ull;
+        h ^= h >> 29;
+    }
     return h;
 }
 
@@ -742,11 +741,14 @@ static uint32_t lpf_ret_intern(lpf_ret_graph *g, const lpf_ret_path *p) {
     if (g->npaths == g->cappaths) {
         size_t cap = g->cappaths ? g->cappaths * 2 : 256;
         lpf_ret_path *v = realloc(g->paths, cap * sizeof(lpf_ret_path));
-        if (v == NULL) return 0;
-        g->paths = v;
+        uint32_t *st = v != NULL ? realloc(g->strip, cap * sizeof(uint32_t)) : NULL;
+        if (v != NULL) g->paths = v;
+        if (st == NULL) return 0;
+        g->strip = st;
         g->cappaths = cap;
     }
     g->paths[g->npaths] = *p;
+    g->strip[g->npaths] = LP_NONE;
     g->pmap[j] = (uint32_t)g->npaths;
     return (uint32_t)g->npaths++;
 }
@@ -754,9 +756,9 @@ static uint32_t lpf_ret_intern(lpf_ret_graph *g, const lpf_ret_path *p) {
 static inline lpf_ret_step lpf_ret_step_of(const lpf_ret_graph *g, uint32_t i) {
     lpf_ret_step s;
     memset(&s, 0, sizeof s);
-    s.kind = g->kind[i];
-    s.tracked = g->site[i] != 0;
-    s.id = g->sid[i];
+    s.kind = g->nodes[i].kind;
+    s.tracked = g->nodes[i].site != 0;
+    s.id = g->nodes[i].sid;
     return s;
 }
 
@@ -772,7 +774,8 @@ static uint32_t lpf_ret_extend(lpf_ret_graph *g, uint32_t pid, lpf_ret_step s) {
     return lpf_ret_intern(g, &p);
 }
 
-/* Children of node i, each passed to lpf_ret_link. Reads under the guard. */
+/* Node i holds `c`: c gets i as its holder if it has none yet. An object
+ * not tracked becomes a node when reached (up to `limit` nodes). */
 static void lpf_ret_link(lpf_ret_graph *g, uint32_t i, lean_object *c, size_t limit, int *truncated) {
     if (c == NULL || lean_is_scalar(c) || ((uintptr_t)c & 7) != 0) return;
     uint32_t j = lpf_ret_map_get(g, (uintptr_t)c);
@@ -784,13 +787,25 @@ static void lpf_ret_link(lpf_ret_graph *g, uint32_t i, lean_object *c, size_t li
         if (!lpf_ret_plausible(c, 0)) return;
         j = lpf_ret_node_add(g, (uintptr_t)c, 0, 0, lpf_ret_kind(c->m_tag));
         if (j == LP_NONE) return;
-        if (c->m_tag == LeanClosure) g->sid[j] = lean_closure_fun(c);
+        if (c->m_tag == LeanClosure) g->nodes[j].sid = lean_closure_fun(c);
     }
-    if (j != i && g->parent[j] == LP_NONE) g->parent[j] = i;
+    if (j != i && g->nodes[j].parent == LP_NONE) g->nodes[j].parent = i;
 }
 
-static void lpf_ret_children(lpf_ret_graph *g, uint32_t i, size_t limit, int *truncated) {
-    lean_object *x = (lean_object *)g->addr[i];
+/* Check node i (tracked: is it still the object entered?) and link what it
+ * holds. Reads under the guard. */
+static void lpf_ret_visit(lpf_ret_graph *g, uint32_t i, size_t limit, int *truncated) {
+    lean_object *x = (lean_object *)g->nodes[i].addr;
+    if (g->nodes[i].site != 0) {
+        if (!lpf_ret_plausible(x, g->nodes[i].size)) {
+            g->nodes[i].dead = 1;
+            return;
+        }
+        g->nodes[i].size = LP_RET_SIZE(g->nodes[i].size);
+        g->nodes[i].kind = lpf_ret_kind(x->m_tag);
+        if (x->m_tag == LeanClosure) g->nodes[i].sid = lean_closure_fun(x);
+    }
+    if (x->m_rc == 0) g->nodes[i].rootk = LR_CONST; /* persistent: a module constant */
     unsigned tag = x->m_tag;
     if (tag <= LeanMaxCtorTag) {
         unsigned k = lean_ctor_num_objs(x);
@@ -1058,7 +1073,8 @@ static void *lpf_ret_stack_owner(const lpf_ret_stack *st, uintptr_t a) {
 }
 
 /* Roots of the nodes no other node holds: words of the program's data and
- * (st != NULL) of the stack copy equal to their addresses. */
+ * (st != NULL) of the stack copy equal to their addresses. A global is
+ * named over a module constant; the stack only names what has no root. */
 static __attribute__((no_sanitize("address"))) void lpf_ret_roots(lpf_ret_graph *g, const lpf_ret_stack *st) {
     pthread_once(&lpf_ret_data_once, lpf_ret_data_load);
     for (size_t k = 0; k < lpf_ret_ndata; k++) {
@@ -1071,18 +1087,22 @@ static __attribute__((no_sanitize("address"))) void lpf_ret_roots(lpf_ret_graph 
         for (; p + sizeof(uintptr_t) <= lpf_ret_data[k].hi; p += sizeof(uintptr_t)) {
             uintptr_t w = *(const uintptr_t *)p;
             uint32_t j = lpf_ret_map_get(g, w);
-            if (j == LP_NONE || g->parent[j] != LP_NONE || g->rootk[j] == LR_GLOBAL) continue;
-            g->rootk[j] = LR_GLOBAL;
-            g->rootw[j] = (void *)p;
+            if (j == LP_NONE) continue;
+            lpf_ret_node *nd = &g->nodes[j];
+            if (nd->parent != LP_NONE || nd->rootk == LR_GLOBAL) continue;
+            nd->rootk = LR_GLOBAL;
+            nd->rootw = (void *)p;
         }
         lpf_ret_jb = NULL;
     }
     if (st == NULL || st->words == NULL) return;
     for (size_t k = 0; k < st->nwords; k++) {
         uint32_t j = lpf_ret_map_get(g, st->words[k]);
-        if (j == LP_NONE || g->parent[j] != LP_NONE || g->rootk[j] != LR_NONE) continue;
-        g->rootk[j] = LR_STACK;
-        g->rootw[j] = lpf_ret_stack_owner(st, st->base + k * sizeof(uintptr_t));
+        if (j == LP_NONE) continue;
+        lpf_ret_node *nd = &g->nodes[j];
+        if (nd->parent != LP_NONE || nd->rootk != LR_NONE) continue;
+        nd->rootk = LR_STACK;
+        nd->rootw = lpf_ret_stack_owner(st, st->base + k * sizeof(uintptr_t));
     }
 }
 
@@ -1164,89 +1184,73 @@ static __attribute__((noinline)) lpf_ret_walk *lpf_ret_walk_now(const char *when
     w->when = when;
     w->ts = t0;
     w->stack = stack && st.words != NULL;
-    lpf_ret_guard(1);
-    /* 1. the tracked objects, copied out of the table, and checked */
+    /* 1. the tracked objects, copied out of the table (the map sized for them) */
+    size_t want = 0;
+    for (int k = 0; k < LP_RET_SHARDS; k++) want += __atomic_load_n(&lpf_ret_shards[k].n, __ATOMIC_RELAXED);
+    lpf_ret_map_grow(&g, want + want / 4 + 1024);
     size_t ntr = 0;
     for (int k = 0; k < LP_RET_SHARDS; k++) {
         lpf_ret_shard *s = &lpf_ret_shards[k];
         lpf_ret_lock_shard(s);
-        size_t cap = s->cap, n = s->n;
+        size_t cap = s->cap, n = s->n, m = 0;
         lpf_ret_ent *copy = n ? malloc(n * sizeof(lpf_ret_ent)) : NULL;
-        size_t m = 0;
         for (size_t i = 0; copy != NULL && i < cap; i++)
             if (s->e[i].key != 0) copy[m++] = s->e[i];
         lpf_ret_unlock_shard(s);
-        for (volatile size_t i = 0; i < m; i++) {
-            sigjmp_buf jb;
-            lpf_ret_jb = &jb;
-            int ok = 0;
-            uint8_t kind = RK_OTHER;
-            void *sid = NULL;
-            if (sigsetjmp(jb, 0) == 0) {
-                lean_object *o = (lean_object *)copy[i].key;
-                ok = lpf_ret_plausible(o, copy[i].size);
-                if (ok) {
-                    kind = lpf_ret_kind(o->m_tag);
-                    if (kind == RK_CLOSURE) sid = lean_closure_fun(o);
-                }
-            } else {
-                w->faults++;
-            }
-            lpf_ret_jb = NULL;
-            if (!ok) { /* freed where leanprof does not look */
-                lpf_ret_ent e;
-                if (lpf_ret_take(copy[i].key, &e)) {
-                    lpf_ret_site *os = lpf_ret_site_at(e.site);
-                    if (os != NULL) {
-                        __atomic_add_fetch(&os->unseen_n, 1, __ATOMIC_RELAXED);
-                        __atomic_add_fetch(&os->unseen_b, LP_RET_SIZE(e.size), __ATOMIC_RELAXED);
-                        lpf_ret_upd(os, -1, -(int64_t)LP_RET_SIZE(e.size));
-                    }
-                    __atomic_add_fetch(&lpf_ret_unseen_n, 1, __ATOMIC_RELAXED);
-                    __atomic_add_fetch(&lpf_ret_unseen_b, LP_RET_SIZE(e.size), __ATOMIC_RELAXED);
-                    w->stale_n++;
-                    w->stale_b += LP_RET_SIZE(e.size);
-                }
-                continue;
-            }
+        for (size_t i = 0; i < m; i++) {
             lpf_ret_site *site = lpf_ret_site_at(copy[i].site);
             uint32_t cid = site != NULL ? lpf_ret_canon(site) : copy[i].site;
-            uint32_t j = lpf_ret_node_add(&g, copy[i].key, cid + 1, LP_RET_SIZE(copy[i].size), kind);
+            uint32_t j = lpf_ret_node_add(&g, copy[i].key, cid + 1, copy[i].size, RK_OTHER);
             if (j == LP_NONE) {
                 w->truncated = 1;
                 continue;
             }
-            g.sid[j] = sid != NULL ? sid : (void *)lpf_ret_site_at(cid);
+            g.nodes[j].sid = lpf_ret_site_at(cid);
             ntr++;
         }
         free(copy);
     }
-    w->live_n = LP_LD(lpf_ret_live_n);
-    w->live_b = LP_LD(lpf_ret_live_b);
-    /* 2. what each object holds; objects leanprof did not see made are added
-     * as they are reached (up to twice the tracked ones, at least a million) */
+    /* 2. each object checked (an entry whose object was freed where leanprof
+     * does not look is dropped) and linked to what it holds; objects leanprof
+     * did not see made are added as they are reached (up to twice the
+     * tracked ones, at least a million) */
     size_t limit = ntr * 3 > ntr + 1000000 ? ntr * 3 : ntr + 1000000;
     int truncated = 0;
+    lpf_ret_guard(1);
     for (volatile size_t i = 0; i < g.n; i++) {
         sigjmp_buf jb;
         lpf_ret_jb = &jb;
-        if (sigsetjmp(jb, 0) == 0) lpf_ret_children(&g, (uint32_t)i, limit, &truncated);
-        else w->faults++;
+        if (sigsetjmp(jb, 0) == 0) {
+            lpf_ret_visit(&g, (uint32_t)i, limit, &truncated);
+        } else {
+            w->faults++;
+            if (g.nodes[i].site != 0 && g.nodes[i].kind == RK_OTHER) g.nodes[i].dead = 1; /* unreadable */
+        }
         lpf_ret_jb = NULL;
     }
     w->truncated |= truncated;
-    w->nodes = g.n;
-    w->untracked = g.n - ntr;
+    for (size_t i = 0; i < g.n; i++) {
+        if (!g.nodes[i].dead) continue;
+        lpf_ret_ent e;
+        if (!lpf_ret_take(g.nodes[i].addr, &e)) continue;
+        lpf_ret_site *os = lpf_ret_site_at(e.site);
+        if (os != NULL) {
+            __atomic_add_fetch(&os->unseen_n, 1, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&os->unseen_b, LP_RET_SIZE(e.size), __ATOMIC_RELAXED);
+            lpf_ret_upd(os, -1, -(int64_t)LP_RET_SIZE(e.size));
+        }
+        __atomic_add_fetch(&lpf_ret_unseen_n, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&lpf_ret_unseen_b, LP_RET_SIZE(e.size), __ATOMIC_RELAXED);
+        w->stale_n++;
+        w->stale_b += LP_RET_SIZE(e.size);
+        ntr--;
+    }
+    w->live_n = LP_LD(lpf_ret_live_n);
+    w->live_b = LP_LD(lpf_ret_live_b);
+    w->nodes = g.n - w->stale_n;
+    w->untracked = w->nodes - ntr;
     /* 3. the roots of the objects nothing seen holds */
     lpf_ret_roots(&g, stack && st.words != NULL ? &st : NULL);
-    for (volatile size_t i = 0; i < g.n; i++) { /* module constants: persistent, never freed */
-        sigjmp_buf jb;
-        lpf_ret_jb = &jb;
-        if (sigsetjmp(jb, 0) == 0 && g.parent[i] == LP_NONE && g.rootk[i] == LR_NONE &&
-            ((lean_object *)g.addr[i])->m_rc == 0)
-            g.rootk[i] = LR_CONST;
-        lpf_ret_jb = NULL;
-    }
     lpf_ret_guard(0);
     if (stack) free(st.words);
     /* 4. each object's chain of holders, interned */
@@ -1255,26 +1259,26 @@ static __attribute__((noinline)) lpf_ret_walk *lpf_ret_walk_now(const char *when
     memset(&none, 0, sizeof none);
     lpf_ret_intern(&g, &none); /* path 0: no holder */
     for (size_t i = 0; todo != NULL && i < g.n; i++) {
-        if (g.site[i] == 0 || g.state[i] == 2) continue;
+        if (g.nodes[i].site == 0 || g.nodes[i].dead || g.nodes[i].state == 2) continue;
         size_t sp = 0;
         todo[sp++] = (uint32_t)i;
-        g.state[i] = 1;
+        g.nodes[i].state = 1;
         while (sp > 0) {
-            uint32_t u = todo[sp - 1], p = g.parent[u];
-            if (p == LP_NONE || g.state[p] == 1) { /* a root, or a cycle closed here */
+            uint32_t u = todo[sp - 1], p = g.nodes[u].parent;
+            if (p == LP_NONE || g.nodes[p].state == 1) { /* a root, or a cycle closed here */
                 lpf_ret_path r;
                 memset(&r, 0, sizeof r);
-                r.root = p != LP_NONE ? LR_CYCLE : g.rootk[u];
-                r.where = p == LP_NONE ? g.rootw[u] : NULL;
-                g.path[u] = lpf_ret_extend(&g, lpf_ret_intern(&g, &r), lpf_ret_step_of(&g, u));
-                g.state[u] = 2;
+                r.root = p != LP_NONE ? LR_CYCLE : g.nodes[u].rootk;
+                r.where = p == LP_NONE ? g.nodes[u].rootw : NULL;
+                g.nodes[u].path = lpf_ret_extend(&g, lpf_ret_intern(&g, &r), lpf_ret_step_of(&g, u));
+                g.nodes[u].state = 2;
                 sp--;
-            } else if (g.state[p] == 2) {
-                g.path[u] = lpf_ret_extend(&g, g.path[p], lpf_ret_step_of(&g, u));
-                g.state[u] = 2;
+            } else if (g.nodes[p].state == 2) {
+                g.nodes[u].path = lpf_ret_extend(&g, g.nodes[p].path, lpf_ret_step_of(&g, u));
+                g.nodes[u].state = 2;
                 sp--;
             } else {
-                g.state[p] = 1;
+                g.nodes[p].state = 1;
                 todo[sp++] = p;
             }
         }
@@ -1286,15 +1290,24 @@ static __attribute__((noinline)) lpf_ret_walk *lpf_ret_walk_now(const char *when
     uint32_t *hm = malloc(hcap * sizeof(uint32_t));
     if (hm != NULL) memset(hm, 0xff, hcap * sizeof(uint32_t));
     for (size_t i = 0; rows != NULL && hm != NULL && i < g.n; i++) {
-        if (g.site[i] == 0 || g.path[i] == LP_NONE) continue;
-        /* the chain above it: its own path less its own step */
-        lpf_ret_path p = g.paths[g.path[i]];
+        const lpf_ret_node *nd = &g.nodes[i];
+        if (nd->site == 0 || nd->dead || nd->path == LP_NONE) continue;
+        /* the chain above it: its own path less its own step (the last,
+         * when it is its own: every path is built ending with its object) */
+        uint32_t pid = nd->path;
         lpf_ret_step me = lpf_ret_step_of(&g, (uint32_t)i);
-        if (p.n > 0 && memcmp(&p.step[p.n - 1], &me, sizeof me) == 0) {
-            memset(&p.step[p.n - 1], 0, sizeof(lpf_ret_step));
-            p.n--;
+        const lpf_ret_path *own = &g.paths[pid];
+        if (own->n > 0 && memcmp(&own->step[own->n - 1], &me, sizeof me) == 0) {
+            if (g.strip[pid] == LP_NONE) {
+                lpf_ret_path p = *own;
+                memset(&p.step[p.n - 1], 0, sizeof(lpf_ret_step));
+                p.n--;
+                uint32_t q = lpf_ret_intern(&g, &p);
+                g.strip[pid] = q;
+            }
+            pid = g.strip[pid];
         }
-        lpf_ret_row key = {g.site[i] - 1, lpf_ret_intern(&g, &p), g.kind[i], 0, 0};
+        lpf_ret_row key = {nd->site - 1, pid, nd->kind, 0, 0};
         if ((n + 1) * 2 > hcap) { /* grow the index */
             size_t c2 = hcap * 2;
             uint32_t *h2 = malloc(c2 * sizeof(uint32_t));
@@ -1324,7 +1337,7 @@ static __attribute__((noinline)) lpf_ret_walk *lpf_ret_walk_now(const char *when
             hm[j] = (uint32_t)n++;
         }
         rows[hm[j]].n++;
-        rows[hm[j]].b += g.size[i];
+        rows[hm[j]].b += nd->size;
     }
     free(hm);
     if (rows != NULL) {
@@ -1351,15 +1364,34 @@ static __attribute__((noinline)) lpf_ret_walk *lpf_ret_walk_now(const char *when
 }
 
 /* A walk near the peak: tracked live bytes passed the threshold. Only while
- * one thread has touched tracked objects (another could free what is read). */
+ * one thread uses tracked objects (another could free what is read), and
+ * only while walks so far took under a quarter of the run (each costs time
+ * in proportion to the live objects; LEANPROF_RETAINED_WALKS=all lifts this). */
+static double lpf_ret_walks_ns, lpf_ret_walk_cost = 100; /* total, and ns per object of the last */
+static unsigned lpf_ret_walks, lpf_ret_walks_skipped;
+
 static void lpf_ret_auto_walk(void) {
     if (!lpf_ret_auto || LP_LD(lpf_ret_shared) || pthread_mutex_trylock(&lpf_ret_walk_lock) != 0) return;
+    int64_t live = LP_LD(lpf_ret_live_b), live_n = LP_LD(lpf_ret_live_n);
+    double elapsed = (double)(lpf_now() - lpf_start) * lpf_ns_per_tick_rough();
+    if (lpf_ret_auto == 1 && lpf_ret_walks_ns + (double)live_n * lpf_ret_walk_cost > 0.25 * elapsed) {
+        lpf_ret_walks_skipped++;
+        uint64_t next = (uint64_t)(live > 0 ? live : 0) * 5 / 4 + 1;
+        LP_ST(lpf_ret_walk_at, next);
+        pthread_mutex_unlock(&lpf_ret_walk_lock);
+        return;
+    }
     lpf_ret_clear_stack();
     lpf_ret_walk *w = lpf_ret_walk_now("peak", 1);
     /* the walk dropped stale entries: the next one is 25% above what is left */
     int64_t left = LP_LD(lpf_ret_live_b);
     uint64_t next = (uint64_t)(left > 0 ? left : 0) * 5 / 4 + 1;
     LP_ST(lpf_ret_walk_at, next < 256 * 1024 ? 256 * 1024 : next);
+    if (w != NULL) {
+        lpf_ret_walks++;
+        lpf_ret_walks_ns += w->ns;
+        if (w->nodes > 1000) lpf_ret_walk_cost = w->ns / (double)w->nodes;
+    }
     /* keep the walk that saw the most live bytes */
     if (w != NULL && (lpf_ret_peak_walk == NULL || w->live_b >= lpf_ret_peak_walk->live_b)) {
         lpf_ret_walk_free(lpf_ret_peak_walk);
@@ -1398,7 +1430,11 @@ static void lpf_ret_init(void) {
     const char *on = getenv("LEANPROF_RETAINED");
     if (on == NULL || strcmp(on, "1") != 0) return;
     const char *walks = getenv("LEANPROF_RETAINED_WALKS");
-    if (walks != NULL && strcmp(walks, "0") == 0) lpf_ret_auto = 0;
+    if (walks != NULL && strcmp(walks, "0") == 0) {
+        lpf_ret_auto = 0;
+        lpf_ret_walk_at = UINT64_MAX >> 1;
+    }
+    if (walks != NULL && strcmp(walks, "all") == 0) lpf_ret_auto = 2;
     double tick = lpf_ns_per_tick_rough();
     double ms = 20;
     const char *every = getenv("LEANPROF_RETAINED_SAMPLE_MS");
