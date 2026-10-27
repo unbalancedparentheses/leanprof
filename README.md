@@ -65,8 +65,10 @@ many, how many bytes, how much time, why the value was shared, and the fix.
   [viewer](docs/profiles/README.md) from project to tactic; full profiles
   cost 1.3–1.9 times less per file than lean-source-profiler's detailed
   mode.
-- **Built for agents.** An MCP server, ranked findings as JSON, paired
-  verdicts, experiments with evidence files, and an
+- **Built for agents.** An MCP server with structured results and typed
+  errors, versioned JSON with schemas, ranked findings with stable ids,
+  provenance on every report, paired verdicts, experiments with evidence
+  files, and an
   [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
   that made a compiler written in Lean 22% faster, merged after review.
 
@@ -297,11 +299,18 @@ attributed, never estimated
 ### Agents: the MCP server
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
-`run`, `sample`, `stat`, `elab`, `measure`, `measure_pair`, `judge`,
-`compare`, `explain`, `hot`, `report`, the four `experiment_*` operations,
-and `live` and `dump` for a running program. Paths it writes must be inside
-the project, and the binaries it runs must be Lake-built
-([MCP server](docs/guide/live.md#mcp-server)).
+`doctor` (what the project has and which modes work), `run`, `sample`,
+`stat`, `elab`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
+`findings` and `finding` (a ranked page of findings with stable ids, then
+one in full with its source, cause and before/after), `hot`, `report`, the
+four `experiment_*` operations, and `live` and `dump` for a running
+program. Every result has `structuredContent` matching the tool's
+`outputSchema`; failures carry an error code, whether a retry may help,
+and a hint. Paths it writes must be inside the project, and the binaries
+it runs must be Lake-built ([MCP server](docs/guide/live.md#mcp-server)).
+Every JSON file the commands write names its schema in
+[`schemas/`](schemas/) and records its provenance
+([machine-readable output](docs/guide/reference.md#machine-readable-output)).
 
 ### Tiny functions
 
