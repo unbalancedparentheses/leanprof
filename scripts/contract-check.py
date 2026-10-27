@@ -234,6 +234,14 @@ def full(lp):
           and j.get("measurement_valid") is True and j.get("correctness"), j)
     j = stdout_json("judge", run([lp, "judge", "--json", f"{d}/m1.json", f"{d}/m2.json"], ok_codes=(0, 1)))
     check("judge: the same program twice is compatible", j.get("provenance", {}).get("compatible") is True, j)
+    # a damaged summary: an error naming the missing metric, never a verdict
+    m2 = json.load(open(f"{d}/m2.json"))
+    del m2["copies_total"]
+    del m2["output"]["stable"]
+    json.dump(m2, open(f"{d}/m-cut.json", "w"))
+    p = run([lp, "judge", "--json", f"{d}/m1.json", f"{d}/m-cut.json"], ok_codes=(2,))
+    check("judge: a summary without a metric is an error, not a verdict",
+          p.returncode == 2 and "missing" in p.stderr and not p.stdout.strip(), p.stdout[:300] + p.stderr[-300:])
     m2 = json.load(open(f"{d}/m2.json"))
     m2["provenance"]["lean"]["version"] = "4.30.0"
     json.dump(m2, open(f"{d}/m-lean.json", "w"))

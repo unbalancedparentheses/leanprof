@@ -552,7 +552,8 @@ def tests : StateT Nat IO Unit := do
       ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
       ("time_ns", Lean.Json.mkObj [("median", Lean.toJson times[times.length / 2]!),
         ("min", Lean.toJson (times.foldl Nat.min times[0]!)), ("max", Lean.toJson (times.foldl Nat.max 0))]),
-      ("copies_total", Lean.toJson copies), ("allocs_total", Lean.toJson allocs), ("allocs_runs", Lean.toJson runs),
+      ("copies_total", Lean.toJson copies), ("copies", Lean.Json.arr #[]), ("calls", Lean.Json.arr #[]),
+      ("allocs_total", Lean.toJson allocs), ("allocs_runs", Lean.toJson runs),
       ("allocs", Lean.toJson #[Lean.Json.mkObj [("key", "CFG.build in -"), ("allocs", Lean.toJson allocs)]])]
     match Judge.Summary.ofJson j with
     | .ok s => s
@@ -578,7 +579,7 @@ def tests : StateT Nat IO Unit := do
   -- a scope whose time was too small to measure (`measure --scope` writes
   -- time_ns.too_small_runs) gives no time verdict, though its runs read 0
   let tiny := Judge.Summary.ofJson (Lean.Json.mkObj [("leanprof", "measure"), ("scope", "build"),
-    ("command", Lean.toJson #["demo"]),
+    ("command", Lean.toJson #["demo"]), ("exit_code", (0 : Nat)), ("copies", Lean.Json.arr #[]), ("calls", Lean.Json.arr #[]),
     ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
     ("time_ns", Lean.Json.mkObj [("median", Lean.toJson (0 : Nat)), ("min", Lean.toJson (0 : Nat)),
       ("max", Lean.toJson (0 : Nat)), ("too_small_runs", Lean.toJson (3 : Nat))]),
@@ -597,9 +598,54 @@ def tests : StateT Nat IO Unit := do
     (!v.keep && v.worse.any (fun w => (w.splitOn "--core").length > 1)) v.render
   let v := Judge.judge { base with core := true } { summary 2999 980000 [980000] [50, 51, 52] with core := true }
   check "judge: two --core summaries are compared" v.keep v.render
+  -- provenance: a file's hash is over all of it, read in pieces; the dirty
+  -- fingerprint changes when an untracked file's contents change
+  let dir : System.FilePath := s!"{(← IO.getEnv "TMPDIR").getD "/tmp"}/leanprof-prov-{← IO.monoNanosNow}"
+  IO.FS.createDirAll dir
+  let big := ByteArray.mk (Array.ofFn (n := 3 * 1048576 + 17) fun i => (i.val % 251).toUInt8)
+  IO.FS.writeBinFile (dir / "big.bin") big
+  check "provenance: a file's hash, read in pieces, is the hash of all its bytes"
+    ((← Leanprof.Contract.hashFile (dir / "big.bin")) == some (Leanprof.Contract.fnv1a big))
+  let git (args : Array String) : IO Unit := do
+    discard <| IO.Process.output { cmd := "git", args := #["-c", "user.name=t", "-c", "user.email=t@example.invalid",
+      "-c", "core.hooksPath=/dev/null"] ++ args, cwd := some dir }
+  git #["init", "-q"]
+  IO.FS.writeFile (dir / "a.lean") "def a := 1\n"
+  git #["add", "a.lean"]
+  git #["commit", "-q", "-m", "a"]
+  IO.FS.writeFile (dir / "b.lean") "def b := 1\n"
+  let fp1 := Leanprof.Contract.provAt (← Leanprof.Contract.gitState dir) ["dirty_fingerprint"]
+  IO.FS.writeFile (dir / "b.lean") "def b := 2\n"
+  let fp2 := Leanprof.Contract.provAt (← Leanprof.Contract.gitState dir) ["dirty_fingerprint"]
+  check "provenance: editing an untracked source changes the dirty fingerprint" (!fp1.isEmpty && fp1 != fp2) s!"{fp1} {fp2}"
+  IO.FS.removeDirAll dir
+  -- a whole summary as `measure` writes it, then the same with a field missing
+  -- or of the wrong type: an error, never a zero or a stable output
+  let full : Lean.Json := Lean.Json.mkObj [("leanprof", "measure"), ("command", Lean.toJson #["demo"]),
+    ("exit_code", (0 : Nat)), ("core", Lean.Json.bool true),
+    ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
+    ("time_ns", Lean.Json.mkObj [("median", (5 : Nat)), ("min", (4 : Nat)), ("max", (6 : Nat))]),
+    ("copies_total", (3 : Nat)), ("copies", Lean.toJson #[Lean.Json.mkObj [("key", "f [Array] in -"), ("copies", (3 : Nat))]]),
+    ("calls", Lean.Json.arr #[]), ("allocs_total", Lean.Json.null),
+    ("machine", Lean.Json.mkObj [("overloaded", false)])]
   check "judge: a summary's core flag is read"
-    (((Judge.Summary.ofJson (Lean.Json.mkObj [("leanprof", "measure"), ("core", Lean.Json.bool true)])).toOption.map
-      (·.core)) == some true)
+    (((Judge.Summary.ofJson full).toOption.map (·.core)) == some true)
+  let broken (what : String) (j : Lean.Json) : Bool :=
+    match Judge.Summary.ofJson j with
+    | .ok _ => false
+    | .error e => (e.splitOn what).length > 1
+  let outNoStable := Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1")]
+  check "judge: a summary without a metric is an error, not a zero"
+    (broken "missing copies_total" (full.setObjVal! "copies_total" Lean.Json.null) &&
+     broken "missing time_ns" (full.setObjVal! "time_ns" Lean.Json.null) &&
+     broken "missing time_ns.median" (full.setObjVal! "time_ns" (Lean.Json.mkObj [("min", (4 : Nat)), ("max", (6 : Nat))])) &&
+     broken "missing output.stable" (full.setObjVal! "output" outNoStable) &&
+     broken "missing calls" (full.setObjVal! "calls" Lean.Json.null) &&
+     broken "missing exit_code" (full.setObjVal! "exit_code" Lean.Json.null) &&
+     broken "copies_total is not of the expected type" (full.setObjVal! "copies_total" "3") &&
+     broken "missing copies[].copies" (full.setObjVal! "copies" (Lean.toJson #[Lean.Json.mkObj [("key", "f")]])) &&
+     broken "missing allocs_runs" (full.setObjVal! "allocs_total" (7 : Nat)) &&
+     broken "machine.overloaded" (full.setObjVal! "machine" (Lean.Json.mkObj [("cpus", (4 : Nat))])))
   -- Interleaved pairs cancel a common drift that makes the two ranges overlap.
   let paired (factor : Nat) (overload : Bool := false) : Lean.Json := Id.run do
     let mut samples := #[]

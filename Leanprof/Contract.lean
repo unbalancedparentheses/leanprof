@@ -165,26 +165,45 @@ def outputOf (cmd : String) (args : Array String) (cwd : Option System.FilePath 
     return if o.exitCode == 0 then some o.stdout else none
   catch _ => return none
 
-/-- A file's FNV-1a hash, or none when it cannot be read; files larger than
-256 MiB are not read (`size:N`). -/
+/-- A file's FNV-1a hash over its whole contents, read 1 MiB at a time (any
+size), as `fnv1a` gives it; none when it cannot be read. -/
 def hashFile (p : System.FilePath) : IO (Option String) := do
   try
-    let m ← p.metadata
-    if m.type != .file then return none
-    if m.byteSize > 268435456 then return some s!"size:{m.byteSize}"
-    return some (fnv1a (← IO.FS.readBinFile p))
+    if (← p.metadata).type != .file then return none
+    let h ← IO.FS.Handle.mk p .read
+    let mut acc : UInt64 := 14695981039346656037
+    repeat
+      let chunk ← h.read 1048576
+      if chunk.isEmpty then break
+      for x in chunk do acc := (acc ^^^ x.toUInt64) * 1099511628211
+    let hex := Nat.toDigits 16 acc.toNat
+    return some (String.ofList (List.replicate (16 - hex.length) '0' ++ hex))
   catch _ => return none
 
 /-- The source revision of the repository around `dir`: the commit, whether the
-tree has uncommitted changes, and a fingerprint of them (`git status` and
+tree has uncommitted changes, and a fingerprint of them: `git status`, `git
+diff HEAD` (tracked files) and the contents of every untracked file that is
+not ignored, so that editing an untracked source changes it too (`git status`
+and
 `git diff HEAD`), or null outside a git repository. -/
 def gitState (dir : System.FilePath := ".") : IO Json := do
   let some rev ← outputOf "git" #["rev-parse", "HEAD"] (some dir) | return Json.null
   let status := (← outputOf "git" #["status", "--porcelain=v1", "--untracked-files=normal"] (some dir)).getD ""
   let dirty := !status.trimAscii.toString.isEmpty
   let diff ← if dirty then pure ((← outputOf "git" #["diff", "HEAD", "--binary"] (some dir)).getD "") else pure ""
+  -- untracked files: `git status` names them, their contents must count too
+  let mut untracked := ""
+  if dirty then
+    let top := ((← outputOf "git" #["rev-parse", "--show-toplevel"] (some dir)).getD "").trimAscii.toString
+    let names := ((← outputOf "git" #["ls-files", "--others", "--exclude-standard", "-z", "--full-name", ":/"]
+      (some dir)).getD "").splitOn "\x00"
+    for n in names do
+      if n.isEmpty then continue
+      let h ← hashFile ((top : System.FilePath) / n)
+      untracked := untracked ++ s!"{n}\x00{h.getD "unreadable"}\x00"
   return Json.mkObj [("rev", Json.str rev.trimAscii.toString), ("dirty", Json.bool dirty),
-    ("dirty_fingerprint", if dirty then Json.str (fnv1a (status ++ "\x00" ++ diff).toUTF8) else Json.null)]
+    ("dirty_fingerprint", if dirty then Json.str (fnv1a (status ++ "\x00" ++ diff ++ "\x00" ++ untracked).toUTF8)
+      else Json.null)]
 
 /-- The Lean the project uses: its version and commit (`lean --version`). -/
 def leanVersion : IO Json := do

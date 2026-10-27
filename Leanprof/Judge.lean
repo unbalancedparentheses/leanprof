@@ -90,34 +90,66 @@ def str (j : Json) (k : String) : String :=
 def keyedMap (j : Json) (field : String) : Std.HashMap String Float :=
   (j.getArr?.toOption.getD #[]).foldl (fun m e => m.insert (str e "key") (num e field)) {}
 
-/-- A `measure` summary, or an error naming what it is instead. -/
+/-- A field that must be there, as `α`, or an error naming it. -/
+def need {α} [FromJson α] (j : Json) (path : String) (k : String) : Except String α :=
+  match j.getObjVal? k with
+  | .error _ => throw s!"missing {path}{k}"
+  | .ok Json.null => throw s!"missing {path}{k} (null)"
+  | .ok v => match fromJson? v with
+    | .ok x => pure x
+    | .error _ => throw s!"{path}{k} is not of the expected type: {v.compress}"
+
+/-- `[{"key": k, field: n}, ...]`, every entry with a key and a count, or an error. -/
+def needKeyed (j : Json) (k field : String) : Except String (Std.HashMap String Nat) := do
+  let xs : Array Json ← need j "" k
+  xs.foldlM (init := {}) fun m e => do
+    let key : String ← need e s!"{k}[]." "key"
+    let n : Nat ← need e s!"{k}[]." field
+    return m.insert key n
+
+/-- A `measure` summary, or an error naming what it is instead or what is
+missing. Every metric `judge` decides on must be there with its type: a
+missing count or output hash is an error, never a zero or a stable output,
+so a damaged or hand-cut summary cannot pass for a measurement. Optional:
+`scope`, `core`, `machine`, `heartbeats`, `provenance`, and the allocation
+fields (null when allocations were not counted). -/
 def Summary.ofJson (j : Json) : Except String Summary := do
   unless str j "leanprof" == "measure" do throw "not a `leanprof measure` summary"
   let field (k : String) := (j.getObjVal? k).toOption.getD Json.null
-  let out := field "output"
-  let time := field "time_ns"
-  let toNat (x : Float) := x.toUInt64.toNat
-  let toNatMap (m : Std.HashMap String Float) := m.fold (fun acc k v => acc.insert k (toNat v)) {}
-  let allocs :=
-    if field "allocs_total" == Json.null then none
-    else
-      let runs := ((field "allocs_runs").getArr?.toOption.getD #[]).filterMap (·.getNat?.toOption)
-      let last := toNat (num j "allocs_total")
-      some (last, runs.foldl Nat.min last, runs.foldl Nat.max last)
+  let command : Array String ← need j "" "command"
+  let exitCode : Nat ← need j "" "exit_code"
+  let out : Json ← need j "" "output"
+  let outputSource : String ← need out "output." "source"
+  let outputHash : String ← need out "output." "hash"
+  let outputStable : Bool ← need out "output." "stable"
+  let time : Json ← need j "" "time_ns"
+  let median : Float ← need time "time_ns." "median"
+  let min : Float ← need time "time_ns." "min"
+  let max : Float ← need time "time_ns." "max"
+  let tooSmallRuns : Nat ← if time.getObjValD "too_small_runs" == Json.null then pure 0 else need time "time_ns." "too_small_runs"
+  let copies : Nat ← need j "" "copies_total"
+  let sites ← needKeyed j "copies" "copies"
+  let calls ← needKeyed j "calls" "calls"
+  let allocs ← if field "allocs_total" == Json.null then pure none else do
+      let last : Nat ← need j "" "allocs_total"
+      let runs : Array Nat ← need j "" "allocs_runs"
+      pure (some (last, runs.foldl Nat.min last, runs.foldl Nat.max last))
+  let allocSites ← if field "allocs" == Json.null then pure {} else needKeyed j "allocs" "allocs"
+  let heartbeats ← if field "heartbeats" == Json.null then pure none else do
+      let xs : Array Json ← need j "" "heartbeats"
+      let m ← xs.foldlM (init := ({} : Std.HashMap String Float)) fun m e => do
+        let key : String ← need e "heartbeats[]." "key"
+        let n : Float ← need e "heartbeats[]." "heartbeats"
+        return m.insert key n
+      pure (some m)
+  let machine := field "machine"
+  let overloaded : Bool ← if machine == Json.null then pure false else need machine "machine." "overloaded"
+  let core : Bool ← if field "core" == Json.null then pure false else need j "" "core"
   return {
-    command := field "command", scope := str j "scope", exitCode := toNat (num j "exit_code")
-    outputSource := str out "source", outputHash := str out "hash"
-    outputStable := (out.getObjValAs? Bool "stable").toOption.getD true
-    median := num time "median", min := num time "min", max := num time "max"
-    copies := toNat (num j "copies_total")
-    sites := toNatMap (keyedMap (field "copies") "copies")
-    calls := toNatMap (keyedMap (field "calls") "calls")
-    allocs, allocSites := toNatMap (keyedMap (field "allocs") "allocs")
-    heartbeats := if field "heartbeats" == Json.null then none else some (keyedMap (field "heartbeats") "heartbeats")
-    overloaded := ((field "machine").getObjValAs? Bool "overloaded").toOption.getD false
-    loadAvg := ((field "machine").getObjValAs? Float "load_avg_1m").toOption
-    core := (j.getObjValAs? Bool "core").toOption.getD false
-    tooSmallRuns := toNat (num time "too_small_runs"), provenance := field "provenance" }
+    command := toJson command, scope := str j "scope", exitCode
+    outputSource, outputHash, outputStable, median, min, max, copies, sites, calls, allocs, allocSites, heartbeats,
+    overloaded, loadAvg := (machine.getObjValAs? Float "load_avg_1m").toOption, core, tooSmallRuns,
+    provenance := field "provenance" }
 
 /-- The verdict and its reasons. -/
 structure Verdict where

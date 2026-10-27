@@ -31,6 +31,9 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   stat, measure, sample, elab and whether its driver is bundled, cached or
   built on first use, `--auto`, `--core`), samply and perf, and each setup
   failure as an error with a code and a fix (`schemas/doctor.schema.json`).
+- `judge` reads summaries strictly: a missing or mistyped metric, output
+  hash or stability flag is an error (exit 2) naming the field, never a
+  zero or a stable output.
 - Provenance: reports and summaries record leanprof's and Lean's
   versions, the platform, the git revision with a fingerprint of
   uncommitted changes, the build flags, and the workload with the hashes of

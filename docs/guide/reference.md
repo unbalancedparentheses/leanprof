@@ -137,9 +137,9 @@ and `fix` carry the report's) record where they came from in `provenance`:
 | `leanprof_version` | leanprof's version |
 | `lean` | the project's Lean: `version`, `commit` (`lean --version`) |
 | `platform` | `target` (the LLVM triple), `os` |
-| `git` | `rev`, `dirty`, and `dirty_fingerprint` (a hash of `git status` and `git diff HEAD`) when there are uncommitted changes; null outside a repository |
+| `git` | `rev`, `dirty`, and `dirty_fingerprint` (a hash of `git status`, `git diff HEAD` and the contents of untracked files that are not ignored) when there are uncommitted changes; null outside a repository |
 | `build` | the mode and the flags that change what is measured (`--auto`, `--allocs`, `--core`, `--runs`, `--scope`, ...) |
-| `workload` | `executable`, `args`, `args_hash`, the binary's `binary_hash`, and `inputs`: each argument that names a file, with its hash |
+| `workload` | `executable`, `args`, `args_hash`, the binary's `binary_hash`, and `inputs`: each argument that names a file, with its hash (FNV-1a over the whole file, at any size) |
 | `created` | when (UTC) |
 
 A program run with `LEANPROF_JSON` by itself writes no provenance (the
