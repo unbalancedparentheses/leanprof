@@ -143,37 +143,96 @@ users than the rest of v0.2.0, and take priority over its long tail.
     declaration only where it can be measured soundly (serially), labelled
     approximate.
 
-## Autoresearch that finds more and breaks nothing
+## Autoresearch that earns its KEEPs
 
-The loop today is an agent following a Claude Code command, with
-`leanprof experiment` judging each change. Ranked by what they would change
-most; none needs a dedicated machine. Not planned: a memory of past
-experiments inside leanprof.
+The loop today is an agent following a Claude Code command
+([research/program.md](research/program.md)), with `leanprof experiment`
+judging each change. "Never keeps a wrong change" cannot be guaranteed by
+testing an arbitrary program; here it means: no candidate is promoted with
+required evidence failed or incomplete, audited proof obligations are
+preserved, and the remaining limits are stated. Order from a review by
+Codex ([autoresearch review](docs/reviews/autoresearch-2026-10-27.md));
+qualification first, cheaper and wider search after. None needs a dedicated
+machine. Not planned: a memory of past experiments inside leanprof.
 
-- [ ] **Differential testing.** Generate inputs (random sizes, edge cases,
-  malformed data) and compare base and candidate outputs on thousands of
-  them, beyond the inputs the user gives. A wrong but faster change is the
-  main risk of an unattended loop; this catches the ones the tests miss.
-  Reported as the number of inputs compared, never as proof.
-- [ ] **Start from evidence.** A ranked list of targets from static copies,
-  `explain` and `elab --why`, ordered by measured cost and by whether a
-  mechanical fix exists. Mechanical ones go through `leanprof fix` with no
-  model call; the agent spends its effort on the ones that need judgement.
-- [ ] **Several candidates at once.** Exact counts and heartbeats do not
-  depend on load, so candidates build and are judged in parallel worktrees;
-  only the final paired timing runs one at a time.
-- [ ] **Compile-time autoresearch on Mathlib.** Heartbeats repeat nearly
-  exactly and Lean checks the proofs, so it is the cleanest setting for an
-  unattended loop; builds on the project-wide compile-time fixes above.
-- [ ] **Wins that combine.** Check KEEPs together (two changes that each
-  help can interact), bisect a combination that regresses, and produce a
-  patch series with the evidence on each commit, ready for review.
-- [ ] **A budget and a stop rule.** A time or token budget, and stopping
-  after N tries in a row with nothing kept, so overnight runs are
-  predictable.
-- [ ] **`leanprof autoresearch` as one command**, on a project it has not
-  seen: sets up the workload, tests and output check, then starts the loop
-  (also listed under Agents below).
+Bugs in `experiment` to fix first (`Leanprof/Experiment.lean`):
+
+- [ ] `finish` reports a held-out failure but leaves the KEEP commits in
+  place, and does not recheck input hashes, rerun the full tests, or measure
+  the original base against the final one.
+- [ ] Nothing checks that the source is unchanged between the audit and the
+  tests; a candidate's evidence must be tied to one fingerprint.
+- [ ] Heartbeats are judged by their total, so a regression in one
+  declaration can hide behind gains elsewhere: report and limit per
+  declaration and per module.
+- [ ] (with the fail-closed verdicts under v0.2.0) missing metrics, partial
+  profiles, unstable counts and self-check warnings never support a KEEP;
+  timing covers more than the first case.
+
+Then, in order:
+
+1. [ ] **Fingerprinted, immutable inputs.** Source, dependencies, tools,
+   configuration, workloads and measurement modes fingerprinted for the
+   session; reports checked for completeness and cache compatibility.
+2. [ ] **Staged qualification.** A promising candidate is not a KEEP:
+   cheap rejection checks first, long suites asynchronously, and promotion
+   only when every required result is in. Baseline failures and skips are
+   named, never waived in bulk; `fix` and `experiment` share one set of
+   checks (standalone `fix` lacks the proof audit today). An interruption
+   leaves a recoverable, qualified head.
+3. [ ] **Explicit goals and performance suites.** Run time, compile time or
+   memory as the declared goal, with a regression limit per workload and
+   sizes that expose algorithmic regressions. A lower count is evidence,
+   not automatically a speedup.
+4. [ ] **A budget and a stop rule, enforced.** A supervisor, not the
+   agent's instructions: deadlines, killing hung builds and tests, token and
+   concurrency limits, time reserved for final qualification; INCONCLUSIVE
+   counts as no progress, repeated infrastructure errors stop separately.
+5. [ ] **Differential testing.** Project-supplied, seeded generators
+   (valid structured inputs, malformed variants, option combinations),
+   frozen before the search, with failures shrunk to minimal inputs and
+   seeds kept; compared on outputs, diagnostics, exit status and declared
+   files, each case with its own state. Random bytes alone are a trap
+   (thousands of parser rejections cover little), and agreement with the
+   base preserves the base's bugs. Reported with the input categories
+   covered, never as proof. The compiler case study's 340 comparisons
+   missed an omitted validation.
+6. [ ] **Confirmation that accounts for selection.** Searching many
+   candidates selects lucky measurements: a winner gets fresh measurements
+   before it is kept, stopping rules are fixed in advance, and the whole
+   procedure is calibrated with unchanged and seeded changes (false KEEPs,
+   detection, inconclusive rate, cost).
+7. [ ] **Start from evidence.** Targets ranked by plausible benefit,
+   confidence, edit size and verification cost, from sampled inclusive CPU
+   with callers (repeated validation was most of the compiler win, not
+   local copies), static copies, `explain` and `elab --why`, refreshed after
+   each KEEP. Mechanical edits come from `fix` but are judged by the full
+   experiment. A static flag has no measured cost of its own.
+8. [ ] **Compile-time campaigns on Mathlib.** Local, explicit changes first
+   (types, arguments, cheaper proofs), global instance or `simp` changes
+   later; the whole affected closure measured, individual regressions
+   reported, plain build time and memory confirmed; incomplete profiles
+   rejected, kernel, elaboration and tracing costs kept apart. The audit
+   must preserve each original statement and its assumptions.
+9. [ ] **Equivalence for verified code.** Candidates prove equivalence
+   against frozen reference definitions and assumptions, so an optimization
+   of a function its theorems mention can pass; the audit is extended
+   narrowly, never weakened.
+10. [ ] **Wins that combine.** `try` already advances the base, so later
+    KEEPs include earlier ones; what is missing is integrating separately
+    tested patches: recheck each integrated prefix against the original
+    base, find the failing subset with repeated measurements (bisection
+    assumes a stable failure), and never add individual percentages.
+11. [ ] **Several candidates at once.** Unsafe on today's `experiment` (one
+    candidate directory, attempt numbers from mutable state, shared
+    `.lake/packages`): immutable candidate IDs, isolated artifacts, CPU and
+    memory limits, one serialized promotion, candidates rechecked after
+    integration, and no builds while timing runs.
+12. [ ] **`leanprof autoresearch` as one command.** A preflight that shows
+    the workload, tests and output checks it found and refuses an ambiguous
+    workload or missing checks (a trivial workload manufactures cheap
+    wins); the manifest pinned for the session; resume, status and cancel;
+    a final evidence bundle. Also listed under Agents below.
 
 ## From measuring problems to solving them
 
