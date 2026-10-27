@@ -41,20 +41,21 @@ lake build retime >/dev/null
 want=$(.lake/build/bin/retime)
 LEANPROF_QUIET=1 "$lp" run --retime --json out.json retime > run.out 2> run.err || { cat run.err; exit 1; }
 grep -q "$want" run.out || { echo "output changed: $(cat run.out)"; exit 1; }
-python3 - <<'PY'
+# (python3 -c, not a heredoc: one run of this script hung in the heredoc's writer)
+python3 -c '
 import json, sys
-d = json.load(open('out.json'))
-names = {s['name'] for s in d['scopes']}
-out = {s['name']: s for s in d.get('compiled_out', [])}
+d = json.load(open("out.json"))
+names = {s["name"] for s in d["scopes"]}
+out = {s["name"]: s for s in d.get("compiled_out", [])}
 problems = []
-if 'loop' not in names: problems.append('loop missing from the second report')
-if 'step' in names: problems.append('step still timed in the second report')
-if 'step' not in out: problems.append(f"step not under compiled_out: {d.get('compiled_out')}")
-elif out['step']['calls'] != 2000000: problems.append(f"step calls {out['step']['calls']}, want 2000000")
-if d.get('retime', {}).get('calls_differ'): problems.append(f"calls differ: {d['retime']['calls_differ']}")
+if "loop" not in names: problems.append("loop missing from the second report")
+if "step" in names: problems.append("step still timed in the second report")
+if "step" not in out: problems.append("step not under compiled_out: %s" % d.get("compiled_out"))
+elif out["step"]["calls"] != 2000000: problems.append("step calls %s, want 2000000" % out["step"]["calls"])
+if d.get("retime", {}).get("calls_differ"): problems.append("calls differ: %s" % d["retime"]["calls_differ"])
 if problems:
-    print('retime-check: ' + '; '.join(problems))
+    print("retime-check: " + "; ".join(problems))
     sys.exit(1)
-PY
+'
 rm -rf "$work"
 echo "retime-check: passed"

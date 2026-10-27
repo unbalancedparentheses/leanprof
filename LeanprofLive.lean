@@ -641,6 +641,37 @@ def explainFindings (ej : Json) (filter : String) (limit : Nat) : Array String :
     out := out.push s!"  confidence: {str f "confidence"}"
   return out
 
+/-- The flags of `leanprof explain --static --json` as text for the MCP
+`static_copies` tool: per likely copy its place, value, cause, why, fix and
+what a run said about it. `filter` keeps flags whose declaration or file
+contains it. -/
+def staticFindings (sj : Json) (filter : String) (limit : Nat) : Array String := Id.run do
+  let has (f : Json) (k : String) := ((str f k).splitOn filter).length > 1
+  let fs := (arr sj "flags").filter fun f => filter.isEmpty || has f "declaration" || has f "file"
+  let mut out : Array String := #[s!"{fs.size} likely copies in {fmtCount (num sj "functions")} compiled functions " ++
+    s!"({fmtCount (num sj "updates")} updates that can copy), from the compiler's IR; nothing was run." ++
+    (if num sj "hidden_string_flags" > 0 then
+      s!" {fmtCount (num sj "hidden_string_flags")} appends to strings still in use outside loops not shown (all)." else "")]
+  for f in fs.toList.take limit do
+    let rt := (f.getObjVal? "runtime").toOption.getD Json.null
+    let st := str rt "status"
+    let seen := match st with
+      | "confirmed" => s!" [confirmed by the report: {fmtCount (num rt "copies")} copies, {fmtBytes (num rt "bytes")} in this function]"
+      | "constants" => " [ran: copies of a constant only]"
+      | "ran-no-copies" => " [ran, no copies counted]"
+      | "never-ran" => " [never ran in the report's run]"
+      | _ => ""
+    out := out.push s!"FLAG  {str f "where"}  {str f "declaration"}: {str f "operation"} of `{str f "value"}`{seen}"
+    out := out.push s!"  cause ({str f "cause"}): {str f "why"}"
+    unless (str f "fix").isEmpty do out := out.push s!"  fix: {str f "fix"}"
+    for c in arr f "fix_code" do
+      for l in (c.getStr?.toOption.getD "").splitOn "\n" do out := out.push s!"      {l}"
+    let lines := (arr f "lines").filterMap (·.getNat?.toOption)
+    unless lines.isEmpty do out := out.push s!"  where: {str f "file"} lines {", ".intercalate (lines.toList.map toString)}"
+    out := out.push s!"  confidence: {str f "confidence"}"
+  if fs.size > limit then out := out.push s!"… and {fs.size - limit} more (limit)"
+  return out
+
 /-! ## `leanprof mcp` -/
 
 def sProp (d : String) : Json := Json.mkObj [("type", Json.str "string"), ("description", Json.str d)]
@@ -690,6 +721,16 @@ def tools : Array Json := #[
     "task granularity, failed reuse and closure calls. Not for sampled reports (they count no copies or calls).")
     [("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
      ("name", sProp "only findings whose function, scope or name contains this"), ("limit", nProp "findings per kind (default 5)")] [],
+  tool "static_copies" ("Find likely copies of shared arrays and strings in a whole Lake package without " ++
+    "running it (libraries too), from the compiler's IR: each with file:line, the value, why another reference is " ++
+    "alive at the update, and `leanprof explain`'s fix. With a run report (default the last one, if any), marks the " ++
+    "flags the run confirmed, with copies and bytes, and, for a report of run with auto, the flagged functions " ++
+    "that never ran. Builds the package first (lake build).")
+    [("modules", aProp "only these modules (and the modules under them); default the whole package"),
+     ("deps", bProp "also the package's dependencies"), ("all", bProp "also appends to strings outside loops"),
+     ("no_build", bProp "scan what is built, without running lake build"),
+     ("report", sProp "run report to check the flags against (default .lake/leanprof/report.json if it exists)"),
+     ("name", sProp "only flags whose declaration or file contains this"), ("limit", nProp "flags shown (default 20)")] [],
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
     [("base", sProp "baseline report"), ("new", sProp "new report"), ("threshold", nProp "time threshold in percent (default 10)")]
     ["base", "new"],
@@ -873,6 +914,19 @@ def callTool (name : String) (a : Json) : IO Json := do
         | _, _ => pure #[s!"COPY  (leanprof explain failed: {tailText (out ++ err) 3})"]
       return textResult (explain j filter limit (some copyLines))
     | none => return textResult s!"cannot read a report at {path}" true
+  | "static_copies" =>
+    let mods := argStrs a "modules"
+    for m in mods do notOption m
+    let report ← match argStr a "report" with
+      | some r => do notOption r; pure #["--report", r]
+      | none => pure #[]
+    let flags := [("deps", "--deps"), ("all", "--all"), ("no_build", "--no-build")].filterMap fun (k, f) =>
+      if argBool a k then some f else none
+    let (rc, out, err) ← runSelf (#["explain", "--static", "--json"] ++ flags.toArray ++ report ++ mods) cwd
+    match rc, Json.parse out with
+    | 0, .ok sj =>
+      return textResult ("\n".intercalate (staticFindings sj ((argStr a "name").getD "") ((argNat a "limit").getD 20)).toList)
+    | _, _ => return textResult s!"leanprof explain --static failed:\n{tailText (out ++ err) 15}" true
   | "compare" =>
     let (some b, some n) := (argStr a "base", argStr a "new") | throw <| IO.userError "missing argument: base or new"
     let thr := (argNat a "threshold").map (#["--threshold", toString ·]) |>.getD #[]

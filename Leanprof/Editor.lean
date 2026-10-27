@@ -219,6 +219,34 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     lines := lines.push s!"{file}:{line}  {label}  ({str c "function"})"
   return lines
 
+/-- Hints for the likely copies `leanprof explain --static` found in this file
+(`.lake/leanprof/static.json`), at the line of each update. -/
+def showStatic (path : String) (file : String) (fm : FileMap) : CommandElabM (Array String) := do
+  let j ← match Json.parse (← (IO.FS.readFile path : IO String)) with
+    | .ok j => pure j
+    | .error e => throwError "leanprof: cannot parse {path}: {e}"
+  let mut lines : Array String := #[]
+  for f in arr j "flags" do
+    let some line := lineIn file (str f "where") | continue
+    let rt := (f.getObjVal? "runtime").toOption.getD Json.null
+    let n := (num rt "copies").toUInt64
+    let (label, seen) := match str rt "status" with
+      | "confirmed" => (s!"⚠ likely copy: {n} copies in the last run",
+          s!"confirmed by the last run: {n} copies, {fmtBytes (num rt "bytes")} in this function")
+      | "never-ran" => ("⚠ likely copy (never ran)", "the last run (with --auto) never ran this function")
+      | "ran-no-copies" => ("⚠ likely copy (ran, none counted)", "the last run ran this function and counted no copies")
+      | _ => ("⚠ likely copy", "")
+    let tip := s!"{str f "operation"} of `{str f "value"}` in {str f "declaration"} is likely to copy it " ++
+      "(found from the compiler's IR, without running)." ++
+      s!"\n\nwhy: {str f "why"}" ++ (if (str f "fix").isEmpty then "" else s!"\nfix: {str f "fix"}") ++
+      String.join ((((f.getObjValAs? (Array String) "fix_code").toOption).getD #[]).toList.map
+        fun c => s!"\n```lean\n{c}\n```") ++
+      (if seen.isEmpty then "" else s!"\n{seen}") ++
+      s!"\n(leanprof explain --static; confidence {str f "confidence"})"
+    hint (endOfLine fm line) label tip
+    lines := lines.push s!"{file}:{line}  {label}  ({str f "declaration"}, {str f "cause"})"
+  return lines
+
 @[command_elab leanprofCmd] def elabLeanprof : CommandElab := fun stx => do
   -- this file, relative to the project (where the reports' positions start)
   let cwd ← (IO.currentDir : IO System.FilePath)
@@ -237,8 +265,13 @@ def showReport (path : String) (file : String) (fm : FileMap) : CommandElabM (Ar
     unless ← System.FilePath.pathExists path do continue
     found := true
     lines := lines ++ (← showReport path file fm)
+  -- likely copies from `leanprof explain --static`, with the default reports
+  let staticPath := ".lake/leanprof/static.json"
+  if stx[1].getOptional?.isNone && (← System.FilePath.pathExists staticPath) then
+    found := true
+    lines := lines ++ (← showStatic staticPath file fm)
   if !found then
-    logInfo m!"no leanprof report: run `lake exe leanprof run EXE`, `lake exe leanprof sample EXE` or `lake exe leanprof elab FILE`"
+    logInfo m!"no leanprof report: run `lake exe leanprof run EXE`, `lake exe leanprof sample EXE`, `lake exe leanprof elab FILE` or `lake exe leanprof explain --static`"
   else if lines.isEmpty then
     logInfo m!"leanprof: the reports mention nothing in {file}"
   else
