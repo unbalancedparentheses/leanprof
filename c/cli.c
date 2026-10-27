@@ -14,6 +14,8 @@
  * signal while nothing runs ends the command at once. */
 #include <lean/lean.h>
 #include <signal.h>
+#include <stdio.h>
+#include <sys/resource.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -63,4 +65,23 @@ LEAN_EXPORT lean_obj_res leanprof_cli_loadavg(lean_obj_arg w) {
     (void)w;
     double l[1];
     return lean_io_result_mk_ok(lean_box_float(getloadavg(l, 1) == 1 ? l[0] : -1.0));
+}
+
+/* Peak resident memory (bytes) and user and system CPU time (microseconds)
+ * of the children waited for, as "RSS USER SYS": `leanprof-build-shim`
+ * (Leanprof/BuildShim.lean) runs one program and reads them after the wait. */
+LEAN_EXPORT lean_obj_res leanprof_cli_child_rusage(lean_obj_arg w) {
+    (void)w;
+    struct rusage ru;
+    char buf[96];
+    if (getrusage(RUSAGE_CHILDREN, &ru) != 0) return lean_io_result_mk_ok(lean_mk_string(""));
+#ifdef __APPLE__
+    unsigned long long rss = (unsigned long long)ru.ru_maxrss;          /* bytes */
+#else
+    unsigned long long rss = (unsigned long long)ru.ru_maxrss * 1024ULL; /* kilobytes */
+#endif
+    unsigned long long user = (unsigned long long)ru.ru_utime.tv_sec * 1000000ULL + (unsigned long long)ru.ru_utime.tv_usec;
+    unsigned long long sys = (unsigned long long)ru.ru_stime.tv_sec * 1000000ULL + (unsigned long long)ru.ru_stime.tv_usec;
+    snprintf(buf, sizeof buf, "%llu %llu %llu", rss, user, sys);
+    return lean_io_result_mk_ok(lean_mk_string(buf));
 }

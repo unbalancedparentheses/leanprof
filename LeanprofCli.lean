@@ -9,6 +9,7 @@ import Leanprof.Workload
 import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
+import Leanprof.BuildCmd
 
 /-!
 # `lake exe leanprof`
@@ -72,6 +73,18 @@ def commands : List (String × String × String) := [
     "(line:column); --compact times only those (close to plain lean). On another Lean than leanprof's,\n" ++
     "the first run builds its driver for that Lean (seconds, once; ~/.cache/leanprof/drivers).\n" ++
     "--no-driver elaborates with `lean --json` instead."),
+  ("build", "[--clean] [--jobs N] [--validate K] [--imports K] [--top N] [--json FILE] [--html FILE] [--from FILE] [--keep-worktree] [--quiet] [TARGETS...]",
+    "Measure a real `lake build` (TARGETS, default the package's): every process Lake runs (module,\n" ++
+    "C compile, link) with its start, end, peak memory and CPU time, recorded through a copy of the\n" ++
+    "toolchain whose programs run through leanprof's shim; the build itself is a normal one.\n" ++
+    "Reports the critical path (and each job's slack), how many jobs ran over time and where the build\n" ++
+    "was serialized, and an estimate of the rebuild after touching each module (a scheduling\n" ++
+    "simulation of the measured durations with --jobs workers, default the hardware threads).\n" ++
+    "--clean removes .lake/build first, so every module of the package is rebuilt (dependencies stay).\n" ++
+    "--validate K touches K modules in a git worktree and rebuilds, to compare with the estimates.\n" ++
+    "--imports K tries removing the K most promising imports there; one counts only if the build,\n" ++
+    "proofs included, passes. Writes .lake/leanprof/build.json (--json FILE); --html FILE draws the\n" ++
+    "timeline with the critical path; --from FILE shows a saved report."),
   ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
@@ -179,6 +192,7 @@ def summary : String → String
   | "stat" => "one-screen summary: time, peak memory, allocations, copies, frees, tasks, top scopes"
   | "sample" => "sample a program with samply: CPU per Lean declaration, no probes"
   | "elab" => "compile cost per line and declaration, repeated work, exact heartbeats"
+  | "build" => "a real lake build: critical path, parallelism, rebuild cost per module, verified imports"
   | "compare" => "compare two reports, exit 1 on regressions (for CI)"
   | "measure" => "run a program several times into one summary (for judge / autoresearch)"
   | "measure-pair" => "interleave two prebuilt binaries for paired timing and correctness checks"
@@ -2723,6 +2737,11 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
   | "report-md" :: rest => reportMd rest
   | "sample" :: rest => sample rest
   | "elab" :: rest => elabCmd rest
+  | "build" :: rest =>
+    Leanprof.Build.hooks.set { guard := guardSignals, interrupted := checkInterrupted }
+    Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
+    Leanprof.Build.buildCmd (usageFor "build") rest
+  | "__build-shim" :: rest => Leanprof.BuildShim.shimMain rest
   | "explain" :: rest =>
     Leanprof.Explain.explainCmd rest fun args env => do spawnWait (← IO.appPath).toString args env
   | "fix" :: rest =>

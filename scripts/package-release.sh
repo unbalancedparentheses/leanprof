@@ -20,6 +20,8 @@ cp .lake/build/bin/leanprof "$dir/.lake/build/bin/"
 # projects on the Lean it is built with; for other Leans, `elab` builds one from
 # the driver's source, which is compiled into the command (nothing else to ship)
 cp .lake/build/bin/leanprof-elab-driver "$dir/.lake/build/bin/"
+# `leanprof build`'s shim, which runs each toolchain program for Lake and records it
+cp .lake/build/bin/leanprof-build-shim "$dir/.lake/build/bin/"
 cp c/*.c c/*.h "$dir/c/"
 cp scripts/leanprof-cc scripts/leanprof-tiny.awk "$dir/scripts/"
 cp LICENSE README.md CHANGELOG.md "$dir/"

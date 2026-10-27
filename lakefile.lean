@@ -160,11 +160,17 @@ target cli_o pkg : FilePath := do
   let srcJob ← inputTextFile <| pkg.dir / "c" / "cli.c"
   buildO oFile srcJob #["-I", (← getLeanIncludeDir).toString] #["-fPIC", "-O2", "-Wall"] "cc" getLeanTrace
 
-/-- `lake exe leanprof run|compare`. Builds the elab driver next to it. -/
+/-- `leanprof build`'s shim (Leanprof/BuildShim.lean): runs one toolchain program for
+Lake and records when it ran, its peak memory and CPU time. Imports only `Init`. -/
+lean_exe «leanprof-build-shim» where
+  root := `LeanprofBuildShim
+  moreLinkObjs := #[cli_o]
+
+/-- `lake exe leanprof run|compare`. Builds the elab driver and the build shim next to it. -/
 lean_exe leanprof where
   root := `LeanprofCli
   supportInterpreter := false
-  needs := #[«leanprof-elab-driver»]
+  needs := #[«leanprof-elab-driver», «leanprof-build-shim»]
   moreLinkObjs := #[cli_o]
 
 lean_exe tasks where
