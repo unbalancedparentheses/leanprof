@@ -1,6 +1,6 @@
 # Autoresearch review (2026-10-27)
 
-Read-only reviews of the ROADMAP section on autoresearch (seven items at the time: differential testing, start from evidence, several candidates at once, compile-time autoresearch on Mathlib, wins that combine, a budget and a stop rule, one command), against `main` at 1cc351b. Kept verbatim. The ROADMAP section "Autoresearch that earns its KEEPs" follows the order below.
+Read-only reviews of the ROADMAP section on autoresearch (seven items at the time: differential testing, start from evidence, several candidates at once, compile-time autoresearch on Mathlib, wins that combine, a budget and a stop rule, one command), against `main` at 1cc351b. Kept verbatim. The ROADMAP section "Autoresearch that earns its KEEPs" merges the two orders.
 
 ## Codex (codex-cli 0.162.1)
 
@@ -77,3 +77,64 @@ Sizes describe implementation scope, not promised calendar time.
 - **Audit scope is limited:** dependent selection uses handwritten import parsing and requires existing build artifacts. The [audit](docs/guide/proof-audit.md) does not establish executable equivalence or cover every downstream consumer.
 - **Behavioral checks have blind spots:** ignored output lines, undeclared side effects and weak workloads can hide changes. Held-out secrecy is an instruction to the agent, not enforced isolation.
 - **Claims must track revisions:** the corrected compiler result is **22.21% lower median wall time**; original allocation counts concern the earlier candidate. Neither that result nor near-repeatable heartbeats warrants universal correctness or speed claims.
+
+## Kimi (k3.1-pro)
+
+### Autoresearch review
+
+“Never keeps a wrong change” is not obtainable from finite testing. The achievable design is conservative automatic KEEP, explicit evidence limits, and mandatory final qualification. The seven items are directionally good, but scaling candidates before fixing verdict validity would scale false confidence.
+
+### A. The seven items
+
+1. **Differential testing — worth doing, with domain-specific generators.**  
+   The hard part is reaching meaningful behavior: random bytes mostly exercise parsers’ rejection paths, while equal stdout misses unlisted files, hangs, external effects, and removed validation. Generators and the corpus must be immutable and created before candidates; compare exit status, stdout/stderr, declared outputs, and resource bounds, with per-case timeouts. Reuse `Experiment.runCase` and `CaseSig` rather than creating another comparator (`Leanprof/Experiment.lean:237`, `:413`). Run a cheap corpus per try and larger generated/held-out corpora before final acceptance. Reusing `research/lcb/compare.py`’s malformed-input model is more credible than claiming generic fuzzing. Report cases and coverage, never “thousands passed, therefore correct.”
+
+2. **Start from evidence — highest value per dollar.**  
+   The hard part is turning overlapping attribution into interventions: static flags are possibilities, inclusive sampled costs overlap, and a mechanical copy fix can increase allocations or time, as `docs/guide/fix.md` demonstrates. Produce typed targets containing observation, source fingerprint, expected metric, semantic constraints, and validation cost. Rank measured `Explain.findingsOf` results first, sampled inclusive CPU for repeated cross-pass work, then unconfirmed static flags. Route only `Fix.plansFor`-supported rewrites through the no-model path (`Leanprof/Fix.lean:236`). **Do not accept `leanprof fix` alone:** its guide admits only one workload, and the proof audit is not wired into it. Every resulting patch still needs `experiment try`.
+
+3. **Several candidates at once — useful only after isolation.**  
+   Current `tryCmd` is not concurrent-safe: it shares the candidate worktree, mutable base, try numbering, and refs (`Leanprof/Experiment.lean:589`, `:759`). Shared `.lake/packages` and unbounded Lake parallelism add further interference. Use an external scheduler with one immutable base revision, separate experiment IDs/worktrees, bounded build jobs, and no KEEP directly from racing branches. Reapply promising patches to the latest base and serially rerun the complete gate. Only paired timing must be exclusive. “Exact” does not mean universally stable: threaded counts vary, heartbeats vary slightly, and instrumentation coverage can be incomplete.
+
+4. **Compile-time autoresearch on Mathlib — best near-term source of real wins.**  
+   Lean checking plus the audit is a strong combination, and the two documented Mathlib patches show large reductions. The traps are enormous dependent closures, ten-minute traced elaborations, overlapping costs, and confusing heartbeats with elapsed build time. Start with declaration-local transformation families such as explicit numeral types and auto-parameter annotations. `Experiment.heartbeats` already selects changed modules and dependents (`Leanprof/Experiment.lean:936`), but `Judge.judge` totals them, allowing one module’s win to hide another’s regression (`Leanprof/Judge.lean:216`). Require per-module non-regression, unchanged proof obligations, clean ordinary `lake build` timing, and reviewable patches. Do not predict savings by summing overlapping `elab` attribution.
+
+5. **Wins that combine — necessary, but avoid combinatorial search.**  
+   Parallel candidates against one base can interact semantically and mechanically; individually significant timing wins also accumulate selection bias. Keep immutable per-candidate evidence, test the series against the original baseline, and retain per-commit relative-to-parent evidence. Use a greedy series, bisecting only when the combination fails—never enumerate subsets. `Experiment.keep` already advances the base (`Leanprof/Experiment.lean:818`), but `finish` only adds held-out behavior checks; it is not a complete original-base/final-head performance and correctness qualification.
+
+6. **A budget and stop rule — small, essential, external to leanprof.**  
+   Put wall-time, candidate, token, and per-stage process-group limits in the runner; leanprof cannot observe an agent’s token spend. Stop immediately on ERROR, after N consecutive non-KEEPs, and reserve time for `finish` and final qualification. Count all generation, rejected builds, tests, timing, and qualification in cost per verified win. The existing ten-DISCARD instruction (`research/program.md:156`) should become enforced runner policy, with run-local state only—not persistent memory inside leanprof.
+
+7. **`leanprof autoresearch` as one command — package it last.**  
+   The trap is pretending an unseen project reveals its semantic contract automatically. Executable choice, meaningful inputs, output files, expected failures, and baseline test failures require discovery or explicit confirmation; ambiguity must stop, not select `--no-test`. The command should orchestrate existing `experiment start|try|finish`, enforce budgets/cancellation, and optionally launch the external `research/program.md` agent. It should contain neither an LLM nor experiment history. A setup-only/dry-run mode and stable typed JSON contracts are prerequisites.
+
+### B. Missing additions, ranked
+
+1. **A valid optimization contract:** explicit primary objective and resource limits, fail-closed coverage, and timing of every declared performance workload—not merely correctness-checking every case.
+2. **Selection-aware measurement:** predeclared trial protocols, no rerun-until-KEEP, and false-KEEP/inconclusive/cost measurements across the whole search, not just one paired session.
+3. **Independent final qualification:** clean original-base/final-head builds, complete tests and corpora, plus adversarial semantic review. The LCB removed-validation bug survived 540 output comparisons.
+4. **Equivalence discharge for conservative INCONCLUSIVEs:** accept verified implementation changes when a preserved theorem proves equality with the original specification; otherwise remain INCONCLUSIVE. This expands usable wins without weakening the audit.
+
+### C. Recommended implementation order
+
+| # | Work | Size | Verification |
+|---|---|---:|---|
+| 1 | Valid objectives, coverage, multi-workload verdicts | L | Malformed/missing metrics cannot KEEP; nondeterministic counts fail closed; seeded regressions on every performance case are rejected. |
+| 2 | Evidence-ranked targets and mechanical routing | M | Fixtures order measured mechanical fixes first; every fix still passes the experiment guard; record agent calls saved. |
+| 3 | Differential testing | L | Seeded wrong changes on unseen valid/malformed inputs are caught; corpus hashes, timeouts, and compared channels appear in evidence. |
+| 4 | Enforced budget/stop runner | S | Fake-clock/token tests stop correctly; cancellation leaves no jobs/worktrees; reports include total cost per qualified win. |
+| 5 | Selection-aware verdict protocol | M | Fixed seeded trials publish false-KEEP and detection rates; repeated sessions cannot be silently presented as independent confirmation. |
+| 6 | Final qualification and semantic review | M | Clean base/head fixture reproduces full checks; an LCB-style validation removal is rejected despite matching sampled outputs. |
+| 7 | Combined-win validation/bisection | M | An A-good/B-good/A+B-bad fixture is bisected; final series evidence refers to the original baseline. |
+| 8 | Mathlib loop | L | Reproduce known heartbeat wins, show no dependent-module regression, and confirm ordinary-build wall improvement on clean checkouts. |
+| 9 | Parallel candidate scheduler | M | Stress tests show no shared-state races; stale-base winners are revalidated; timings never overlap. |
+| 10 | Equivalence discharge | L | Proven-equivalent implementations pass; unequal or unproved implementations cannot KEEP. |
+| 11 | One-command packaging | M | Fresh unfamiliar-project runs test discovery, ambiguity refusal, one complete improvement, cancellation, and cleanup. |
+
+### D. Existing risks these features must not worsen
+
+- **Fail-open evidence:** `Judge.Summary.ofJson` defaults missing metrics to zero, `outputStable` to true, and overload to false (`Leanprof/Judge.lean:91`). Copy stability and self-check/coverage warnings are not verdict gates.
+- **Proxy “speedups”:** `Experiment.combine` can KEEP an exact-count improvement while timing is unsettled (`Leanprof/Experiment.lean:208`). Only `s.cases[0]` is timed (`:1012`), and compile heartbeats are totaled across modules. These are not universal runtime improvements.
+- **Scoped correctness:** the audit preserves selected proof obligations, not executable equivalence or validation branches. `no_theorems` can pass modules whose behavior rests entirely on tests; `fix` lacks the audit.
+- **Statistical selection:** the paired interval assumes independent pairs and one valid sequential session. Parallel experimentation, optional retries, and choosing the best of many candidates invalidate naïve per-trial confidence claims.
+- **Incomplete behavior observation:** checks cover supplied cases, declared files, and non-ignored output lines only. Held-out success is still evidence, not proof. Claims must retain the LCB distinction between reviewed results, clean-build qualification, and independent replication.
+

@@ -150,9 +150,10 @@ The loop today is an agent following a Claude Code command
 judging each change. "Never keeps a wrong change" cannot be guaranteed by
 testing an arbitrary program; here it means: no candidate is promoted with
 required evidence failed or incomplete, audited proof obligations are
-preserved, and the remaining limits are stated. Order from a review by
-Codex ([autoresearch review](docs/reviews/autoresearch-2026-10-27.md));
-qualification first, cheaper and wider search after. None needs a dedicated
+preserved, and the remaining limits are stated. Order from reviews by
+Codex and Kimi ([autoresearch review](docs/reviews/autoresearch-2026-10-27.md)),
+which agree: valid verdicts and qualification first, cheaper search next
+(targets from evidence), wider search and the launcher last. None needs a dedicated
 machine. Not planned: a memory of past experiments inside leanprof.
 
 Bugs in `experiment` to fix first (`Leanprof/Experiment.lean`):
@@ -168,6 +169,8 @@ Bugs in `experiment` to fix first (`Leanprof/Experiment.lean`):
 - [ ] (with the fail-closed verdicts under v0.2.0) missing metrics, partial
   profiles, unstable counts and self-check warnings never support a KEEP;
   timing covers more than the first case.
+- [ ] A module with no theorems passes the audit with nothing checked, so
+  its behaviour rests on the tests alone: say so in the verdict.
 
 Then, in order:
 
@@ -179,16 +182,27 @@ Then, in order:
    only when every required result is in. Baseline failures and skips are
    named, never waived in bulk; `fix` and `experiment` share one set of
    checks (standalone `fix` lacks the proof audit today). An interruption
-   leaves a recoverable, qualified head.
+   leaves a recoverable, qualified head. Before a session's result is
+   reported: a clean build of the original base against the final head,
+   the full tests and corpora, and an adversarial review of what each kept
+   change could break (lean-compiler-backend's removed validation passed
+   540 output comparisons).
 3. [ ] **Explicit goals and performance suites.** Run time, compile time or
    memory as the declared goal, with a regression limit per workload and
    sizes that expose algorithmic regressions. A lower count is evidence,
    not automatically a speedup.
-4. [ ] **A budget and a stop rule, enforced.** A supervisor, not the
-   agent's instructions: deadlines, killing hung builds and tests, token and
+4. [ ] **Start from evidence.** Targets ranked by plausible benefit,
+   confidence, edit size and verification cost, from sampled inclusive CPU
+   with callers (repeated validation was most of the compiler win, not
+   local copies), static copies, `explain` and `elab --why`, refreshed after
+   each KEEP. Mechanical edits come from `fix` but are judged by the full
+   experiment. A static flag has no measured cost of its own.
+5. [ ] **A budget and a stop rule, enforced.** A supervisor in the
+   runner, not the agent's instructions (leanprof cannot see an agent's
+   token use): deadlines, killing hung builds and tests, token and
    concurrency limits, time reserved for final qualification; INCONCLUSIVE
    counts as no progress, repeated infrastructure errors stop separately.
-5. [ ] **Differential testing.** Project-supplied, seeded generators
+6. [ ] **Differential testing.** Project-supplied, seeded generators
    (valid structured inputs, malformed variants, option combinations),
    frozen before the search, with failures shrunk to minimal inputs and
    seeds kept; compared on outputs, diagnostics, exit status and declared
@@ -197,17 +211,11 @@ Then, in order:
    base preserves the base's bugs. Reported with the input categories
    covered, never as proof. The compiler case study's 340 comparisons
    missed an omitted validation.
-6. [ ] **Confirmation that accounts for selection.** Searching many
+7. [ ] **Confirmation that accounts for selection.** Searching many
    candidates selects lucky measurements: a winner gets fresh measurements
    before it is kept, stopping rules are fixed in advance, and the whole
    procedure is calibrated with unchanged and seeded changes (false KEEPs,
    detection, inconclusive rate, cost).
-7. [ ] **Start from evidence.** Targets ranked by plausible benefit,
-   confidence, edit size and verification cost, from sampled inclusive CPU
-   with callers (repeated validation was most of the compiler win, not
-   local copies), static copies, `explain` and `elab --why`, refreshed after
-   each KEEP. Mechanical edits come from `fix` but are judged by the full
-   experiment. A static flag has no measured cost of its own.
 8. [ ] **Compile-time campaigns on Mathlib.** Local, explicit changes first
    (types, arguments, cheaper proofs), global instance or `simp` changes
    later; the whole affected closure measured, individual regressions
@@ -222,7 +230,8 @@ Then, in order:
     KEEPs include earlier ones; what is missing is integrating separately
     tested patches: recheck each integrated prefix against the original
     base, find the failing subset with repeated measurements (bisection
-    assumes a stable failure), and never add individual percentages.
+    assumes a stable failure), and never add individual percentages. A greedy series, bisected only when
+    the combination fails; never every subset.
 11. [ ] **Several candidates at once.** Unsafe on today's `experiment` (one
     candidate directory, attempt numbers from mutable state, shared
     `.lake/packages`): immutable candidate IDs, isolated artifacts, CPU and
@@ -232,7 +241,8 @@ Then, in order:
     the workload, tests and output checks it found and refuses an ambiguous
     workload or missing checks (a trivial workload manufactures cheap
     wins); the manifest pinned for the session; resume, status and cancel;
-    a final evidence bundle. Also listed under Agents below.
+    a final evidence bundle. It orchestrates `experiment` and launches an
+    external agent; it contains no LLM and no history of past experiments. Also listed under Agents below.
 
 ## From measuring problems to solving them
 
