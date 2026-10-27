@@ -216,6 +216,18 @@ exact for compiled code outside Lean's precompiled libraries (`--core`
 reaches into those). Tests can assert them with `expectNoCopies` and
 `expectAllocsAtMost` ([copies and allocations](docs/guide/copies-and-allocations.md)).
 
+### Copies without running: `explain --static`
+
+`leanprof explain --static` reads the C the compiler emitted for every
+function of the package, libraries included, and flags each update likely
+to copy, with file:line, the value, why another reference is alive there
+(in the function, in a caller, or in a global) and `explain`'s fix. Nothing
+runs. Given a run report it marks which flags the run confirmed and which
+flagged functions never ran. On the repository's examples it flags all 16
+functions that copy and none of the 18 that do not; on lean-compiler-backend
+compiling zlib, 97% of the copies are in flagged functions
+([guide](docs/guide/static-copies.md)).
+
 ### Applying the fix: `leanprof fix`
 
 `leanprof fix --exe myapp -- args` takes the costliest finding whose cause
@@ -297,7 +309,7 @@ attributed, never estimated
 ### Agents: the MCP server
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
-`run`, `sample`, `stat`, `elab`, `measure`, `measure_pair`, `judge`,
+`run`, `sample`, `stat`, `elab`, `measure`, `measure_pair`, `judge`, `static_copies`,
 `compare`, `explain`, `hot`, `report`, the four `experiment_*` operations,
 and `live` and `dump` for a running program. Paths it writes must be inside
 the project, and the binaries it runs must be Lake-built

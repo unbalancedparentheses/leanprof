@@ -110,13 +110,17 @@ def commands : List (String × String × String) := [
     "with pass/fail per exact metric, and why each regressed declaration or copy site got worse (as\n" ++
     "`compare`). At most N characters (default 60000, under GitHub's comment limit).\n" ++
     "Exit 1 if a metric named by --fail-on (default: copies) regressed."),
-  ("explain", "[--report FILE] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]]",
+  ("explain", "[--report FILE] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]] | --static [MODULE...] [--deps] [--no-build] [--all] [--report FILE | --no-report] [--out FILE] [--json]",
     "For each copy of a shared value in the last report, say where the second reference comes from,\n" ++
     "read from the compiler's IR (.lake/build/ir/*.c), with source lines and, when the cause is\n" ++
     "recognised, the fix as Lean code with the program's own names. --json prints the ranked findings\n" ++
     "(cause, location, fix and fix code, cost) for agents. --why EXE first reruns EXE recording where\n" ++
     "each copied value became shared. Writes .lake/leanprof/explain.json (or --out FILE) for\n" ++
-    "#leanprof hovers."),
+    "#leanprof hovers.\n" ++
+    "--static flags likely copies across the whole package (libraries too) without running anything: every\n" ++
+    "update whose value the IR shows still referenced (in the function, a caller or an `initialize` global),\n" ++
+    "with file:line and the fix; with a run report, which flags it confirmed and which never ran. Runs\n" ++
+    "`lake build` first (--no-build skips it); writes .lake/leanprof/static.json (or --out FILE)."),
   ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
@@ -185,7 +189,7 @@ def summary : String → String
   | "measure-pair" => "interleave two prebuilt binaries for paired timing and correctness checks"
   | "judge" => "KEEP or DISCARD from measure summaries or one paired session"
   | "report-md" => "Markdown summary of base and head reports, for pull-request comments"
-  | "explain" => "why each copy happened: where the second reference comes from, and a fix"
+  | "explain" => "why each copy happened, and a fix; --static: likely copies without running anything"
   | "experiment" => "start an experiment, try candidates (KEEP/DISCARD/INCONCLUSIVE with evidence), finish on held-out inputs"
   | "fix" => "apply explain's fix on a new branch, test, measure and judge it; commit KEEPs with the evidence"
   | "html" => "one self-contained HTML report: flame graph, tables, source, comparison"

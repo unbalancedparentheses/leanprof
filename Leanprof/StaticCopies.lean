@@ -281,8 +281,9 @@ inductive Via where
   | here
   /-- The value was taken out of the global `IO.Ref` or `Std.Mutex` `global`. -/
   | global (global : String)
-  /-- Caller `g` passes `value` at `call` to a function that updates it, and keeps it (`kept`). -/
-  | caller (g : CFun) (call : Stmt) (value : String) (kept : Kept)
+  /-- Caller `g` passes `value` at `call` to a function that updates it (or, `field`,
+  a field of it), and keeps it (`kept`). -/
+  | caller (g : CFun) (call : Stmt) (value : String) (kept : Kept) (field : Bool)
   deriving Inhabited
 
 structure Site where
@@ -358,13 +359,17 @@ def scan (funs : Array CFun) (closed : Std.HashMap String String := {}) : Scan :
           let some (g, op) := site? u | continue
           let some (kind, opName) := opInfo op.fn | continue
           -- the value the callee updates, in the caller
-          let (w, chain) : String × Option Stmt := match u.field with
-            | none => (resolve f a, none)
+          -- (for an update of a field: the structure itself, when the caller passes
+          -- one it did not build here; a kept structure keeps its field shared)
+          let (w, chain, whole) : String × Option Stmt × Bool := match u.field with
+            | none => (resolve f a, none, false)
             | some k =>
               match f.stmts.find? fun t => t.fn == "lean_ctor_set" && t.args[0]? == some a &&
                   t.args[1]? == some (toString k) && t.idx < s.idx with
-              | some t => (resolve f (t.args[2]?.getD ""), some t)
-              | none => ("", none)
+              | some t => (resolve f (t.args[2]?.getD ""), some t, false)
+              | none =>
+                if f.stmts.any (fun t => t.lhs == a && t.fn == "lean_alloc_ctor") then ("", none, false)
+                else (resolve f a, none, true)
           if w.isEmpty then continue
           if u.viaRef then
             if let some glob := globalOf f w then
@@ -380,14 +385,16 @@ def scan (funs : Array CFun) (closed : Std.HashMap String String := {}) : Scan :
           | some kept =>
             if knownEmpty f w then empty := empty + 1; continue
             let fd := analyzeOp g op opName
-            sites := sites.push { f := g, fd := { fd with strength := 2 }, kind, via := .caller f s w kept }
+            sites := sites.push { f := g, fd := { fd with strength := 2 }, kind, via := .caller f s w kept whole }
             calls := calls.insert (f.name, s.idx)
           | none =>
-            if u.field.isNone then
-              if let some (i, fld) := paramPath f w then
-                let nu := { u with param := i, field := fld }
-                if !(upds.getD f.name #[]).contains nu then
-                  upds := upds.insert f.name ((upds.getD f.name #[]).push nu); added := true
+            let nu? : Option Upd := match paramPath f w, u.field with
+              | some (i, fld), none => some { u with param := i, field := fld }
+              | some (i, none), some _ => if whole then some { u with param := i } else none
+              | _, _ => none
+            if let some nu := nu? then
+              if !(upds.getD f.name #[]).contains nu then
+                upds := upds.insert f.name ((upds.getD f.name #[]).push nu); added := true
     if !added then break
   -- closures run on a global's contents (`mutex.atomically (modify ...)`):
   -- a closure whose code updates its `IO.Ref` argument, passed with a global
@@ -419,7 +426,7 @@ def scan (funs : Array CFun) (closed : Std.HashMap String String := {}) : Scan :
       if let some kept := retainedAt f s i w none then
         if knownEmpty f w then empty := empty + 1; continue
         let fd := { analyzeOp f (asUpdate s w) opName with var := w, strength := 2 }
-        sites := sites.push { f, fd, kind := "Array", via := .caller f s w kept }
+        sites := sites.push { f, fd, kind := "Array", via := .caller f s w kept false }
   return { sites, empty, functions := funs.size, updates }
 
 /-! ## Source positions -/
@@ -526,7 +533,7 @@ def explainSite (s : Site) (fnName : String) (src : Array String) (decl : Array 
     let code := if code.isEmpty then #[] else #[code]
     let ex' := { ex with why, fix, code, lines := ls, matched := !ls.isEmpty, cause := "multi-threaded-global" }
     return ({ ex' with strength := 3 }, s!"global `{Leanprof.demangle g}`")
-  | .caller g call w kept =>
+  | .caller g call w kept field =>
     let crel := let r := g.file.toString; if r.startsWith "./" then dropChars r 2 else r
     let via := if g.name == s.f.name then "" else s!"caller {callerName}, {crel}:{call.cline} `{call.text}`"
     -- a loop over the array it updates, or a map over a shared array: the callee's own account
@@ -550,7 +557,8 @@ def explainSite (s : Site) (fnName : String) (src : Array String) (decl : Array 
       let pex := explainFinding g pf s.kind 0 callerDecl callerName
       return ({ pex with lines := ls ++ pex.lines, strength := 2 }, via)
     | _ => pure ()
-    let updates := s!"`{method}`, which updates it in place ({op})"
+    let updates := if field then s!"`{method}`, which updates a field of it in place ({op})"
+      else s!"`{method}`, which updates it in place ({op})"
     match kept with
     | .usedAfter t =>
       if isDec t then
@@ -810,7 +818,7 @@ def explainStatic (argv : List String) : IO UInt32 := do
     let (decl, declName, dl) := here.decl fnName
     -- a flag known from a caller is shown at the caller
     let (at_, callerDecl, callerName, callerDeclName, callerLine) ← match s.via with
-      | .caller g _ _ _ => do
+      | .caller g .. => do
         let n := Leanprof.demangle g.name
         let cs ← sourceOf g.name
         let (cd, cdn, cl) := cs.decl n
@@ -823,7 +831,7 @@ def explainStatic (argv : List String) : IO UInt32 := do
       if atCallee then (here, declName, dl) else (at_, callerDeclName, callerLine)
     let value := match s.via with
       | .global g => userDecl (Leanprof.demangle g)
-      | .caller g _ w _ =>
+      | .caller g _ w .. =>
         match sourceName w with
         | some n => if genericNames.contains n then valueName s.f s.fd.var s.fd.opName decl ex.lines else n
         | none => display g w
@@ -843,7 +851,7 @@ def explainStatic (argv : List String) : IO UInt32 := do
     let key := s!"{at_.file}:{line}:{ex.cause}:{ex.why}"
     if seen.contains key then continue
     seen := seen.insert key
-    let loop := isLoop s.f || (match s.via with | .caller g _ _ _ => isLoop g | _ => false)
+    let loop := isLoop s.f || (match s.via with | .caller g .. => isLoop g | _ => false)
     let names := #[fnName] ++ (if callerName.isEmpty then #[] else #[callerName])
     flags := flags.push {
       file := at_.file, line, decl := callerDeclName, fnName, sym := s.f.name, kind := s.kind, op := s.fd.opName,

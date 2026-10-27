@@ -49,6 +49,17 @@ PY
 LEANPROF_QUIET=1 "$lp" explain --why smoke -- 2000 > why.txt
 grep -q "1999×" why.txt
 
+echo "== leanprof explain --static (this Lean version's C), checked against the --auto run"
+"$lp" explain --static --no-build --report run.json --json > static.json
+python3 - <<'PY'
+import json, sys
+d = json.load(open('static.json'))
+flags = {(f['declaration'], f['kind']): f['runtime'] for f in d['flags']}
+print('static flags', flags)
+ok = all(flags.get(k, {}).get('status') == 'confirmed' for k in (('buildWithHistory', 'Array'), ('strings', 'String')))
+sys.exit(0 if ok and len(flags) == 2 else 1)
+PY
+
 echo "== self-check: a missing shim is reported"
 # leanprof as installed, but with the String.push shims taken out of the
 # compiler wrapper (as Lean 4.36's inline lean_string_push once did to every

@@ -209,6 +209,6 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
     (match causeOf "logGlobal", causeOf "logMutex" with | some (.global _), some (.global _) => true | _, _ => false) ""
   check "static copies: a loop that keeps its array is found at the caller"
     (match causeOf "loopKeeps", causeOf "interprocedural" with
-     | some (.caller _ _ _ .held), some (.caller _ _ _ (.usedAfter _)) => true | _, _ => false) ""
+     | some (.caller _ _ _ .held _), some (.caller _ _ _ (.usedAfter _) _) => true | _, _ => false) ""
 
 end Tests.StaticCopies
