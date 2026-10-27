@@ -1459,7 +1459,8 @@ static void lpf_ret_finish(void) {
 /* ---- report ---- */
 
 /* Leak-like growth: live bytes that rose through the second half of the
- * samples, ending near their largest, by at least 64 KiB and 10%. */
+ * samples (in two of three), ending near their largest, by at least 64 KiB
+ * and 10%. A batch program that builds its result until the end also grows. */
 typedef struct {
     int growing;
     int64_t from, to;           /* at the middle sample, and at the last */
@@ -1479,8 +1480,9 @@ static lpf_ret_trend lpf_ret_trend_of(const int64_t *ser, uint32_t n) {
         t.steps++;
         t.rises += ser[k] > ser[k - 1];
     }
+    /* rising in two of every three samples: a one-time build-up rises in a few */
     t.growing = t.to - t.from >= 65536 && t.to - t.from >= t.to / 10 && t.to * 10 >= mx * 9 &&
-                t.rises * 2 >= t.steps;
+                t.rises * 3 >= t.steps * 2;
     return t;
 }
 

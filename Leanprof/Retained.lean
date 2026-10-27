@@ -48,21 +48,21 @@ def section? (j : Json) : Option Json :=
 def notTracked : String :=
   "retained memory: not tracked in this report (`leanprof run --retained` tracks which allocation sites hold memory)"
 
-private def at (fn place : String) : String := if place.isEmpty then fn else s!"{fn} ({place})"
+private def placed (fn place : String) : String := if place.isEmpty then fn else s!"{fn} ({place})"
 
 /-- One holder, as `IO.Ref from F (pos)` or `closure of F`. -/
 def holder (h : Json) : String :=
   let k := str h "kind"
   let fn := str h "function"
   if fn.isEmpty then s!"{k} (made where leanprof does not look)"
-  else if k == "closure" then s!"closure of {at fn (str h "where")}"
-  else s!"{k} from {at fn (str h "where")}"
+  else if k == "closure" then s!"closure of {placed fn (str h "where")}"
+  else s!"{k} from {placed fn (str h "where")}"
 
 /-- The root of a chain, in words. -/
 def root (r : Json) : String :=
   match str r "kind" with
-  | "global" => s!"global {at (str r "name") (str r "where")}"
-  | "stack" => s!"a local of {at (if (str r "name").isEmpty then "an unknown function" else str r "name") (str r "where")} (stack)"
+  | "global" => s!"global {placed (str r "name") (str r "where")}"
+  | "stack" => s!"a local of {placed (if (str r "name").isEmpty then "an unknown function" else str r "name") (str r "where")} (stack)"
   | "constant" => "a module constant (persistent)"
   | "cycle" => "a reference cycle"
   | _ => "nothing leanprof can see (another thread's stack, the runtime, or an object made in precompiled code)"
@@ -90,13 +90,13 @@ def siteLines (r : Json) (limit : Nat) : Array String :=
   sites[0:min limit sites.size].toArray.map fun s =>
     s!"{fmtBytes (num s "peak_bytes")} in {(num s "peak_objects").toUInt64} objects at the peak, " ++
     s!"{fmtBytes (num s "exit_bytes")} at exit{if bool s "growing" then ", growing" else ""}: " ++
-    at (str s "function") (str s "where") ++ (if str s "scope" == "-" || (str s "scope").isEmpty then "" else s!" in scope {str s "scope"}")
+    placed (str s "function") (str s "where") ++ (if str s "scope" == "-" || (str s "scope").isEmpty then "" else s!" in scope {str s "scope"}")
 
 /-- Sites whose live bytes kept rising over the run. -/
 def growthLines (r : Json) : Array String :=
   ((arr r "sites").filter (bool · "growing")).map fun s =>
     let g := obj s "growth"
-    s!"{at (str s "function") (str s "where")} kept growing over the second half of the run, " ++
+    s!"{placed (str s "function") (str s "where")} kept growing over the second half of the run, " ++
     s!"{fmtBytes (num g "from")} -> {fmtBytes (num g "to")} (rose in {(num g "rises").toUInt64} of {(num g "steps").toUInt64} samples)"
 
 /-- The rows of a walk: bytes, objects, what, and what holds them. -/
@@ -104,7 +104,7 @@ def walkLines (w : Json) (limit : Nat) (fixes := true) : Array String := Id.run 
   let mut out : Array String := #[]
   let ps := arr w "paths"
   for p in ps[0:min limit ps.size] do
-    out := out.push s!"{fmtBytes (num p "bytes")} in {(num p "objects").toUInt64} {str p "kind"} from {at (str p "function") (str p "where")}"
+    out := out.push s!"{fmtBytes (num p "bytes")} in {(num p "objects").toUInt64} {str p "kind"} from {placed (str p "function") (str p "where")}"
     out := out.push s!"  held by {chain p}"
     if fixes && !(str p "hint").isEmpty then out := out.push s!"  fix: {str p "hint"}"
   return out
@@ -143,15 +143,16 @@ def findings (j : Json) (filter : String := "") (limit : Nat := 5) : Array Strin
   let has (p : Json) := filter.isEmpty || ((str p "function").splitOn filter).length > 1
   let mut out : Array String := #[]
   if let some w := mainWalk? r then
-    let ps := (arr w "paths").filter has
+    -- small rows (module constants, runtime glue) are left to the report
+    let ps := (arr w "paths").filter fun p => has p && num p "bytes" ≥ 1024
     for p in ps[0:min limit ps.size] do
       out := out.push (s!"RETAINED {fmtBytes (num p "bytes")} in {(num p "objects").toUInt64} {str p "kind"} from " ++
-        s!"{at (str p "function") (str p "where")} at the {str w "when"} walk")
+        s!"{placed (str p "function") (str p "where")} at the {str w "when"} walk")
       out := out.push s!"  held by: {chain p}"
       unless (str p "hint").isEmpty do out := out.push s!"  fix: {str p "hint"}"
   for s in (arr r "sites").filter fun s => bool s "growing" && has s do
     let g := obj s "growth"
-    out := out.push (s!"GROWING {at (str s "function") (str s "where")}: its live objects kept rising, " ++
+    out := out.push (s!"GROWING {placed (str s "function") (str s "where")}: its live objects kept rising, " ++
       s!"{fmtBytes (num g "from")} -> {fmtBytes (num g "to")} over the second half of the run. In a long-running " ++
       "program this is a leak: find what holds them in the RETAINED rows (or take Leanprof.retainedSnapshot later in the run).")
   return out

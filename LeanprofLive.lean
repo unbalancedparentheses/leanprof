@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import Leanprof.Retained
 
 /-!
 # Live commands: `leanprof top`, `leanprof dump`, `leanprof mcp`
@@ -258,7 +259,7 @@ structure TopOpts where
 
 def topUsage : String :=
   "usage: leanprof top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS]\n" ++
-  "                    [--auto | --auto-all] [--allocs] [--counters] [--frees] [--core] [--no-deps] EXE [-- ARGS...]\n" ++
+  "                    [--auto | --auto-all] [--allocs] [--counters] [--frees] [--retained] [--core] [--no-deps] EXE [-- ARGS...]\n" ++
   "       leanprof top [OPTIONS] --attach FILE | --pid PID"
 
 partial def parseTop (o : TopOpts) : List String → Except String TopOpts
@@ -273,7 +274,7 @@ partial def parseTop (o : TopOpts) : List String → Except String TopOpts
   | "--slow-ms" :: v :: rest => parseTop { o with slowMs := some v } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: rest =>
-    if ["--auto", "--auto-all", "--allocs", "--counters", "--frees", "--core", "--no-deps"].contains a then
+    if ["--auto", "--auto-all", "--allocs", "--counters", "--frees", "--retained", "--core", "--no-deps"].contains a then
       parseTop { o with runFlags := o.runFlags.push a } rest
     else if a.startsWith "--" then .error s!"unknown option {a}\n{topUsage}"
     else if o.exe.isNone then parseTop { o with exe := some a } rest
@@ -515,7 +516,8 @@ def hotLines (j : Json) (kind : String) (limit : Nat) : Array String := Id.run d
   | "waits" =>
     let xs := take ((arr j "waits").qsort fun a b => num a "blocked_ns" > num b "blocked_ns")
     xs.map fun x => s!"{fmtCount (num x "waits")} waits, {fmtTime (num x "blocked_ns")} blocked in scope {str x "scope"}: {str x "function"}{str x (if live then "name" else "")}{w x}"
-  | _ => #[s!"unknown kind {kind}: use scopes, copies, allocations, tasks or waits"]
+  | "retained" => Leanprof.Retained.hotLines j limit
+  | _ => #[s!"unknown kind {kind}: use scopes, copies, allocations, tasks, waits or retained"]
 
 def summarize (j : Json) (limit : Nat := 5) : String := Id.run do
   let mut out : Array String := #[]
@@ -540,6 +542,9 @@ def summarize (j : Json) (limit : Nat := 5) : String := Id.run do
     unless ls.isEmpty do
       out := out.push s!"{k}:"
       out := out ++ ls.map ("  " ++ ·)
+  -- retained memory: only a report of `run --retained` has it (not tracked otherwise, not zero)
+  unless live do
+    out := out ++ Leanprof.Retained.lines j limit
   return "\n".intercalate out.toList
 
 
@@ -615,6 +620,8 @@ def explain (j : Json) (filter : String) (limit : Nat := 5) (copyLines : Option 
   let clo := ((arr j "closures").filter has).qsort fun a b => num a "applications" > num b "applications"
   for c in clo[0:min limit clo.size] do
     out := out.push s!"CLOSURE {fmtCount (num c "applications")} calls of {str c "target"} through a closure in {str c "function"}{pos c} ({fmtCount (num c "partial")} partial, {fmtCount (num c "over")} over-applied). A non-specialized higher-order call: @[specialize] or @[inline] on the higher-order function usually removes it."
+  -- retained memory (run --retained): the largest chains of holders, and growth
+  out := out ++ Leanprof.Retained.findings j filter limit
   if out.isEmpty then
     out := out.push (if filter.isEmpty then "nothing notable in this report" else s!"nothing in this report matches {filter}")
   return "\n".intercalate out.toList
@@ -665,7 +672,9 @@ def tools : Array Json := #[
     "blocking waits, peak memory. The full JSON report is saved (default .lake/leanprof/report.json).")
     (exeProps ++ [("auto", bProp "time every function of the package (no profile! needed)"),
       ("allocs", bProp "count allocations per site"), ("counters", bProp "failed reuse and closure counters"),
-      ("frees", bProp "time freeing cascades"), ("core", bProp "also probe Lean's own libraries"),
+      ("frees", bProp "time freeing cascades"),
+      ("retained", bProp "live objects by allocation site at the peak and at exit, what holds them, and growth (implies allocs and frees)"),
+      ("core", bProp "also probe Lean's own libraries"),
       ("json", sProp "where to save the report"), ("top", nProp "rows per section (default 8)")]) ["executable"],
   tool "sample" "Sample a Lake executable with samply (no probes): CPU time per Lean declaration with file:line."
     (exeProps ++ [("top", nProp "declarations shown (default 15)")]) ["executable"],
@@ -681,13 +690,14 @@ def tools : Array Json := #[
   tool "report" "Summarize a leanprof report (run, sample or elab JSON) or a live snapshot: the hottest rows of each section."
     [("path", sProp "report file (default .lake/leanprof/report.json)"), ("top", nProp "rows per section (default 5)")] [],
   tool "hot" "List the hottest scopes, copy sites, allocation sites, tasks or waits of a report or live snapshot, with file:line."
-    [("kind", sProp "scopes, copies, allocations, tasks or waits"),
+    [("kind", sProp "scopes, copies, allocations, tasks, waits or retained (live bytes by allocation site, with run --retained)"),
      ("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"), ("limit", nProp "rows (default 10)")]
     ["kind"],
   tool "explain" ("Explain the costliest findings of a run report or live snapshot: why each copy of a shared value " ++
     "happens and how to fix it (for a report, `leanprof explain`'s diagnosis from the compiler's IR, with the fix " ++
     "in the program's own names), where a scope's time goes (own or nested), tail latency, allocations per call, " ++
-    "task granularity, failed reuse and closure calls. Not for sampled reports (they count no copies or calls).")
+    "task granularity, failed reuse and closure calls, and with run --retained what keeps memory alive and which " ++
+    "sites keep growing. Not for sampled reports (they count no copies or calls).")
     [("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
      ("name", sProp "only findings whose function, scope or name contains this"), ("limit", nProp "findings per kind (default 5)")] [],
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
@@ -815,7 +825,7 @@ def callTool (name : String) (a : Json) : IO Json := do
   | "run" =>
     let json ← projectPath cwd "json" (argStr a "json" |>.getD ".lake/leanprof/report.json")
     let flags := [("auto", "--auto"), ("allocs", "--allocs"), ("counters", "--counters"), ("frees", "--frees"),
-      ("core", "--core")].filterMap fun (k, f) => if argBool a k then some f else none
+      ("retained", "--retained"), ("core", "--core")].filterMap fun (k, f) => if argBool a k then some f else none
     let (rc, out, err) ← runSelf (#["run", "--json", json] ++ flags.toArray ++ (← exeArgs)) cwd
       #[("LEANPROF_QUIET", some "1")]
     let report ← readJson? (inDir cwd json)
