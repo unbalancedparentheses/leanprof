@@ -121,27 +121,22 @@ def run (check' : String → Bool → String → StateT Nat IO Unit) : StateT Na
   check "delta: a declaration removed from a file without errors is reported gone"
     ((jarr (Leanprof.Delta.compute (withFile twoDecls 0) (withFile (report #[] #[] #[]) 0)) "decls").any
       (jstr · "status" == "gone"))
-  let runReport (n : Nat) : Json := Json.mkObj [("scopes", Json.arr #[]),
-    ("copies", Json.arr #[Json.mkObj [("function", "build"), ("kind", "Array"), ("scope", "build"), ("where", "M.lean:17"),
-      ("shared", toJson n), ("multi_threaded", toJson (0 : Nat)), ("bytes", toJson (n * 8))]]),
-    ("allocations", Json.arr #[Json.mkObj [("function", "0x1234"), ("scope", "-"), ("where", ""), ("allocs", toJson (3 : Nat)),
-      ("bytes", toJson (48 : Nat))]])]
-  let r := Leanprof.Delta.compute (runReport 1) (runReport 2001)
-  let cs := jarr r "copies"
-  check' "delta: copies per call site, with the site's line"
-    (jstr r "kind" == "run" && cs.size == 1 && jnum cs[0]! "change" == 2000 && jstr cs[0]! "where" == "M.lean:17" &&
-      (jarr r "allocations").isEmpty) r.compress
-  check "delta: reports of different kinds are not compared"
-    (((Leanprof.Delta.compute (runReport 1) (report #[] #[] #[])).getObjValAs? Bool "comparable").toOption == some false)
-  check' "delta: the summary names the change"
-    ((Leanprof.Delta.summary r).any (has · "+2,000  build [Array] in build (M.lean:17)"))
-    (toString (Leanprof.Delta.summary r))
+  -- a project report: an error in another file does not hide what was removed from this one
+  let twoFiles (errors : Nat) : Json := (withFile (report #[] #[] #[]) 0).setObjVal! "files" (Json.arr #[
+    Json.mkObj [("file", "F.lean"), ("errors", toJson (0 : Nat))], Json.mkObj [("file", "G.lean"), ("errors", toJson errors)]])
+  check "delta: an error in another file does not keep this file's removed declarations"
+    ((jarr (Leanprof.Delta.compute (withFile twoDecls 0) (twoFiles 1)) "decls").any (jstr · "status" == "gone"))
+  let d := Leanprof.Delta.compute (report #[] #[] #[]) (report #[cause "f" "whnf" 5000 30] #[] #[] (total := 7000))
+  check' "delta: the summary names the declaration and its top change"
+    ((Leanprof.Delta.summary d).any (has · "+6.00 kHB  F.lean d (F.lean:1); whnf reduces f"))
+    (toString (Leanprof.Delta.summary d))
+  check "delta: a run report is not compared"
+    (((Leanprof.Delta.compute (Json.mkObj [("scopes", Json.arr #[])]) (report #[] #[] #[])).getObjValAs? Bool "comparable").toOption == some false)
   -- time moved by 20% and 5 ms: changed at compare's defaults, not with --threshold 50
-  let timed (ns : Nat) : Json := Json.mkObj [("scopes", Json.arr #[Json.mkObj [("name", "s"), ("pos", "M.lean:3"),
-    ("total_ns", toJson ns), ("calls", toJson (1 : Nat))]])]
-  check "delta: a scope's time change counts above compare's default thresholds"
-    ((jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000)) "scopes").size == 1)
+  let timed (ns : Nat) : Json := (report #[] #[] #[] (total := ns)).setObjVal! "unit" "ns"
+  check "delta: a time change counts above compare's default thresholds"
+    ((jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000)) "decls").size == 1)
   check "delta: the time thresholds can be raised"
-    (jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000) { pct := 50 }) "scopes").isEmpty
+    (jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000) { pct := 50 }) "decls").isEmpty
 
 end Tests.Regress

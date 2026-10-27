@@ -1503,7 +1503,8 @@ def sinceLast (report : String) (keepBase : Bool) : IO Unit := do
   IO.FS.writeFile delta d.compress
   IO.println s!"\nsince the last profile ({delta}):"
   for l in Leanprof.Delta.summary d do IO.println s!"  {l}"
-  let fresh := bj?.isNone || (d.getObjValAs? Bool "first").toOption.getD false
+  -- no base, or one that cannot be compared (another unit): this run becomes the base
+  let fresh := bj?.isNone || (d.getObjValAs? Bool "comparable").toOption == some false
   if fresh || (!keepBase && Leanprof.Delta.errors nj == 0) then
     IO.FS.writeBinFile base (← IO.FS.readBinFile report)
 

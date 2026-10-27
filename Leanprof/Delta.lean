@@ -2,7 +2,7 @@ import Lean.Data.Json
 import Leanprof.Regress
 
 /-!
-# The difference of two reports, per declaration and per call site
+# The difference of two compile-time reports, per declaration
 
 `elab --since-last` writes it (`FILE.delta.json` next to the report): what an
 edit did to a file's compile time, for a person or an agent ("+12.3 kHB in
@@ -11,14 +11,12 @@ edit did to a file's compile time, for a person or an agent ("+12.3 kHB in
 For two `elab` reports: each declaration whose cost changed, at its first line
 in the newer report, with what changed inside it when both reports have it
 (`Regress.explainDecl`: the definitions unfolded, instances and simp lemmas
-whose credited work or counts changed). For two `run` or `stat` reports: copy
-sites and allocation sites whose counts changed, and scopes whose calls changed
-or whose time changed by more than the time thresholds.
+whose credited work or counts changed).
 
 Counts are exact and heartbeats nearly so, so a declaration counts as changed
 when its heartbeats moved by more than `Regress.hbNoise` (1,000), and as a
 regression above 1% and 1,000 heartbeats, as in `compare`. Time (an `elab`
-report without `--heartbeats`, a run's scopes) counts when it moved by more
+report without `--heartbeats`) counts when it moved by more
 than `Thresholds.pct` percent and `Thresholds.minMs` ms: `compare`'s
 `--threshold` and `--min-ms`, 10 and 1 by default.
 -/
@@ -35,6 +33,10 @@ def heartbeats (j : Json) : Bool := jstr j "unit" == "heartbeats"
 
 /-- Errors in the files of an `elab` report (costs stop at the first error of a file). -/
 def errors (j : Json) : Nat := (jarr j "files").foldl (fun a f => a + jnat f "errors") 0
+
+/-- The files of an `elab` report that had errors. -/
+def failedFiles (j : Json) : Std.HashSet String :=
+  (jarr j "files").foldl (fun s f => if jnat f "errors" > 0 then s.insert (jstr f "file") else s) {}
 
 /-- `File.lean:12` as (file, line). -/
 def splitPos (p : String) : String × Nat :=
@@ -104,8 +106,9 @@ def elabDelta (t : Thresholds) (bj nj : Json) : Json := Id.run do
   let ni := loadElab nj
   let starts := declStarts nj
   let baseStarts := declStarts bj
-  -- a file with errors stops being elaborated at the first: what follows is not gone
-  let partial_ := errors nj > 0
+  -- a file with errors stops being elaborated at the first: its declarations that are
+  -- missing are not gone (those of the other files are)
+  let failed := failedFiles nj
   let keys := (bi.decls.toList.map (·.1) ++ ni.decls.toList.map (·.1)).eraseDups.toArray
   let mut rows : Array (Float × Json) := #[]
   for k in keys do
@@ -123,7 +126,7 @@ def elabDelta (t : Thresholds) (bj nj : Json) : Json := Id.run do
         ("status", Json.str "new"), ("base", toJson (0 : Nat)), ("new", toJson n.total), ("change", toJson n.total),
         ("regression", Json.bool false)])
     | some b, none =>
-      if partial_ || b.total ≤ 0 then continue
+      if failed.contains (splitPos pos).1 || b.total ≤ 0 then continue
       rows := rows.push (b.total, Json.mkObj [("key", Json.str k), ("name", Json.str name), ("pos", Json.str ""),
         ("status", Json.str "gone"), ("base", toJson b.total), ("new", toJson (0 : Nat)), ("change", toJson (-b.total)),
         ("regression", Json.bool false)])
@@ -133,79 +136,20 @@ def elabDelta (t : Thresholds) (bj nj : Json) : Json := Id.run do
     ("errors", toJson (errors nj)),
     ("threshold", toJson ni.threshold)]
 
-/-- Counts per key of a run report's `field` array: (count, bytes, where, entry). -/
-def sites (j : Json) (field : String) (key : Json → String) (count bytes : Json → Float) :
-    Std.HashMap String (Float × Float × String × Json) := Id.run do
-  let mut out : Std.HashMap String (Float × Float × String × Json) := {}
-  for e in jarr j field do
-    let k := key e
-    let (c, b, w, _) := out.getD k (0, 0, jstr e "where", e)
-    out := out.insert k (c + count e, b + bytes e, if w.isEmpty then jstr e "where" else w, e)
-  return out
-
-/-- The sites whose counts differ, largest change first. -/
-def siteDelta (b n : Std.HashMap String (Float × Float × String × Json)) (fields : Json → List (String × Json)) :
-    Array Json :=
-  let keys := (b.toList.map (·.1) ++ n.toList.map (·.1)).eraseDups.toArray
-  let rows := keys.filterMap fun k =>
-    let (bc, bb, bw, be) := b.getD k (0, 0, "", Json.null)
-    let (nc, nb, nw, ne) := n.getD k (0, 0, "", Json.null)
-    if bc == nc then none
-    else some ((nc - bc).abs, Json.mkObj ([("key", Json.str k), ("where", Json.str (if nw.isEmpty then bw else nw)),
-      ("base", toJson bc), ("new", toJson nc), ("change", toJson (nc - bc)),
-      ("base_bytes", toJson bb), ("new_bytes", toJson nb)] ++ fields (if ne.isNull then be else ne)))
-  (rows.qsort fun x y => x.1 > y.1).map (·.2)
-
-def runDelta (t : Thresholds) (bj nj : Json) : Json :=
-  let copyKey (c : Json) := s!"{jstr c "function"} [{jstr c "kind"}] in {jstr c "scope"}"
-  let copyCount (c : Json) := jnum c "shared" + jnum c "multi_threaded"
-  let copies := siteDelta (sites bj "copies" copyKey copyCount (jnum · "bytes")) (sites nj "copies" copyKey copyCount (jnum · "bytes"))
-    fun c => [("function", Json.str (jstr c "function")), ("kind", Json.str (jstr c "kind")), ("scope", Json.str (jstr c "scope"))]
-  -- code without a symbol is named by its address, which moves between runs
-  let allocKey (a : Json) :=
-    let f := jstr a "function"
-    s!"{if f.startsWith "0x" then "(no symbol)" else f} in {jstr a "scope"}"
-  let counted (j : Json) := !(jarr j "allocations").isEmpty
-  let allocs := if counted bj && counted nj then
-      siteDelta (sites bj "allocations" allocKey (jnum · "allocs") (jnum · "bytes"))
-        (sites nj "allocations" allocKey (jnum · "allocs") (jnum · "bytes"))
-        fun a => [("function", Json.str (jstr a "function")), ("scope", Json.str (jstr a "scope"))]
-    else #[]
-  let scopeKey' (s : Json) := s!"{jstr s "name"} {jstr s "pos"}"
-  let scopeMap (j : Json) : Std.HashMap String Json :=
-    (jarr j "scopes").foldl (fun m s => m.insert (scopeKey' s) s) {}
-  let bs := scopeMap bj
-  let ns := scopeMap nj
-  let scopes := ((ns.toList.filterMap fun (k, n) => do
-    let b ← bs.get? k
-    let (bt, nt) := (jnum b "total_ns", jnum n "total_ns")
-    let (bc, nc) := (jnat b "calls", jnat n "calls")
-    guard (bc != nc || t.moved bt nt)
-    return ((nt - bt).abs, Json.mkObj [("key", Json.str k), ("name", Json.str (jstr n "name")), ("pos", Json.str (jstr n "pos")),
-      ("base_ns", toJson bt), ("new_ns", toJson nt), ("base_calls", toJson bc), ("new_calls", toJson nc)])).toArray.qsort
-    fun a b => a.1 > b.1).map (·.2)
-  let total (j : Json) (f : String) (count : Json → Float) := (jarr j f).foldl (fun a e => a + count e) 0
-  Json.mkObj [("copies", Json.arr copies), ("allocations", Json.arr allocs), ("scopes", Json.arr scopes),
-    ("allocations_counted", Json.bool (counted bj && counted nj)),
-    ("total", Json.mkObj [("base_copies", toJson (total bj "copies" copyCount)), ("new_copies", toJson (total nj "copies" copyCount)),
-      ("base_allocs", toJson (total bj "allocations" (jnum · "allocs"))),
-      ("new_allocs", toJson (total nj "allocations" (jnum · "allocs")))])]
-
-/-- The difference from `bj` to `nj`. Reports of different kinds (or units)
-are not compared: the result says so (`comparable: false`). -/
+/-- The difference from `bj` to `nj`, two `elab` reports. Other reports, or reports
+in different units, are not compared: the result says so (`comparable: false`). -/
 def compute (bj nj : Json) (t : Thresholds := {}) : Json :=
-  let kind := if isElab nj then "elab" else "run"
-  let comparable := isElab bj == isElab nj && heartbeats bj == heartbeats nj
-  let head := [("version", toJson version), ("delta", Json.bool true), ("kind", Json.str kind),
+  let comparable := isElab bj && isElab nj && heartbeats bj == heartbeats nj
+  let head := [("version", toJson version), ("delta", Json.bool true), ("kind", Json.str "elab"),
     ("unit", Json.str (if heartbeats nj then "heartbeats" else "ns")), ("comparable", Json.bool comparable)]
-  if !comparable then Json.mkObj (head ++ [("first", Json.bool true)])
-  else match (if isElab nj then elabDelta t bj nj else runDelta t bj nj) with
+  if !comparable then Json.mkObj (head ++ [("first", Json.bool false)])
+  else match elabDelta t bj nj with
     | .obj kvs => Json.mkObj (head ++ [("first", Json.bool false)] ++ kvs.toList.map fun ⟨k, v⟩ => (k, v))
     | j => j
 
 /-- The difference written when there is nothing to compare with yet. -/
 def first (nj : Json) : Json :=
-  Json.mkObj [("version", toJson version), ("delta", Json.bool true), ("kind", Json.str (if isElab nj then "elab" else "run")),
+  Json.mkObj [("version", toJson version), ("delta", Json.bool true), ("kind", Json.str "elab"),
     ("unit", Json.str (if heartbeats nj then "heartbeats" else "ns")), ("comparable", Json.bool true), ("first", Json.bool true)]
 
 def fmtAmount (hb : Bool) (x : Float) : String :=
@@ -215,34 +159,22 @@ def fmtAmount (hb : Bool) (x : Float) : String :=
 def summary (d : Json) (top : Nat := 5) : Array String := Id.run do
   if (d.getObjValAs? Bool "first").toOption.getD false then
     return #["no earlier profile to compare with: the next one is compared with this one"]
+  if (d.getObjValAs? Bool "comparable").toOption == some false then
+    return #["not compared: the earlier profile is not an elab report in the same unit; the next run is compared with this one"]
   let hb := jstr d "unit" == "heartbeats"
-  if jstr d "kind" == "elab" then
-    let decls := jarr d "decls"
-    let tot := (d.getObjVal? "total").toOption.getD Json.null
-    let mut out := #[s!"{decls.size} {if decls.size == 1 then "declaration" else "declarations"} changed; " ++
-      s!"file {fmtAmount hb (jnum tot "base")} -> {fmtAmount hb (jnum tot "new")} ({fmtSigned (fmtAmount hb) (jnum tot "new" - jnum tot "base")})"]
-    if jnat d "errors" > 0 then
-      out := out.push s!"  ({jnat d "errors"} errors in the file: declarations after the first error are not compared)"
-    for e in decls.toList.take top do
-      let w := (e.getObjVal? "why").toOption.getD Json.null
-      let head := match (w.getObjVal? "headline").toOption.bind (·.getStr?.toOption) with
-        | some h => s!"; {h}"
-        | none => ""
-      let status := jstr e "status"
-      out := out.push s!"  {fmtSigned (fmtAmount hb) (jnum e "change")}  {if status == "changed" then "" else s!"({status}) "}{jstr e "key"}{if (jstr e "pos").isEmpty then "" else s!" ({jstr e "pos"})"}{head}"
-    return out
-  else
-    let mut out := #[]
-    for (field, what) in [("copies", "copies"), ("allocations", "allocations")] do
-      let rows := jarr d field
-      if rows.isEmpty then continue
-      out := out.push s!"{what}: {rows.size} {if rows.size == 1 then "site" else "sites"} changed"
-      for e in rows.toList.take top do
-        out := out.push s!"  {fmtSigned (fun x => groupDigits x.toUInt64.toNat) (jnum e "change")}  {jstr e "key"}{if (jstr e "where").isEmpty then "" else s!" ({jstr e "where"})"}"
-    for s in (jarr d "scopes").toList.take top do
-      if jnat s "base_calls" != jnat s "new_calls" then
-        out := out.push s!"  calls {jnat s "base_calls"} -> {jnat s "new_calls"}  {jstr s "name"} ({jstr s "pos"})"
-    if out.isEmpty then out := #["no copies, allocations or calls changed"]
-    return out
+  let decls := jarr d "decls"
+  let tot := (d.getObjVal? "total").toOption.getD Json.null
+  let mut out := #[s!"{decls.size} {if decls.size == 1 then "declaration" else "declarations"} changed; " ++
+    s!"file {fmtAmount hb (jnum tot "base")} -> {fmtAmount hb (jnum tot "new")} ({fmtSigned (fmtAmount hb) (jnum tot "new" - jnum tot "base")})"]
+  if jnat d "errors" > 0 then
+    out := out.push s!"  ({jnat d "errors"} errors in the file: declarations after the first error are not compared)"
+  for e in decls.toList.take top do
+    let w := (e.getObjVal? "why").toOption.getD Json.null
+    let head := match (w.getObjVal? "headline").toOption.bind (·.getStr?.toOption) with
+      | some h => s!"; {h}"
+      | none => ""
+    let status := jstr e "status"
+    out := out.push s!"  {fmtSigned (fmtAmount hb) (jnum e "change")}  {if status == "changed" then "" else s!"({status}) "}{jstr e "key"}{if (jstr e "pos").isEmpty then "" else s!" ({jstr e "pos"})"}{head}"
+  return out
 
 end Leanprof.Delta
