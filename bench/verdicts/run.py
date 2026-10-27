@@ -34,8 +34,9 @@ The protocol, fixed before its first run (2026-10-26) and not changed after:
   does not depend on the load; the session's `overloaded` flag is recorded).
   On `base`, "slower" or "faster" is a false positive; on `pctN`, "slower"
   is a detection; "inconclusive" is neither.
-* Conditions: `quiet`, nothing added, each trial waiting (at most 10
-  minutes) until the 1-minute load is below 0.4 of the CPU count; `loaded`,
+* Conditions: `quiet`, nothing added, each trial waiting (at most 10 minutes,
+  no limit since the amendment below) until the 1-minute load is below 0.4
+  of the CPU count; `loaded`,
   `--yes N` processes of `yes > /dev/null` for the whole condition, started
   60 s before the first trial. Every trial holds the machine-wide benchmark
   lock (~/.leanprof-bench.lock), and the loaded condition holds it
@@ -49,8 +50,10 @@ repetitions opt-in, so they became `r1` (the default) and `r5`. And the first lo
 21:13) was stopped after 4 trials, because other work had taken the
 machine's load to 160–250 (on 18 CPUs; verdicts took 4–43 s); its rows are
 in results/aborted/, with the two `reps` files collected during it. Since
-then the loaded condition (and `reps` with `yes`) first waits, at most 30
-minutes, until the load is below 0.4 of the CPU count, so that the added
+then the loaded condition (and `reps` with `yes`) first waits
+until the load is below 0.4 of the CPU count (with no limit: a first
+limit of 30 minutes let one `reps` file start at load 86, now in
+results/aborted/ too), so that the added
 load is the `yes` processes.
 """
 import argparse, fcntl, json, math, os, random, shutil, statistics, subprocess, sys, time
@@ -229,7 +232,7 @@ def cmd_trials(a):
         # the machine itself first (at most 30 minutes): the added load is
         # to be the `yes` processes, not something else
         t0 = time.monotonic()
-        while load() >= 0.4 * cpus and time.monotonic() - t0 < 1800:
+        while load() >= 0.4 * cpus:
             time.sleep(10)
     outer = Lock().__enter__() if a.condition == "loaded" else None
     try:
@@ -244,7 +247,7 @@ def cmd_trials(a):
                 break
             if a.condition == "quiet":
                 t0 = time.monotonic()
-                while load() >= 0.4 * cpus and time.monotonic() - t0 < 600:
+                while load() >= 0.4 * cpus:
                     time.sleep(5)
             with (Lock() if outer is None else open(os.devnull)) as lk:
                 rec = trial(g, b, "base" if i == 0 else variant, f"{a.condition}-{i}", i, CONFIGS, tmp)
@@ -278,7 +281,7 @@ def cmd_reps(a):
     os.makedirs(RES, exist_ok=True)
     path = os.path.join(RES, f"reps-yes{a.yes}-{a.variant}.jsonl")
     t0 = time.monotonic()
-    while a.yes and load() >= 0.4 * os.cpu_count() and time.monotonic() - t0 < 1800:
+    while a.yes and load() >= 0.4 * os.cpu_count():
         time.sleep(10)
     with Lock():
         yes =[subprocess.Popen(["yes"], stdout=subprocess.DEVNULL) for _ in range(a.yes)]
