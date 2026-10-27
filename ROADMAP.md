@@ -101,25 +101,21 @@ Everything here is on `main`; v0.1.0 is tagged from it.
 Two changes in reach rather than features: they would help far more Lean
 users than the rest of v0.2.0, and take priority over its long tail.
 
-- [ ] **Find copies without running anything.** Today a copy is found only if
-  a workload happens to run that path. The compiler already knows the risky
-  spots: in its intermediate code, an array push or set on a value whose
-  reference count was just increased will copy. A pass reading that code
-  flags every likely copy across a whole package, including libraries with no
-  executable, and in the editor as you type, at no runtime cost. The runtime
-  profiler then confirms which flags matter and how much: "profile, then fix"
-  becomes "never write it". The most uncertain bet (compiler internals change;
-  false positives) and the biggest. First step done: a prototype on the
-  post-reference-counting IR ([static copies](docs/research/static-copies.md))
-  finds both copy sites of lean-compiler-backend's old `CFG.build` and 2 of
-  8 copying examples, with no false warning on 10 alternatives; not part of
-  the command yet.
-  - [ ] Run `Tests/StaticCopies/check.py` in CI, checking static warnings
-    against instrumented copy counts, including exclusive updates and
-    ownership transfers that must not warn.
-  - [ ] Extend detection to map lookups, interprocedural sharing and
-    multi-threaded `IO.Ref` ownership. Validate each extension against
-    runtime measurements and publish false positives and missed copies.
+- [x] **Find copies without running anything.** `leanprof explain --static`
+  reads the compiler's post-reference-counting IR (the C Lake keeps) for a
+  whole package, libraries included, and flags every update that is likely
+  to copy, with explain's cause and fix, also when the second reference is
+  in a caller or a global; a run report marks which flags it confirmed and
+  which never ran; `#leanprof` hints and the MCP `static_copies` tool show
+  them ([guide](docs/guide/static-copies.md)). All 16 copying examples
+  flagged, none of 18 alternatives; on lean-compiler-backend's zlib run, 97%
+  of the copies are in flagged functions. Left: hints as you type (the scan
+  needs the build's C), sharing through closures and deeper structures.
+  - [ ] Extend detection to map lookups, sharing through closures, tasks and
+    values more than one structure away (most of the copying functions it
+    misses on lean-compiler-backend are `Array.map` over such values).
+    Validate each extension against runtime measurements and publish false
+    positives and missed copies.
 - [ ] **Make compile time the main target.** Most Lean users write proofs,
   not programs, and what they wait on is elaboration: Mathlib builds, slow
   `simp` calls, instance search. The compile-time side already works (all of
