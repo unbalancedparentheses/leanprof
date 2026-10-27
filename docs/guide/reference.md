@@ -9,11 +9,11 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | command | does |
 |---|---|
 | (none) `[-- ARGS]`, or `EXE [-- ARGS]` | in a Lake project: pick the workload (the one `lean_exe`; else the test driver when it is an executable; else compile time of the libraries, as `elab --project --compact`; several executables are listed, never chosen between), profile it the cheapest way (`sample` when samply can sample, else `stat`), print the top findings and the `run`/`explain`/`fix` commands that go deeper. `EXE` names one of the project's executables. Exit 2 when it lists executables instead |
-| `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F \| --out F] [--since-last [--keep-base]] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR; `--since-last`: see [difference file](#difference-file) |
-| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--since-last [--keep-base]] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
+| `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
+| `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--json F] [--cwd DIR] EXE [-- ARGS]` | sample with samply (`--out`: samply's profile), report per Lean declaration (`--json`: a copy of the report); exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
-| `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [--since-last [--keep-base]] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)); `--since-last` (one file): the difference from the previous `--since-last` profile of it ([difference file](#difference-file)) |
-| `compare [--threshold PCT] [--min-ms MS] [--explain F] [--json OUT] BASE.json NEW.json` | exit 1 on regressions; `--json`: also write the [difference file](#difference-file) |
+| `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [--since-last [--keep-base]] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)); `--since-last` (one file): what changed since the previous `--since-last` profile of it ([difference file](#difference-file)) |
+| `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
 | `measure [--runs N] [--scope NAME] [--heartbeats-files F…] [--check-output F] [--ignore-lines TEXT…] [--no-allocs] [--core] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time of the process or, with `--scope`, of one `profile!` scope, output; `self_check_warning`, empty unless copies may be undercounted) |
 | `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output F] [--ignore-lines TEXT…] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries until the time verdict is settled (at most N pairs, default 30); `--scope` times one `Leanprof.bench` region; `--ignore-lines TEXT` leaves stdout's lines containing TEXT out of the output hash (in `measure` too: a benchmark's own timings); no builds or added probes |
 | `judge [--min-change PCT] BASE.json NEW.json` or `judge [--min-change PCT] PAIR.json` | KEEP (exit 0) or DISCARD (exit 1); paired sessions use a 95% median interval |
@@ -198,38 +198,33 @@ Lean code), `allocs_runs` (each run's total), `allocs_stable`,
 
 ## Difference file
 
-What editors show on save. `elab`, `run` and `stat` with `--since-last`
-write their report under `.lake/leanprof/onsave/` (`FILE.lean.json` for
-`elab FILE.lean`, `run-EXE.json` for `run EXE` and `stat EXE`; `--out` or
-`--json` names another file), compare it with the base kept from the
-previous `--since-last` profile (`NAME.base.json`), write the difference to
-`NAME.delta.json` and print a summary. The new report then becomes the base,
-unless `--keep-base` or the file has errors. `compare --json OUT` writes the
-same difference for any two reports. The format (version 1):
+`elab --since-last FILE.lean` writes its report to
+`.lake/leanprof/onsave/FILE.lean.json` (`--out` names another file),
+compares it with the base kept from the previous `--since-last` profile of
+the file (`FILE.lean.base.json`), writes the difference to
+`FILE.lean.delta.json` and prints a summary. The new report then becomes the
+base, unless `--keep-base` or the file has errors. The format (version 1):
 
-- `kind` (`elab` or `run`), `unit` (`heartbeats` or `ns`), `comparable`
-  (false for reports of different kinds or units), `first` (true when there
+- `kind` (`elab`), `unit` (`heartbeats` or `ns`), `comparable` (false when
+  the two reports were made in different units), `first` (true when there
   was no base: nothing is compared);
-- `elab`: `decls`, the declarations whose cost changed by more than 1,000
-  heartbeats (or 10% and 1 ms of time), largest change first: `key`, `name`,
-  `pos` (the declaration's first line in the newer report), `status`
-  (`changed`, `new`, `gone`; nothing is `gone` when the file has errors),
-  `base`, `new`, `change`, `regression` (as `compare` counts it) and, for
+- `decls`: the declarations whose cost changed by more than 1,000
+  heartbeats (time: by more than 10% and 1 ms, `compare`'s default
+  thresholds), largest change first: `key`, `name`, `pos` (the
+  declaration's first line in the newer report), `status` (`changed`,
+  `new`, `gone`; nothing is `gone` when the file has errors), `base`,
+  `new`, `change`, `regression` (as `compare` counts it) and, for
   heartbeats, `why`: `headline`, `parts` (elaboration, kernel, compiler,
   linters that changed), `rows` (credited work and exact counts, each with
   `label`, `name`, `where`, `base`, `new`, `change` as `compare` prints
-  them), `more` and `notes`; also `total` (`base`, `new`), `errors` and
-  `threshold`;
-- `run`: `copies` and `allocations`, the sites whose counts changed: `key`,
-  `where` (file:line), `base`, `new`, `change`, `base_bytes`, `new_bytes`,
-  `function`, `scope` (and `kind` for copies); `scopes` whose calls changed
-  or whose time moved by more than 10% and 1 ms; `total` (copies and
-  allocations of each report) and `allocations_counted`.
+  them), `more` and `notes`;
+- `total` (`base`, `new`), `errors` and `threshold`.
 
 `elab --since-last` also keeps `lake env`'s paths in
 `.lake/leanprof/lake-env.json`, and the setup of a module that is not built
 under `.lake/leanprof/setup/`, while the package's `lakefile`, manifest and
-`lean-toolchain` (and the file's imports) are unchanged.
+`lean-toolchain` (and the file's imports) are unchanged: 0.2–0.45 s less a
+run on the files measured ([compile time](compile-time.md#what-an-edit-changed)).
 
 ## Live snapshot
 

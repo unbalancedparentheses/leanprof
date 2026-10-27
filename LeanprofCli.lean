@@ -37,7 +37,7 @@ open Leanprof.Regress (mdCode mdProse htmlCode whatLabel fmtKHB fmtSigned rowSid
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--since-last [--keep-base]] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time, except functions too small to time, which --time-tiny includes; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
@@ -50,14 +50,11 @@ def commands : List (String × String × String) := [
     "libraries, by linking against copies rewritten with llvm-objcopy (cached in .lake/leanprof/core).\n" ++
     "--all-copies lists copies of constants and of empty or tiny values row by row (summarized\n" ++
     "by default). --trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
-    "--cwd DIR runs EXE in DIR (for programs that read the current directory).\n" ++
-    "--since-last also compares the report with the previous --since-last run of EXE (kept under\n" ++
-    ".lake/leanprof/onsave/) and writes the difference per call site next to it (what editors show);\n" ++
-    "--keep-base keeps comparing with that same base."),
-  ("stat", "[--auto | --auto-all] [--time-tiny] [--no-allocs] [--no-frees] [--no-deps] [--trace FILE] [--json FILE] [--since-last [--keep-base]] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+    "--cwd DIR runs EXE in DIR (for programs that read the current directory)."),
+  ("stat", "[--auto | --auto-all] [--time-tiny] [--no-allocs] [--no-frees] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
     "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
-    "unless turned off (they slow the program down); --auto times every function. --since-last: as for run."),
+    "unless turned off (they slow the program down); --auto times every function."),
   ("sample", "[--rate HZ] [--top N] [--out FILE] [--json FILE] [--cwd DIR] EXE [-- ARGS...]",
     "Run EXE under samply (no probes) and report CPU time per Lean declaration with file:line,\n" ++
     "plus where the Lean runtime's time went. `samply load` on the saved profile (--out FILE) opens a flame\n" ++
@@ -77,16 +74,14 @@ def commands : List (String × String × String) := [
     "the first run builds its driver for that Lean (seconds, once; ~/.cache/leanprof/drivers).\n" ++
     "--no-driver elaborates with `lean --json` instead. --since-last (one file) writes the report under\n" ++
     ".lake/leanprof/onsave/, compares it with the previous --since-last profile of the file and writes\n" ++
-    "the difference per declaration, with what changed inside each, next to it (what editors show on\n" ++
-    "save); --keep-base keeps comparing with that same base."),
-  ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] [--json OUT.json] BASE.json NEW.json",
+    "the difference per declaration, with what changed inside each, next to it (FILE.delta.json);\n" ++
+    "--keep-base keeps comparing with that same base."),
+  ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
     "by more than PCT% (default 10) and MS ms (default 1). For each declaration that got more\n" ++
     "expensive, what changed inside it (definitions unfolded, instances, simp lemmas, repeated work,\n" ++
-    "`--counts` counters); --explain names explain's cause for each copy site that copies more.\n" ++
-    "--json OUT.json also writes the difference per declaration and per call site, with the line of\n" ++
-    "each, as editors read it (what `--since-last` writes)."),
+    "`--counts` counters); --explain names explain's cause for each copy site that copies more."),
   ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--ignore-lines TEXT]... [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
@@ -984,10 +979,6 @@ def loadFindings (path : Option String) : IO (Option (Array Leanprof.Regress.Fin
   return some (Leanprof.Regress.loadExplain (← IO.ofExcept (Json.parse (← IO.FS.readFile p))))
 
 def compare (argv : List String) : IO UInt32 := do
-  -- `--json FILE`: the difference also written there (`Leanprof.Delta`), for editors
-  let (jsonOut, argv) := match argv.idxOf? "--json" with
-    | some i => (argv[i + 1]?, argv.eraseIdx i |>.eraseIdx i)
-    | none => (none, argv)
   let rec parse (thr minMs : Float) (ex : Option String) (files : List String) :
       List String → Except String (Float × Float × Option String × List String)
     | [] => .ok (thr, minMs, ex, files.reverse)
@@ -997,11 +988,6 @@ def compare (argv : List String) : IO UInt32 := do
     | a :: rest => parse thr minMs ex (a :: files) rest
   let (thr, minMs, explainPath, files) ← IO.ofExcept (parse 10 1 none [] argv)
   let [basePath, newPath] := files | throw <| IO.userError (usageFor "compare")
-  if let some out := jsonOut then
-    let bj ← IO.ofExcept (Json.parse (← IO.FS.readFile basePath))
-    let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile newPath))
-    if let some dir := (out : System.FilePath).parent then IO.FS.createDirAll dir
-    IO.FS.writeFile out (Leanprof.Delta.compute bj nj).compress
   let base ← loadReport basePath
   let new ← loadReport newPath
   let findings ← loadFindings explainPath
@@ -1476,24 +1462,18 @@ def sample (argv : List String) : IO UInt32 := do
 
 /-! ## elab: in LeanprofElab.lean -/
 
-/-! ## --since-last: the difference from the previous profile, for editors
+/-! ## elab --since-last: the difference from the previous profile of a file
 
-`elab`, `run` and `stat` with `--since-last` write their report under
-`.lake/leanprof/onsave/` (unless `--out`/`--json` names a file), compare it
-with the one kept from the previous `--since-last` profile of the same file or
-program (`NAME.base.json`), and write the difference next to it
-(`NAME.delta.json`, `Leanprof.Delta`), which the VS Code extension and
-`#leanprof` show next to the code. The new report then becomes the base, unless
-`--keep-base` (compare with a fixed base until it is removed) or it has errors. -/
+`elab --since-last FILE` writes its report under `.lake/leanprof/onsave/`
+(unless `--out` names a file), compares it with the one kept from the previous
+`--since-last` profile of the same file (`NAME.base.json`), and writes the
+difference next to it (`NAME.delta.json`, `Leanprof.Delta`), for a person or an
+agent checking what an edit did to compile time. The new report then becomes the
+base, unless `--keep-base` (compare with a fixed base until it is removed) or it
+has errors. -/
 
 /-- Where `--since-last` keeps its reports. -/
 def onSaveDir : System.FilePath := (".lake" : System.FilePath) / "leanprof" / "onsave"
-
-/-- `argv` without `flag` before a `--`, and whether it was there. -/
-def takeFlag (flag : String) (argv : List String) : Bool × List String :=
-  let before := argv.takeWhile (· != "--")
-  let after := argv.drop before.length
-  (before.contains flag, before.filter (· != flag) ++ after)
 
 /-- Whether `argv` names its report file with one of `opts`, before a `--`. -/
 def namesOut (opts : List String) (argv : List String) : Option String :=
@@ -1548,21 +1528,6 @@ def elabCmd (argv : List String) : IO UInt32 := do
   if ← (out : System.FilePath).pathExists then IO.FS.removeFile out
   let rc ← Leanprof.Elab.main argv
   if rc == 0 then sinceLast out o.keepBase
-  return rc
-
-/-- `run` or `stat` (`cmd`) with `--since-last`. -/
-def runSinceLast (cmd : List String → IO UInt32) (argv : List String) : IO UInt32 := do
-  let (since, argv) := takeFlag "--since-last" argv
-  let (keepBase, argv) := takeFlag "--keep-base" argv
-  unless since do return ← cmd argv
-  let exe := (argv.takeWhile (· != "--")).filter (!·.startsWith "-") |>.getLast? |>.getD "run"
-  let out ← match namesOut ["--json", "--out"] argv with
-    | some f => pure f
-    | none => pure s!"{onSaveName (← IO.currentDir) s!"run-{(System.FilePath.mk exe).fileName.getD exe}"}.json"
-  let argv := if (namesOut ["--json", "--out"] argv).isSome then argv else ["--json", out] ++ argv
-  if let some dir := (out : System.FilePath).parent then IO.FS.createDirAll dir
-  let rc ← cmd argv
-  if rc == 0 then sinceLast out keepBase
   return rc
 
 /-! ## measure and judge
@@ -2781,8 +2746,8 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
     | some h => IO.println h; return 0
     | none => IO.eprintln usage; return 2
   | ["doctor"] => doctor
-  | "run" :: rest => runSinceLast run rest
-  | "stat" :: rest => runSinceLast statCmd rest
+  | "run" :: rest => run rest
+  | "stat" :: rest => statCmd rest
   | "measure" :: rest => measureCmd rest
   | "measure-pair" :: rest => measurePairCmd rest
   | "judge" :: rest => judgeCmd rest

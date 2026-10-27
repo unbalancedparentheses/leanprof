@@ -136,5 +136,12 @@ def run (check' : String → Bool → String → StateT Nat IO Unit) : StateT Na
   check' "delta: the summary names the change"
     ((Leanprof.Delta.summary r).any (has · "+2,000  build [Array] in build (M.lean:17)"))
     (toString (Leanprof.Delta.summary r))
+  -- time moved by 20% and 5 ms: changed at compare's defaults, not with --threshold 50
+  let timed (ns : Nat) : Json := Json.mkObj [("scopes", Json.arr #[Json.mkObj [("name", "s"), ("pos", "M.lean:3"),
+    ("total_ns", toJson ns), ("calls", toJson (1 : Nat))]])]
+  check "delta: a scope's time change counts above compare's default thresholds"
+    ((jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000)) "scopes").size == 1)
+  check "delta: the time thresholds can be raised"
+    (jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000) { pct := 50 }) "scopes").isEmpty
 
 end Tests.Regress

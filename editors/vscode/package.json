@@ -1,7 +1,7 @@
 {
   "name": "leanprof",
   "displayName": "leanprof",
-  "description": "Profile Lean 4 programs and compile times with leanprof from VS Code: run, sample, compile cost of a file, what changed on each save, the HTML report and a live view",
+  "description": "Profile Lean 4 programs and compile times with leanprof from VS Code: run, sample, compile cost of a file, the HTML report and a live view",
   "version": "0.1.0",
   "publisher": "unbalancedparentheses",
   "license": "MIT",
@@ -26,11 +26,7 @@
     "performance"
   ],
   "main": "./extension.js",
-  "activationEvents": [
-    "onLanguage:lean4",
-    "workspaceContains:lakefile.lean",
-    "workspaceContains:lakefile.toml"
-  ],
+  "activationEvents": [],
   "contributes": {
     "commands": [
       {
@@ -57,21 +53,6 @@
         "command": "leanprof.live",
         "title": "Live view",
         "category": "leanprof"
-      },
-      {
-        "command": "leanprof.whySlow",
-        "title": "Why is this file slow?",
-        "category": "leanprof"
-      },
-      {
-        "command": "leanprof.resetOnSave",
-        "title": "Forget the on-save profiles (start over)",
-        "category": "leanprof"
-      },
-      {
-        "command": "leanprof.onSaveLog",
-        "title": "Show the on-save log",
-        "category": "leanprof"
       }
     ],
     "menus": {
@@ -79,20 +60,11 @@
         {
           "command": "leanprof.elabFile",
           "when": "resourceExtname == .lean"
-        },
-        {
-          "command": "leanprof.whySlow",
-          "when": "resourceExtname == .lean"
         }
       ],
       "editor/context": [
         {
           "command": "leanprof.elabFile",
-          "when": "resourceExtname == .lean",
-          "group": "leanprof"
-        },
-        {
-          "command": "leanprof.whySlow",
           "when": "resourceExtname == .lean",
           "group": "leanprof"
         }
@@ -123,68 +95,13 @@
           "default": 500,
           "minimum": 100,
           "markdownDescription": "Milliseconds between frames of **leanprof: Live view** (`leanprof top --interval`)."
-        },
-        "leanprof.onSave.compileTime": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "On saving a `.lean` file, run `leanprof elab --heartbeats --since-last` on it and show each declaration whose compile cost changed since the previous save at the end of its line (`+12.3 kHB since the last save`), with what changed inside it in the hover."
-        },
-        "leanprof.onSave.delay": {
-          "type": "number",
-          "default": 500,
-          "minimum": 0,
-          "markdownDescription": "Milliseconds to wait after a save before profiling (a newer save restarts the wait and stops a profile still running)."
-        },
-        "leanprof.onSave.highlightAbove": {
-          "type": "number",
-          "default": 10,
-          "minimum": 0,
-          "markdownDescription": "An increase of more than this many thousand heartbeats (kHB) is shown in the error color, smaller ones in the warning color. Any increase of copies or allocations is shown in the error color."
-        },
-        "leanprof.onSave.workload": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "A program to profile after each save, as for **leanprof: Run…** (`myapp -- input.txt`: a `lean_exe` target, then its arguments). Empty: none. The copies and allocations that changed since the previous run are shown at their lines (`+2,000 copies`)."
-        },
-        "leanprof.onSave.runCommand": {
-          "type": "string",
-          "enum": [
-            "run",
-            "stat"
-          ],
-          "default": "run",
-          "markdownDescription": "How the workload is profiled: `leanprof run` (copies; allocations with `--allocs` in **runOptions**) or `leanprof stat` (allocations and frees counted by default)."
-        },
-        "leanprof.onSave.runOptions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            "--allocs"
-          ],
-          "markdownDescription": "Options of `leanprof run` (or `stat`) for the workload, such as `--allocs` or `--no-deps`."
-        },
-        "leanprof.onSave.keepBase": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Compare every save with the same first profile (`--keep-base`) instead of the previous save. **leanprof: Forget the on-save profiles** starts over."
         }
       }
-    },
-    "views": {
-      "explorer": [
-        {
-          "id": "leanprof.slowest",
-          "name": "leanprof: slowest declarations"
-        }
-      ]
     }
   },
   "scripts": {
     "package": "vsce package --no-dependencies --baseContentUrl https://github.com/unbalancedparentheses/leanprof/blob/HEAD/editors/vscode --baseImagesUrl https://github.com/unbalancedparentheses/leanprof/raw/HEAD/editors/vscode",
-    "test": "node test/run.js",
-    "test:unit": "node --test test/unit.test.js"
+    "test": "node test/run.js"
   },
   "devDependencies": {
     "@vscode/test-electron": "3.1.0",

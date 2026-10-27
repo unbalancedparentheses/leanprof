@@ -815,7 +815,7 @@ def cachedLeanEnv : IO LeanEnv := do
   return le
 
 structure Opts where
-  /-- `--since-last` (`leanprof elab --since-last`, run by an editor on every save): the
+  /-- `--since-last` (`leanprof elab --since-last`, run after each edit): the
   report is compared with the previous one by the command (LeanprofCli.lean); here,
   `lake env`'s paths and the setup of a module that is not built are reused while the
   files that decide them are unchanged (`cachedLeanEnv`, `setupFile`), which saves

@@ -4,9 +4,7 @@
 // palette, input box), and saves PNGs of the window.
 //   node media/screenshot.mjs            (from editors/vscode, after `npm test`
 //                                         and a `leanprof run` + `leanprof elab` in the repository)
-// The on-save shot profiles Examples/OnSaveDemo.lean before and after an edit
-// (the file is removed at the end).
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -37,8 +35,6 @@ fs.writeFileSync(
     "chat.disableAIFeatures": true,
     "workbench.secondarySideBar.defaultVisibility": "hidden",
     "workbench.layoutControl.enabled": false,
-    "leanprof.onSave.compileTime": true,
-    "leanprof.onSave.delay": 0,
   }),
 );
 // a key for Run… with its target and options, so no input box is needed
@@ -139,47 +135,6 @@ await send("Input.insertText", { text: "server -- 0 20" });
 await enter();
 await sleep(9000);
 await shot("live.png");
-
-// what changed on save, and why the file is slow: a file profiled, then edited
-const demo = path.join(repo, "Examples", "OnSaveDemo.lean");
-const before = `def double (n : Nat) : Nat := n + n
-
-theorem double_eq (n : Nat) : double n = 2 * n := by
-  unfold double; omega
-
-theorem sum_comm (a b c : Nat) : a + b + c = c + b + a := by
-  omega
-
-example : (List.range 50).length = 50 := by simp
-`;
-const after = before
-  .replace("unfold double; omega", "simp [double]; omega")
-  .replace("  omega\n\nexample", "  simp only [Nat.add_comm, Nat.add_left_comm]\n\nexample")
-  .replace("= 50 := by simp", "= 50 := by decide");
-fs.writeFileSync(demo, before);
-fs.rmSync(path.join(repo, ".lake/leanprof/onsave/Examples/OnSaveDemo.lean.base.json"), { force: true });
-spawnSync(leanprof, ["elab", "--heartbeats", "--since-last", "Examples/OnSaveDemo.lean"], { cwd: repo });
-await palette("View: Close All Editors");
-await sleep(500);
-await palette("Go to File");
-await sleep(500);
-await send("Input.insertText", { text: "OnSaveDemo.lean" });
-await sleep(800);
-await enter();
-await sleep(1500);
-fs.writeFileSync(demo, after);
-await sleep(2000);
-await palette("leanprof: Why is this file slow?");
-await sleep(6000);
-await palette("Go to Line/Column");
-await sleep(500);
-await send("Input.insertText", { text: "9" });
-await enter();
-await sleep(500);
-await palette("Show or Focus Hover");
-await sleep(2000);
-await shot("onsave.png");
-fs.rmSync(demo, { force: true });
 
 ws.close();
 vsc.kill();

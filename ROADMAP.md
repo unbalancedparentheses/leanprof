@@ -110,6 +110,12 @@ users than the rest of v0.2.0, and take priority over its long tail.
   finds both copy sites of lean-compiler-backend's old `CFG.build` and 2 of
   8 copying examples, with no false warning on 10 alternatives; not part of
   the command yet.
+  - [ ] Run `Tests/StaticCopies/check.py` in CI, checking static warnings
+    against instrumented copy counts, including exclusive updates and
+    ownership transfers that must not warn.
+  - [ ] Extend detection to map lookups, interprocedural sharing and
+    multi-threaded `IO.Ref` ownership. Validate each extension against
+    runtime measurements and publish false positives and missed copies.
 - [ ] **Make compile time the main target.** Most Lean users write proofs,
   not programs, and what they wait on is elaboration: Mathlib builds, slow
   `simp` calls, instance search. The compile-time side already works (all of
@@ -138,25 +144,18 @@ Ranked; the open ones are planned after v0.2.0.
   --heartbeats --counts` at base and head, and explain's cause for each
   copy site that copies more (`compare`, `report-md`, `Tests/Regress`;
   [guide](docs/guide/ci-and-regressions.md#why-it-got-worse)).
-- [x] **Feedback on every save.** In the editor, re-profile what changed and
+- [ ] **Feedback on every save.** In the editor, re-profile what changed and
   show the difference inline ("this edit added 2,000 copies", "+30%
-  heartbeats in this lemma"). Done: `elab|run|stat --since-last` write the
-  difference from the previous profile, with the cause of each compile-time
-  change; the VS Code extension runs them on save and shows the changes at
-  their lines, `#leanprof` as hints ([editor](docs/guide/editor.md#what-changed-since-the-last-profile),
-  [VS Code](docs/guide/vscode.md#on-save)). Still open: with static copy
-  detection (above), warn before anything runs; re-elaborate only the
-  declarations that changed (each save elaborates the whole file and loads
-  its imports).
+  heartbeats in this lemma"); with static copy detection (above), warn
+  before anything runs. Not planned for now. What exists is on the command
+  line: `elab --heartbeats --since-last FILE` compares a file's compile cost
+  with its previous run and says what changed inside each declaration
+  ([compile time](docs/guide/compile-time.md#what-an-edit-changed)).
 - [ ] **Retained memory.** Which allocation site holds the memory at peak,
   and what keeps it alive; for long-running programs and servers.
-- [x] **Why a file is slow in the editor.** Profile the language server
-  re-elaborating a file and attribute the delay to declarations. Done by
-  elaborating the file as Lake (and so the server) does, with its setup:
-  **Why is this file slow?** in VS Code lists its costliest declarations
-  ([guide](docs/guide/vscode.md#why-is-this-file-slow)). Still open:
-  measuring inside the language server itself, which re-elaborates only
-  from the first edited command and keeps imports loaded.
+- [ ] **Why a file is slow in the editor.** Profile the language server
+  re-elaborating a file and attribute the delay to declarations. Not
+  planned for now.
 - [ ] **A heartbeat budget.** `elab --max-heartbeats N` in CI flags any
   declaration above N, so slow lemmas do not accumulate.
 
@@ -463,8 +462,6 @@ keeps only improvements ([research/program.md](research/program.md)).
 - [x] `#leanprof`: inlay hints with time per scope/function and copies per
   declaration, from the last report; tooltips with details; checked against
   the language server in CI.
-- [x] What changed since the last profile, on save: VS Code decorations
-  with the cause in the hover, `#leanprof` hints for other editors.
 - [ ] Infoview widget with a flame graph of the run.
 
 ## M9: compile time

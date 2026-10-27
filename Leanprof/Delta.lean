@@ -4,20 +4,23 @@ import Leanprof.Regress
 /-!
 # The difference of two reports, per declaration and per call site
 
-`compare --json` and `--since-last` (of `elab`, `run` and `stat`) write it;
-the VS Code extension and `#leanprof` show it next to the code ("+12.3 kHB
-since the last save", "+2,000 copies").
+`elab --since-last` writes it (`FILE.delta.json` next to the report): what an
+edit did to a file's compile time, for a person or an agent ("+12.3 kHB in
+`foo`, from unfolding `bar`").
 
 For two `elab` reports: each declaration whose cost changed, at its first line
 in the newer report, with what changed inside it when both reports have it
 (`Regress.explainDecl`: the definitions unfolded, instances and simp lemmas
 whose credited work or counts changed). For two `run` or `stat` reports: copy
 sites and allocation sites whose counts changed, and scopes whose calls changed
-or whose time changed by more than 10% and 1 ms.
+or whose time changed by more than the time thresholds.
 
 Counts are exact and heartbeats nearly so, so a declaration counts as changed
-when its heartbeats moved by more than `Regress.hbNoise` (1,000); time (an
-`elab` report without `--heartbeats`) by more than 10% and 1 ms.
+when its heartbeats moved by more than `Regress.hbNoise` (1,000), and as a
+regression above 1% and 1,000 heartbeats, as in `compare`. Time (an `elab`
+report without `--heartbeats`, a run's scopes) counts when it moved by more
+than `Thresholds.pct` percent and `Thresholds.minMs` ms: `compare`'s
+`--threshold` and `--min-ms`, 10 and 1 by default.
 -/
 
 namespace Leanprof.Delta
@@ -76,18 +79,26 @@ def whyJson (e : Explanation) (down : Bool := false) (top : Nat := 8) : Json :=
     ("more", toJson (e.work.size + e.counts.size - rows.length)),
     ("notes", toJson (if down then #[] else e.notes))]
 
+/-- When a change of time counts, as `compare --threshold PCT --min-ms MS`. -/
+structure Thresholds where
+  pct : Float := 10
+  minMs : Float := 1
+
+/-- Time moved from `b` to `n` (ns) by more than the thresholds. -/
+def Thresholds.moved (t : Thresholds) (b n : Float) : Bool :=
+  (n - b).abs / 1e6 > t.minMs && (b <= 0 || (n - b).abs / b * 100 > t.pct)
+
 /-- Whether a change of a declaration's cost from `b` to `n` counts: above
-`hbNoise` heartbeats, or 10% and 1 ms of time. -/
-def changed (hb : Bool) (b n : Float) : Bool :=
-  if hb then (n - b).abs > hbNoise
-  else (n - b).abs > 1e6 && (n - b).abs > b * 0.1
+`hbNoise` heartbeats, or the time thresholds. -/
+def changed (t : Thresholds) (hb : Bool) (b n : Float) : Bool :=
+  if hb then (n - b).abs > hbNoise else t.moved b n
 
-/-- A regression as `compare` counts it: above 1% and 1,000 heartbeats, or 10% and 1 ms. -/
-def regressed (hb : Bool) (b n : Float) : Bool :=
-  if hb then n - b > max (b * 0.01) 1000
-  else n - b > 1e6 && n - b > b * 0.1
+/-- A regression as `compare` counts it: above 1% and 1,000 heartbeats, or slower
+by more than the time thresholds. -/
+def regressed (t : Thresholds) (hb : Bool) (b n : Float) : Bool :=
+  if hb then n - b > max (b * 0.01) 1000 else n > b && t.moved b n
 
-def elabDelta (bj nj : Json) : Json := Id.run do
+def elabDelta (t : Thresholds) (bj nj : Json) : Json := Id.run do
   let hb := heartbeats bj && heartbeats nj
   let bi := loadElab bj
   let ni := loadElab nj
@@ -101,11 +112,11 @@ def elabDelta (bj nj : Json) : Json := Id.run do
     let (pos, name) := (starts.get? k <|> baseStarts.get? k).getD ("", k)
     match bi.decls.get? k, ni.decls.get? k with
     | some b, some n =>
-      unless changed hb b.total n.total do continue
+      unless changed t hb b.total n.total do continue
       let why := if hb then [("why", whyJson (explainDecl bi ni k b n) (down := n.total < b.total))] else []
       rows := rows.push ((n.total - b.total).abs, Json.mkObj ([("key", Json.str k), ("name", Json.str name),
         ("pos", Json.str pos), ("status", Json.str "changed"), ("base", toJson b.total), ("new", toJson n.total),
-        ("change", toJson (n.total - b.total)), ("regression", Json.bool (regressed hb b.total n.total))] ++ why))
+        ("change", toJson (n.total - b.total)), ("regression", Json.bool (regressed t hb b.total n.total))] ++ why))
     | none, some n =>
       if n.total ≤ 0 then continue
       rows := rows.push (n.total, Json.mkObj [("key", Json.str k), ("name", Json.str name), ("pos", Json.str pos),
@@ -145,7 +156,7 @@ def siteDelta (b n : Std.HashMap String (Float × Float × String × Json)) (fie
       ("base_bytes", toJson bb), ("new_bytes", toJson nb)] ++ fields (if ne.isNull then be else ne)))
   (rows.qsort fun x y => x.1 > y.1).map (·.2)
 
-def runDelta (bj nj : Json) : Json :=
+def runDelta (t : Thresholds) (bj nj : Json) : Json :=
   let copyKey (c : Json) := s!"{jstr c "function"} [{jstr c "kind"}] in {jstr c "scope"}"
   let copyCount (c : Json) := jnum c "shared" + jnum c "multi_threaded"
   let copies := siteDelta (sites bj "copies" copyKey copyCount (jnum · "bytes")) (sites nj "copies" copyKey copyCount (jnum · "bytes"))
@@ -169,7 +180,7 @@ def runDelta (bj nj : Json) : Json :=
     let b ← bs.get? k
     let (bt, nt) := (jnum b "total_ns", jnum n "total_ns")
     let (bc, nc) := (jnat b "calls", jnat n "calls")
-    guard (bc != nc || ((nt - bt).abs > 1e6 && (nt - bt).abs > bt * 0.1))
+    guard (bc != nc || t.moved bt nt)
     return ((nt - bt).abs, Json.mkObj [("key", Json.str k), ("name", Json.str (jstr n "name")), ("pos", Json.str (jstr n "pos")),
       ("base_ns", toJson bt), ("new_ns", toJson nt), ("base_calls", toJson bc), ("new_calls", toJson nc)])).toArray.qsort
     fun a b => a.1 > b.1).map (·.2)
@@ -182,13 +193,13 @@ def runDelta (bj nj : Json) : Json :=
 
 /-- The difference from `bj` to `nj`. Reports of different kinds (or units)
 are not compared: the result says so (`comparable: false`). -/
-def compute (bj nj : Json) : Json :=
+def compute (bj nj : Json) (t : Thresholds := {}) : Json :=
   let kind := if isElab nj then "elab" else "run"
   let comparable := isElab bj == isElab nj && heartbeats bj == heartbeats nj
   let head := [("version", toJson version), ("delta", Json.bool true), ("kind", Json.str kind),
     ("unit", Json.str (if heartbeats nj then "heartbeats" else "ns")), ("comparable", Json.bool comparable)]
   if !comparable then Json.mkObj (head ++ [("first", Json.bool true)])
-  else match (if isElab nj then elabDelta bj nj else runDelta bj nj) with
+  else match (if isElab nj then elabDelta t bj nj else runDelta t bj nj) with
     | .obj kvs => Json.mkObj (head ++ [("first", Json.bool false)] ++ kvs.toList.map fun ⟨k, v⟩ => (k, v))
     | j => j
 

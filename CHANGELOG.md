@@ -6,33 +6,25 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
-### Feedback on every save
+### Added
 
-- `leanprof elab --since-last FILE`, `leanprof run --since-last EXE` and
-  `leanprof stat --since-last EXE` compare the profile with the previous
-  one of the same file or program (kept under `.lake/leanprof/onsave/`) and
-  write the difference next to it (`NAME.delta.json`, [format](docs/guide/reference.md#difference-file)):
-  declarations whose heartbeats moved by more than 1,000, each with what
-  changed inside it (the unfolds, instances and simp lemmas `compare`
-  explains a regression with), and copy and allocation sites whose counts
-  changed. `--keep-base` compares with a fixed base. `compare --json OUT`
-  writes the same difference for any two reports.
+- `leanprof elab --heartbeats --since-last FILE` compares the file's
+  compile cost with the previous `--since-last` run on it (kept under
+  `.lake/leanprof/onsave/`), prints the declarations whose heartbeats moved
+  by more than 1,000 with what changed inside each (the unfolds, instances
+  and simp lemmas `compare` explains a regression with), and writes the
+  difference as JSON next to the report
+  ([format](docs/guide/reference.md#difference-file)). `--keep-base`
+  compares with a fixed base. For a person or an agent checking what an
+  edit did to compile time.
 - `elab --since-last` reuses `lake env`'s paths and the setup of a module
   that is not built while the package's configuration, manifest, toolchain
-  and the file's imports are unchanged: 0.2–0.45 s less per run on the files measured
-  ([VS Code guide](docs/guide/vscode.md#on-save)), about 0.7 s for
-  a file outside the package's libraries.
-- `#leanprof` shows those differences as hints (`Δ +25.0 kHB since the last
-  profile`, `Δ +2,000 copies since the last run`), with the cause in the
-  hover.
-- VS Code: opt-in on-save profiling (`leanprof.onSave.compileTime`, and
-  `leanprof.onSave.workload` for a program's copies and allocations). The
-  changes appear at the end of each line, colored by size, with the cause
-  in the hover; saves are debounced and a new save stops a running
-  profile. **leanprof: Why is this file slow?** and the **slowest
-  declarations** view list a file's costliest declarations. The logic that
-  needs no VS Code (`lib.js`) has unit tests (`npm run test:unit`), run in
-  CI and the release dry run.
+  and the file's imports are unchanged: 0.2–0.45 s less a run on the files
+  measured ([compile time](docs/guide/compile-time.md#what-an-edit-changed)),
+  about 0.7 s for a file outside the package's libraries.
+- `elab` no longer tries to import a module of the package that is not
+  built when it locates definitions (it printed an error; those
+  definitions are found in the profiled file).
 
 ## [0.1.0] - 2026-10-26
 
