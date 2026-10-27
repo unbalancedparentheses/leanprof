@@ -37,6 +37,24 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `Examples/Retained.lean` (`lake exe retained`) keeps memory in known ways;
   the tests check the exact counts, holders and roots.
 
+### Added
+
+- `leanprof explain --static [MODULE...]`: likely copies of shared arrays and
+  strings across a whole package, libraries included, without running
+  anything, from the C Lake keeps in `.lake/build/ir`. Each flag gives
+  file:line, the value, why another reference is alive (in the function, in
+  a caller up to four calls away, or in a global made by `initialize`) and
+  `explain`'s fix. With a run report it marks the flags the run confirmed
+  (copies, bytes) and, for `run --auto`, the flagged functions that never
+  ran. `--json`, `--all`, `--deps`, `--no-build`. Shown by `#leanprof` as
+  hints and by the MCP tool `static_copies`. It replaces the prototype
+  scripts in `scripts/static-copies` ([guide](docs/guide/static-copies.md)).
+
+### Fixed
+
+- `explain` read the last parameter of a C function wrongly on Lean before
+  4.30 (`x_5)`), which hid causes found through parameters.
+
 ## [0.1.0] - 2026-10-26
 
 The first release: a profiler for Lean 4 programs and their compile times,

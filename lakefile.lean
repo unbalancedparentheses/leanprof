@@ -215,9 +215,11 @@ lean_exe server where
 
 /-- The causes `leanprof explain` recognises, each next to its fix
 (`Examples/ExplainPatterns.lean`), and their tests (`Tests/ExplainFixes.lean`,
-run by `tests`), which check the diagnosis and count both versions' copies. -/
+run by `tests`), which check the diagnosis and count both versions' copies;
+`Tests/StaticCopies.lean` checks that `explain --static` flags exactly the
+functions that copy. -/
 lean_lib ExplainPatterns where
-  roots := #[`Examples.ExplainPatterns, `Tests.ExplainFixes]
+  roots := #[`Examples.ExplainPatterns, `Tests.ExplainFixes, `Tests.StaticCopies]
   moreLeancArgs := copyFlags
 
 /-- A program with known retention (`Examples/Retained.lean`): what
