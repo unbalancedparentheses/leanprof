@@ -1,0 +1,7629 @@
+{
+ "meta": {
+  "quick": false,
+  "reps": 7,
+  "scale": 100,
+  "machine": {
+   "cpu": "Apple M5 Max",
+   "cores": 18,
+   "os": "macOS 26.6.2",
+   "arch": "arm64",
+   "lean": "Lean (version 4.35.0, arm64-apple-darwin24.6.0, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)",
+   "cc": "Apple clang version 21.0.0 (clang-2100.0.123.102)",
+   "samply": "samply 0.13.1",
+   "commit": "f5b5479",
+   "date": "2026-10-27 15:03",
+   "load": "4.6 10.5 14.5"
+  },
+  "json": "/private/tmp/claude-501/-Users-unbalancedparen/6b44ecbc-2fb8-4f5f-aaf3-47a00e3d1a1f/scratchpad/prec/focus2.json",
+  "load_start": "5.9 12.9 15.7",
+  "load_end": "4.6 10.5 14.5",
+  "elapsed_s": 97.96439909934998,
+  "noisy": false,
+  "configs": [
+   "plain",
+   "profile",
+   "retime",
+   "phases",
+   "sample"
+  ]
+ },
+ "skipped": {},
+ "results": {
+  "tiny": {
+   "truth_ns": {
+    "phTinyA": 9764625,
+    "phTinyB": 31120250
+   },
+   "truth_share": {
+    "phTinyA": 0.2388322087324469,
+    "phTinyB": 0.7611677912675531
+   },
+   "plain_wall_ns": 40718334,
+   "expected_calls": {
+    "phTinyA": 1,
+    "phTinyB": 1,
+    "tinyA": 10000000,
+    "tinyB": 20000000
+   },
+   "configs": {
+    "plain": {
+     "runs": 7,
+     "slowdown": 1.0,
+     "slowdown_min": 0.9953399124826668,
+     "slowdown_max": 1.0708648590583298,
+     "wall_ns": 40718334,
+     "external_s": 0.058830208028666675
+    },
+    "profile": {
+     "runs": 7,
+     "slowdown": 4.451687340646108,
+     "slowdown_min": 4.410673850261163,
+     "slowdown_max": 4.645546573688403,
+     "wall_ns": 181265292,
+     "external_s": 0.20736141607630998,
+     "ns_per_scope": 4.684898287673447,
+     "share_mae_pp": 9.57686902271868,
+     "share_mae_pp_max": 10.079908084836921,
+     "share_max_err_pp": 9.576869022718682,
+     "total_ratio": 0.6774979255776128,
+     "residual_ns_per_scope": -0.4395152040323197,
+     "total_ratio_min": 0.5185195503227049,
+     "total_ratio_max": 0.7945221062801342,
+     "component_ratio": {
+      "phTinyA": 0.9084362174686688,
+      "phTinyB": 0.5995674520609571
+     },
+     "component_probe_err": {
+      "phTinyA": -0.018157402756609434,
+      "phTinyB": -0.12891656305149282
+     },
+     "component_near": {
+      "phTinyA": true,
+      "phTinyB": true
+     },
+     "component_holds": {
+      "phTinyA": true,
+      "phTinyB": true
+     },
+     "calls_checked": 28,
+     "calls_wrong": {}
+    },
+    "retime": {
+     "runs": 7,
+     "slowdown": 1.1879425371381844,
+     "slowdown_min": 1.1675760113368097,
+     "slowdown_max": 1.2313587289696086,
+     "wall_ns": 48371041,
+     "external_s": 0.09135350002907217,
+     "ns_per_scope": 0.25509021632731893,
+     "share_mae_pp": 0.3474671924873482,
+     "share_mae_pp_max": 1.3494851103402248,
+     "share_max_err_pp": 0.3474671924873496,
+     "total_ratio": 1.0020846339875076,
+     "residual_ns_per_scope": 0.002840999810599976,
+     "total_ratio_min": 0.9832445372524681,
+     "total_ratio_max": 1.0446462658868347,
+     "component_ratio": {
+      "phTinyA": 1.0035178002227427,
+      "phTinyB": 0.99851305821772
+     },
+     "component_probe_err": {
+      "phTinyA": 4907.142857142857,
+      "phTinyB": -6610.571428571428
+     },
+     "component_near": {
+      "phTinyA": false,
+      "phTinyB": false
+     },
+     "calls_checked": 14,
+     "calls_wrong": {},
+     "untimed": [
+      "tinyA",
+      "tinyB"
+     ]
+    },
+    "phases": {
+     "runs": 7,
+     "slowdown": 1.234604564125831,
+     "slowdown_min": 1.1802709560759534,
+     "slowdown_max": 1.2396893006477132,
+     "wall_ns": 50271041,
+     "external_s": 0.0762579160509631,
+     "share_mae_pp": 0.2393235013721684,
+     "share_mae_pp_max": 0.9706728277378396,
+     "share_max_err_pp": 0.2393235013721684,
+     "total_ratio": 1.0497571290116454,
+     "total_ratio_min": 0.9945011449833221,
+     "total_ratio_max": 1.054354941772477,
+     "component_ratio": {
+      "phTinyA": 1.024469040029699,
+      "phTinyB": 1.053057735718704
+     },
+     "component_probe_err": {
+      "phTinyA": 34133.0,
+      "phTinyB": 235881.42857142858
+     },
+     "component_near": {
+      "phTinyA": false,
+      "phTinyB": false
+     },
+     "calls_checked": 14,
+     "calls_wrong": {}
+    },
+    "sample": {
+     "runs": 7,
+     "slowdown": 1.326844978480701,
+     "slowdown_min": 1.1262105419146078,
+     "slowdown_max": 1.4132055353738195,
+     "wall_ns": 54026917,
+     "external_s": 3.3502974159782752,
+     "share_mae_pp": 5.106316936316958,
+     "share_mae_pp_max": 6.241076202225292,
+     "share_max_err_pp": 5.10631693631696,
+     "total_ratio": 1.2653823693969959,
+     "total_ratio_min": 1.077562301462338,
+     "total_ratio_max": 1.3439933471730072,
+     "component_ratio": {
+      "phTinyA": 1.5496754867698452,
+      "phTinyB": 1.1785252367831236
+     }
+    }
+   }
+  },
+  "tasks": {
+   "truth_ns": {
+    "taskWork2": 48660583,
+    "taskWork4": 48309959,
+    "taskWork8": 51620791
+   },
+   "truth_share": {
+    "taskWork2": 0.3274792817155762,
+    "taskWork4": 0.3251196286125248,
+    "taskWork8": 0.347401089671899
+   },
+   "plain_wall_ns": 44911584,
+   "expected_calls": {
+    "taskWork2": 2,
+    "taskWork4": 4,
+    "taskWork8": 8,
+    "taskStep": 24000000
+   },
+   "configs": {
+    "plain": {
+     "runs": 7,
+     "slowdown": 1.0,
+     "slowdown_min": 0.9714958394698348,
+     "slowdown_max": 1.0273091904306915,
+     "wall_ns": 44911584,
+     "external_s": 0.06307933304924518
+    },
+    "profile": {
+     "runs": 7,
+     "slowdown": 1.992975976977343,
+     "slowdown_min": 1.9837133555565531,
+     "slowdown_max": 2.0069654857864734,
+     "wall_ns": 89507708,
+     "external_s": 0.11586116708349437,
+     "ns_per_scope": 1.8581707494003963,
+     "share_mae_pp": 2.0933881379819295,
+     "share_mae_pp_max": 2.4907382275698406,
+     "share_max_err_pp": 3.140082206972894,
+     "total_ratio": 1.1240111292359158,
+     "residual_ns_per_scope": 0.7677903437889664,
+     "total_ratio_min": 1.0991133244628744,
+     "total_ratio_max": 1.133080689167786,
+     "component_ratio": {
+      "taskWork2": 1.0669981080991158,
+      "taskWork4": 1.058709323268107,
+      "taskWork8": 1.2196583155806349
+     },
+     "component_probe_err": {
+      "taskWork2": 0.08312855475890805,
+      "taskWork4": 0.07276555040716197,
+      "taskWork8": 0.2944109661187123
+     },
+     "component_near": {
+      "taskWork2": true,
+      "taskWork4": true,
+      "taskWork8": true
+     },
+     "component_holds": {
+      "taskWork2": true,
+      "taskWork4": true,
+      "taskWork8": true
+     },
+     "calls_checked": 28,
+     "calls_wrong": {}
+    },
+    "retime": {
+     "runs": 7,
+     "slowdown": 1.144664770674755,
+     "slowdown_min": 1.129944203259453,
+     "slowdown_max": 1.2629991407116703,
+     "wall_ns": 51408708,
+     "external_s": 0.09595383296255022,
+     "ns_per_scope": 0.27071334208388376,
+     "share_mae_pp": 0.39732773607453015,
+     "share_mae_pp_max": 1.4693484412787727,
+     "share_max_err_pp": 0.5959916041117952,
+     "total_ratio": 1.0036650253349568,
+     "residual_ns_per_scope": 0.02269127843008786,
+     "total_ratio_min": 0.9807864029323972,
+     "total_ratio_max": 1.033965803375625,
+     "component_ratio": {
+      "taskWork2": 0.988025749712041,
+      "taskWork4": 1.0008057137866748,
+      "taskWork8": 1.003186022469125
+     },
+     "component_probe_err": {
+      "taskWork2": -41619.57142857143,
+      "taskWork4": 1390.142857142857,
+      "taskWork8": 2936.875
+     },
+     "component_near": {
+      "taskWork2": false,
+      "taskWork4": false,
+      "taskWork8": false
+     },
+     "calls_checked": 21,
+     "calls_wrong": {},
+     "untimed": [
+      "taskStep"
+     ]
+    },
+    "phases": {
+     "runs": 7,
+     "slowdown": 1.1508111359421214,
+     "slowdown_min": 1.1380796321946693,
+     "slowdown_max": 1.207595839861716,
+     "wall_ns": 51684751,
+     "external_s": 0.07874279201496392,
+     "share_mae_pp": 0.3355387997945436,
+     "share_mae_pp_max": 0.9620509239242995,
+     "share_max_err_pp": 0.5033081996918154,
+     "total_ratio": 1.002865867015272,
+     "total_ratio_min": 0.98694271085111,
+     "total_ratio_max": 1.0119699982770867,
+     "component_ratio": {
+      "taskWork2": 0.9797616275990775,
+      "taskWork4": 0.9887610544235816,
+      "taskWork8": 0.9998867123132615
+     },
+     "component_probe_err": {
+      "taskWork2": -70343.64285714286,
+      "taskWork4": -19391.178571428572,
+      "taskWork8": -110.33962264150944
+     },
+     "component_near": {
+      "taskWork2": false,
+      "taskWork4": false,
+      "taskWork8": false
+     },
+     "calls_checked": 21,
+     "calls_wrong": {}
+    },
+    "sample": {
+     "runs": 7,
+     "slowdown": 1.2065706700525192,
+     "slowdown_min": 1.0434798514343204,
+     "slowdown_max": 1.261286509066347,
+     "wall_ns": 54189000,
+     "external_s": 3.360239457921125,
+     "share_mae_pp": 3.668638252469993,
+     "share_mae_pp_max": 4.692265851538398,
+     "share_max_err_pp": 5.502957378704987,
+     "total_ratio": 1.0639382311753,
+     "total_ratio_min": 0.9782400969510112,
+     "total_ratio_max": 1.1189818184079416,
+     "component_ratio": {
+      "taskWork2": 1.2871198029008406,
+      "taskWork4": 1.0306777532144045,
+      "taskWork8": 0.9808063576553874
+     }
+    }
+   }
+  },
+  "rec": {
+   "truth_ns": {
+    "phDeep100": 26892875,
+    "phDeep1k": 27880583,
+    "phDeep10k": 28393708,
+    "phFib": 6255125
+   },
+   "truth_share": {
+    "phDeep100": 0.30074017003210085,
+    "phDeep1k": 0.3117856038825934,
+    "phDeep10k": 0.3175238263577926,
+    "phFib": 0.06995039972751313
+   },
+   "plain_wall_ns": 89306999,
+   "expected_calls": {
+    "phDeep100": 1,
+    "phDeep1k": 1,
+    "phDeep10k": 1,
+    "phFib": 1,
+    "deepRec": 6022200,
+    "fib": 7049155
+   },
+   "configs": {
+    "plain": {
+     "runs": 7,
+     "slowdown": 1.0,
+     "slowdown_min": 0.9709205434167595,
+     "slowdown_max": 1.0595198927241973,
+     "wall_ns": 89306999,
+     "external_s": 0.10832704103086144
+    },
+    "profile": {
+     "runs": 7,
+     "slowdown": 2.087428780357965,
+     "slowdown_min": 2.069973552688743,
+     "slowdown_max": 2.109156730258062,
+     "wall_ns": 186422000,
+     "external_s": 0.2121324170148,
+     "ns_per_scope": 7.429602461381407,
+     "share_mae_pp": 1.7877870919542718,
+     "share_mae_pp_max": 3.337896514026415,
+     "share_max_err_pp": 3.575574183908545,
+     "total_ratio": 0.9824714511060783,
+     "residual_ns_per_scope": -0.11991431036359713,
+     "total_ratio_min": 0.9646340754119127,
+     "total_ratio_max": 1.0659249045632258,
+     "component_ratio": {
+      "phDeep100": 0.968907489437258,
+      "phDeep1k": 0.9104717788720559,
+      "phDeep10k": 0.9791917631892249,
+      "phFib": 1.4846700905257688
+     },
+     "component_probe_err": {
+      "phDeep100": -0.059347985336025984,
+      "phDeep1k": -0.18751480395451234,
+      "phDeep10k": -0.04235758229636693,
+      "phFib": 0.06166086916533696
+     },
+     "component_near": {
+      "phDeep100": true,
+      "phDeep1k": true,
+      "phDeep10k": true,
+      "phFib": true
+     },
+     "calls_checked": 42,
+     "calls_wrong": {}
+    },
+    "retime": {
+     "runs": 7,
+     "slowdown": 2.0990730636912343,
+     "slowdown_min": 2.0654106404359194,
+     "slowdown_max": 2.135796579616341,
+     "wall_ns": 187461916,
+     "external_s": 0.22963145899120718,
+     "ns_per_scope": 7.509159300115619,
+     "share_mae_pp": 1.4342886675457058,
+     "share_mae_pp_max": 1.8776546840451567,
+     "share_max_err_pp": 2.868577335091413,
+     "total_ratio": 0.9836985836115516,
+     "residual_ns_per_scope": -0.1115193913655039,
+     "total_ratio_min": 0.9517726961390421,
+     "total_ratio_max": 1.012690571750169,
+     "component_ratio": {
+      "phDeep100": 0.9701187024444207,
+      "phDeep1k": 0.8967743967190356,
+      "phDeep10k": 0.9896207638678259,
+      "phFib": 1.390317699486421
+     },
+     "component_probe_err": {
+      "phDeep100": -0.05680574446371365,
+      "phDeep1k": -0.20527315618345807,
+      "phDeep10k": -0.02092428236325216,
+      "phFib": 0.048808278523244736
+     },
+     "component_near": {
+      "phDeep100": true,
+      "phDeep1k": true,
+      "phDeep10k": true,
+      "phFib": true
+     },
+     "calls_checked": 42,
+     "calls_wrong": {}
+    },
+    "phases": {
+     "runs": 7,
+     "slowdown": 1.0826078480142414,
+     "slowdown_min": 1.0352076772840615,
+     "slowdown_max": 1.1130953801280457,
+     "wall_ns": 96684458,
+     "external_s": 0.12238333292771131,
+     "share_mae_pp": 0.6813141395348933,
+     "share_mae_pp_max": 0.8793544083163696,
+     "share_max_err_pp": 1.1607717183835853,
+     "total_ratio": 0.9994821537283136,
+     "total_ratio_min": 0.9518117579877259,
+     "total_ratio_max": 1.0296715502401967,
+     "component_ratio": {
+      "phDeep100": 1.0276749510790497,
+      "phDeep1k": 0.9911291309797934,
+      "phDeep10k": 0.9631666987629794,
+      "phFib": 0.9914246318019224
+     },
+     "component_probe_err": {
+      "phDeep100": 106322.71428571429,
+      "phDeep1k": -35332.142857142855,
+      "phDeep10k": -149404.85714285713,
+      "phFib": -7662.857142857143
+     },
+     "component_near": {
+      "phDeep100": false,
+      "phDeep1k": false,
+      "phDeep10k": false,
+      "phFib": false
+     },
+     "calls_checked": 28,
+     "calls_wrong": {}
+    },
+    "sample": {
+     "runs": 7,
+     "slowdown": 1.2598569346171848,
+     "slowdown_min": 1.178405210995837,
+     "slowdown_max": 1.4057268792561264,
+     "wall_ns": 112514042,
+     "external_s": 3.3383865830255672,
+     "share_mae_pp": 0.7446638798028,
+     "share_mae_pp_max": 2.406241199709175,
+     "share_max_err_pp": 1.4115478396184877,
+     "total_ratio": 1.0389132168398594,
+     "total_ratio_min": 0.9955012223965499,
+     "total_ratio_max": 1.1726047144106384,
+     "component_ratio": {
+      "phDeep100": 1.0924826743142932,
+      "phDeep1k": 1.025337239181835,
+      "phDeep10k": 1.0228322415656315,
+      "phFib": 1.0159669071361483
+     }
+    }
+   }
+  }
+ },
+ "lcb": null,
+ "raw": {
+  "plain": {
+   "tiny": [
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 9991500,
+        "cpu_ns": 9991500
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31220750,
+        "cpu_ns": 31220750
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.05990745802409947,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 9592708,
+        "cpu_ns": 9592708
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31120250,
+        "cpu_ns": 31120250
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.05881929106544703,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 9643834,
+        "cpu_ns": 9643834
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 30984875,
+        "cpu_ns": 30984875
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.05847674992401153,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 10024375,
+        "cpu_ns": 10024375
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 30993500,
+        "cpu_ns": 30993500
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.05923766701016575,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 9764625,
+        "cpu_ns": 9764625
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 30763958,
+        "cpu_ns": 30763958
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.05845816701184958,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 10630167,
+        "cpu_ns": 10630167
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 32973666,
+        "cpu_ns": 32973666
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.062449209042824805,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 9568292,
+        "cpu_ns": 9568292
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31150042,
+        "cpu_ns": 31150042
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.058830208028666675,
+     "report": null
+    }
+   ],
+   "tasks": [
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 24489375,
+        "cpu_ns": 48660583
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12196625,
+        "cpu_ns": 48322668
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7773875,
+        "cpu_ns": 52106667
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.06318979093339294,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 24665333,
+        "cpu_ns": 49048917
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12357292,
+        "cpu_ns": 48309959
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7888959,
+        "cpu_ns": 51381292
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.06277504202444106,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 24822459,
+        "cpu_ns": 48688958
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12285875,
+        "cpu_ns": 47994709
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7865625,
+        "cpu_ns": 51620791
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.06307933304924518,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 24607375,
+        "cpu_ns": 48315666
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12856500,
+        "cpu_ns": 48716792
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 8000666,
+        "cpu_ns": 52213124
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.06382224999833852,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 23756209,
+        "cpu_ns": 47314250
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 11956750,
+        "cpu_ns": 47487749
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7918458,
+        "cpu_ns": 51586374
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.06112904194742441,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 25557000,
+        "cpu_ns": 49396624
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12927458,
+        "cpu_ns": 49045125
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7653625,
+        "cpu_ns": 51830957
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.06477129203267395,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 24129167,
+        "cpu_ns": 47822291
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12220917,
+        "cpu_ns": 47745167
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7888541,
+        "cpu_ns": 51521793
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.06268616707529873,
+     "report": null
+    }
+   ],
+   "rec": [
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 26892875,
+        "cpu_ns": 26892875
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 28915667,
+        "cpu_ns": 28915667
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 31650417,
+        "cpu_ns": 31650417
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6009834,
+        "cpu_ns": 6009834
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.1119294170057401,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 26305000,
+        "cpu_ns": 26305000
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 28122666,
+        "cpu_ns": 28122666
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 27423459,
+        "cpu_ns": 27423459
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6186209,
+        "cpu_ns": 6186209
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.10662754089571536,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 28394583,
+        "cpu_ns": 28394583
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 29493500,
+        "cpu_ns": 29493500
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 30353417,
+        "cpu_ns": 30353417
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6381042,
+        "cpu_ns": 6381042
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.1137164169922471,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 26280541,
+        "cpu_ns": 26280541
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 26969709,
+        "cpu_ns": 26969709
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 28486834,
+        "cpu_ns": 28486834
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6262375,
+        "cpu_ns": 6262375
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.1063123339554295,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 27003500,
+        "cpu_ns": 27003500
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 27880583,
+        "cpu_ns": 27880583
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 28393708,
+        "cpu_ns": 28393708
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6029208,
+        "cpu_ns": 6029208
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.10832704103086144,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 27133625,
+        "cpu_ns": 27133625
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 27822666,
+        "cpu_ns": 27822666
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 27968000,
+        "cpu_ns": 27968000
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6605333,
+        "cpu_ns": 6605333
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.10911287495400757,
+     "report": null
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 26699042,
+        "cpu_ns": 26699042
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 26183291,
+        "cpu_ns": 26183291
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 27572542,
+        "cpu_ns": 27572542
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6255125,
+        "cpu_ns": 6255125
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.10448829096276313,
+     "report": null
+    }
+   ]
+  },
+  "profile": {
+   "tiny": [
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 65296041,
+        "cpu_ns": 65296041
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 115415917,
+        "cpu_ns": 115415917
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.20674216700717807,
+     "report": {
+      "times": {
+       "phTinyB": 16143705,
+       "phTinyA": 8302797,
+       "tinyA": 3856771,
+       "tinyB": 3010001
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0,
+       "tinyA": 0,
+       "tinyB": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": true,
+       "phTinyA": true,
+       "tinyA": true,
+       "tinyB": true
+      },
+      "probes": {
+       "phTinyB": 99265323,
+       "phTinyA": 49632530,
+       "tinyA": 70185547,
+       "tinyB": 140371094
+      },
+      "holds": {
+       "phTinyB": true,
+       "phTinyA": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 65828167,
+        "cpu_ns": 65828167
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 116804500,
+        "cpu_ns": 116804500
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.20842433301731944,
+     "report": {
+      "times": {
+       "phTinyB": 18961099,
+       "tinyB": 13689927,
+       "phTinyA": 9534730,
+       "tinyA": 6704076
+      },
+      "calls": {
+       "phTinyB": 1,
+       "tinyB": 20000000,
+       "phTinyA": 1,
+       "tinyA": 10000000
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "tinyB": 0,
+       "phTinyA": 0,
+       "tinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": true,
+       "tinyB": true,
+       "phTinyA": true,
+       "tinyA": true
+      },
+      "probes": {
+       "phTinyB": 97832011,
+       "tinyB": 139960938,
+       "phTinyA": 48918206,
+       "tinyA": 69980469
+      },
+      "holds": {
+       "phTinyB": true,
+       "phTinyA": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 66084958,
+        "cpu_ns": 66084958
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 123073959,
+        "cpu_ns": 123073959
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.21567125001456589,
+     "report": {
+      "times": {
+       "phTinyB": 23568359,
+       "phTinyA": 8915578,
+       "tinyB": 2198924,
+       "tinyA": 1404131
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1,
+       "tinyB": 20000000,
+       "tinyA": 10000000
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0,
+       "tinyB": 0,
+       "tinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": true,
+       "phTinyA": true,
+       "tinyB": true,
+       "tinyA": true
+      },
+      "probes": {
+       "phTinyB": 99498790,
+       "phTinyA": 49749395,
+       "tinyB": 141191406,
+       "tinyA": 70595703
+      },
+      "holds": {
+       "phTinyB": true,
+       "phTinyA": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 64772625,
+        "cpu_ns": 64772625
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 115331084,
+        "cpu_ns": 115331084
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.20530358306132257,
+     "report": {
+      "times": {
+       "phTinyB": 18658689,
+       "tinyB": 15952354,
+       "tinyA": 10099230,
+       "phTinyA": 9040729
+      },
+      "calls": {
+       "phTinyB": 1,
+       "tinyB": 20000000,
+       "tinyA": 10000000,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "tinyB": 0,
+       "tinyA": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": true,
+       "tinyB": true,
+       "tinyA": true,
+       "phTinyA": true
+      },
+      "probes": {
+       "phTinyB": 96663770,
+       "tinyB": 139570312,
+       "tinyA": 69785156,
+       "phTinyA": 48333408
+      },
+      "holds": {
+       "phTinyB": true,
+       "phTinyA": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 64816250,
+        "cpu_ns": 64816250
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 114779041,
+        "cpu_ns": 114779041
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.20557279197964817,
+     "report": {
+      "times": {
+       "phTinyB": 14057912,
+       "phTinyA": 7141695,
+       "tinyA": 0,
+       "tinyB": 0
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0,
+       "tinyA": 0,
+       "tinyB": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": true,
+       "phTinyA": true,
+       "tinyA": true,
+       "tinyB": true
+      },
+      "probes": {
+       "phTinyB": 100713289,
+       "phTinyA": 50357736,
+       "tinyA": 69667969,
+       "tinyB": 139335938
+      },
+      "holds": {
+       "phTinyB": true,
+       "phTinyA": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 65492667,
+        "cpu_ns": 65492667
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 115772625,
+        "cpu_ns": 115772625
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.20736141607630998,
+     "report": {
+      "times": {
+       "phTinyB": 17281809,
+       "tinyB": 12062698,
+       "phTinyA": 8870539,
+       "tinyA": 6351921
+      },
+      "calls": {
+       "phTinyB": 1,
+       "tinyB": 20000000,
+       "phTinyA": 1,
+       "tinyA": 10000000
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "tinyB": 0,
+       "phTinyA": 0,
+       "tinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": true,
+       "tinyB": true,
+       "phTinyA": true,
+       "tinyA": true
+      },
+      "probes": {
+       "phTinyB": 98479246,
+       "tinyB": 141191406,
+       "phTinyA": 49240853,
+       "tinyA": 70595703
+      },
+      "holds": {
+       "phTinyB": true,
+       "phTinyA": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 65262084,
+        "cpu_ns": 65262084
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 120953500,
+        "cpu_ns": 120953500
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.21194091707002372,
+     "report": {
+      "times": {
+       "phTinyB": 22470524,
+       "tinyB": 19178682,
+       "tinyA": 10854359,
+       "phTinyA": 8641037
+      },
+      "calls": {
+       "phTinyB": 1,
+       "tinyB": 20000000,
+       "tinyA": 10000000,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "tinyB": 0,
+       "tinyA": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": true,
+       "tinyB": true,
+       "tinyA": true,
+       "phTinyA": true
+      },
+      "probes": {
+       "phTinyB": 98476685,
+       "tinyB": 140136719,
+       "tinyA": 70068359,
+       "phTinyA": 49239815
+      },
+      "holds": {
+       "phTinyB": true,
+       "phTinyA": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    }
+   ],
+   "tasks": [
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 52449041,
+        "cpu_ns": 98674583
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 22699041,
+        "cpu_ns": 90165750
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 14543541,
+        "cpu_ns": 102950085
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.11570954089984298,
+     "report": {
+      "times": {
+       "taskStep": 147354348,
+       "taskWork8": 63743199,
+       "taskWork2": 52259646,
+       "taskWork4": 51146204
+      },
+      "calls": {
+       "taskStep": 24000000,
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskStep": 0,
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {},
+      "near": {
+       "taskStep": true,
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "probes": {
+       "taskStep": 167671875,
+       "taskWork8": 39011661,
+       "taskWork2": 39082185,
+       "taskWork4": 38977854
+      },
+      "holds": {
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 52321083,
+        "cpu_ns": 98483375
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 22820541,
+        "cpu_ns": 90476500
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 14366084,
+        "cpu_ns": 102199666
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.11586116708349437,
+     "report": {
+      "times": {
+       "taskStep": 151369036,
+       "taskWork8": 62305643,
+       "taskWork2": 51379682,
+       "taskWork4": 50795479
+      },
+      "calls": {
+       "taskStep": 24000000,
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskStep": 0,
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {},
+      "near": {
+       "taskStep": true,
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "probes": {
+       "taskStep": 167179688,
+       "taskWork8": 39651716,
+       "taskWork2": 39695008,
+       "taskWork4": 39635570
+      },
+      "holds": {
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 52614666,
+        "cpu_ns": 98920708
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 22917458,
+        "cpu_ns": 91006958
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 14603875,
+        "cpu_ns": 101683709
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.11711454100441188,
+     "report": {
+      "times": {
+       "taskStep": 142027438,
+       "taskWork8": 62959727,
+       "taskWork2": 52943532,
+       "taskWork4": 52462711
+      },
+      "calls": {
+       "taskStep": 24000000,
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskStep": 0,
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {},
+      "near": {
+       "taskStep": true,
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "probes": {
+       "taskStep": 168656250,
+       "taskWork8": 38513973,
+       "taskWork2": 38645023,
+       "taskWork4": 38494654
+      },
+      "holds": {
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 52232292,
+        "cpu_ns": 98491417
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 22792875,
+        "cpu_ns": 90847083
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 14066542,
+        "cpu_ns": 103012417
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.11529300000984222,
+     "report": {
+      "times": {
+       "taskStep": 154164791,
+       "taskWork8": 63677828,
+       "taskWork2": 51866716,
+       "taskWork4": 51641463
+      },
+      "calls": {
+       "taskStep": 24000000,
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskStep": 0,
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {},
+      "near": {
+       "taskStep": true,
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "probes": {
+       "taskStep": 168164062,
+       "taskWork8": 39165348,
+       "taskWork2": 39267909,
+       "taskWork4": 39160397
+      },
+      "holds": {
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 52362000,
+        "cpu_ns": 98605666
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 22840083,
+        "cpu_ns": 90227541
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 14230084,
+        "cpu_ns": 100012542
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.1152369580231607,
+     "report": {
+      "times": {
+       "taskStep": 146377480,
+       "taskWork8": 60526513,
+       "taskWork2": 51861647,
+       "taskWork4": 50930554
+      },
+      "calls": {
+       "taskStep": 24000000,
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskStep": 0,
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {},
+      "near": {
+       "taskStep": true,
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "probes": {
+       "taskStep": 166992188,
+       "taskWork8": 39256890,
+       "taskWork2": 39330947,
+       "taskWork4": 39239746
+      },
+      "holds": {
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 52306417,
+        "cpu_ns": 98427959
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 22628625,
+        "cpu_ns": 90137292
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 14280333,
+        "cpu_ns": 100574958
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.11634845798835158,
+     "report": {
+      "times": {
+       "taskStep": 140820929,
+       "taskWork8": 61432005,
+       "taskWork2": 52116601,
+       "taskWork4": 51243899
+      },
+      "calls": {
+       "taskStep": 24000000,
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskStep": 0,
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {},
+      "near": {
+       "taskStep": true,
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "probes": {
+       "taskStep": 167671875,
+       "taskWork8": 38862385,
+       "taskWork2": 38964447,
+       "taskWork4": 38845808
+      },
+      "holds": {
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 52282375,
+        "cpu_ns": 98539084
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 22615250,
+        "cpu_ns": 90005165
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 14764167,
+        "cpu_ns": 103633586
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.11608345806598663,
+     "report": {
+      "times": {
+       "taskStep": 165078069,
+       "taskWork8": 64262327,
+       "taskWork2": 51920750,
+       "taskWork4": 50835235
+      },
+      "calls": {
+       "taskStep": 24000000,
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskStep": 0,
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {},
+      "near": {
+       "taskStep": true,
+       "taskWork8": true,
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "probes": {
+       "taskStep": 167671875,
+       "taskWork8": 39137106,
+       "taskWork2": 39218377,
+       "taskWork4": 39120488
+      },
+      "holds": {
+       "taskWork2": true,
+       "taskWork4": true
+      },
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    }
+   ],
+   "rec": [
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 50332875,
+        "cpu_ns": 50332875
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 39244750,
+        "cpu_ns": 39244750
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 40267500,
+        "cpu_ns": 40267500
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58517333,
+        "cpu_ns": 58517333
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.7167602080153301,
+     "report": {
+      "times": {
+       "deepRec": 81316817,
+       "phDeep100": 28605503,
+       "phDeep10k": 27356786,
+       "phDeep1k": 26324469,
+       "phFib": 13030689,
+       "fib": 13027404
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep100": 1,
+       "phDeep10k": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep100": 0,
+       "phDeep10k": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {},
+      "near": {
+       "deepRec": true,
+       "phDeep100": true,
+       "phDeep10k": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 38865375,
+       "phDeep100": 13032314,
+       "phDeep10k": 12904572,
+       "phDeep1k": 12916185,
+       "phFib": 45478598,
+       "fib": 45478592
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 46810625,
+        "cpu_ns": 46810625
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 38783917,
+        "cpu_ns": 38783917
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41755833,
+        "cpu_ns": 41755833
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 57794959,
+        "cpu_ns": 57794959
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.21087874996010214,
+     "report": {
+      "times": {
+       "deepRec": 76958634,
+       "phDeep10k": 27802885,
+       "phDeep100": 25398491,
+       "phDeep1k": 24818027,
+       "phFib": 8624038,
+       "fib": 8621129
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {},
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 41996075,
+       "phDeep10k": 13948459,
+       "phDeep100": 14086535,
+       "phDeep1k": 13961012,
+       "phFib": 49157493,
+       "fib": 49157486
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 47116500,
+        "cpu_ns": 47116500
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 39199750,
+        "cpu_ns": 39199750
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 42478541,
+        "cpu_ns": 42478541
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58707666,
+        "cpu_ns": 58707666
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.21380395791493356,
+     "report": {
+      "times": {
+       "deepRec": 77401769,
+       "phDeep10k": 28210844,
+       "phDeep100": 25342164,
+       "phDeep1k": 24921657,
+       "phFib": 8451321,
+       "fib": 8448411
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {},
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42926770,
+       "phDeep10k": 14257963,
+       "phDeep100": 14399103,
+       "phDeep1k": 14270794,
+       "phFib": 50248255,
+       "fib": 50248248
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 47143083,
+        "cpu_ns": 47143083
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 38784792,
+        "cpu_ns": 38784792
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41742208,
+        "cpu_ns": 41742208
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 57909625,
+        "cpu_ns": 57909625
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.21101312502287328,
+     "report": {
+      "times": {
+       "deepRec": 79414296,
+       "phDeep10k": 28537865,
+       "phDeep100": 26308077,
+       "phDeep1k": 25569157,
+       "phFib": 11386711,
+       "fib": 11385116
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {},
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 39740228,
+       "phDeep10k": 13199145,
+       "phDeep100": 13329804,
+       "phDeep1k": 13211023,
+       "phFib": 46516742,
+       "fib": 46516735
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.6,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 47306042,
+        "cpu_ns": 47306042
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 38523000,
+        "cpu_ns": 38523000
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41200500,
+        "cpu_ns": 41200500
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 57833584,
+        "cpu_ns": 57833584
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.21088487503584474,
+     "report": {
+      "times": {
+       "deepRec": 76602186,
+       "phDeep10k": 27234738,
+       "phDeep100": 25846469,
+       "phDeep1k": 24543756,
+       "phFib": 8634826,
+       "fib": 8632917
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {},
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42025903,
+       "phDeep10k": 13958331,
+       "phDeep100": 14096505,
+       "phDeep1k": 13970892,
+       "phFib": 49192282,
+       "fib": 49192275
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 47525125,
+        "cpu_ns": 47525125
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 39392875,
+        "cpu_ns": 39392875
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41044958,
+        "cpu_ns": 41044958
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58459042,
+        "cpu_ns": 58459042
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.2121324170148,
+     "report": {
+      "times": {
+       "deepRec": 77497707,
+       "phDeep10k": 27088068,
+       "phDeep100": 26056708,
+       "phDeep1k": 25423275,
+       "phFib": 9286797,
+       "fib": 9283013
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {},
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42004057,
+       "phDeep10k": 13951120,
+       "phDeep100": 14089223,
+       "phDeep1k": 13963675,
+       "phFib": 49166871,
+       "fib": 49166864
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 48420208,
+        "cpu_ns": 48420208
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 38701375,
+        "cpu_ns": 38701375
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41327208,
+        "cpu_ns": 41327208
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58096625,
+        "cpu_ns": 58096625
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.2121881670318544,
+     "report": {
+      "times": {
+       "deepRec": 79955004,
+       "phDeep10k": 28022090,
+       "phDeep100": 27604178,
+       "phDeep1k": 25384484,
+       "phFib": 11219387,
+       "fib": 11209060
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {},
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 40042198,
+       "phDeep10k": 13299508,
+       "phDeep100": 13431160,
+       "phDeep1k": 13311477,
+       "phFib": 46870444,
+       "fib": 46870438
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.7,
+      "dropped": 0
+     }
+    }
+   ]
+  },
+  "retime": {
+   "tiny": [
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 18686292,
+        "cpu_ns": 18686292
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31080250,
+        "cpu_ns": 31080250
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.9538327080663294,
+     "report": {
+      "times": {
+       "phTinyB": 31073976,
+       "phTinyA": 10486945
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {
+       "jsonObj": 0,
+       "emit": 0
+      },
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17167000,
+        "cpu_ns": 17167000
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 30724291,
+        "cpu_ns": 30724291
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.08975679194554687,
+     "report": {
+      "times": {
+       "phTinyB": 30716307,
+       "phTinyA": 9798975
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {
+       "jsonObj": 0,
+       "emit": 0
+      },
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 16754167,
+        "cpu_ns": 16754167
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 30787583,
+        "cpu_ns": 30787583
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.09024483396206051,
+     "report": {
+      "times": {
+       "phTinyB": 30779150,
+       "phTinyA": 9420680
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {
+       "jsonObj": 0,
+       "emit": 0
+      },
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17242083,
+        "cpu_ns": 17242083
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31128958,
+        "cpu_ns": 31128958
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.09135350002907217,
+     "report": {
+      "times": {
+       "phTinyB": 31118928,
+       "phTinyA": 9851177
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17466834,
+        "cpu_ns": 17466834
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 32672042,
+        "cpu_ns": 32672042
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.09393850003834814,
+     "report": {
+      "times": {
+       "phTinyB": 32658057,
+       "phTinyA": 10052175
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 16705875,
+        "cpu_ns": 16705875
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31674500,
+        "cpu_ns": 31674500
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.09129116602707654,
+     "report": {
+      "times": {
+       "phTinyB": 31665310,
+       "phTinyA": 9336836
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17075583,
+        "cpu_ns": 17075583
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31018750,
+        "cpu_ns": 31018750
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.09191483294125646,
+     "report": {
+      "times": {
+       "phTinyB": 31007692,
+       "phTinyA": 9616036
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    }
+   ],
+   "tasks": [
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 30981083,
+        "cpu_ns": 47212792
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12463291,
+        "cpu_ns": 49136875
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7922916,
+        "cpu_ns": 51949167
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.0948144169524312,
+     "report": {
+      "times": {
+       "taskWork8": 51785256,
+       "taskWork4": 49081612,
+       "taskWork2": 47181632
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork4": 28,
+       "taskWork2": 14
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31514792,
+        "cpu_ns": 48111750
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12327667,
+        "cpu_ns": 48393000
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7917125,
+        "cpu_ns": 53780750
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.09602112497668713,
+     "report": {
+      "times": {
+       "taskWork8": 53699061,
+       "taskWork4": 48348883,
+       "taskWork2": 48085536
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork4": 28,
+       "taskWork2": 14
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31340208,
+        "cpu_ns": 47598584
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12253542,
+        "cpu_ns": 48213709
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7814958,
+        "cpu_ns": 51677250
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.09619254199787974,
+     "report": {
+      "times": {
+       "taskWork8": 51495991,
+       "taskWork4": 48165691,
+       "taskWork2": 47568502
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false
+      },
+      "probes": {
+       "taskWork8": 57,
+       "taskWork4": 28,
+       "taskWork2": 14
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31034834,
+        "cpu_ns": 47392875
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 11908625,
+        "cpu_ns": 47292876
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7804125,
+        "cpu_ns": 51255500
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.09298220800701529,
+     "report": {
+      "times": {
+       "taskWork8": 51130375,
+       "taskWork2": 47366720,
+       "taskWork4": 47239264
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "taskWork8": false,
+       "taskWork2": false,
+       "taskWork4": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork2": 14,
+       "taskWork4": 28
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31366083,
+        "cpu_ns": 48215250
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12416458,
+        "cpu_ns": 48942917
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7904375,
+        "cpu_ns": 52891250
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.09595383296255022,
+     "report": {
+      "times": {
+       "taskWork8": 52781951,
+       "taskWork4": 48898381,
+       "taskWork2": 48184420
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork4": 28,
+       "taskWork2": 14
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31530625,
+        "cpu_ns": 48105375
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12327375,
+        "cpu_ns": 48729832
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7384250,
+        "cpu_ns": 52511916
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.09594729100354016,
+     "report": {
+      "times": {
+       "taskWork8": 52388483,
+       "taskWork4": 48669532,
+       "taskWork2": 48077909
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false
+      },
+      "probes": {
+       "taskWork8": 57,
+       "taskWork4": 28,
+       "taskWork2": 14
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 36667042,
+        "cpu_ns": 53734291
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12167625,
+        "cpu_ns": 48294166
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7888625,
+        "cpu_ns": 51818959
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.10000341606792063,
+     "report": {
+      "times": {
+       "taskWork2": 53699603,
+       "taskWork8": 51691743,
+       "taskWork4": 48247011
+      },
+      "calls": {
+       "taskWork2": 2,
+       "taskWork8": 8,
+       "taskWork4": 4
+      },
+      "allocs": {
+       "taskWork2": 0,
+       "taskWork8": 0,
+       "taskWork4": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "taskWork2": false,
+       "taskWork8": false,
+       "taskWork4": false
+      },
+      "probes": {
+       "taskWork2": 14,
+       "taskWork8": 56,
+       "taskWork4": 28
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    }
+   ],
+   "rec": [
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 48332417,
+        "cpu_ns": 48332417
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 40285875,
+        "cpu_ns": 40285875
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 42326500,
+        "cpu_ns": 42326500
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58487875,
+        "cpu_ns": 58487875
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.23206983401905745,
+     "report": {
+      "times": {
+       "deepRec": 80121173,
+       "phDeep10k": 28247652,
+       "phDeep100": 26722038,
+       "phDeep1k": 26192892,
+       "phFib": 8881615,
+       "fib": 8878872
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42375548,
+       "phDeep10k": 14074443,
+       "phDeep100": 14213766,
+       "phDeep1k": 14087109,
+       "phFib": 49601487,
+       "fib": 49601480
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 47171833,
+        "cpu_ns": 47171833
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 38868084,
+        "cpu_ns": 38868084
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41908750,
+        "cpu_ns": 41908750
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 57997292,
+        "cpu_ns": 57997292
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.2279025410534814,
+     "report": {
+      "times": {
+       "deepRec": 76467613,
+       "phDeep10k": 27610193,
+       "phDeep100": 25343706,
+       "phDeep1k": 24549217,
+       "phFib": 7606579,
+       "fib": 7603044
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 43043538,
+       "phDeep10k": 14297425,
+       "phDeep100": 14438955,
+       "phDeep1k": 14310291,
+       "phFib": 50387325,
+       "fib": 50387318
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 48422750,
+        "cpu_ns": 48422750
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 40639125,
+        "cpu_ns": 40639125
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 42953958,
+        "cpu_ns": 42953958
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58725750,
+        "cpu_ns": 58725750
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.23449029203038663,
+     "report": {
+      "times": {
+       "deepRec": 80804108,
+       "phDeep10k": 28754919,
+       "phDeep100": 26681164,
+       "phDeep1k": 26424417,
+       "phFib": 8696611,
+       "fib": 8694285
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42733705,
+       "phDeep10k": 14193754,
+       "phDeep100": 14334258,
+       "phDeep1k": 14206527,
+       "phFib": 50021965,
+       "fib": 50021958
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 47489208,
+        "cpu_ns": 47489208
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 38868209,
+        "cpu_ns": 38868209
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41453292,
+        "cpu_ns": 41453292
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58218167,
+        "cpu_ns": 58218167
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.228556958027184,
+     "report": {
+      "times": {
+       "deepRec": 76907678,
+       "phDeep10k": 27374754,
+       "phDeep100": 25866200,
+       "phDeep1k": 24775859,
+       "phFib": 8597414,
+       "fib": 8594879
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42381242,
+       "phDeep10k": 14076789,
+       "phDeep100": 14216135,
+       "phDeep1k": 14089457,
+       "phFib": 49609756,
+       "fib": 49609749
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 46906917,
+        "cpu_ns": 46906917
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 38514834,
+        "cpu_ns": 38514834
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 40737542,
+        "cpu_ns": 40737542
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58296333,
+        "cpu_ns": 58296333
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.22668325004633516,
+     "report": {
+      "times": {
+       "deepRec": 75454799,
+       "phDeep10k": 26704112,
+       "phDeep100": 25298215,
+       "phDeep1k": 24466954,
+       "phFib": 8844747,
+       "fib": 8843338
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42242149,
+       "phDeep10k": 14030276,
+       "phDeep100": 14169161,
+       "phDeep1k": 14042902,
+       "phFib": 49445832,
+       "fib": 49445825
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 48052625,
+        "cpu_ns": 48052625
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 39170458,
+        "cpu_ns": 39170458
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 42189292,
+        "cpu_ns": 42189292
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58049541,
+        "cpu_ns": 58049541
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.22963145899120718,
+     "report": {
+      "times": {
+       "deepRec": 78487595,
+       "phDeep10k": 28099003,
+       "phDeep100": 26386401,
+       "phDeep1k": 25068655,
+       "phFib": 8410522,
+       "fib": 8408904
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42404369,
+       "phDeep10k": 14084354,
+       "phDeep100": 14223776,
+       "phDeep1k": 14097029,
+       "phFib": 49636417,
+       "fib": 49636410
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 47589459,
+        "cpu_ns": 47589459
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 39027625,
+        "cpu_ns": 39027625
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 42262916,
+        "cpu_ns": 42262916
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 58892042,
+        "cpu_ns": 58892042
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.23038270801771432,
+     "report": {
+      "times": {
+       "deepRec": 78312567,
+       "phDeep10k": 28249746,
+       "phDeep100": 26089281,
+       "phDeep1k": 25002593,
+       "phFib": 9518035,
+       "fib": 9515334
+      },
+      "calls": {
+       "deepRec": 6022200,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1,
+       "fib": 7049155
+      },
+      "allocs": {
+       "deepRec": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0,
+       "fib": 0
+      },
+      "copies": {
+       "emit": 0,
+       "jsonObj": 0
+      },
+      "near": {
+       "deepRec": true,
+       "phDeep10k": true,
+       "phDeep100": true,
+       "phDeep1k": true,
+       "phFib": true,
+       "fib": true
+      },
+      "probes": {
+       "deepRec": 42174394,
+       "phDeep10k": 14007689,
+       "phDeep100": 14146351,
+       "phDeep1k": 14020294,
+       "phFib": 49366230,
+       "fib": 49366223
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    }
+   ]
+  },
+  "phases": {
+   "tiny": [
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17623833,
+        "cpu_ns": 17623833
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 32854250,
+        "cpu_ns": 32854250
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.07649141596630216,
+     "report": {
+      "times": {
+       "phTinyB": 32844681,
+       "phTinyA": 10262489
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17495083,
+        "cpu_ns": 17495083
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 32502083,
+        "cpu_ns": 32502083
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.07557483296841383,
+     "report": {
+      "times": {
+       "phTinyB": 32480993,
+       "phTinyA": 10109817
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17337875,
+        "cpu_ns": 17337875
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 32999583,
+        "cpu_ns": 32999583
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.07632954197470099,
+     "report": {
+      "times": {
+       "phTinyB": 32988126,
+       "phTinyA": 9968372
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17341375,
+        "cpu_ns": 17341375
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 31214625,
+        "cpu_ns": 31214625
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.07393204106483608,
+     "report": {
+      "times": {
+       "phTinyB": 31199005,
+       "phTinyA": 10003556
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.7,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17491333,
+        "cpu_ns": 17491333
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 32779708,
+        "cpu_ns": 32779708
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.0762579160509631,
+     "report": {
+      "times": {
+       "phTinyB": 32771420,
+       "phTinyA": 10147769
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17183041,
+        "cpu_ns": 17183041
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 33144250,
+        "cpu_ns": 33144250
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.07676970900502056,
+     "report": {
+      "times": {
+       "phTinyB": 33132654,
+       "phTinyA": 9847952
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17197959,
+        "cpu_ns": 17197959
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 30860708,
+        "cpu_ns": 30860708
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 0.07486204197630286,
+     "report": {
+      "times": {
+       "phTinyB": 30853812,
+       "phTinyA": 9806243
+      },
+      "calls": {
+       "phTinyB": 1,
+       "phTinyA": 1
+      },
+      "allocs": {
+       "phTinyB": 0,
+       "phTinyA": 0
+      },
+      "copies": {},
+      "near": {
+       "phTinyB": false,
+       "phTinyA": false
+      },
+      "probes": {
+       "phTinyB": 7,
+       "phTinyA": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.7,
+      "dropped": 0
+     }
+    }
+   ],
+   "tasks": [
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 34304917,
+        "cpu_ns": 51445875
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 11983792,
+        "cpu_ns": 47539833
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7946333,
+        "cpu_ns": 51645209
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.5960360419703647,
+     "report": {
+      "times": {
+       "taskWork8": 51487499,
+       "taskWork2": 51385915,
+       "taskWork4": 47496557,
+       "phTasks2": 25815328,
+       "phTasks4": 11982865,
+       "phTasks8": 7943611
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "phTasks2": 1,
+       "phTasks4": 1,
+       "phTasks8": 1
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0,
+       "phTasks2": 0,
+       "phTasks4": 0,
+       "phTasks8": 0
+      },
+      "copies": {},
+      "near": {
+       "taskWork8": false,
+       "taskWork2": false,
+       "taskWork4": false,
+       "phTasks2": false,
+       "phTasks4": false,
+       "phTasks8": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork2": 14,
+       "taskWork4": 28,
+       "phTasks2": 7,
+       "phTasks4": 7,
+       "phTasks8": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31889250,
+        "cpu_ns": 49113958
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12104875,
+        "cpu_ns": 47830999
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7642292,
+        "cpu_ns": 52652832
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.07901166600640863,
+     "report": {
+      "times": {
+       "taskWork8": 52479305,
+       "taskWork2": 49039371,
+       "taskWork4": 47767006,
+       "phTasks2": 24618059,
+       "phTasks4": 12099603,
+       "phTasks8": 7637227
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "phTasks2": 1,
+       "phTasks4": 1,
+       "phTasks8": 1
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0,
+       "phTasks2": 0,
+       "phTasks4": 0,
+       "phTasks8": 0
+      },
+      "copies": {},
+      "near": {
+       "taskWork8": false,
+       "taskWork2": false,
+       "taskWork4": false,
+       "phTasks2": false,
+       "phTasks4": false,
+       "phTasks8": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork2": 14,
+       "taskWork4": 28,
+       "phTasks2": 7,
+       "phTasks4": 7,
+       "phTasks8": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31322875,
+        "cpu_ns": 47721418
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12488500,
+        "cpu_ns": 48431417
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7920583,
+        "cpu_ns": 51628708
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.07890354190021753,
+     "report": {
+      "times": {
+       "taskWork8": 51388928,
+       "taskWork4": 48382351,
+       "taskWork2": 47675772,
+       "phTasks2": 23944756,
+       "phTasks4": 12485314,
+       "phTasks8": 7915986
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2,
+       "phTasks2": 1,
+       "phTasks4": 1,
+       "phTasks8": 1
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0,
+       "phTasks2": 0,
+       "phTasks4": 0,
+       "phTasks8": 0
+      },
+      "copies": {},
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false,
+       "phTasks2": false,
+       "phTasks4": false,
+       "phTasks8": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork4": 28,
+       "taskWork2": 14,
+       "phTasks2": 7,
+       "phTasks4": 7,
+       "phTasks8": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31241458,
+        "cpu_ns": 47598000
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 11995709,
+        "cpu_ns": 47581207
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 8447584,
+        "cpu_ns": 54162417
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.07759333297144622,
+     "report": {
+      "times": {
+       "taskWork8": 53919161,
+       "taskWork2": 47560236,
+       "taskWork4": 47537779,
+       "phTasks2": 23856953,
+       "phTasks4": 11991782,
+       "phTasks8": 8441493
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "phTasks2": 1,
+       "phTasks4": 1,
+       "phTasks8": 1
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork2": 0,
+       "taskWork4": 0,
+       "phTasks2": 0,
+       "phTasks4": 0,
+       "phTasks8": 0
+      },
+      "copies": {},
+      "near": {
+       "taskWork8": false,
+       "taskWork2": false,
+       "taskWork4": false,
+       "phTasks2": false,
+       "phTasks4": false,
+       "phTasks8": false
+      },
+      "probes": {
+       "taskWork8": 53,
+       "taskWork2": 13,
+       "taskWork4": 27,
+       "phTasks2": 7,
+       "phTasks4": 7,
+       "phTasks8": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.6,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 32027541,
+        "cpu_ns": 48433500
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 13015958,
+        "cpu_ns": 48985251
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7732000,
+        "cpu_ns": 52917373
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.07874279201496392,
+     "report": {
+      "times": {
+       "taskWork8": 52757373,
+       "taskWork4": 48940024,
+       "taskWork2": 48397543,
+       "phTasks2": 24661619,
+       "phTasks4": 13012487,
+       "phTasks8": 7729196
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2,
+       "phTasks2": 1,
+       "phTasks4": 1,
+       "phTasks8": 1
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0,
+       "phTasks2": 0,
+       "phTasks4": 0,
+       "phTasks8": 0
+      },
+      "copies": {},
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false,
+       "phTasks2": false,
+       "phTasks4": false,
+       "phTasks8": false
+      },
+      "probes": {
+       "taskWork8": 57,
+       "taskWork4": 28,
+       "taskWork2": 14,
+       "phTasks2": 7,
+       "phTasks4": 7,
+       "phTasks8": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.1,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31263042,
+        "cpu_ns": 47677208
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12165208,
+        "cpu_ns": 48240041
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7929000,
+        "cpu_ns": 51747501
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.07851233403198421,
+     "report": {
+      "times": {
+       "taskWork8": 51554525,
+       "taskWork4": 48192249,
+       "taskWork2": 47631060,
+       "phTasks2": 23894304,
+       "phTasks4": 12164453,
+       "phTasks8": 7926801
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2,
+       "phTasks2": 1,
+       "phTasks4": 1,
+       "phTasks8": 1
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0,
+       "phTasks2": 0,
+       "phTasks4": 0,
+       "phTasks8": 0
+      },
+      "copies": {},
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false,
+       "phTasks2": false,
+       "phTasks4": false,
+       "phTasks8": false
+      },
+      "probes": {
+       "taskWork8": 56,
+       "taskWork4": 28,
+       "taskWork2": 14,
+       "phTasks2": 7,
+       "phTasks4": 7,
+       "phTasks8": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 31097584,
+        "cpu_ns": 47431041
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12014042,
+        "cpu_ns": 47689125
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 8001333,
+        "cpu_ns": 51791957
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 0.07756095798686147,
+     "report": {
+      "times": {
+       "taskWork8": 51614943,
+       "taskWork4": 47642494,
+       "taskWork2": 47393696,
+       "phTasks2": 23813418,
+       "phTasks4": 12011091,
+       "phTasks8": 7998897
+      },
+      "calls": {
+       "taskWork8": 8,
+       "taskWork4": 4,
+       "taskWork2": 2,
+       "phTasks2": 1,
+       "phTasks4": 1,
+       "phTasks8": 1
+      },
+      "allocs": {
+       "taskWork8": 0,
+       "taskWork4": 0,
+       "taskWork2": 0,
+       "phTasks2": 0,
+       "phTasks4": 0,
+       "phTasks8": 0
+      },
+      "copies": {},
+      "near": {
+       "taskWork8": false,
+       "taskWork4": false,
+       "taskWork2": false,
+       "phTasks2": false,
+       "phTasks4": false,
+       "phTasks8": false
+      },
+      "probes": {
+       "taskWork8": 53,
+       "taskWork4": 27,
+       "taskWork2": 13,
+       "phTasks2": 7,
+       "phTasks4": 7,
+       "phTasks8": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.7,
+      "dropped": 0
+     }
+    }
+   ],
+   "rec": [
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 34956542,
+        "cpu_ns": 34956542
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 26994125,
+        "cpu_ns": 26994125
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 27039250,
+        "cpu_ns": 27039250
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6649959,
+        "cpu_ns": 6649959
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.12079187494236976,
+     "report": {
+      "times": {
+       "phDeep100": 27637134,
+       "phDeep10k": 27028305,
+       "phDeep1k": 26981246,
+       "phFib": 6644272
+      },
+      "calls": {
+       "phDeep100": 1,
+       "phDeep10k": 1,
+       "phDeep1k": 1,
+       "phFib": 1
+      },
+      "allocs": {
+       "phDeep100": 0,
+       "phDeep10k": 0,
+       "phDeep1k": 0,
+       "phFib": 0
+      },
+      "copies": {},
+      "near": {
+       "phDeep100": false,
+       "phDeep10k": false,
+       "phDeep1k": false,
+       "phFib": false
+      },
+      "probes": {
+       "phDeep100": 7,
+       "phDeep10k": 7,
+       "phDeep1k": 7,
+       "phFib": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.6,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 33646792,
+        "cpu_ns": 33646792
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 27642500,
+        "cpu_ns": 27642500
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 26537833,
+        "cpu_ns": 26537833
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 5657792,
+        "cpu_ns": 5657792
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.11894783400930464,
+     "report": {
+      "times": {
+       "phDeep1k": 27633258,
+       "phDeep10k": 26531251,
+       "phDeep100": 26302651,
+       "phFib": 5652501
+      },
+      "calls": {
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phFib": 1
+      },
+      "allocs": {
+       "phDeep1k": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phFib": 0
+      },
+      "copies": {},
+      "near": {
+       "phDeep1k": false,
+       "phDeep10k": false,
+       "phDeep100": false,
+       "phFib": false
+      },
+      "probes": {
+       "phDeep1k": 7,
+       "phDeep10k": 7,
+       "phDeep100": 7,
+       "phFib": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.6,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 35260250,
+        "cpu_ns": 35260250
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 28864667,
+        "cpu_ns": 28864667
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 27944166,
+        "cpu_ns": 27944166
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6615333,
+        "cpu_ns": 6615333
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.1247856670524925,
+     "report": {
+      "times": {
+       "phDeep1k": 28856294,
+       "phDeep10k": 27936725,
+       "phDeep100": 27916458,
+       "phFib": 6612046
+      },
+      "calls": {
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phFib": 1
+      },
+      "allocs": {
+       "phDeep1k": 0,
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phFib": 0
+      },
+      "copies": {},
+      "near": {
+       "phDeep1k": false,
+       "phDeep10k": false,
+       "phDeep100": false,
+       "phFib": false
+      },
+      "probes": {
+       "phDeep1k": 7,
+       "phDeep10k": 7,
+       "phDeep100": 7,
+       "phFib": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 35150792,
+        "cpu_ns": 35150792
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 29560000,
+        "cpu_ns": 29560000
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 27357125,
+        "cpu_ns": 27357125
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6309416,
+        "cpu_ns": 6309416
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.12427241704426706,
+     "report": {
+      "times": {
+       "phDeep1k": 29549722,
+       "phDeep100": 27736061,
+       "phDeep10k": 27347874,
+       "phFib": 6303428
+      },
+      "calls": {
+       "phDeep1k": 1,
+       "phDeep100": 1,
+       "phDeep10k": 1,
+       "phFib": 1
+      },
+      "allocs": {
+       "phDeep1k": 0,
+       "phDeep100": 0,
+       "phDeep10k": 0,
+       "phFib": 0
+      },
+      "copies": {},
+      "near": {
+       "phDeep1k": false,
+       "phDeep100": false,
+       "phDeep10k": false,
+       "phFib": false
+      },
+      "probes": {
+       "phDeep1k": 7,
+       "phDeep100": 7,
+       "phDeep10k": 7,
+       "phFib": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 34073917,
+        "cpu_ns": 34073917
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 26395916,
+        "cpu_ns": 26395916
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 26212917,
+        "cpu_ns": 26212917
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 5768541,
+        "cpu_ns": 5768541
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.11786429106723517,
+     "report": {
+      "times": {
+       "phDeep100": 26756731,
+       "phDeep1k": 26387746,
+       "phDeep10k": 26205849,
+       "phFib": 5762862
+      },
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1
+      },
+      "allocs": {
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phDeep10k": 0,
+       "phFib": 0
+      },
+      "copies": {},
+      "near": {
+       "phDeep100": false,
+       "phDeep1k": false,
+       "phDeep10k": false,
+       "phFib": false
+      },
+      "probes": {
+       "phDeep100": 7,
+       "phDeep1k": 7,
+       "phDeep10k": 7,
+       "phFib": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 6.6,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 35245875,
+        "cpu_ns": 35245875
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 28515833,
+        "cpu_ns": 28515833
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 29957917,
+        "cpu_ns": 29957917
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 5687583,
+        "cpu_ns": 5687583
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.12583016708958894,
+     "report": {
+      "times": {
+       "phDeep10k": 29946743,
+       "phDeep1k": 28503667,
+       "phDeep100": 27945351,
+       "phFib": 5679828
+      },
+      "calls": {
+       "phDeep10k": 1,
+       "phDeep1k": 1,
+       "phDeep100": 1,
+       "phFib": 1
+      },
+      "allocs": {
+       "phDeep10k": 0,
+       "phDeep1k": 0,
+       "phDeep100": 0,
+       "phFib": 0
+      },
+      "copies": {},
+      "near": {
+       "phDeep10k": false,
+       "phDeep1k": false,
+       "phDeep100": false,
+       "phFib": false
+      },
+      "probes": {
+       "phDeep10k": 7,
+       "phDeep1k": 7,
+       "phDeep100": 7,
+       "phFib": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 34556833,
+        "cpu_ns": 34556833
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 27259167,
+        "cpu_ns": 27259167
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 28662916,
+        "cpu_ns": 28662916
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6205542,
+        "cpu_ns": 6205542
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 0.12238333292771131,
+     "report": {
+      "times": {
+       "phDeep10k": 28655130,
+       "phDeep100": 27268380,
+       "phDeep1k": 27250989,
+       "phFib": 6201485
+      },
+      "calls": {
+       "phDeep10k": 1,
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phFib": 1
+      },
+      "allocs": {
+       "phDeep10k": 0,
+       "phDeep100": 0,
+       "phDeep1k": 0,
+       "phFib": 0
+      },
+      "copies": {},
+      "near": {
+       "phDeep10k": false,
+       "phDeep100": false,
+       "phDeep1k": false,
+       "phFib": false
+      },
+      "probes": {
+       "phDeep10k": 7,
+       "phDeep100": 7,
+       "phDeep1k": 7,
+       "phFib": 7
+      },
+      "holds": {},
+      "untimed": [],
+      "overhead_ns": 7.0,
+      "dropped": 0
+     }
+    }
+   ]
+  },
+  "sample": {
+   "tiny": [
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 16220833,
+        "cpu_ns": 16220833
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 38871208,
+        "cpu_ns": 38871208
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 3.4033402079949155,
+     "report": {
+      "times": {
+       "runWorkload": 52857000,
+       "timePhase": 52857000,
+       "runSession": 52857000,
+       "lazyPure": 52857000,
+       "phTinyB": 37534000,
+       "phTinyA": 15323000,
+       "tinyB": 14162000,
+       "tinyA": 3804000,
+       "andthenInfo": 3661000,
+       "updateBuiltinTokens": 3425000,
+       "addBuiltin": 3153000,
+       "addBuiltinParser": 2969000,
+       "nodeInfo": 2322000,
+       "registerBuiltinSimprocCore": 1753000,
+       "addTokenConfig": 1596000,
+       "registerPersistentEnvExtensionUnsafe": 1372000,
+       "loop": 1400000,
+       "node": 917000,
+       "any": 909000,
+       "addBuiltinDocString": 902000,
+       "addSimprocBuiltinAttrCore": 899000,
+       "registerScopedEnvExtensionUnsafe": 890000,
+       "removeLeadingSpaces": 657000,
+       "registerAlias": 609000,
+       "registerTraceClass": 608000,
+       "leadingNode": 565000,
+       "addCore": 444000,
+       "addBuiltinDeclarationRanges": 440000,
+       "registerSimpAttr": 434000,
+       "withAntiquotSpliceAndSuffix": 352000,
+       "mkAntiquotSplice": 352000,
+       "optional": 352000,
+       "symbolInfo": 248000,
+       "quickCmpImpl": 245000,
+       "registerSymSimpAttr": 237000,
+       "findNextLine": 236000,
+       "findLeadingSpacesSize": 236000,
+       "elabPrintTacTags": 235000,
+       "init": 229000,
+       "append": 225000,
+       "andthen": 223000,
+       "implicitBinder": 223000,
+       "bracketedBinder": 223000,
+       "registerAliasCore": 212000,
+       "createNodes": 212000,
+       "saveLine": 209000,
+       "addLeadingParser": 92000,
+       "optionalNoAntiquot": 44000,
+       "getCollisionNodeSize": 19000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 15893625,
+        "cpu_ns": 15893625
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 38133292,
+        "cpu_ns": 38133292
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 3.3502974159782752,
+     "report": {
+      "times": {
+       "runWorkload": 51735000,
+       "runSession": 51735000,
+       "timePhase": 51735000,
+       "lazyPure": 51735000,
+       "phTinyB": 36603000,
+       "tinyB": 18398000,
+       "phTinyA": 15132000,
+       "andthenInfo": 6739000,
+       "addBuiltinParser": 5034000,
+       "updateBuiltinTokens": 4394000,
+       "tinyA": 4368000,
+       "nodeInfo": 4264000,
+       "addBuiltin": 4152000,
+       "registerBuiltinSimprocCore": 1563000,
+       "addTokenConfig": 1432000,
+       "addBuiltinDocString": 1362000,
+       "loop": 1211000,
+       "addSimprocBuiltinAttrCore": 1153000,
+       "registerPersistentEnvExtensionUnsafe": 898000,
+       "any": 898000,
+       "addCore": 747000,
+       "registerTraceClass": 672000,
+       "removeLeadingSpaces": 661000,
+       "symbolInfo": 435000,
+       "registerAlias": 431000,
+       "andthen": 387000,
+       "registerAliasCore": 332000,
+       "epsilonInfo": 302000,
+       "evalRefine'": 250000,
+       "init": 248000,
+       "registerSimplePersistentEnvExtension": 244000,
+       "eraseIdx": 238000,
+       "withAntiquot": 235000,
+       "merge": 235000,
+       "orelseInfo": 235000,
+       "optional": 235000,
+       "seq": 233000,
+       "registerScopedEnvExtensionUnsafe": 233000,
+       "insert": 227000,
+       "mkAntiquot": 223000,
+       "addBuiltinDeclarationRanges": 223000,
+       "node": 223000,
+       "saveLine": 219000,
+       "quickCmpImpl": 207000,
+       "findLeadingSpacesSize": 202000,
+       "findNextLine": 202000,
+       "registerBuiltinAttribute": 147000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 10690667,
+        "cpu_ns": 10690667
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 35166750,
+        "cpu_ns": 35166750
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 3.182151791988872,
+     "report": {
+      "times": {
+       "lazyPure": 44056000,
+       "runWorkload": 44056000,
+       "runSession": 44056000,
+       "timePhase": 44056000,
+       "phTinyB": 33882000,
+       "main": 20148000,
+       "tinyB": 13216000,
+       "phTinyA": 10174000,
+       "andthenInfo": 4760000,
+       "addBuiltinParser": 3951000,
+       "updateBuiltinTokens": 3163000,
+       "nodeInfo": 2372000,
+       "addBuiltin": 2224000,
+       "tinyA": 1690000,
+       "registerPersistentEnvExtensionUnsafe": 1416000,
+       "addBuiltinDocString": 903000,
+       "addTokenConfig": 861000,
+       "loop": 861000,
+       "addSimprocBuiltinAttrCore": 716000,
+       "any": 695000,
+       "registerBuiltinSimprocCore": 671000,
+       "addCore": 485000,
+       "registerScopedEnvExtensionUnsafe": 465000,
+       "leadingNode": 342000,
+       "withAntiquotSpliceAndSuffix": 342000,
+       "andthen": 342000,
+       "optional": 342000,
+       "symbolInfo": 244000,
+       "registerTraceClass": 241000,
+       "symbolNoAntiquot": 240000,
+       "symbol": 240000,
+       "elabPrintAxioms": 239000,
+       "instAddErrorMessageContextOfAddMessageContextOfMonad": 238000,
+       "init": 235000,
+       "removeLeadingSpaces": 232000,
+       "isUnaryNode": 232000,
+       "consumeSpaces": 232000,
+       "isUnaryEntries": 232000,
+       "findLeadingSpacesSize": 232000,
+       "registerCombinatorAttribute": 231000,
+       "addLeadingParser": 229000,
+       "quickCmpImpl": 214000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 15382667,
+        "cpu_ns": 15382667
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 38461000,
+        "cpu_ns": 38461000
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 3.367353457957506,
+     "report": {
+      "times": {
+       "runWorkload": 51618000,
+       "runSession": 51618000,
+       "timePhase": 51618000,
+       "lazyPure": 51618000,
+       "phTinyB": 37049000,
+       "tinyB": 16132000,
+       "phTinyA": 14569000,
+       "andthenInfo": 4595000,
+       "addBuiltinParser": 4277000,
+       "updateBuiltinTokens": 3791000,
+       "addBuiltin": 3522000,
+       "tinyA": 3343000,
+       "nodeInfo": 2912000,
+       "addTokenConfig": 1230000,
+       "registerBuiltinSimprocCore": 1158000,
+       "loop": 1058000,
+       "registerPersistentEnvExtensionUnsafe": 945000,
+       "addSimprocBuiltinAttrCore": 903000,
+       "registerTraceClass": 882000,
+       "symbolInfo": 858000,
+       "addBuiltinDeclarationRanges": 696000,
+       "addLeadingParser": 664000,
+       "registerScopedEnvExtensionUnsafe": 476000,
+       "init": 476000,
+       "any": 469000,
+       "mkAntiquot": 464000,
+       "quickCmpImpl": 456000,
+       "findLeadingSpacesSize": 396000,
+       "addBuiltinDocString": 396000,
+       "removeLeadingSpaces": 396000,
+       "insert": 489000,
+       "registerBuiltinPropagatorCore": 242000,
+       "registerEnvExtension": 240000,
+       "leadingNode": 239000,
+       "nonReservedSymbolNoAntiquot": 238000,
+       "trimAscii": 238000,
+       "registerBuiltinAttribute": 233000,
+       "mkStdGen": 227000,
+       "registerDerivingHandler": 226000,
+       "andthen": 226000,
+       "findNextLine": 190000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 16042459,
+        "cpu_ns": 16042459
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 37897959,
+        "cpu_ns": 37897959
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 3.411443541990593,
+     "report": {
+      "times": {
+       "runWorkload": 51760000,
+       "runSession": 51760000,
+       "timePhase": 51760000,
+       "lazyPure": 51760000,
+       "phTinyB": 36407000,
+       "tinyB": 16634000,
+       "phTinyA": 15353000,
+       "andthenInfo": 6447000,
+       "updateBuiltinTokens": 6006000,
+       "addBuiltinParser": 3382000,
+       "nodeInfo": 3037000,
+       "tinyA": 2651000,
+       "addBuiltin": 2120000,
+       "registerBuiltinSimprocCore": 1944000,
+       "registerPersistentEnvExtensionUnsafe": 1756000,
+       "addTokenConfig": 1671000,
+       "registerScopedEnvExtensionUnsafe": 1117000,
+       "registerTraceClass": 1091000,
+       "addBuiltinDeclarationRanges": 848000,
+       "loop": 1203000,
+       "addSimprocBuiltinAttrCore": 745000,
+       "symbolInfo": 716000,
+       "andthen": 680000,
+       "mkAntiquot": 541000,
+       "registerSimpAttr": 468000,
+       "mkAntiquotSplice": 461000,
+       "withAntiquotSpliceAndSuffix": 461000,
+       "any": 446000,
+       "registerEnvExtension": 434000,
+       "sepBy1": 427000,
+       "sepByElemParser": 427000,
+       "tokenWithAntiquot": 427000,
+       "quickCmpImpl": 410000,
+       "node": 290000,
+       "registerAliasCore": 281000,
+       "registerAlias": 281000,
+       "addCore": 246000,
+       "optional": 235000,
+       "registerBuiltinAttribute": 227000,
+       "many1": 226000,
+       "init": 223000,
+       "appendCore": 220000,
+       "append": 220000,
+       "mkGrindAttr": 220000,
+       "registerAttr": 220000,
+       "registerTagAttribute": 212000,
+       "addTrailingParser": 210000,
+       "epsilonInfo": 33000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 17426083,
+        "cpu_ns": 17426083
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 40117292,
+        "cpu_ns": 40117292
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 3.284849207964726,
+     "report": {
+      "times": {
+       "runWorkload": 54949000,
+       "runSession": 54949000,
+       "timePhase": 54949000,
+       "lazyPure": 54949000,
+       "phTinyB": 38396000,
+       "tinyB": 17804000,
+       "phTinyA": 16553000,
+       "andthenInfo": 6281000,
+       "addBuiltinParser": 5306000,
+       "updateBuiltinTokens": 4136000,
+       "nodeInfo": 3909000,
+       "tinyA": 3568000,
+       "addBuiltin": 3377000,
+       "addTokenConfig": 2082000,
+       "registerPersistentEnvExtensionUnsafe": 1640000,
+       "registerBuiltinSimprocCore": 1565000,
+       "loop": 1256000,
+       "addLeadingParser": 1001000,
+       "registerTraceClass": 883000,
+       "addSimprocBuiltinAttrCore": 709000,
+       "registerScopedEnvExtensionUnsafe": 692000,
+       "addBuiltinDocString": 654000,
+       "insert": 567000,
+       "addCore": 476000,
+       "registerBuiltinAttribute": 460000,
+       "any": 445000,
+       "andthen": 341000,
+       "quickCmpImpl": 310000,
+       "quickCmpAux": 257000,
+       "registerTagAttribute": 241000,
+       "registerEnvExtension": 241000,
+       "elabSetOption": 237000,
+       "mkMapDeclarationExtension": 235000,
+       "appendCore": 233000,
+       "append": 233000,
+       "registerEnumAttributes": 220000,
+       "init": 213000,
+       "matchAlt": 168000,
+       "mkAntiquot": 168000,
+       "seq": 168000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tiny",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTinyA",
+        "wall_ns": 15686833,
+        "cpu_ns": 15686833
+       },
+       {
+        "name": "phTinyB",
+        "wall_ns": 38403084,
+        "cpu_ns": 38403084
+       }
+      ],
+      "calls": {
+       "phTinyA": 1,
+       "phTinyB": 1,
+       "tinyA": 10000000,
+       "tinyB": 20000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 13677100263804372641
+     },
+     "external_s": 3.343243000097573,
+     "report": {
+      "times": {
+       "runWorkload": 51520000,
+       "runSession": 51520000,
+       "timePhase": 51520000,
+       "lazyPure": 51520000,
+       "phTinyB": 36676000,
+       "tinyB": 17066000,
+       "phTinyA": 14844000,
+       "andthenInfo": 6703000,
+       "addBuiltinParser": 5298000,
+       "nodeInfo": 4749000,
+       "addBuiltin": 3504000,
+       "tinyA": 3145000,
+       "updateBuiltinTokens": 3078000,
+       "registerPersistentEnvExtensionUnsafe": 2034000,
+       "registerBuiltinSimprocCore": 1565000,
+       "addTokenConfig": 1124000,
+       "addBuiltinDocString": 885000,
+       "addSimprocBuiltinAttrCore": 882000,
+       "any": 690000,
+       "mkMapDeclarationExtension": 678000,
+       "removeLeadingSpaces": 676000,
+       "addCore": 674000,
+       "registerScopedEnvExtensionUnsafe": 668000,
+       "registerEnvExtension": 653000,
+       "mkAntiquot": 533000,
+       "registerTraceClass": 468000,
+       "loop": 458000,
+       "saveLine": 432000,
+       "tokenWithAntiquot": 325000,
+       "orelseInfo": 299000,
+       "merge": 299000,
+       "orelse": 299000,
+       "doMatch": 247000,
+       "findLeadingSpacesSize": 244000,
+       "structInstLVal": 244000,
+       "elabCheckFailure": 243000,
+       "toString": 242000,
+       "isInaccessibleUserName": 242000,
+       "nonReservedSymbolNoAntiquot": 234000,
+       "printAxioms": 234000,
+       "epsilonInfo": 234000,
+       "registerSimplePersistentEnvExtension": 234000,
+       "insert": 460000,
+       "grindPattern": 221000,
+       "init": 219000,
+       "registerBuiltinParserAttribute": 217000,
+       "elabStructInst": 216000,
+       "addBuiltinDeclarationRanges": 207000,
+       "symbol": 188000,
+       "symbolNoAntiquot": 188000
+      }
+     }
+    }
+   ],
+   "tasks": [
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 28682875,
+        "cpu_ns": 57220041
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12610833,
+        "cpu_ns": 49963791
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7733542,
+        "cpu_ns": 57793292
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 3.424436750006862,
+     "report": {
+      "times": {
+       "lazyPure": 152744000,
+       "spin": 126997000,
+       "taskWork2": 54792000,
+       "taskWork8": 50630000,
+       "taskWork4": 47322000,
+       "addBuiltinParser": 4305000,
+       "andthenInfo": 4208000,
+       "nodeInfo": 2894000,
+       "updateBuiltinTokens": 2775000,
+       "addBuiltin": 2747000,
+       "registerPersistentEnvExtensionUnsafe": 1578000,
+       "any": 1356000,
+       "addTokenConfig": 1323000,
+       "registerScopedEnvExtensionUnsafe": 1170000,
+       "registerBuiltinSimprocCore": 1153000,
+       "registerTraceClass": 1140000,
+       "addSimprocBuiltinAttrCore": 935000,
+       "addCore": 935000,
+       "loop": 873000,
+       "addBuiltinDocString": 587000,
+       "createNodes": 469000,
+       "addLeadingParser": 468000,
+       "registerSimpAttr": 246000,
+       "timeTasks": 240000,
+       "runSession": 240000,
+       "runWorkload": 240000,
+       "runTasks": 240000,
+       "registerInternalExceptionId": 238000,
+       "init": 238000,
+       "withAntiquot": 236000,
+       "orelseInfo": 236000,
+       "append": 236000,
+       "node": 235000,
+       "leadingNode": 235000,
+       "symbolInfo": 235000,
+       "addBuiltinDeclarationRanges": 234000,
+       "removeLeadingSpaces": 231000,
+       "findLeadingSpacesSize": 231000,
+       "mkMapDeclarationExtension": 222000,
+       "registerSymSimpAttr": 219000,
+       "insert": 212000,
+       "registerAliasCore": 191000,
+       "registerTagAttribute": 186000,
+       "andthen": 99000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 33479250,
+        "cpu_ns": 66852875
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 13789917,
+        "cpu_ns": 53991458
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 9377208,
+        "cpu_ns": 62341958
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 3.3338648329954594,
+     "report": {
+      "times": {
+       "lazyPure": 166271000,
+       "spin": 144289000,
+       "taskWork2": 63959000,
+       "taskWork8": 52166000,
+       "taskWork4": 50146000,
+       "andthenInfo": 6798000,
+       "updateBuiltinTokens": 5380000,
+       "addBuiltinParser": 4559000,
+       "nodeInfo": 4103000,
+       "addBuiltin": 2822000,
+       "addTokenConfig": 2461000,
+       "addSimprocBuiltinAttrCore": 1584000,
+       "loop": 1540000,
+       "registerBuiltinSimprocCore": 1506000,
+       "registerPersistentEnvExtensionUnsafe": 1505000,
+       "addCore": 927000,
+       "addBuiltinDocString": 506000,
+       "registerBuiltinAttribute": 464000,
+       "registerTraceClass": 460000,
+       "registerEnvExtension": 455000,
+       "addBuiltinDeclarationRanges": 454000,
+       "mkMapDeclarationExtension": 428000,
+       "registerScopedEnvExtensionUnsafe": 425000,
+       "symbolInfo": 416000,
+       "any": 414000,
+       "propagateEqUp": 310000,
+       "runWorkload": 265000,
+       "runSession": 265000,
+       "runTasks": 265000,
+       "timeTasks": 265000,
+       "atomic": 251000,
+       "mkAntiquot": 251000,
+       "registerDerivingHandler": 247000,
+       "let": 245000,
+       "registerBuiltinParserAttribute": 234000,
+       "quickCmpImpl": 232000,
+       "registerSimplePersistentEnvExtension": 232000,
+       "toString": 231000,
+       "isInaccessibleUserName": 231000,
+       "append": 228000,
+       "registerParametricAttributeForExt": 216000,
+       "registerTagAttribute": 214000,
+       "waitIfContainsMVar": 209000,
+       "createNodes": 209000,
+       "balance": 189000,
+       "addBuiltinDocRole": 189000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 33131416,
+        "cpu_ns": 66125125
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 13389125,
+        "cpu_ns": 52747250
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 8111583,
+        "cpu_ns": 57527334
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 3.360239457921125,
+     "report": {
+      "times": {
+       "lazyPure": 162526000,
+       "spin": 131171000,
+       "taskWork2": 63158000,
+       "taskWork4": 50095000,
+       "taskWork8": 49273000,
+       "andthenInfo": 5556000,
+       "addBuiltinParser": 5016000,
+       "updateBuiltinTokens": 3680000,
+       "nodeInfo": 3290000,
+       "addBuiltin": 2456000,
+       "registerBuiltinSimprocCore": 1611000,
+       "registerPersistentEnvExtensionUnsafe": 1188000,
+       "addTokenConfig": 1161000,
+       "addSimprocBuiltinAttrCore": 1114000,
+       "registerTraceClass": 908000,
+       "addLeadingParser": 801000,
+       "loop": 737000,
+       "registerScopedEnvExtensionUnsafe": 714000,
+       "addBuiltinDeclarationRanges": 692000,
+       "addCore": 670000,
+       "symbolInfo": 560000,
+       "quickCmpImpl": 489000,
+       "registerBuiltinAttribute": 462000,
+       "init": 460000,
+       "addBuiltinDocString": 443000,
+       "mixfix": 253000,
+       "any": 252000,
+       "registerDerivingHandler": 250000,
+       "timeTasks": 247000,
+       "runSession": 247000,
+       "runWorkload": 247000,
+       "runTasks": 247000,
+       "insert": 228000,
+       "mkAntiquot": 221000,
+       "manyNoAntiquot": 221000,
+       "registerAliasCore": 219000,
+       "registerSimpAttr": 218000,
+       "mkAtom": 207000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 32803209,
+        "cpu_ns": 65488833
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 13436416,
+        "cpu_ns": 53148417
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 7949375,
+        "cpu_ns": 57578959
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 3.3205556670436636,
+     "report": {
+      "times": {
+       "lazyPure": 163740000,
+       "spin": 139391000,
+       "taskWork2": 62632000,
+       "taskWork8": 51212000,
+       "taskWork4": 49896000,
+       "andthenInfo": 6617000,
+       "addBuiltinParser": 5354000,
+       "updateBuiltinTokens": 4458000,
+       "nodeInfo": 4423000,
+       "addBuiltin": 3957000,
+       "registerBuiltinSimprocCore": 1353000,
+       "registerPersistentEnvExtensionUnsafe": 1346000,
+       "addSimprocBuiltinAttrCore": 1125000,
+       "addBuiltinDocString": 950000,
+       "loop": 881000,
+       "addTokenConfig": 881000,
+       "andthen": 738000,
+       "addCore": 689000,
+       "registerBuiltinAttribute": 677000,
+       "registerTraceClass": 676000,
+       "epsilonInfo": 491000,
+       "addBuiltinDeclarationRanges": 459000,
+       "any": 449000,
+       "quickCmpImpl": 442000,
+       "symbolInfo": 416000,
+       "addLeadingParser": 408000,
+       "runWorkload": 289000,
+       "runTasks": 289000,
+       "timeTasks": 289000,
+       "runSession": 289000,
+       "registerTagAttribute": 282000,
+       "mkAtom": 244000,
+       "registerScopedEnvExtensionUnsafe": 235000,
+       "checkSyntax": 230000,
+       "mkAntiquot": 226000,
+       "mkMapDeclarationExtension": 222000,
+       "inaccessible": 222000,
+       "findNextLine": 221000,
+       "evalRotateRight": 221000,
+       "findLeadingSpacesSize": 221000,
+       "removeLeadingSpaces": 221000,
+       "registerEnumAttributes": 220000,
+       "leadingNode": 81000,
+       "insert": 73000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 24965417,
+        "cpu_ns": 49745542
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12703000,
+        "cpu_ns": 50238291
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 9195916,
+        "cpu_ns": 61351081
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 3.3780366249848157,
+     "report": {
+      "times": {
+       "lazyPure": 145591000,
+       "spin": 127662000,
+       "taskWork8": 50183000,
+       "taskWork2": 47807000,
+       "taskWork4": 47368000,
+       "andthenInfo": 4164000,
+       "addBuiltinParser": 3466000,
+       "updateBuiltinTokens": 3355000,
+       "addBuiltin": 2776000,
+       "nodeInfo": 2147000,
+       "registerPersistentEnvExtensionUnsafe": 1423000,
+       "addSimprocBuiltinAttrCore": 1169000,
+       "addTokenConfig": 1155000,
+       "addCore": 948000,
+       "registerBuiltinAttribute": 734000,
+       "symbolInfo": 704000,
+       "loop": 1155000,
+       "addBuiltinDocString": 647000,
+       "mkAntiquot": 585000,
+       "registerEnvExtension": 466000,
+       "removeLeadingSpaces": 443000,
+       "findLeadingSpacesSize": 443000,
+       "findNextLine": 443000,
+       "andthen": 439000,
+       "addBuiltinDeclarationRanges": 431000,
+       "orelse": 392000,
+       "timeTasks": 267000,
+       "runWorkload": 267000,
+       "runTasks": 267000,
+       "runSession": 267000,
+       "mkElabAttribute": 248000,
+       "registerBuiltinSimprocCore": 247000,
+       "bracketedBinder": 246000,
+       "strictImplicitBinder": 246000,
+       "seq": 246000,
+       "addBuiltinIncrementalElab": 243000,
+       "registerInternalExceptionId": 243000,
+       "symbol": 240000,
+       "symbolNoAntiquot": 240000,
+       "trimAscii": 240000,
+       "registerTagAttribute": 236000,
+       "registerScopedEnvExtensionUnsafe": 235000,
+       "mkMapDeclarationExtension": 235000,
+       "registerSimplePersistentEnvExtension": 211000,
+       "addLeadingParser": 195000,
+       "quickCmpAux": 195000,
+       "insert": 195000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 32948125,
+        "cpu_ns": 65759125
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 13226000,
+        "cpu_ns": 52449374
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 8267083,
+        "cpu_ns": 57578125
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 3.3820959590375423,
+     "report": {
+      "times": {
+       "lazyPure": 158092000,
+       "spin": 135024000,
+       "taskWork2": 62899000,
+       "taskWork4": 49792000,
+       "taskWork8": 45401000,
+       "updateBuiltinTokens": 5886000,
+       "andthenInfo": 5795000,
+       "addBuiltinParser": 4024000,
+       "nodeInfo": 2536000,
+       "addBuiltin": 2492000,
+       "addTokenConfig": 2031000,
+       "loop": 1468000,
+       "registerBuiltinSimprocCore": 1367000,
+       "addSimprocBuiltinAttrCore": 1313000,
+       "registerPersistentEnvExtensionUnsafe": 1093000,
+       "addBuiltinDocString": 933000,
+       "registerTraceClass": 886000,
+       "removeLeadingSpaces": 730000,
+       "registerSimplePersistentEnvExtension": 657000,
+       "registerScopedEnvExtensionUnsafe": 643000,
+       "registerAlias": 477000,
+       "symbolInfo": 477000,
+       "epsilonInfo": 476000,
+       "init": 470000,
+       "findLeadingSpacesSize": 468000,
+       "registerBuiltinParserAttribute": 462000,
+       "addCore": 445000,
+       "registerBuiltinAttribute": 440000,
+       "mkAntiquot": 424000,
+       "trimAscii": 424000,
+       "nonReservedSymbolNoAntiquot": 424000,
+       "addLeadingParser": 420000,
+       "quickCmpImpl": 398000,
+       "timeTasks": 262000,
+       "runSession": 262000,
+       "saveLine": 262000,
+       "runTasks": 262000,
+       "runWorkload": 262000,
+       "reverseAux": 258000,
+       "andthen": 258000,
+       "appendTR": 258000,
+       "seq": 258000,
+       "addBuiltinDeclarationRanges": 240000,
+       "findNextLine": 236000,
+       "elabWithDeclName": 217000,
+       "any": 215000,
+       "registerAttr": 215000,
+       "mkMapDeclarationExtension": 212000,
+       "registerEnvExtension": 210000,
+       "createNodes": 207000,
+       "insert": 199000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "tasks",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phTasks2",
+        "wall_ns": 25714791,
+        "cpu_ns": 51122959
+       },
+       {
+        "name": "phTasks4",
+        "wall_ns": 12983500,
+        "cpu_ns": 51339376
+       },
+       {
+        "name": "phTasks8",
+        "wall_ns": 9651584,
+        "cpu_ns": 65697833
+       }
+      ],
+      "calls": {
+       "taskWork2": 2,
+       "taskWork4": 4,
+       "taskWork8": 8,
+       "taskStep": 24000000
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 6411480501110611142
+     },
+     "external_s": 3.3471377909881994,
+     "report": {
+      "times": {
+       "lazyPure": 149392000,
+       "spin": 125725000,
+       "taskWork8": 52260000,
+       "taskWork2": 49027000,
+       "taskWork4": 48105000,
+       "andthenInfo": 6132000,
+       "addBuiltinParser": 5365000,
+       "nodeInfo": 4358000,
+       "updateBuiltinTokens": 3270000,
+       "addBuiltin": 2302000,
+       "registerPersistentEnvExtensionUnsafe": 1684000,
+       "addTokenConfig": 1674000,
+       "any": 1453000,
+       "loop": 1585000,
+       "andthen": 909000,
+       "mkAntiquot": 909000,
+       "registerBuiltinSimprocCore": 893000,
+       "addLeadingParser": 502000,
+       "addSimprocBuiltinAttrCore": 490000,
+       "registerTagAttribute": 476000,
+       "registerScopedEnvExtensionUnsafe": 470000,
+       "append": 438000,
+       "addBuiltinDeclarationRanges": 411000,
+       "elabOmission": 248000,
+       "reduceOfNatClamp": 241000,
+       "registerSymSimpAttr": 239000,
+       "runTasks": 236000,
+       "runWorkload": 236000,
+       "timeTasks": 236000,
+       "runSession": 236000,
+       "mkMapDeclarationExtension": 234000,
+       "registerEnvExtension": 231000,
+       "appendCore": 226000,
+       "registerBuiltinAttribute": 217000,
+       "registerAlias": 213000,
+       "registerTraceClass": 212000,
+       "addBuiltinDocString": 164000,
+       "epsilonInfo": 103000
+      }
+     }
+    }
+   ],
+   "rec": [
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 32338792,
+        "cpu_ns": 32338792
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 31623541,
+        "cpu_ns": 31623541
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 54248583,
+        "cpu_ns": 54248583
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6962417,
+        "cpu_ns": 6962417
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 4.722120958031155,
+     "report": {
+      "times": {
+       "runWorkload": 97505000,
+       "lazyPure": 97505000,
+       "runSession": 97505000,
+       "timePhase": 97505000,
+       "deepRec": 90935000,
+       "repeatU": 90935000,
+       "spin": 48995000,
+       "phDeep10k": 31036000,
+       "phDeep100": 30700000,
+       "phDeep1k": 29199000,
+       "andthenInfo": 7031000,
+       "phFib": 6570000,
+       "fib": 6570000,
+       "call": 6570000,
+       "updateBuiltinTokens": 4481000,
+       "addBuiltinParser": 4095000,
+       "nodeInfo": 3690000,
+       "registerBuiltinSimprocCore": 1875000,
+       "registerPersistentEnvExtensionUnsafe": 1622000,
+       "addBuiltin": 1298000,
+       "registerTraceClass": 1195000,
+       "andthen": 1084000,
+       "addTokenConfig": 939000,
+       "any": 931000,
+       "addSimprocBuiltinAttrCore": 923000,
+       "loop": 939000,
+       "registerScopedEnvExtensionUnsafe": 690000,
+       "mkAntiquot": 632000,
+       "addCore": 496000,
+       "orelseInfo": 442000,
+       "orelse": 442000,
+       "leadingNode": 437000,
+       "registerSimplePersistentEnvExtension": 436000,
+       "ifVerso": 251000,
+       "mutual": 250000,
+       "addBuiltinDocString": 249000,
+       "findNextLine": 249000,
+       "findLeadingSpacesSize": 249000,
+       "removeLeadingSpaces": 249000,
+       "append": 245000,
+       "elabOmission": 243000,
+       "evalGrindTrace": 241000,
+       "set_option": 241000,
+       "mkDeclExt": 240000,
+       "elabPrintTacTags": 238000,
+       "registerBuiltinAttribute": 237000,
+       "init": 237000,
+       "registerBuiltinParserAttribute": 235000,
+       "expandDbgTrace": 233000,
+       "propagateNotUp": 233000,
+       "propagateExistsDown": 233000,
+       "evalExact": 232000,
+       "delabAppMatch": 231000,
+       "evalLIA": 230000,
+       "registerSymSimpAttr": 229000,
+       "implicitBinder": 227000,
+       "registerSimpAttr": 227000,
+       "mkMapDeclarationExtension": 226000,
+       "registerEnumAttributes": 225000,
+       "many1": 218000,
+       "withAntiquotSpliceAndSuffix": 218000,
+       "mkAntiquotSplice": 218000,
+       "elabAttr": 215000,
+       "node": 212000,
+       "addBuiltinDeclarationRanges": 206000,
+       "seq": 197000,
+       "toConfigWithKey": 190000,
+       "withAntiquot": 164000,
+       "optional": 164000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 27987250,
+        "cpu_ns": 27987250
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 29457833,
+        "cpu_ns": 29457833
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 41254500,
+        "cpu_ns": 41254500
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6540250,
+        "cpu_ns": 6540250
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 3.5435279170051217,
+     "report": {
+      "times": {
+       "runSession": 89271000,
+       "runWorkload": 89271000,
+       "timePhase": 89020000,
+       "lazyPure": 89020000,
+       "repeatU": 82665000,
+       "deepRec": 82411000,
+       "spin": 42230000,
+       "phDeep10k": 28382000,
+       "phDeep1k": 27610000,
+       "phDeep100": 26673000,
+       "andthenInfo": 6371000,
+       "call": 6355000,
+       "fib": 6355000,
+       "phFib": 6355000,
+       "addBuiltinParser": 4329000,
+       "updateBuiltinTokens": 3980000,
+       "nodeInfo": 3859000,
+       "addBuiltin": 2594000,
+       "addTokenConfig": 1899000,
+       "registerPersistentEnvExtensionUnsafe": 944000,
+       "registerBuiltinSimprocCore": 918000,
+       "node": 708000,
+       "optional": 704000,
+       "withAntiquotSpliceAndSuffix": 704000,
+       "mkAntiquotSplice": 704000,
+       "andthen": 666000,
+       "loop": 658000,
+       "epsilonInfo": 521000,
+       "addSimprocBuiltinAttrCore": 493000,
+       "any": 486000,
+       "addLeadingParser": 479000,
+       "insert": 478000,
+       "registerBuiltinAttribute": 450000,
+       "findLeadingSpacesSize": 419000,
+       "addBuiltinDocString": 419000,
+       "findNextLine": 419000,
+       "removeLeadingSpaces": 419000,
+       "registerAliasCore": 345000,
+       "registerAlias": 345000,
+       "addBuiltinDeclarationRanges": 276000,
+       "intercalate": 251000,
+       "emit": 251000,
+       "leadingNode": 250000,
+       "reverseAux": 248000,
+       "evalZeta": 238000,
+       "registerEnvExtension": 236000,
+       "registerScopedEnvExtensionUnsafe": 236000,
+       "registerSimpAttr": 235000,
+       "registerTraceClass": 234000,
+       "registerEnumAttributes": 232000,
+       "orelseInfo": 228000,
+       "withAntiquot": 228000,
+       "symbolInfo": 227000,
+       "registerCombinatorAttribute": 215000,
+       "mkAntiquot": 179000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 36122291,
+        "cpu_ns": 36122291
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 34942791,
+        "cpu_ns": 34942791
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 47763917,
+        "cpu_ns": 47763917
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6712250,
+        "cpu_ns": 6712250
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 3.3795487500028685,
+     "report": {
+      "times": {
+       "runWorkload": 104857000,
+       "runSession": 104857000,
+       "timePhase": 104857000,
+       "lazyPure": 104857000,
+       "repeatU": 98306000,
+       "deepRec": 97944000,
+       "spin": 50889000,
+       "phDeep100": 33723000,
+       "phDeep1k": 32381000,
+       "phDeep10k": 32202000,
+       "call": 6551000,
+       "fib": 6551000,
+       "phFib": 6551000,
+       "andthenInfo": 5636000,
+       "addBuiltinParser": 5221000,
+       "updateBuiltinTokens": 4223000,
+       "nodeInfo": 3054000,
+       "addBuiltin": 2632000,
+       "registerPersistentEnvExtensionUnsafe": 1840000,
+       "registerBuiltinSimprocCore": 1404000,
+       "addTokenConfig": 1182000,
+       "registerScopedEnvExtensionUnsafe": 963000,
+       "andthen": 696000,
+       "addBuiltinDocString": 664000,
+       "symbolInfo": 584000,
+       "addBuiltinDeclarationRanges": 560000,
+       "registerEnvExtension": 512000,
+       "loop": 510000,
+       "init": 484000,
+       "any": 483000,
+       "removeLeadingSpaces": 434000,
+       "declaration": 355000,
+       "insert": 298000,
+       "addLeadingParser": 298000,
+       "quickCmpAux": 298000,
+       "insertEmpty": 295000,
+       "registerBuiltinParserAttribute": 250000,
+       "node": 242000,
+       "leadingNode": 242000,
+       "registerParametricAttribute": 241000,
+       "registerTagAttribute": 236000,
+       "nomatch": 236000,
+       "registerTraceClass": 236000,
+       "registerAttr": 235000,
+       "registerBuiltinAttribute": 235000,
+       "mkMapDeclarationExtension": 234000,
+       "quickCmpImpl": 230000,
+       "addCore": 229000,
+       "addSimprocBuiltinAttrCore": 229000,
+       "findLeadingSpacesSize": 228000,
+       "findNextLine": 228000,
+       "addBuiltinHandler": 225000,
+       "appendTR": 219000,
+       "reverseAux": 219000,
+       "saveLine": 206000,
+       "mkAntiquot": 190000,
+       "nonReservedSymbolNoAntiquot": 190000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 29784917,
+        "cpu_ns": 29784917
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 30408208,
+        "cpu_ns": 30408208
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 44089583,
+        "cpu_ns": 44089583
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6247709,
+        "cpu_ns": 6247709
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 3.251356374938041,
+     "report": {
+      "times": {
+       "lazyPure": 92473000,
+       "runWorkload": 92473000,
+       "runSession": 92473000,
+       "timePhase": 92473000,
+       "repeatU": 86576000,
+       "deepRec": 86264000,
+       "spin": 42147000,
+       "phDeep10k": 29741000,
+       "phDeep1k": 28582000,
+       "phDeep100": 28253000,
+       "phFib": 5897000,
+       "call": 5897000,
+       "fib": 5897000,
+       "andthenInfo": 3323000,
+       "updateBuiltinTokens": 2342000,
+       "addBuiltinParser": 1669000,
+       "addBuiltin": 1469000,
+       "nodeInfo": 1192000,
+       "registerBuiltinSimprocCore": 1155000,
+       "registerPersistentEnvExtensionUnsafe": 776000,
+       "registerScopedEnvExtensionUnsafe": 770000,
+       "addTokenConfig": 655000,
+       "addSimprocBuiltinAttrCore": 480000,
+       "andthen": 479000,
+       "registerBuiltinAttribute": 441000,
+       "addBuiltinDocString": 441000,
+       "registerAttr": 282000,
+       "any": 265000,
+       "addCore": 254000,
+       "matchAlt": 241000,
+       "symbolInfo": 238000,
+       "implicitBinder": 238000,
+       "loop": 232000,
+       "registerBuiltinPropagatorCore": 231000,
+       "registerEnvExtension": 229000,
+       "addLeadingParser": 225000,
+       "init": 214000,
+       "addBuiltinDeclarationRanges": 203000,
+       "mkDeclExt": 202000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 36233208,
+        "cpu_ns": 36233208
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 31696416,
+        "cpu_ns": 31696416
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 44918041,
+        "cpu_ns": 44918041
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6384791,
+        "cpu_ns": 6384791
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 3.2909706250065938,
+     "report": {
+      "times": {
+       "runSession": 98417000,
+       "runWorkload": 98417000,
+       "timePhase": 98174000,
+       "lazyPure": 97929000,
+       "repeatU": 91823000,
+       "deepRec": 91551000,
+       "spin": 48360000,
+       "phDeep100": 34164000,
+       "phDeep1k": 29033000,
+       "phDeep10k": 28626000,
+       "call": 6106000,
+       "fib": 6106000,
+       "phFib": 6106000,
+       "andthenInfo": 3753000,
+       "updateBuiltinTokens": 3698000,
+       "addBuiltinParser": 2372000,
+       "registerPersistentEnvExtensionUnsafe": 1790000,
+       "any": 1584000,
+       "nodeInfo": 1456000,
+       "addTokenConfig": 1427000,
+       "addBuiltin": 1412000,
+       "addBuiltinDocString": 966000,
+       "loop": 1401000,
+       "addSimprocBuiltinAttrCore": 931000,
+       "registerBuiltinSimprocCore": 904000,
+       "symbolInfo": 685000,
+       "addBuiltinDeclarationRanges": 683000,
+       "registerTraceClass": 670000,
+       "registerScopedEnvExtensionUnsafe": 624000,
+       "andthen": 534000,
+       "addLeadingParser": 486000,
+       "registerTagAttribute": 464000,
+       "quickCmpImpl": 462000,
+       "addCore": 458000,
+       "checkRegisterBuiltinOption": 249000,
+       "emit": 243000,
+       "removeLeadingSpaces": 238000,
+       "findLeadingSpacesSize": 238000,
+       "consumeSpaces": 238000,
+       "evalBvCheck": 234000,
+       "epsilonInfo": 234000,
+       "insert": 233000,
+       "isUnaryEntries": 229000,
+       "isUnaryNode": 229000,
+       "createNodes": 229000,
+       "registerEnumAttributes": 216000,
+       "init": 206000,
+       "registerSimprocAttr": 196000,
+       "registerAliasCore": 172000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 31118417,
+        "cpu_ns": 31118417
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 30478125,
+        "cpu_ns": 30478125
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 44622125,
+        "cpu_ns": 44622125
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6295375,
+        "cpu_ns": 6295375
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 3.3383865830255672,
+     "report": {
+      "times": {
+       "timePhase": 92902000,
+       "runSession": 92902000,
+       "runWorkload": 92902000,
+       "lazyPure": 92902000,
+       "repeatU": 86996000,
+       "deepRec": 86040000,
+       "spin": 48256000,
+       "phDeep100": 29380000,
+       "phDeep10k": 29042000,
+       "phDeep1k": 28574000,
+       "andthenInfo": 6185000,
+       "call": 5906000,
+       "phFib": 5906000,
+       "fib": 5906000,
+       "addBuiltinParser": 4632000,
+       "nodeInfo": 3463000,
+       "updateBuiltinTokens": 2781000,
+       "addBuiltin": 1668000,
+       "registerBuiltinSimprocCore": 1399000,
+       "registerPersistentEnvExtensionUnsafe": 1254000,
+       "andthen": 1025000,
+       "any": 1007000,
+       "seq": 741000,
+       "addLeadingParser": 481000,
+       "addBuiltinDeclarationRanges": 469000,
+       "registerTraceClass": 466000,
+       "addTokenConfig": 399000,
+       "loop": 348000,
+       "addBuiltinDocString": 301000,
+       "removeLeadingSpaces": 301000,
+       "saveLine": 301000,
+       "registerAliasCore": 287000,
+       "appendTR": 251000,
+       "reverseAux": 251000,
+       "notFollowedBy": 246000,
+       "registerAlias": 241000,
+       "registerBuiltinAttribute": 240000,
+       "insert": 438000,
+       "addCore": 232000,
+       "addSimprocBuiltinAttrCore": 232000,
+       "appendCore": 225000,
+       "mkAntiquot": 225000,
+       "append": 225000,
+       "status": 201000,
+       "mkAntiquotSplice": 198000,
+       "sepByElemParser": 198000,
+       "quickCmpImpl": 198000,
+       "node": 198000,
+       "sepBy1": 198000,
+       "registerSimplePersistentEnvExtension": 188000,
+       "symbolInfo": 12000
+      }
+     }
+    },
+    {
+     "bench": {
+      "workload": "rec",
+      "scale": 100,
+      "phases": [
+       {
+        "name": "phDeep100",
+        "wall_ns": 28631583,
+        "cpu_ns": 28631583
+       },
+       {
+        "name": "phDeep1k",
+        "wall_ns": 30596417,
+        "cpu_ns": 30596417
+       },
+       {
+        "name": "phDeep10k",
+        "wall_ns": 45401958,
+        "cpu_ns": 45401958
+       },
+       {
+        "name": "phFib",
+        "wall_ns": 6966750,
+        "cpu_ns": 6966750
+       }
+      ],
+      "calls": {
+       "phDeep100": 1,
+       "phDeep1k": 1,
+       "phDeep10k": 1,
+       "phFib": 1,
+       "deepRec": 6022200,
+       "fib": 7049155
+      },
+      "allocs": {},
+      "copies": {},
+      "checksum": 4260006254494142359
+     },
+     "external_s": 3.302278417046182,
+     "report": {
+      "times": {
+       "runSession": 91532000,
+       "runWorkload": 91532000,
+       "timePhase": 91532000,
+       "lazyPure": 91288000,
+       "repeatU": 84337000,
+       "deepRec": 83381000,
+       "spin": 49120000,
+       "phDeep1k": 28587000,
+       "phDeep10k": 28501000,
+       "phDeep100": 27249000,
+       "call": 6951000,
+       "fib": 6951000,
+       "phFib": 6951000,
+       "andthenInfo": 5162000,
+       "addBuiltinParser": 4196000,
+       "updateBuiltinTokens": 4050000,
+       "nodeInfo": 2831000,
+       "addBuiltin": 2183000,
+       "addTokenConfig": 1566000,
+       "registerPersistentEnvExtensionUnsafe": 1159000,
+       "registerBuiltinSimprocCore": 938000,
+       "loop": 1534000,
+       "any": 704000,
+       "addLeadingParser": 588000,
+       "addSimprocBuiltinAttrCore": 483000,
+       "addBuiltinDocString": 471000,
+       "node": 464000,
+       "leadingNode": 464000,
+       "registerScopedEnvExtensionUnsafe": 455000,
+       "quickCmpImpl": 408000,
+       "saveLine": 249000,
+       "removeLeadingSpaces": 249000,
+       "addCore": 241000,
+       "registerBuiltinCbvSimproc": 236000,
+       "registerBuiltinAttribute": 233000,
+       "registerTagAttribute": 229000,
+       "registerTraceClass": 225000,
+       "init": 214000
+      }
+     }
+    }
+   ]
+  }
+ }
+}
