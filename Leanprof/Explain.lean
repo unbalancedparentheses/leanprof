@@ -1,4 +1,6 @@
 import Lean.Data.Json
+import Leanprof.Retained
+import Leanprof.Contract
 
 /-!
 # `leanprof explain`: why a value was shared when it was copied
@@ -179,7 +181,9 @@ def parseFun (file : FilePath) (lines : Array String) (start : Nat) : CFun := Id
   let name := match (header.splitOn "(").head? with
     | some h => ((h.splitOn " ").getLast?.getD "").replace "*" ""
     | none => ""
-  let paramsText := dropRightChars (String.intercalate "(" ((header.splitOn "(").drop 1)) 2
+  -- up to the last `)`: Lean 4.35 ends the line with `){`, 4.27 with `) {`
+  let afterParen := String.intercalate "(" ((header.splitOn "(").drop 1)
+  let paramsText := String.intercalate ")" ((afterParen.splitOn ")").dropLast)
   let params := (splitArgs paramsText).filterMap fun p => (p.splitOn " ").getLast?.map (·.replace "*" "")
   let mut stmts : Array Stmt := #[]
   let mut conds : Std.HashMap String String := {}
@@ -599,7 +603,7 @@ inductive Recv where
 /-- Method suffixes and operators that perform each operation in source. -/
 def surface (opName : String) : List String × List String :=
   if opName.endsWith ".push" then ([".push", ".pushn"], [])
-  else if opName.startsWith "String.append" then ([".append"], ["++", "++="])
+  else if opName.startsWith "String.append" || opName.startsWith "Array.append" then ([".append"], ["++", "++="])
   else if opName.endsWith ".pop" then ([".pop", ".back", ".popWhile"], [])
   else if opName.endsWith ".swap" then ([".swap", ".swapAt", ".reverse"], [])
   else ([".set", ".modify", ".uset", ".setIfInBounds", ".insertAt", ".insertIdx", ".swapAt", ".setD"], [])
@@ -994,6 +998,36 @@ def sectionUpdate (line buf : String) : Option String := do
     out := c :: out
   guard (depth == 0)
   return s!"{buf} := {buf}.{String.ofList out.reverse}"
+
+/-- Why updates through a global `IO.Ref` or `Std.Mutex` made by `initialize`
+copy, and the fix: (why, fix, fix code, source lines), when the declaration
+`decl` uses such a global of `src`. -/
+def mtGlobalExplained (src : Array String) (decl : Array (Nat × String)) (kind : String) :
+    Option (String × String × String × Array Nat) := do
+  let (g, ty, il, init, ul, ut) ← globalUse src decl
+  let mutex := has ty "Mutex"
+  let why := s!"`{g}` is a global `{ty}` made by `initialize` (line {il}): Lean marks what it holds as " ++
+    "multi-threaded, because any thread can reach it, and never updates a multi-threaded value in place, " ++
+    s!"even when `{g}` holds the only reference. So every update through `{g}` (line {ul}, `{ut}`) copies the " ++
+    s!"whole {kind}; `modify`, `take` or `atomically` do not change that."
+  let fix := if mutex then
+      s!"Collect the updates in a local `let mut` that only this thread sees (updated in place), and merge " ++
+      s!"them into `{g}` once, instead of once per update; with several threads, give each its own buffer " ++
+      "and merge at the end. (Tested on Lean 4.35 with leanprof's copy counter: no copies per update.)"
+    else
+      s!"Update a value that only this thread can see, and publish it once: a local `IO.mkRef` (or a " ++
+      s!"`let mut`) updated in place, then `{g}.set` when it is complete. If other threads must see every " ++
+      "update, give each thread its own buffer and merge them at the end. (Tested on Lean 4.35 with " ++
+      "leanprof's copy counter: no copies.)"
+  let upd := if mutex then (sectionUpdate ut "buf").getD "buf := …  -- the update, on `buf`"
+    else replaceWord ut g "buf"
+  let code := if mutex then
+      s!"let mut buf := {init}   -- before the loop: private to this thread\n{upd}\n" ++
+      s!"{g}.atomically (modify (· ++ buf))   -- after the loop: publish once"
+    else
+      s!"let buf ← IO.mkRef {init}   -- before the loop: private to this thread\n{upd}\n" ++
+      s!"{g}.set (← buf.get)   -- after the loop: publish once"
+  return (why, fix, code, dedup #[il, ul])
 
 /-- Code lines of a fix, printed under `fix:`; alternatives separated by `or:`. -/
 def codeBlock (code : Array String) : String := Id.run do
@@ -1410,35 +1444,13 @@ def explainSite (cache : IO.Ref CCache) (c : Json) (shares : Array ShareRecord) 
     -- a few copies of values that other threads could see: say so, not why all copied
     out := out ++ s!"  ({mt.toUInt64} of the copies were of values shared with other threads; the others are explained below)\n"
   else if mt > 0 then
-    match globalUse src decl with
-    | some (g, ty, il, init, ul, ut) =>
+    match mtGlobalExplained src decl kind with
+    | some (why, fix, code, ls) =>
       mtGlobal := true
-      let mutex := has ty "Mutex"
-      let why := s!"`{g}` is a global `{ty}` made by `initialize` (line {il}): Lean marks what it holds as " ++
-        "multi-threaded, because any thread can reach it, and never updates a multi-threaded value in place, " ++
-        s!"even when `{g}` holds the only reference. So every update through `{g}` (line {ul}, `{ut}`) copies the " ++
-        s!"whole {kind}; `modify`, `take` or `atomically` do not change that."
-      let fix := if mutex then
-          s!"Collect the updates in a local `let mut` that only this thread sees (updated in place), and merge " ++
-          s!"them into `{g}` once, instead of once per update; with several threads, give each its own buffer " ++
-          "and merge at the end. (Tested on Lean 4.35 with leanprof's copy counter: no copies per update.)"
-        else
-          s!"Update a value that only this thread can see, and publish it once: a local `IO.mkRef` (or a " ++
-          s!"`let mut`) updated in place, then `{g}.set` when it is complete. If other threads must see every " ++
-          "update, give each thread its own buffer and merge them at the end. (Tested on Lean 4.35 with " ++
-          "leanprof's copy counter: no copies.)"
-      let upd := if mutex then (sectionUpdate ut "buf").getD "buf := …  -- the update, on `buf`"
-        else replaceWord ut g "buf"
-      let code := if mutex then
-          s!"let mut buf := {init}   -- before the loop: private to this thread\n{upd}\n" ++
-          s!"{g}.atomically (modify (· ++ buf))   -- after the loop: publish once"
-        else
-          s!"let buf ← IO.mkRef {init}   -- before the loop: private to this thread\n{upd}\n" ++
-          s!"{g}.set (← buf.get)   -- after the loop: publish once"
       out := out ++ wrap s!"  why (multi-threaded): {why}" "       " ++ "\n"
       out := out ++ wrap s!"  fix: {fix}" "       " ++ "\n" ++ codeBlock #[code]
-      out := out ++ s!"  where: {file} {showLines (dedup #[il, ul])}\n"
-      entries := entries.push (site "multi-threaded-global" why fix #[code] (dedup #[il, ul])
+      out := out ++ s!"  where: {file} {showLines ls}\n"
+      entries := entries.push (site "multi-threaded-global" why fix #[code] ls
         "high: the copies are counted as multi-threaded; global matched by text" 3)
     | none =>
       let why := "the value was reachable from more than one thread (a `Task` result or argument, a global " ++
@@ -1563,10 +1575,18 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
       "run `leanprof run EXE` again, or pass --report FILE with a report of `leanprof run`")
   let shares ← if o.run.isSome || (← (o.why : FilePath).pathExists) then loadWhy o.why else pure #[]
   let (sites, tiny) := rankedSites j o.all
+  -- retained memory (`run --retained`): what keeps memory alive, after the copies
+  let retained := Retained.findings j "" o.top
+  let printRetained : IO Unit := do
+    unless o.json || retained.isEmpty do
+      IO.println "\nleanprof explain: what keeps memory alive (run --retained)\n"
+      for l in retained do IO.println l
   if sites.isEmpty then
-    if o.json then IO.println (Json.mkObj [("report", o.report), ("sites", 0), ("findings", Json.arr #[])]).pretty
+    if o.json then IO.println (Json.mkObj [("schema", Contract.schema "explain"), ("report", o.report), ("sites", 0), ("findings", Json.arr #[]), ("tiny_sites", toJson tiny),
+        ("retained", Retained.findingsJson j o.top)]).pretty
     else IO.println ("leanprof explain: the report has no copies of shared values" ++
       (if tiny > 0 then s!" other than {tiny} site(s) of empty or tiny values (--all explains them)" else ""))
+    printRetained
     return 0
   let runNs := if jnum j "run_ns" > 0 then jnum j "run_ns" else jnum j "wall_ns"
   let cache ← IO.mkRef ({} : CCache)
@@ -1581,10 +1601,25 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
     let (text, js) ← explainSite cache c shares runNs
     unless o.json do IO.println text
     if let .arr a := js then entries := entries ++ a.map (·.setObjVal! "rank" (rank : Json))
+  -- source lines are matched against the files as they are now: a file that
+  -- changed since the report may no longer have them where they were
+  let mut stale : Array (String × String) := #[]
+  for f in (entries.map (jstr · "file")).toList.eraseDups do
+    if f.isEmpty then continue
+    if let some why ← Contract.staleSource o.report j f then stale := stale.push (f, why)
+  entries := entries.map fun e => e.setObjVal! "stale" (Json.bool (stale.any (·.1 == jstr e "file")))
+  unless o.json do
+    for (f, why) in stale do
+      IO.println s!"warning: {f} {why}: the lines above may not be the ones measured (profile again)"
   IO.FS.createDirAll ((o.out : FilePath).parent.getD ".")
   IO.FS.writeFile o.out ((Json.arr entries).compress ++ "\n")
   if o.json then
-    IO.println (Json.mkObj [("report", o.report), ("sites", sites.size), ("findings", Json.arr entries)]).pretty
+    IO.println (Json.mkObj [("schema", Contract.schema "explain"), ("report", o.report), ("sites", sites.size),
+      ("shown", toJson (min o.top sites.size)), ("tiny_sites", toJson tiny), ("findings", Json.arr entries),
+      ("stale_sources", Json.arr (stale.map fun (f, w) => Json.mkObj [("file", Json.str f), ("reason", Json.str w)])),
+      ("provenance", (j.getObjVal? "provenance").toOption.getD Json.null),
+      ("retained", Retained.findingsJson j o.top)]).pretty
+  printRetained
   return 0
 
 end Leanprof.Explain

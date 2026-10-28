@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/fix-project.schema.json",
+  "title": "leanprof fix --elab --project result",
+  "description": "Project-wide compile-time hypotheses and what checking them found (.lake/leanprof/fix/project-fixes.json, printed by --json). `candidates` are ranked by the files the work was seen in, then an exact count; `attributed` is inclusive and overlaps other candidates, so it is evidence, not a saving. `tried` has one entry per candidate checked, each judged by an experiment against the same base. `status`: kept, none_kept, dry_run, nothing_to_try or error.",
+  "type": "object",
+  "required": ["schema", "leanprof", "exit_code", "dry_run", "status", "candidates", "tried"],
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {"name": {"const": "leanprof.fix-project"}}
+    },
+    "leanprof": {"const": "fix-project"},
+    "exit_code": {"type": "integer", "minimum": 0},
+    "dry_run": {"type": "boolean"},
+    "status": {"enum": ["kept", "none_kept", "dry_run", "nothing_to_try", "error"]},
+    "error": {"type": "string"},
+    "report": {"type": "string", "description": "the elab --project report the hypotheses come from"},
+    "ranking": {"type": "string"},
+    "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "tried": {
+      "type": "array",
+      "items": {
+        "allOf": [{"$ref": "#/$defs/candidate"}],
+        "type": "object",
+        "required": ["verdict", "reasons"],
+        "properties": {
+          "verdict": {"enum": ["KEEP", "DISCARD", "INCONCLUSIVE", "ERROR", "NOT_APPLICABLE"]},
+          "outcome": {"$ref": "common.schema.json#/$defs/outcome"},
+          "reasons": {"type": "array", "items": {"type": "string"}},
+          "candidate_commit": {"type": "string"},
+          "branch": {"type": "string", "description": "the local branch a KEEP was committed on (empty otherwise)"},
+          "evidence": {"description": "the experiment try's evidence (schemas/experiment-try.schema.json)"},
+          "modules": {"type": "array", "items": {"type": "string"}, "description": "the changed module and every module importing it"},
+          "heartbeats_base": {"type": "number"},
+          "heartbeats_candidate": {"type": "number"},
+          "modules_dearer": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+          "modules_cheaper": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+          "declarations_dearer": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+          "declarations_cheaper": {"type": "integer", "minimum": 0},
+          "declarations_cheaper_top": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+          "build_seconds_base": {"type": "array", "items": {"type": "number"}},
+          "build_seconds_candidate": {"type": "array", "items": {"type": "number"}},
+          "build_time": {"enum": ["worse", "better", "within noise", "too few runs to judge", "not measured"]},
+          "build_time_error": {"type": "string"},
+          "load_avg": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": ["rank", "kind", "target", "count", "files", "mechanical"],
+      "properties": {
+        "rank": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["irreducible", "reducible", "instance-priority", "simp-attr", "termination", "shortcut-instance"]},
+        "target": {"type": "string"},
+        "defined": {"type": "string", "description": "file:line of the declaration (empty for a batch)"},
+        "count": {"type": "integer", "minimum": 0},
+        "count_what": {"type": "string"},
+        "files": {"type": "integer", "minimum": 0},
+        "sites": {"type": "integer", "minimum": 0},
+        "attributed": {"type": "number", "description": "what the report charges to it: inclusive and overlapping, not a saving"},
+        "attributed_note": {"type": "string"},
+        "observed": {"type": "array", "items": {"type": "string"}},
+        "suggested": {"type": "string"},
+        "declarations": {"type": "array", "items": {"type": "string"}},
+        "in_files": {"type": "array", "items": {"type": "string"}},
+        "mechanical": {"type": "boolean"},
+        "not_mechanical": {"type": "string"}
+      }
+    },
+    "change": {
+      "type": "object",
+      "required": ["key", "base", "candidate"],
+      "properties": {
+        "key": {"type": "string"},
+        "base": {"type": "number"},
+        "candidate": {"type": "number"}
+      }
+    }
+  }
+}

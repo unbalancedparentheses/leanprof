@@ -71,7 +71,11 @@ expect() {
   cat "$out/try.txt"
   [ "$code" = "$want" ] || fail "try $*: exit code $code, expected $want"
   path=$(sed -n 's/^  evidence: \([^ ]*\) .*/\1/p' "$out/try.txt")
-  if [ -n "$path" ] && [ -f "$path" ]; then cp "$path" "$out/evidence.json"; else echo '{}' > "$out/evidence.json"; fi
+  if [ -n "$path" ] && [ -f "$path" ]; then
+    cp "$path" "$out/evidence.json"
+    python3 "$root/scripts/contract-check.py" --validate experiment-try "$out/evidence.json" > "$out/contract.txt" ||
+      { cat "$out/contract.txt"; fail "try $*: the evidence does not follow schemas/experiment-try.schema.json"; }
+  else echo '{}' > "$out/evidence.json"; fi
   clean "try $*"
 }
 field() { python3 -c "import json,sys; d=json.load(open(sys.argv[2])); print(eval(sys.argv[1]))" "$1" "$out/evidence.json"; }
@@ -89,12 +93,14 @@ echo "== library experiment: compile heartbeats"
 "$lp" experiment start --id lib --no-test || fail "library start"
 expect 1 lib-slow
 grep -q "compile heartbeats" "$out/try.txt" || fail "lib-slow: not judged by heartbeats"
+[ "$(field 'd["outcome"]')" = regression ] || fail "lib-slow: outcome $(field 'd["outcome"]'), not regression"
 expect 0 lib-fast
 grep -q "compile heartbeats: .* -> " "$out/try.txt" || fail "lib-fast: no heartbeat reason"
 git notes --ref=leanprof-experiments show lib-fast | grep -q "KEEP" || fail "lib-fast: no note with the evidence"
 expect 1 lib-sorry
 [ "$(field 'd["guard"]["status"]')" = FAIL ] || fail "lib-sorry: the guard did not fail"
 grep -q "sorry_dependency" "$out/try.txt" || fail "lib-sorry: no sorry finding"
+[ "$(field 'd["outcome"]')" = correctness_failure ] || fail "lib-sorry: outcome is not correctness_failure"
 "$lp" experiment finish --id lib || fail "library finish"
 
 echo
@@ -111,6 +117,7 @@ echo "-- the working tree: Array.modify, and a value that moves only beyond the 
 perl -0pi -e "$modify" Exp/Buckets.lean
 perl -0pi -e 's/let i := bucketOf v k/let i := if v == 200000 then 1 else bucketOf v k/' Exp/Buckets.lean
 "$lp" experiment try --working-tree --message "Array.modify in buckets" > "$out/try.txt" 2>&1 || fail "working tree: not KEEP (exit $?)"
+grep -q "measured on case 0 only" "$out/try.txt" || fail "working tree: the verdict does not say which case was timed"
 cat "$out/try.txt"
 clean "working tree"
 git log -1 --format=%B > "$out/message.txt"
@@ -132,6 +139,7 @@ expect 1 behaviour
 grep -q "DIFFER on 1 of 3 cases" "$out/try.txt" || fail "behaviour: not caught on exactly one case"
 grep -q "inputs/large.txt" "$out/try.txt" || fail "behaviour: the case is not named"
 [ "$(field 'd.get("exact")')" = None ] || fail "behaviour: measured after the outputs differed"
+[ "$(field 'd["outcome"]')" = correctness_failure ] || fail "behaviour: outcome is not correctness_failure"
 
 echo
 echo "-- sorry"
@@ -142,6 +150,7 @@ echo
 echo "-- a weaker statement"
 expect 3 weaker
 grep -q "signature_changed bucketOf_lt" "$out/try.txt" || fail "weaker: no signature finding"
+[ "$(field 'd["outcome"]')" = insufficient_evidence ] || fail "weaker: outcome is not insufficient_evidence"
 
 echo
 echo "-- a loosened test"
@@ -159,6 +168,7 @@ echo
 echo "-- nothing changed"
 expect 1 proof
 grep -q "changes nothing" "$out/try.txt" || fail "no change: reason"
+[ "$(field 'd["outcome"]')" = no_improvement ] || fail "no change: outcome is not no_improvement"
 
 echo
 echo "== finish: the held-out input"

@@ -3,6 +3,7 @@ import Leanprof.Fix
 import Leanprof.Experiment
 import Leanprof.ElabWhy
 import Leanprof.FixElab
+import Leanprof.Contract
 
 /-!
 # `leanprof fix --elab --project`: project-wide compile-time interventions, checked
@@ -423,6 +424,7 @@ structure Opts where
   jobs : Option String := none
   lock : Option String := none
   out : String := ".lake/leanprof/fix/project-fixes.json"
+  json : Bool := false
 
 partial def parseOpts (o : Opts) : List String → Except String Opts
   | [] => .ok o
@@ -442,6 +444,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--jobs" :: n :: rest => parseOpts { o with jobs := some n } rest
   | "--lock" :: f :: rest => parseOpts { o with lock := some f } rest
   | "--out" :: f :: rest => parseOpts { o with out := f } rest
+  | "--json" :: rest => parseOpts { o with json := true } rest
   | a :: _ => .error s!"unknown argument {a} (fix --elab --project)"
 
 def candJson (i : Nat) (c : Candidate) : List (String × Json) :=
@@ -462,9 +465,8 @@ def printCandidate (i : Nat) (c : Candidate) (shared : String) : IO Unit := do
   IO.println (wrap s!"     suggested  {c.suggested}{if c.mechanical then " [mechanical]" else ""}" "                ")
   unless c.mechanical do IO.println (wrap s!"     not tried  {c.notMechanical}" "                ")
 
-/-- `leanprof fix --elab --project`. -/
-def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.Process.Output) : IO UInt32 := do
-  let o ← IO.ofExcept (parseOpts {} argv)
+/-- The body of `leanprof fix --elab --project`: writes `o.out` as it goes. -/
+def fixProjectBody (o : Opts) (runSelf : Array String → FilePath → IO IO.Process.Output) : IO UInt32 := do
   let dir : FilePath := ".lake" / "leanprof" / "fix"
   IO.FS.createDirAll dir
   let logPath := dir / "project-log.txt"
@@ -534,7 +536,8 @@ def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → 
   let mut results : Array Json := #[]
   let writeOut (results : Array Json) : IO Unit := do
     if let some p := (o.out : FilePath).parent then IO.FS.createDirAll p
-    IO.FS.writeFile o.out ((Json.mkObj [("version", toJson (1 : Nat)), ("leanprof", Json.str "fix-elab-project"),
+    IO.FS.writeFile o.out ((Json.mkObj [("schema", Contract.schema "fix-project"), ("leanprof", Json.str "fix-project"),
+      ("dry_run", Json.bool o.dryRun),
       ("report", Json.str report), ("ranking", Json.str "files where the work was observed, then the exact count; attributed heartbeats overlap and are not savings"),
       ("candidates", Json.arr ((cands.toList.zipIdx.map fun (c, i) => Json.mkObj (candJson (i + 1) c)).toArray)),
       ("tried", Json.arr results)]).pretty ++ "\n")
@@ -590,7 +593,7 @@ def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → 
       | .ok f => pure f
       | .error e =>
         IO.println s!"  not applicable: {e}"
-        results := results.push (Json.mkObj (base ++ [("verdict", Json.str "NOT APPLICABLE"), ("reasons", toJson #[e])]))
+        results := results.push (Json.mkObj (base ++ [("verdict", Json.str "NOT_APPLICABLE"), ("reasons", toJson #[e])]))
         summary := summary.push s!"  #{k + 1} {c.kind} {c.target}: not applicable"
         continue
     let rel := files.map fun (f, t) => (pre ++ f, t)
@@ -599,6 +602,7 @@ def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → 
     log s!"leanprof experiment try ({c.kind} {c.target})" tr
     let ev := (Json.parse tr.stdout).toOption.getD Json.null
     let mut verdict := if (jstr ev "verdict").isEmpty then "ERROR" else jstr ev "verdict"
+    let mut outcome := if (jstr ev "outcome").isEmpty then "measurement_failed" else jstr ev "outcome"
     let mut reasons := ((ev.getObjVal? "reasons" >>= Json.getArr?).toOption.getD #[]).filterMap (·.getStr?.toOption)
     if verdict == "ERROR" && reasons.isEmpty then reasons := #[tailOf (tr.stdout ++ tr.stderr) 6]
     let hbStep := (ev.getObjVal? "heartbeats").toOption.getD Json.null
@@ -651,6 +655,7 @@ def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → 
       IO.println s!"  plain lake build of {modules.size} module(s): median {Judge.fmt2 (median bs)} s -> {Judge.fmt2 (median cs)} s ({bs.size} runs each, {tv}; load {load0} / {load1})"
       if verdict == "KEEP" && tv == "worse" then
         verdict := "INCONCLUSIVE"
+        outcome := "insufficient_evidence"
         reasons := reasons.push "the heartbeats went down, but every timed build of the candidate was slower than every build of the base"
     IO.println s!"  {verdict}"
     for x in reasons.toList.take 4 do IO.println (wrap s!"  - {String.ofList (x.toList.take 600)}" "    ")
@@ -675,7 +680,7 @@ def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → 
       discard <| git #["branch", branch, sha]
       kept := kept + 1
       IO.println s!"  committed {sha.take 12} on branch {branch}"
-    results := results.push (Json.mkObj (base ++ [("verdict", Json.str verdict), ("reasons", toJson reasons),
+    results := results.push (Json.mkObj (base ++ [("verdict", Json.str verdict), ("outcome", Json.str outcome), ("reasons", toJson reasons),
       ("candidate_commit", Json.str cand), ("branch", Json.str branch)] ++ extra))
     summary := summary.push s!"  #{k + 1} {c.kind} {c.target}: {verdict}{if branch.isEmpty then "" else s!" ({branch})"}"
     writeOut results
@@ -686,5 +691,39 @@ def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → 
   for s in summary do IO.println s
   IO.println s!"  evidence: {o.out}; log: {logPath}"
   return if kept > 0 then 0 else 1
+
+/-- `leanprof fix --elab --project`: the evidence in `.lake/leanprof/fix/project-fixes.json`
+(`--out`; schemas/fix-project.schema.json), also after an error, with its `status` and
+`exit_code`; `--json` prints it, with the steps on stderr. -/
+def fixProjectCmd (argv : List String) (runSelf : Array String → FilePath → IO IO.Process.Output) : IO UInt32 := do
+  let o ← IO.ofExcept (parseOpts {} argv)
+  let out ← IO.getStdout
+  if o.json then discard <| IO.setStdout (← IO.getStderr)
+  let finish (rc : UInt32) (err : Option String) : IO Json := do
+    if o.json then discard <| IO.setStdout out
+    let prev := match ← (try some <$> IO.FS.readFile o.out catch _ => pure none) with
+      | some t => (Json.parse t).toOption.getD (Json.mkObj [])
+      | none => Json.mkObj []
+    let prev := if (prev.getObjValAs? String "leanprof").toOption == some "fix-project" then prev
+      else Json.mkObj [("schema", Contract.schema "fix-project"), ("leanprof", Json.str "fix-project"),
+        ("dry_run", Json.bool o.dryRun), ("candidates", Json.arr #[]), ("tried", Json.arr #[])]
+    let tried := (prev.getObjValD "tried").getArr?.toOption.getD #[]
+    let status := if err.isSome then "error" else if o.dryRun && rc == 0 then "dry_run"
+      else if tried.any (jstr · "verdict" == "KEEP") then "kept"
+      else if tried.isEmpty then "nothing_to_try" else "none_kept"
+    let j := (prev.setObjVal! "exit_code" (toJson rc.toNat)).setObjVal! "status" (Json.str status)
+    let j := match err with | some e => j.setObjVal! "error" (Json.str e) | none => j
+    if let some p := (o.out : FilePath).parent then IO.FS.createDirAll p
+    IO.FS.writeFile o.out (j.pretty ++ "\n")
+    if o.json then IO.println j.pretty
+    return j
+  -- a document from an earlier run must not pass for this one's
+  if ← (o.out : FilePath).pathExists then IO.FS.removeFile o.out
+  let rc ← try fixProjectBody o runSelf
+    catch e =>
+      discard <| finish 2 (some (toString e))
+      throw e
+  discard <| finish rc none
+  return rc
 
 end Leanprof.ProjectFix

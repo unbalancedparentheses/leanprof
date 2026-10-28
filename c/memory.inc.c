@@ -320,13 +320,18 @@ static inline void lpf_walk_child(lpf_mem_thread *m, lean_object *c) {
  * objects that die. Tasks, promises and external objects count as one. */
 static uint64_t lpf_cascade_size(lpf_mem_thread *m, lean_object *o) {
     uint8_t tag = lean_ptr_tag(o);
-    if (tag >= LeanScalarArray && tag <= LeanMPZ) return 1; /* no children: the common case */
+    int ret = LP_RET_TRACKING(); /* --retained: every object of the cascade leaves the live table */
+    if (tag >= LeanScalarArray && tag <= LeanMPZ) { /* no children: the common case */
+        if (ret) lpf_ret_free(o);
+        return 1;
+    }
     uint64_t n = 0;
     m->nstack = 0;
     lpf_walk_push(m, o);
     while (m->nstack > 0) {
         lean_object *x = m->stack[--m->nstack];
         n++;
+        if (ret) lpf_ret_free(x);
         tag = lean_ptr_tag(x);
         if (tag <= LeanMaxCtorTag) {
             unsigned k = lean_ctor_num_objs(x);
@@ -425,6 +430,39 @@ LEAN_EXPORT void leanprof_dec_ref_cold(lean_object *o) {
     }
     if (LEAN_UNLIKELY(now >= __atomic_load_n(&lpf_mem_next, __ATOMIC_RELAXED))) lpf_mem_take(now, 0);
 }
+
+/* ---- what --retained also sees freed ----
+ * `-Dlean_free_object=leanprof_free_object`: compiled code frees a
+ * constructor cell it took apart (IR `del`). `lean_st_ref_set` (Lean 4.35:
+ * `lean_st_ref_put`) frees the Ref's old value inside the runtime: its
+ * cascade is walked first, the way the runtime will free it. */
+LEAN_EXPORT void leanprof_free_object(lean_object *o) {
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_free(o);
+    lean_free_object(o);
+}
+
+static void lpf_ret_drop(lean_object *old) {
+    if (old == NULL || lean_is_scalar(old)) return;
+    int rc = lean_internal_get_rc(old);
+    if (rc != 1 && rc != -1) return; /* not its last reference (or persistent) */
+    lpf_mem_thread *m = lpf_mem_thread_get();
+    if (m->in_free) return;
+    lpf_cascade_size(m, old);
+}
+
+#if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 35)
+LEAN_EXPORT lean_obj_res lean_st_ref_put(b_lean_obj_arg, lean_obj_arg);
+LEAN_EXPORT lean_obj_res leanprof_st_ref_put(b_lean_obj_arg r, lean_obj_arg a) {
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_drop(lean_to_ref(r)->m_value);
+    return lean_st_ref_put(r, a);
+}
+#else
+LEAN_EXPORT lean_obj_res lean_st_ref_set(b_lean_obj_arg, lean_obj_arg);
+LEAN_EXPORT lean_obj_res leanprof_st_ref_set(b_lean_obj_arg r, lean_obj_arg a) {
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_drop(lean_to_ref(r)->m_value);
+    return lean_st_ref_set(r, a);
+}
+#endif
 
 /* ---- start, exit, queries ---- */
 

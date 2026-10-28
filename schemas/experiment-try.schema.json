@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/experiment-try.schema.json",
+  "title": "leanprof experiment try evidence",
+  "description": "One candidate checked by `leanprof experiment try` (tries/N/evidence.json, printed by --json). Each step that ran adds its own field (build, guard, tests, outputs, compiled, exact, timing, heartbeats).",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.experiment-try"
+        }
+      }
+    },
+    "version": {
+      "const": 1
+    },
+    "leanprof": {
+      "const": "experiment-try"
+    },
+    "experiment": {
+      "type": "string"
+    },
+    "try": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verdict": {
+      "enum": [
+        "KEEP",
+        "DISCARD",
+        "INCONCLUSIVE",
+        "ERROR"
+      ]
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "outcome": {
+      "$ref": "common.schema.json#/$defs/outcome"
+    },
+    "measurement_valid": {
+      "type": "boolean"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "mode": {
+      "enum": [
+        "exe",
+        "library"
+      ]
+    },
+    "base_commit": {
+      "type": "string"
+    },
+    "candidate_commit": {
+      "type": "string"
+    },
+    "candidate_source": {
+      "type": "string"
+    },
+    "committed": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "seconds": {
+      "type": "number"
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "leanprof",
+    "experiment",
+    "try",
+    "verdict",
+    "reasons",
+    "outcome",
+    "measurement_valid",
+    "mode",
+    "base_commit",
+    "candidate_commit"
+  ]
+}

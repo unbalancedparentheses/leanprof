@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.ElabWhy import Tests.ProjectFix
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.ElabWhy import Tests.ProjectFix import Tests.StaticCopies import Examples.Retained
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -267,6 +267,78 @@ def lightScopeTests (sanitized : Bool) : StateT Nat IO Unit := do
     s!"holds_tiny={holds}"
   try IO.FS.removeFile "light-wrap.json" catch _ => pure ()
 
+/-- Retained memory (`run --retained`): the scenario of Examples/Retained.lean
+runs as a child with LEANPROF_RETAINED=1, and its report must say exactly
+what it keeps, where, and what holds it. -/
+def retainedTests (sanitized : Bool) : StateT Nat IO Unit := do
+  let app ← IO.appPath
+  let env := #[("LEANPROF_JSON", some "retained-test.json"), ("LEANPROF_QUIET", some "1"),
+    ("LEANPROF_RETAINED", some "1"), ("LEANPROF_RETAINED_SAMPLE_MS", some "2")]
+  let child ← IO.Process.output { cmd := app.toString, args := #["--retained"], env }
+  let text ← try IO.FS.readFile "retained-test.json" catch _ => pure ""
+  try IO.FS.removeFile "retained-test.json" catch _ => pure ()
+  let r := ((Lean.Json.parse text).toOption.bind fun j => (j.getObjVal? "retained").toOption).getD .null
+  check "retained: the child ran and reported" (child.exitCode == 0 && r != .null) child.stderr
+  let arr (j : Lean.Json) (k : String) := ((j.getObjVal? k >>= Lean.Json.getArr?).toOption.getD #[])
+  let str (j : Lean.Json) (k : String) := ((j.getObjValAs? String k).toOption.getD "")
+  let nat (j : Lean.Json) (k : String) := ((j.getObjValAs? Nat k).toOption.getD 0)
+  let flag (j : Lean.Json) (k : String) := (j.getObjValAs? Bool k).toOption
+  let site (fn : String) := (arr r "sites").find? (str · "function" == s!"RetainedTest.{fn}") |>.getD .null
+  let siteIs (fn : String) (exitN exitB : Nat) :=
+    nat (site fn) "exit_objects" == exitN && nat (site fn) "exit_bytes" == exitB
+  -- live at exit, per site: pairs and list cells are 24 bytes
+  check "retained: list cells a closure captured, live at exit" (siteIs "hookCells" 300 7200) (toString (site "hookCells"))
+  check "retained: list cells a forced thunk keeps, live at exit" (siteIs "lazyCells" 200 4800) (toString (site "lazyCells"))
+  check "retained: 100 pairs and their array in a global IO.Ref, live at exit"
+    (nat (site "keepPairs") "exit_objects" == 101) (toString (site "keepPairs"))
+  check "retained: the global log's 40000 pairs and 40000 cells, live at exit"
+    (siteIs "logPairs" 80000 1920000) (toString (site "logPairs"))
+  check "retained: a temporary list is gone at exit, and its largest size is kept"
+    (siteIs "tempPairs" 0 0 && nat (site "tempPairs") "max_bytes" == 240000) (toString (site "tempPairs"))
+  check "retained: the log grows over the run, the others do not"
+    (flag (site "logPairs") "growing" == some true &&
+      ["hookCells", "lazyCells", "keepPairs", "tempPairs"].all fun f => flag (site f) "growing" == some false)
+    (toString (site "logPairs"))
+  check "retained: frees were seen, and peak and exit are consistent"
+    (flag r "frees_seen" == some true && nat r "peak_bytes" ≥ nat r "exit_bytes" &&
+      nat r "exit_objects" ≥ 80000 + 300 + 200 + 101) s!"{(r.getObjVal? "peak_bytes").toOption} {(r.getObjVal? "exit_objects").toOption}"
+  -- what holds them: the walk at exit, and the snapshot taken while the temporary list was alive
+  let walk (w : String) := (arr r "walks").find? (str · "when" == w) |>.getD .null
+  let row (w fn kind : String) := (arr (walk w) "paths").find? (fun p =>
+    str p "function" == s!"RetainedTest.{fn}" && str p "kind" == kind) |>.getD .null
+  let heldBy (p : Lean.Json) := (arr p "held_by").map (str · "kind")
+  let rootOf (p : Lean.Json) := (p.getObjVal? "root").toOption.getD .null
+  let held (w fn kind : String) (n : Nat) (by_ : Array String) (glob : String) :=
+    let p := row w fn kind
+    nat p "objects" == n && heldBy p == by_ && str (rootOf p) "kind" == "global" &&
+      str (rootOf p) "name" == s!"RetainedTest.{glob}"
+  check "retained: pairs held by an Array in a global IO.Ref"
+    (held "exit" "keepPairs" "constructor" 100 #["Array", "IO.Ref"] "cache") (toString (row "exit" "keepPairs" "constructor"))
+  check "retained: list cells held by a closure in a global IO.Ref"
+    (held "exit" "hookCells" "constructor" 300 #["closure", "IO.Ref"] "hook") (toString (row "exit" "hookCells" "constructor"))
+  check "retained: list cells held by a Thunk in a global IO.Ref"
+    (held "exit" "lazyCells" "constructor" 200 #["Thunk", "IO.Ref"] "lazy") (toString (row "exit" "lazyCells" "constructor"))
+  check "retained: the log held by its global IO.Ref"
+    (held "exit" "logPairs" "constructor" 80000 #["IO.Ref"] "log") (toString (row "exit" "logPairs" "constructor"))
+  let hint (w fn : String) := str (row w fn "constructor") "hint"
+  check "retained: fixes name the closure, the thunk and the global IO.Ref"
+    ((hint "exit" "hookCells").startsWith "Captured by a closure" && (hint "exit" "lazyCells").startsWith "Held by a Thunk" &&
+      ((hint "exit" "keepPairs").splitOn "global IO.Ref").length > 1) s!"{hint "exit" "hookCells"} | {hint "exit" "lazyCells"}"
+  let tmp := row "snapshot" "tempPairs" "constructor"
+  -- the stack is scanned conservatively; under ASan locals can live off the stack
+  check "retained: the snapshot sees the temporary list, held by a local"
+    (nat tmp "objects" == 10000 && nat tmp "bytes" == 240000 && (sanitized || str (rootOf tmp) "kind" == "stack"))
+    (toString tmp)
+  check "retained: a heap walk near the peak" (sanitized || str r "peak_walk" == "taken") (str r "peak_walk")
+  -- with a task spawned, another thread could change what a walk reads: none runs, and the report says so
+  let child ← IO.Process.output { cmd := app.toString, args := #["--retained-task"], env }
+  let text ← try IO.FS.readFile "retained-test.json" catch _ => pure ""
+  try IO.FS.removeFile "retained-test.json" catch _ => pure ()
+  let r := ((Lean.Json.parse text).toOption.bind fun j => (j.getObjVal? "retained").toOption).getD .null
+  check "retained: no heap walk while a task may run, and the report says each was skipped"
+    (child.exitCode == 0 && (arr r "walks").isEmpty && nat r "snapshots_skipped" == 1 && str r "exit_walk" == "threads" &&
+      nat (site "hookCells") "exit_objects" ≥ 0) s!"{child.stderr} {text.take 300}"
+
 -- a long `do` block: Lean before 4.28 elaborates it past the default depth
 set_option maxRecDepth 2048 in
 def tests : StateT Nat IO Unit := do
@@ -418,6 +490,7 @@ def tests : StateT Nat IO Unit := do
   let big ← IO.lazyPure fun _ => Array.replicate (n500 * 5000) (0 : Nat)
   let p1 ← peakMemory
   check "peak memory includes a large array" (p1 ≥ p0 && p1 ≥ big.size * 8) s!"peak={p1} size={big.size}"
+  retainedTests sanitized
   -- ===== end of frees and memory =====
   -- >>> task continuations (Task.map/bind, IO.mapTask/bindTask); `run --core` is tested in CI
   let v ← opaqueNat 7
@@ -480,6 +553,8 @@ def tests : StateT Nat IO Unit := do
   check "explain: a sampled report is refused with a pointer to `leanprof run`"
     (match r with | .error e => (toString e).contains "leanprof sample" | .ok _ => false) ""
   -- END leanprof explain
+  -- leanprof explain --static: flags exactly the functions that copy (Tests/StaticCopies.lean)
+  Tests.StaticCopies.run fun n ok d => check n ok d
   -- leanprof explain: the fixes it prints remove the copies (Tests/ExplainFixes.lean)
   Tests.ExplainFixes.run fun n ok d => check n ok d
   -- leanprof fix: edits and their diff (Leanprof/Fix.lean)
@@ -552,7 +627,9 @@ def tests : StateT Nat IO Unit := do
       ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
       ("time_ns", Lean.Json.mkObj [("median", Lean.toJson times[times.length / 2]!),
         ("min", Lean.toJson (times.foldl Nat.min times[0]!)), ("max", Lean.toJson (times.foldl Nat.max 0))]),
-      ("copies_total", Lean.toJson copies), ("allocs_total", Lean.toJson allocs), ("allocs_runs", Lean.toJson runs),
+      ("copies_total", Lean.toJson copies), ("copies_runs", Lean.toJson [copies]), ("self_check_warning", ""),
+      ("copies", Lean.Json.arr #[]), ("calls", Lean.Json.arr #[]),
+      ("allocs_total", Lean.toJson allocs), ("allocs_runs", Lean.toJson runs),
       ("allocs", Lean.toJson #[Lean.Json.mkObj [("key", "CFG.build in -"), ("allocs", Lean.toJson allocs)]])]
     match Judge.Summary.ofJson j with
     | .ok s => s
@@ -578,7 +655,8 @@ def tests : StateT Nat IO Unit := do
   -- a scope whose time was too small to measure (`measure --scope` writes
   -- time_ns.too_small_runs) gives no time verdict, though its runs read 0
   let tiny := Judge.Summary.ofJson (Lean.Json.mkObj [("leanprof", "measure"), ("scope", "build"),
-    ("command", Lean.toJson #["demo"]),
+    ("command", Lean.toJson #["demo"]), ("exit_code", (0 : Nat)), ("copies", Lean.Json.arr #[]), ("calls", Lean.Json.arr #[]),
+    ("copies_stable", true), ("self_check_warning", ""),
     ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
     ("time_ns", Lean.Json.mkObj [("median", Lean.toJson (0 : Nat)), ("min", Lean.toJson (0 : Nat)),
       ("max", Lean.toJson (0 : Nat)), ("too_small_runs", Lean.toJson (3 : Nat))]),
@@ -597,9 +675,6 @@ def tests : StateT Nat IO Unit := do
     (!v.keep && v.worse.any (fun w => (w.splitOn "--core").length > 1)) v.render
   let v := Judge.judge { base with core := true } { summary 2999 980000 [980000] [50, 51, 52] with core := true }
   check "judge: two --core summaries are compared" v.keep v.render
-  check "judge: a summary's core flag is read"
-    (((Judge.Summary.ofJson (Lean.Json.mkObj [("leanprof", "measure"), ("core", Lean.Json.bool true)])).toOption.map
-      (·.core)) == some true)
   -- Interleaved pairs cancel a common drift that makes the two ranges overlap.
   let paired (factor : Nat) (overload : Bool := false) : Lean.Json := Id.run do
     let mut samples := #[]
@@ -721,6 +796,93 @@ def tests : StateT Nat IO Unit := do
     (Workload.choose { exes := #["tests"], testDriver := some "tests" } matches .exe "tests" _)
   check "workload: nothing to profile" (Workload.choose {} == .nothing)
 
+/-- The JSON contract: provenance hashes, strict summaries, copy ranges and
+coverage (Leanprof/Contract.lean, Leanprof/Judge.lean). -/
+def contractTests : StateT Nat IO Unit := do
+  let summary (copies allocs : Nat) (runs : List Nat) (ms : List Nat) : Judge.Summary :=
+    let times := ms.map (· * 1000000)
+    let j := Lean.Json.mkObj [("leanprof", "measure"), ("command", Lean.toJson #["demo"]), ("exit_code", (0 : Nat)),
+      ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
+      ("time_ns", Lean.Json.mkObj [("median", Lean.toJson times[times.length / 2]!),
+        ("min", Lean.toJson (times.foldl Nat.min times[0]!)), ("max", Lean.toJson (times.foldl Nat.max 0))]),
+      ("copies_total", Lean.toJson copies), ("copies_runs", Lean.toJson [copies]), ("self_check_warning", ""),
+      ("copies", Lean.Json.arr #[]), ("calls", Lean.Json.arr #[]),
+      ("allocs_total", Lean.toJson allocs), ("allocs_runs", Lean.toJson runs),
+      ("allocs", Lean.toJson #[Lean.Json.mkObj [("key", "CFG.build in -"), ("allocs", Lean.toJson allocs)]])]
+    match Judge.Summary.ofJson j with
+    | .ok s => s
+    | .error _ => {}
+  -- provenance: a file's hash is over all of it, read in pieces; the dirty
+  -- fingerprint changes when an untracked file's contents change
+  let dir : System.FilePath := s!"{(← IO.getEnv "TMPDIR").getD "/tmp"}/leanprof-prov-{← IO.monoNanosNow}"
+  IO.FS.createDirAll dir
+  let big := ByteArray.mk (Array.ofFn (n := 3 * 1048576 + 17) fun i => (i.val % 251).toUInt8)
+  IO.FS.writeBinFile (dir / "big.bin") big
+  check "provenance: a file's hash, read in pieces, is the hash of all its bytes"
+    ((← Leanprof.Contract.hashFile (dir / "big.bin")) == some (Leanprof.Contract.fnv1a big))
+  let git (args : Array String) : IO Unit := do
+    discard <| IO.Process.output { cmd := "git", args := #["-c", "user.name=t", "-c", "user.email=t@example.invalid",
+      "-c", "core.hooksPath=/dev/null"] ++ args, cwd := some dir }
+  git #["init", "-q"]
+  IO.FS.writeFile (dir / "a.lean") "def a := 1\n"
+  git #["add", "a.lean"]
+  git #["commit", "-q", "-m", "a"]
+  IO.FS.writeFile (dir / "b.lean") "def b := 1\n"
+  let fp1 := Leanprof.Contract.provAt (← Leanprof.Contract.gitState dir) ["dirty_fingerprint"]
+  IO.FS.writeFile (dir / "b.lean") "def b := 2\n"
+  let fp2 := Leanprof.Contract.provAt (← Leanprof.Contract.gitState dir) ["dirty_fingerprint"]
+  check "provenance: editing an untracked source changes the dirty fingerprint" (!fp1.isEmpty && fp1 != fp2) s!"{fp1} {fp2}"
+  IO.FS.removeDirAll dir
+  -- a whole summary as `measure` writes it, then the same with a field missing
+  -- or of the wrong type: an error, never a zero or a stable output
+  let full : Lean.Json := Lean.Json.mkObj [("leanprof", "measure"), ("command", Lean.toJson #["demo"]),
+    ("exit_code", (0 : Nat)), ("core", Lean.Json.bool true),
+    ("output", Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1"), ("stable", true)]),
+    ("time_ns", Lean.Json.mkObj [("median", (5 : Nat)), ("min", (4 : Nat)), ("max", (6 : Nat))]),
+    ("copies_total", (3 : Nat)), ("copies_runs", Lean.toJson [3, 3]), ("self_check_warning", ""),
+    ("copies", Lean.toJson #[Lean.Json.mkObj [("key", "f [Array] in -"), ("copies", (3 : Nat))]]),
+    ("calls", Lean.Json.arr #[]), ("allocs_total", Lean.Json.null),
+    ("machine", Lean.Json.mkObj [("overloaded", false)])]
+  check "judge: a summary's core flag is read"
+    (((Judge.Summary.ofJson full).toOption.map (·.core)) == some true)
+  let broken (what : String) (j : Lean.Json) : Bool :=
+    match Judge.Summary.ofJson j with
+    | .ok _ => false
+    | .error e => (e.splitOn what).length > 1
+  let outNoStable := Lean.Json.mkObj [("source", "stdout"), ("hash", "fnv1a64:1")]
+  check "judge: a summary without a metric is an error, not a zero"
+    (broken "missing copies_total" (full.setObjVal! "copies_total" Lean.Json.null) &&
+     broken "missing time_ns" (full.setObjVal! "time_ns" Lean.Json.null) &&
+     broken "missing time_ns.median" (full.setObjVal! "time_ns" (Lean.Json.mkObj [("min", (4 : Nat)), ("max", (6 : Nat))])) &&
+     broken "missing output.stable" (full.setObjVal! "output" outNoStable) &&
+     broken "missing calls" (full.setObjVal! "calls" Lean.Json.null) &&
+     broken "missing exit_code" (full.setObjVal! "exit_code" Lean.Json.null) &&
+     broken "copies_total is not of the expected type" (full.setObjVal! "copies_total" "3") &&
+     broken "missing copies[].copies" (full.setObjVal! "copies" (Lean.toJson #[Lean.Json.mkObj [("key", "f")]])) &&
+     broken "missing allocs_runs" (full.setObjVal! "allocs_total" (7 : Nat)) &&
+     broken "machine.overloaded" (full.setObjVal! "machine" (Lean.Json.mkObj [("cpus", (4 : Nat))])) &&
+     broken "missing self_check_warning" (full.setObjVal! "self_check_warning" Lean.Json.null) &&
+     broken "copies_runs is missing" ((full.setObjVal! "copies_runs" Lean.Json.null).setObjVal! "copies_stable" false))
+  -- copy counts that vary between runs (threads) are judged by their range
+  let base := summary 2999 1000000 [1000000] [50, 51, 52]
+  let v := Judge.judge { base with copiesMin := 2900, copiesMax := 3100 }
+    { summary 2950 1000000 [1000000] [50, 51, 52] with copiesMin := 2950, copiesMax := 3050 }
+  check "judge: unstable copy counts within the runs' spread are not an improvement"
+    (!v.keep && v.better.isEmpty && v.worse.isEmpty && v.notes.any (·.contains "within the runs' spread")) v.render
+  let v := Judge.judge { base with copiesMin := 2900, copiesMax := 3100 }
+    { summary 3500 1000000 [1000000] [50, 51, 52] with copiesMin := 3200, copiesMax := 3500 }
+  check "judge: unstable copy counts above the base's whole range are worse" (v.worse.any (·.startsWith "copies:")) v.render
+  -- coverage: no KEEP when the self-check warned or a metric is on one side only
+  let v := Judge.judge base { summary 0 1000000 [1000000] [50, 51, 52] with selfCheckWarning := "copies of String may be undercounted" }
+  check "judge: fewer copies, but the self-check warned: no KEEP, insufficient evidence"
+    (!v.keep && v.outcome == .insufficientEvidence && !v.coverage.isEmpty) v.render
+  let v := Judge.judge base { summary 0 0 [] [50, 51, 52] with allocs := none }
+  check "judge: allocations not counted on one side: no KEEP, insufficient evidence"
+    (!v.keep && v.outcome == .insufficientEvidence) v.render
+  check "experiment: a coverage gap is INCONCLUSIVE, never KEEP"
+    ((Experiment.combine v (some { keep := true, worse := #[], better := #["paired time: faster"], notes := #[] })).1 ==
+      .inconclusive)
+
 /-- `leanprof experiment`'s pure parts (Leanprof/Experiment.lean); the whole
 operation runs in `scripts/experiment-check.sh`. -/
 def experimentTests : StateT Nat IO Unit := do
@@ -792,6 +954,13 @@ def experimentTests : StateT Nat IO Unit := do
       | .error _ => false) ""
 
 def main (args : List String) : IO UInt32 := do
+  -- the retained-memory scenario, run as a child with LEANPROF_RETAINED=1
+  if args.head? == some "--retained" then
+    RetainedTest.scenario ((args[1]? >>= String.toNat?).getD 1)
+    return 0
+  if args.head? == some "--retained-task" then
+    RetainedTest.taskScenario 1
+    return 0
   -- a light scope (cheap calls) whose estimate is then raised by costlier
   -- calls, called cheaply again from a parent; checked by the tests above
   if args.head? == some "--light-wrap" then
@@ -803,7 +972,7 @@ def main (args : List String) : IO UInt32 := do
   let compileTime : StateT Nat IO Unit := do
     for (name, ok, detail) in Tests.ElabWhy.cases do check name ok detail
     for (name, ok, detail) in Tests.ProjectFix.cases do check name ok detail
-  let ((), failures) ← (do tests; experimentTests; compileTime).run 0
+  let ((), failures) ← (do tests; contractTests; experimentTests; compileTime).run 0
   if failures == 0 then
     IO.println "all tests passed"
     return 0

@@ -38,6 +38,14 @@ def counterFlags : Array String := #["-include", (__dir__ / "c" / "counters.h").
 (last references dropped, and every decrement of a multi-threaded object)
 through leanprof, which times freeing cascades per call site. -/
 def freeFlags : Array String := #["-Dlean_dec_ref_cold=leanprof_dec_ref_cold"]
+/-- Opt-in retained memory, with `allocFlags` and `freeFlags`: also route the
+runtime calls that make or free objects for compiled code (IO.mkRef and
+IO.Ref.set, Array.replicate, Array.mk, Array.toList, String.mk, String.data,
+freeing a constructor cell) through leanprof, which then follows each object
+to its free. Turned on at run time with `LEANPROF_RETAINED=1`. -/
+def retainedFlags : Array String :=
+  #["free_object", "st_mk_ref", "st_ref_set", "st_ref_put", "mk_array", "array_mk", "array_to_list",
+    "string_mk", "string_data"].map fun f => s!"-Dlean_{f}=leanprof_{f}"
 
 /-- Link flags so the report can name the functions that copied. -/
 def linkFlags : Array String := #["-rdynamic"]
@@ -51,17 +59,18 @@ lean_exe copybug where
 
 @[test_driver] lean_exe tests where
   root := `Tests.Main
-  moreLeancArgs := copyFlags ++ allocFlags ++ counterFlags ++ freeFlags
+  moreLeancArgs := copyFlags ++ allocFlags ++ counterFlags ++ freeFlags ++ retainedFlags
   moreLinkArgs := linkFlags
 
 target leanprof_o pkg : FilePath := do
   let oFile := pkg.buildDir / "c" / "leanprof.o"
   let srcJob ← inputTextFile <| pkg.dir / "c" / "leanprof.c"
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  -- leanprof.c includes counters.inc.c, memory.inc.c, coverage.inc.c,
-  -- explain.inc.c and live.inc.c: rebuild when any changes
+  -- leanprof.c includes counters.inc.c, memory.inc.c, retained.inc.c,
+  -- coverage.inc.c, explain.inc.c and live.inc.c: rebuild when any changes
   let counters ← computeTrace (pkg.dir / "c" / "counters.inc.c")
   let memory ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "memory.inc.c"))
+  let retained ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "retained.inc.c"))
   let coverage ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "coverage.inc.c"))
   let explain ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "explain.inc.c"))
   let live ← computeTrace (TextFilePath.mk (pkg.dir / "c" / "live.inc.c"))
@@ -80,7 +89,7 @@ target leanprof_o pkg : FilePath := do
   -- report. Not outlining keeps the two the same code (and cheaper).
   let noOutline := if System.Platform.isOSX then #["-mno-outline"] else #[]
   buildO oFile srcJob weakArgs (#["-fPIC", "-O2", "-Wall"] ++ noOutline ++ sanArgs) cc
-    (return ((((((← getLeanTrace).mix counters).mix memory).mix coverage).mix explain).mix live).mix selfcheck)
+    (return (((((((← getLeanTrace).mix counters).mix memory).mix retained).mix coverage).mix explain).mix live).mix selfcheck)
 
 /-- The runtime's self-check (`c/selfcheck.c`), compiled with `copyFlags` like
 the programs it vouches for: at exit, each of its known copies must reach a
@@ -206,10 +215,24 @@ lean_exe server where
 
 /-- The causes `leanprof explain` recognises, each next to its fix
 (`Examples/ExplainPatterns.lean`), and their tests (`Tests/ExplainFixes.lean`,
-run by `tests`), which check the diagnosis and count both versions' copies. -/
+run by `tests`), which check the diagnosis and count both versions' copies;
+`Tests/StaticCopies.lean` checks that `explain --static` flags exactly the
+functions that copy. -/
 lean_lib ExplainPatterns where
-  roots := #[`Examples.ExplainPatterns, `Tests.ExplainFixes]
+  roots := #[`Examples.ExplainPatterns, `Tests.ExplainFixes, `Tests.StaticCopies]
   moreLeancArgs := copyFlags
+
+/-- A program with known retention (`Examples/Retained.lean`): what
+`run --retained` reports for it is checked by `tests`, which runs it as a
+child; `retained` runs it on its own. -/
+lean_lib RetainedExample where
+  roots := #[`Examples.Retained]
+  moreLeancArgs := copyFlags ++ allocFlags ++ freeFlags ++ retainedFlags
+
+lean_exe retained where
+  root := `Examples.RetainedMain
+  moreLeancArgs := copyFlags ++ allocFlags ++ freeFlags ++ retainedFlags
+  moreLinkArgs := linkFlags
 
 lean_exe explainpatterns where
   root := `Examples.ExplainPatternsMain

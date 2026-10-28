@@ -6,7 +6,95 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
-Compile time first: most Lean users wait on elaboration, not on programs.
+### Retained memory
+
+- `leanprof run --retained` follows every object compiled Lean code
+  allocates to its free: live objects and bytes per allocation site at the
+  program's peak and at exit, each site's largest size, and the sites whose
+  live bytes keep growing over the run (sustained growth worth
+  investigating, not necessarily a leak: caches grow by design).
+- Heap walks say what keeps objects alive: each object's chain of holders
+  (an `Array`, an `IO.Ref`, a closure, a `Thunk`, a `Task`) down to its root,
+  a global variable named from the program's symbols, a local on the stack
+  (scanned conservatively, named by function), or a module constant. Walks
+  run near the peak (single-threaded programs, kept under a quarter of the
+  run), at exit, and at `Leanprof.retainedSnapshot`. Known causes get a fix:
+  a value kept in a global `IO.Ref`, a forced thunk, a capturing closure.
+- In the text and JSON report (`retained`), `leanprof explain` (RETAINED and
+  GROWING findings, `retained` in `--json`), the MCP server (`run` with
+  `retained`, `report`, `hot` kind `retained`, `explain`), the HTML report
+  (a Retained tab) and `leanprof top --retained`. A report without it says
+  retained memory was not tracked.
+- Frees made inside Lean's precompiled libraries and runtime are not seen;
+  leanprof finds those objects freed when their address is reused or a walk
+  reads them, and says how many. Objects the runtime makes for compiled code
+  (`Array.replicate`, `Array.mk`, `Array.toList`, `String.mk`, `IO.mkRef`,
+  grown arrays and strings) are tracked at the call.
+- Cost: about 25 ns per allocation and free on top of `--allocs --frees`,
+  and about 150 ns per live object per walk (a 4-million-allocation program:
+  0.074 s with `--allocs --frees`, 0.45 s with `--retained`, most of it the
+  walk over 1.8 million objects alive at exit).
+- `Examples/Retained.lean` (`lake exe retained`) keeps memory in known ways;
+  the tests check the exact counts, holders and roots.
+
+### For agents: stable machine-readable output
+
+- Every JSON document leanprof writes (run, sample and stat reports, live
+  snapshots, elab, measure, measure-pair, judge, explain, compare, the
+  experiment's evidence, finish and state, fix) carries a `schema` field,
+  `{"name": "leanprof.NAME", "version": N}`, described by
+  `schemas/NAME.schema.json` (JSON Schema 2020-12). Existing fields are
+  unchanged. `scripts/contract-check.py` validates real outputs against
+  the schemas in CI.
+- `judge --json`, `compare --json` and `fix --json` (the result is also
+  written to `.lake/leanprof/fix/result.json`); `explain --json` adds
+  `shown` and `tiny_sites`, so a cut list says so.
+- Verdicts carry an `outcome`: `improved`, `regression`, `no_improvement`,
+  `correctness_failure`, `insufficient_evidence`, `incompatible` or
+  `measurement_failed`, with `measurement_valid` and `retryable`. A valid
+  DISCARD (a regression, no improvement, changed behaviour) is told apart
+  from one that says nothing about the change (another command or scope
+  measured, an unstable output, a failed measurement).
+- Discovery without guesswork: `leanprof doctor --json` and the MCP
+  `doctor` tool report the Lean version and whether it is supported, the
+  project's executables, libraries and test driver, the workload
+  `leanprof` alone would pick, which modes work here and why not (run,
+  stat, measure, sample, elab and whether its driver is bundled, cached or
+  built on first use, `--auto`, `--core`), samply and perf, and each setup
+  failure as an error with a code and a fix (`schemas/doctor.schema.json`).
+- `judge` reads summaries strictly: a missing or mistyped metric, output
+  hash or stability flag is an error (exit 2) naming the field, never a
+  zero or a stable output.
+- Copy counts that differ between runs (threads) are judged by their
+  range, as allocations were: `measure` records `copies_runs`.
+- Coverage gates verdicts: `measure` records `coverage` (copies counted or
+  undercounted, allocations and heartbeats counted or not, time measured
+  or too small). When the runtime's self-check warned, or allocations or
+  heartbeats were counted on one side only, `judge` gives no KEEP (outcome
+  `insufficient_evidence`, listed in `coverage`) and an experiment says
+  INCONCLUSIVE.
+- Provenance: reports and summaries record leanprof's and Lean's
+  versions, the platform, the git revision with a fingerprint of
+  uncommitted changes, the build flags, and the workload with the hashes of
+  its binary and input files. `judge` refuses summaries of another Lean
+  version or platform (outcome `incompatible`; `--allow-incompatible`
+  judges them anyway); `compare` warns. `explain`, `fix` and the MCP
+  `finding` tool warn when a source file changed since the report.
+- Compact, queryable evidence: findings with stable ids (the same site
+  keeps its id across reports). `run` and `report` return the costliest
+  five first; the MCP `findings` tool filters them by kind, module,
+  declaration or file and pages them (`total`, `truncated`,
+  `next_offset`); `finding` returns one in full: the report's row, the
+  source lines, the cause with its confidence (explain's diagnosis and fix
+  for a copy) and, with a base report, the value before and after. Cut
+  text and a source changed since the report are reported, never silent.
+- MCP: every tool result has `structuredContent` that follows the
+  `outputSchema` the tool declares, next to the text. Failures carry a
+  typed `error`: `code` (`not_lake_project`, `build_failed`,
+  `lean_not_found`, `samply_missing`, `overloaded`, `bad_argument`,
+  `not_found`, `failed`), `retryable` and a `hint`; an overloaded machine
+  is a retryable warning next to an `insufficient_evidence` verdict.
+  Commands record the same errors in `LEANPROF_ERROR_JSON`.
 
 ### Added
 
@@ -38,6 +126,16 @@ Compile time first: most Lean users wait on elaboration, not on programs.
   touched. `scripts/experiment-check.sh` runs it on `Tests/FixElab`.
 - [Case study](docs/case-studies/compile-time-fixes.md): Batteries and
   Mathlib, heartbeats before and after.
+- `leanprof explain --static [MODULE...]`: likely copies of shared arrays and
+  strings across a whole package, libraries included, without running
+  anything, from the C Lake keeps in `.lake/build/ir`. Each flag gives
+  file:line, the value, why another reference is alive (in the function, in
+  a caller up to four calls away, or in a global made by `initialize`) and
+  `explain`'s fix. With a run report it marks the flags the run confirmed
+  (copies, bytes) and, for `run --auto`, the flagged functions that never
+  ran. `--json`, `--all`, `--deps`, `--no-build`. Shown by `#leanprof` as
+  hints and by the MCP tool `static_copies`. It replaces the prototype
+  scripts in `scripts/static-copies` ([guide](docs/guide/static-copies.md)).
 
 ### Changed
 
@@ -69,6 +167,9 @@ Compile time first: most Lean users wait on elaboration, not on programs.
   200-character description, and six of Mathlib's `def
   UniversalCoprimeFactorizationRing.…` were one key (`UniversalCo`) to
   `compare` and `experiment`.
+- `explain` read the last parameter of a C function wrongly on Lean before
+  4.30 (`x_5)`), which hid causes found through parameters.
+
 
 ## [0.1.0] - 2026-10-26
 
