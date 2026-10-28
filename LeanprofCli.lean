@@ -6,6 +6,7 @@ import Leanprof.Fix
 import Leanprof.Experiment
 import Leanprof.Judge
 import Leanprof.Regress
+import Leanprof.Delta
 import Leanprof.Workload
 import Leanprof.ElabWhy
 import Leanprof.FixElab
@@ -35,7 +36,7 @@ import LeanprofElab
 -/
 
 open Lean System
-open Leanprof.Regress (mdCode mdProse htmlCode)
+open Leanprof.Regress (mdCode mdProse htmlCode whatLabel fmtKHB fmtSigned rowSide rowChange)
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
@@ -67,7 +68,7 @@ def commands : List (String × String × String) := [
     "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
     "Needs samply: the one on PATH, else the one `install.sh --samply` put in leanprof's home\n" ++
     "(`leanprof doctor` says how to get it)."),
-  ("elab", "[--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
+  ("elab", "[--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [--since-last [--keep-base]] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
@@ -80,7 +81,10 @@ def commands : List (String × String × String) := [
     "--why: for the costliest declarations, the causes the profile shows and a change to try (observed and\n" ++
     "suggested kept apart), with Lean's own `simp only [...]` list for each `simp` (`leanprof fix --elab` applies it).\n" ++
     "--max-heartbeats N (implies --heartbeats): list every declaration above N thousand heartbeats\n" ++
-    "(maxHeartbeats' unit) and exit 1 if there is one, for CI."),
+    "(maxHeartbeats' unit) and exit 1 if there is one, for CI.\n" ++
+    "--since-last (one file) writes the report under .lake/leanprof/onsave/, compares it with the previous\n" ++
+    "--since-last profile of the file and writes the difference per declaration, with what changed inside\n" ++
+    "each, next to it (FILE.delta.json); --keep-base keeps comparing with that same base."),
   ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] [--json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
@@ -987,44 +991,6 @@ def groupDigits (n : Nat) : String :=
 termination_by n
 decreasing_by omega
 
-/-- What a row of `Regress.Explanation` is, in words. -/
-def whatLabel : String → String
-  | "unfold" => "isDefEq unfolds"
-  | "whnf" => "whnf reduces"
-  | "instance" => "instance tried"
-  | "simp" => "simp lemma rewrote with"
-  | "repeated" => "repeated operation"
-  | "unfolds" => "unfolded (count)"
-  | "kernel" => "kernel unfolded (count)"
-  | "instances" => "instance used (count)"
-  | "simp_used" => "simp lemma used (count)"
-  | "simp_failed" => "simp lemma failed (count)"
-  | "grind_instances" => "grind instantiated (count)"
-  | w => w
-
-def fmtKHB (x : Float) : String := s!"{fmt2 (x / 1000)} kHB"
-
-def fmtSigned (f : Float → String) (d : Float) : String :=
-  if d > 0 then s!"+{f d}" else if d < 0 then s!"−{f d.abs}" else "0"
-
-/-- One side of a row: heartbeats (and how many times), or a count. -/
-def rowSide (r : Leanprof.Regress.Row) (v : Option Float) (t : Option Nat) : String :=
-  match v with
-  | none => "not listed"
-  | some x =>
-    if r.isCount then groupDigits x.toUInt64.toNat
-    -- no heartbeats credited on either side: only how often
-    else if r.base.getD 0 == 0 && r.new.getD 0 == 0 && t.isSome then s!"{t.getD 0}×"
-    else s!"{fmtKHB x}{match t with | some t => s!", {t}×" | none => ""}"
-
-def rowChange (r : Leanprof.Regress.Row) : String :=
-  match r.delta? with
-  | none => "?"
-  | some d =>
-    if r.isCount then fmtSigned (fun x => groupDigits x.toUInt64.toNat) d
-    else if d == 0 then s!"{if r.timesDelta > 0 then "+" else "−"}{r.timesDelta.natAbs}×"
-    else fmtSigned fmtKHB d
-
 /-- The rows to show of an explanation: credited work, then exact counts, `n` of each. -/
 def shownRows (e : Leanprof.Regress.Explanation) (n : Nat) : Array Leanprof.Regress.Row × Nat :=
   let rows := (e.work.toList.take n ++ e.counts.toList.take n).toArray
@@ -1609,7 +1575,74 @@ def sample (argv : List String) : IO UInt32 := do
 
 /-! ## elab: in LeanprofElab.lean -/
 
-def elabCmd (argv : List String) : IO UInt32 := Leanprof.Elab.main argv
+/-! ## elab --since-last: the difference from the previous profile of a file
+
+`elab --since-last FILE` writes its report under `.lake/leanprof/onsave/`
+(unless `--out` names a file), compares it with the one kept from the previous
+`--since-last` profile of the same file (`NAME.base.json`), and writes the
+difference next to it (`NAME.delta.json`, `Leanprof.Delta`), for a person or an
+agent checking what an edit did to compile time. The new report then becomes the
+base, unless `--keep-base` (compare with a fixed base until it is removed) or it
+has errors. -/
+
+/-- Where `--since-last` keeps its reports. -/
+def onSaveDir : System.FilePath := (".lake" : System.FilePath) / "leanprof" / "onsave"
+
+/-- Whether `argv` names its report file with one of `opts`, before a `--`. -/
+def namesOut (opts : List String) (argv : List String) : Option String :=
+  let before := argv.takeWhile (· != "--")
+  match before.findIdx? (opts.contains ·) with
+  | some i => before[i + 1]?
+  | none => none
+
+/-- `NAME.json` as `NAME.SUFFIX.json`. -/
+def sibling (report : String) (suffix : String) : String :=
+  let stem := if report.endsWith ".json" then (report.dropEnd 5).toString else report
+  s!"{stem}.{suffix}.json"
+
+/-- After `report` was written: the difference from its base, written to
+`NAME.delta.json` and summarized; the report becomes the base unless `keepBase`
+or it has errors. -/
+def sinceLast (report : String) (keepBase : Bool) : IO Unit := do
+  unless ← (report : System.FilePath).pathExists do return
+  let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile report))
+  let base := sibling report "base"
+  let delta := sibling report "delta"
+  let bj? ← if ← (base : System.FilePath).pathExists then
+      pure ((Json.parse (← IO.FS.readFile base)).toOption) else pure none
+  let d := match bj? with
+    | some bj => Leanprof.Delta.compute bj nj
+    | none => Leanprof.Delta.first nj
+  IO.FS.writeFile delta d.compress
+  IO.println s!"\nsince the last profile ({delta}):"
+  for l in Leanprof.Delta.summary d do IO.println s!"  {l}"
+  -- no base, or one that cannot be compared (another unit): this run becomes the base
+  let fresh := bj?.isNone || (d.getObjValAs? Bool "comparable").toOption == some false
+  if fresh || (!keepBase && Leanprof.Delta.errors nj == 0) then
+    IO.FS.writeBinFile base (← IO.FS.readBinFile report)
+
+/-- A file name for `name` under `onSaveDir`: its path relative to the project
+(an absolute path under it is made relative), as directories. -/
+def onSaveName (cwd : System.FilePath) (name : String) : String :=
+  let c := cwd.toString ++ "/"
+  let rel := if name.startsWith c then (name.drop c.length).toString
+    else if name.startsWith "./" then (name.drop 2).toString else name
+  let rel := if rel.startsWith "/" then (rel.drop 1).toString else rel
+  (onSaveDir / (rel.replace ".." "__")).toString
+
+def elabCmd (argv : List String) : IO UInt32 := do
+  let o ← IO.ofExcept (Leanprof.Elab.parseOpts {} argv)
+  unless o.sinceLast do return ← Leanprof.Elab.main argv
+  let out ← match namesOut ["--out"] argv, o.files.toList with
+    | some f, _ => pure f
+    | none, [f] => pure s!"{onSaveName (← IO.currentDir) f}.json"
+    | none, _ => throw <| IO.userError "leanprof elab --since-last: give one file (or --out FILE)"
+  let argv := if (namesOut ["--out"] argv).isSome then argv else ["--out", out] ++ argv
+  if let some dir := (out : System.FilePath).parent then IO.FS.createDirAll dir
+  if ← (out : System.FilePath).pathExists then IO.FS.removeFile out
+  let rc ← Leanprof.Elab.main argv
+  if rc == 0 then sinceLast out o.keepBase
+  return rc
 
 /-! ## measure and judge
 

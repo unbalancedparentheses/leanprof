@@ -233,6 +233,50 @@ decreasing_by omega
 
 def fmtNum (x : Float) : String := groupDigits x.toUInt64.toNat
 
+/-- `x` with two decimals. -/
+def fmt2 (x : Float) : String :=
+  let v := (x.abs * 100).round.toUInt64.toNat
+  let frac := v % 100
+  s!"{if x < 0 && v > 0 then "-" else ""}{v / 100}.{if frac < 10 then "0" else ""}{frac}"
+
+/-- What a row of an `Explanation` is, in words. -/
+def whatLabel : String → String
+  | "unfold" => "isDefEq unfolds"
+  | "whnf" => "whnf reduces"
+  | "instance" => "instance tried"
+  | "simp" => "simp lemma rewrote with"
+  | "repeated" => "repeated operation"
+  | "unfolds" => "unfolded (count)"
+  | "kernel" => "kernel unfolded (count)"
+  | "instances" => "instance used (count)"
+  | "simp_used" => "simp lemma used (count)"
+  | "simp_failed" => "simp lemma failed (count)"
+  | "grind_instances" => "grind instantiated (count)"
+  | w => w
+
+def fmtKHB (x : Float) : String := s!"{fmt2 (x / 1000)} kHB"
+
+def fmtSigned (f : Float → String) (d : Float) : String :=
+  if d > 0 then s!"+{f d}" else if d < 0 then s!"−{f d.abs}" else "0"
+
+/-- One side of a row: heartbeats (and how many times), or a count. -/
+def rowSide (r : Row) (v : Option Float) (t : Option Nat) : String :=
+  match v with
+  | none => "not listed"
+  | some x =>
+    if r.isCount then groupDigits x.toUInt64.toNat
+    -- no heartbeats credited on either side: only how often
+    else if r.base.getD 0 == 0 && r.new.getD 0 == 0 && t.isSome then s!"{t.getD 0}×"
+    else s!"{fmtKHB x}{match t with | some t => s!", {t}×" | none => ""}"
+
+def rowChange (r : Row) : String :=
+  match r.delta? with
+  | none => "?"
+  | some d =>
+    if r.isCount then fmtSigned (fun x => groupDigits x.toUInt64.toNat) d
+    else if d == 0 then s!"{if r.timesDelta > 0 then "+" else "−"}{r.timesDelta.natAbs}×"
+    else fmtSigned fmtKHB d
+
 /-- Why declaration `key` costs `new.total - base.total` more heartbeats. -/
 def explainDecl (bi ni : ElabInfo) (key : String) (b n : Decl) : Explanation := Id.run do
   let parts := (List.range 4).toArray.filterMap fun i =>
