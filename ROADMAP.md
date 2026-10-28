@@ -266,10 +266,13 @@ Ranked; the open ones are planned after v0.2.0.
   --heartbeats --counts` at base and head, and explain's cause for each
   copy site that copies more (`compare`, `report-md`, `Tests/Regress`;
   [guide](docs/guide/ci-and-regressions.md#why-it-got-worse)).
-- [ ] *(in progress)* **Retained memory.** Which allocation site holds the
-  memory at peak, and what keeps it alive; sites with sustained growth worth
-  investigating (not necessarily leaks: caches grow too). Heap walks only
-  while no other thread can change the heap.
+- [x] **Retained memory.** Which allocation site holds the memory at peak,
+  and what keeps it alive; sites with sustained growth worth investigating
+  (not necessarily leaks: caches grow too). Heap walks only while no other
+  thread can change the heap (`run --retained`: live objects per site at
+  the peak and at exit, the chain of holders down to a global or a local,
+  growing sites in the report and in `top`;
+  [memory guide](docs/guide/memory.md#retained-memory-what-holds-it)).
 - [x] **A heartbeat budget.** `elab --max-heartbeats N` in
   CI flags any declaration above N, so slow lemmas do not accumulate
   (`report-md --max-heartbeats`, the Action's `max-heartbeats`).
@@ -445,7 +448,9 @@ Still to do:
 - [ ] **Broaden memory coverage.** Identify core-library and precompiled code
   coverage; add RC-operation costs, retained-memory attribution and object
   lifetime analysis beyond allocation counts and peak-live metrics. Report
-  unobserved activity as such, never as a measured zero.
+  unobserved activity as such, never as a measured zero. Retained-memory
+  attribution is done (`run --retained`, which counts the frees it did not
+  see); left: RC-operation costs and object lifetimes.
 - [x] **Navigate large projects.** `leanprof html` drills from project to
   folder, module, declaration, term and tactic, and compares each level with
   a base report ([compile time](docs/guide/compile-time.md#a-whole-project-in-the-browser)).

@@ -39,10 +39,12 @@ open Leanprof.Regress (mdCode mdProse htmlCode)
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--retained] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time, except functions too small to time, which --time-tiny includes; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
-    "--frees: freeing pauses and atomic decrements), run it, print the report and save it to\n" ++
+    "--frees: freeing pauses and atomic decrements; --retained: live objects by allocation site at the\n" ++
+    "peak and at exit, what keeps them alive, and sites whose live bytes keep growing; implies --allocs\n" ++
+    "and --frees), run it, print the report and save it to\n" ++
     ".lake/leanprof/report.json, the last report (what explain, html and #leanprof read; --json FILE,\n" ++
     "or --out FILE, also saves it to FILE). Memory (peak, per scope) is always sampled.\n" ++
     "Works in any Lake project: leanprof's runtime is compiled for the project's Lean version.\n" ++
@@ -476,6 +478,7 @@ structure RunOpts where
   allocs : Bool := false
   counters : Bool := false
   frees : Bool := false
+  retained : Bool := false
   core : Bool := false
   deps : Bool := true
   allCopies : Bool := false
@@ -501,6 +504,8 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--allocs" :: rest => parseRun { opts with allocs := true } rest
   | "--counters" :: rest => parseRun { opts with counters := true } rest
   | "--frees" :: rest => parseRun { opts with frees := true } rest
+  -- retained memory follows every object from its allocation to its free
+  | "--retained" :: rest => parseRun { opts with retained := true, allocs := true, frees := true } rest
   | "--core" :: rest => parseRun { opts with core := true } rest
   | "--no-deps" :: rest => parseRun { opts with deps := false } rest
   | "--all-copies" :: rest => parseRun { opts with allCopies := true } rest
@@ -553,8 +558,10 @@ shim, the static-archive equivalent of `ld --wrap`. The functions are defined
 in libleanrt, which is left alone, so the shims still reach the real ones. -/
 
 /-- The `-Dold=leanprof_*` pairs in the compiler wrapper (the one list of
-redirected functions): the base set, plus what `LEANPROF_ALLOCS=1` adds. -/
-def wrapperRenames (allocs : Bool) (frees : Bool := false) : IO (Array (String × String)) := do
+redirected functions): the base set, plus what `LEANPROF_ALLOCS=1`,
+`LEANPROF_FREES=1` and `LEANPROF_RETAINED=1` add. -/
+def wrapperRenames (allocs : Bool) (frees : Bool := false) (retained : Bool := false) :
+    IO (Array (String × String)) := do
   let text ← IO.FS.readFile ((← packageRoot) / "scripts" / "leanprof-cc")
   -- the block an env switch guards: from its test to the next `fi`
   let block (switch : String) : String :=
@@ -562,14 +569,15 @@ def wrapperRenames (allocs : Bool) (frees : Bool := false) : IO (Array (String �
     | _ :: r :: _ => (r.splitOn "\nfi").head!
     | _ => ""
   let base := (text.splitOn "LEANPROF_ALLOCS:-").head!
-  let alloc := block "LEANPROF_ALLOCS" ++ (if frees then " " ++ block "LEANPROF_FREES" else "")
+  let extra := (if allocs then [block "LEANPROF_ALLOCS"] else []) ++ (if frees then [block "LEANPROF_FREES"] else []) ++
+    (if retained then [block "LEANPROF_RETAINED"] else [])
   let pairs (s : String) : Array (String × String) :=
     ((s.replace "\n" " ").splitOn " ").toArray.filterMap fun tok =>
       match tok.splitOn "=" with
       | [d, new] => if d.startsWith "-D" && new.startsWith "leanprof_" then
           some (d.replace "-D" "", new) else none
       | _ => none
-  return pairs base ++ pairs (if allocs then alloc else if frees then block "LEANPROF_FREES" else "")
+  return pairs base ++ pairs (" ".intercalate extra)
 
 /-- An objcopy that can rename symbols in this platform's archives:
 LEANPROF_OBJCOPY, then llvm-objcopy (also versioned, and in Homebrew's and
@@ -604,13 +612,13 @@ def findObjcopy : IO (Option String) := do
 /-- The toolchain's Lean libraries with references to the redirected runtime
 functions renamed to leanprof's shims, cached in `.lake/leanprof/core/` by
 toolchain and set of renamed symbols. Returns the directory to search first. -/
-def coreLibDir (allocs : Bool) (frees : Bool := false) : IO FilePath := do
+def coreLibDir (allocs : Bool) (frees : Bool := false) (retained : Bool := false) : IO FilePath := do
   let some objcopy ← findObjcopy | throw <| IO.userError <|
     s!"--core needs llvm-objcopy, which is not installed; install it with:\n  {← installHint "objcopy"}"
   let leanOut (arg : String) : IO String := do
     return (← IO.Process.output { cmd := "lean", args := #[arg] }).stdout.trimAscii.toString
   let leanPrefix : FilePath := ⟨← leanOut "--print-prefix"⟩
-  let renames ← wrapperRenames allocs frees
+  let renames ← wrapperRenames allocs frees retained
   -- Mach-O symbol names carry a leading underscore
   let us := if System.Platform.isOSX then "_" else ""
   let key := hash s!"{leanPrefix} {← leanOut "--githash"} {renames}"
@@ -640,7 +648,8 @@ def coreLibDir (allocs : Bool) (frees : Bool := false) : IO FilePath := do
 is compiled, so its copies take the same path as the program's. -/
 def selfCheckEnv (wrapper : FilePath) : Array (String × Option String) :=
   #[("LEAN_CC", some wrapper.toString)] ++
-    #["LEANPROF_AUTO", "LEANPROF_ALLOCS", "LEANPROF_COUNTERS", "LEANPROF_FREES", "LEANPROF_WHY"].map (·, none)
+    #["LEANPROF_AUTO", "LEANPROF_ALLOCS", "LEANPROF_COUNTERS", "LEANPROF_FREES", "LEANPROF_RETAINED",
+      "LEANPROF_WHY"].map (·, none)
 
 /-- `leanprof doctor`'s copy-detection check: builds a small C program from
 leanprof's runtime and `c/selfcheck.c` (compiled and linked as `leanprof run`
@@ -713,7 +722,7 @@ anywhere from setting the executable aside to the build itself puts the
 normal build back. -/
 def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false)
     (counters : Bool := false) (frees : Bool := false) (extraEnv : Array (String × Option String) := #[])
-    (deps : Bool := true) : IO UInt32 := do
+    (deps : Bool := true) (retained : Bool := false) : IO UInt32 := do
   let root ← packageRoot
   let wrapper := root / "scripts" / "leanprof-cc"
   unless ← wrapper.pathExists do
@@ -779,11 +788,12 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
       -- Lake does not notice a new LEAN_CC, so objects built without it must go:
       -- they wait in .lake/leanprof/normal-objects and come back afterwards
       let (stashed, pkgs) ← stashObjects deps
-      IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if counters then " and reuse/closure counters" else ""}{if frees then " and frees timed" else ""} in {if deps then "every package" else "the root package only"} ({stashed} normal objects of {pkgs} package{if pkgs == 1 then "" else "s"} set aside)"
+      IO.eprintln s!"leanprof: building {exe} with copy shims{if auto.isSome then " and every function timed" else ""}{if allocs then " and allocations counted" else ""}{if counters then " and reuse/closure counters" else ""}{if frees then " and frees timed" else ""}{if retained then " and objects followed to their frees" else ""} in {if deps then "every package" else "the root package only"} ({stashed} normal objects of {pkgs} package{if pkgs == 1 then "" else "s"} set aside)"
       let buildEnv := #[("LEAN_CC", some wrapper.toString), ("LEANPROF_AUTO", auto),
         ("LEANPROF_ALLOCS", if allocs then some "1" else none),
         ("LEANPROF_COUNTERS", if counters then some "1" else none),
         ("LEANPROF_FREES", if frees then some "1" else none),
+        ("LEANPROF_RETAINED", if retained then some "1" else none),
         -- the build may run instrumented code (precompiled modules are loaded
         -- into `lean`): no reports from it, and none over the program's
         ("LEANPROF_QUIET", some "1"), ("LEANPROF_JSON", none), ("LEANPROF_TRACE", none),
@@ -870,16 +880,18 @@ def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
   let some exe := opts.exe | throw <| IO.userError (usageFor "run")
   let coreEnv ← if opts.core then
-      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees).toString)]
+      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees opts.retained).toString)]
     else pure #[]
   clearReports opts.json
   let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees (coreEnv ++ tinyEnv opts) opts.deps
+    opts.retained
   if rc != 0 then return rc
   -- written where asked (--json/--out), and always as the last report
   let json := opts.json.getD lastReport.toString
   let prov ← runProvenance "run" exe opts opts.allocs opts.frees
   let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json),
       ("LEANPROF_PROVENANCE", some prov.compress)] ++
+    (if opts.retained then #[("LEANPROF_RETAINED", some "1")] else #[]) ++
     (if opts.allCopies then #[("LEANPROF_ALL_COPIES", some "1")] else #[])
   let rc ← try runInstrumented exe opts runEnv
     finally
@@ -1916,7 +1928,7 @@ def benchTotal (file : FilePath) (scope : String) : IO (Option Nat) := do
 /-- Settings besides the commit that change what `lake build` makes. -/
 def buildSettingVars : Array String :=
   #["ELAN_TOOLCHAIN", "LEAN_CC", "LEANC_OPTS", "LEAN_SYSROOT", "LEAN_AR", "LEANPROF_SANITIZE",
-    "LEANPROF_ALLOCS", "LEANPROF_COUNTERS", "LEANPROF_FREES", "LEANPROF_AUTO", "LEANPROF_RUNTIME"]
+    "LEANPROF_ALLOCS", "LEANPROF_COUNTERS", "LEANPROF_FREES", "LEANPROF_RETAINED", "LEANPROF_AUTO", "LEANPROF_RUNTIME"]
 
 /-- `cmd args` in `cwd`; its stdout, trimmed, or an error with its stderr. -/
 def runOut (cmd : String) (args : Array String) (cwd : FilePath) : IO String := do

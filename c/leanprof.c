@@ -119,6 +119,7 @@ typedef struct {
     uint8_t kind;
     uint64_t count[LP_REASONS];
     uint64_t bytes, ticks;     /* ticks: time spent in the copying call */
+    struct lpf_ret_site *ret;  /* LP_ALLOC with --retained: its site's live objects (retained.inc.c) */
 } lpf_copy;
 
 /* An open scope: one cache line (frames are 64-byte aligned). Deep
@@ -1416,22 +1417,43 @@ static inline size_t lpf_sarray_bytes(lean_object *a) {
 }
 
 #include "explain.inc.c"
+#include "retained.inc.c" /* live objects by allocation site, and what holds them (--retained) */
 
 #define LP_PC __builtin_return_address(0)
 
-/* Called only when the value is not exclusive: always a copy. */
+/* Called only when the value is not exclusive: always a copy. With
+ * --retained, the result is a new object (retained.inc.c). */
 #define LP_COPY(kind, obj, bytes, call)                       \
     do {                                                      \
-        lpf_pending p_ = lpf_begin(LP_PC, (obj), (kind), (bytes)); \
+        lean_object *o_ = (obj);                              \
+        int ex_ = 0;                                          \
+        size_t sz_ = 0;                                       \
+        if (LEAN_UNLIKELY(LP_RET_TRACKING())) {               \
+            /* its last reference (a multi-threaded one is never   \
+             * exclusive): the runtime frees it after copying */  \
+            int rc_ = lean_internal_get_rc(o_);               \
+            ex_ = rc_ == 1 || rc_ == -1;                      \
+            sz_ = lpf_ret_var_bytes(o_);                      \
+        }                                                     \
+        lpf_pending p_ = lpf_begin(LP_PC, o_, (kind), (bytes)); \
         lean_object *r_ = (call);                             \
         lpf_end(&p_);                                          \
+        if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_moved(LP_PC, o_, ex_, sz_, r_); \
         return r_;                                            \
     } while (0)
 
-/* Copies only when the value is not exclusive. */
+/* Copies only when the value is not exclusive. An exclusive value the
+ * runtime grows into a new object moves there (--retained). */
 #define LP_MAYBE_COPY(kind, obj, bytes, call)                 \
     do {                                                      \
-        if (LEAN_LIKELY(lean_is_exclusive(obj))) return (call); \
+        if (LEAN_LIKELY(lean_is_exclusive(obj))) {            \
+            if (LEAN_LIKELY(!LP_RET_TRACKING())) return (call); \
+            lean_object *a_ = (obj);                          \
+            size_t sz_ = lpf_ret_var_bytes(a_);               \
+            lean_object *r_ = (call);                         \
+            lpf_ret_moved(LP_PC, a_, 1, sz_, r_);             \
+            return r_;                                        \
+        }                                                     \
         LP_COPY(kind, obj, bytes, call);                      \
     } while (0)
 
@@ -1669,6 +1691,7 @@ static lean_obj_res lpf_task_run(lean_obj_arg ctx, lean_obj_arg arg) {
 
 /* Wrap closure `c` so lpf_task_run sees the spawning scope. */
 static lean_obj_res lpf_task_wrap(lean_obj_arg c) {
+    LP_ST(lpf_ret_shared, 1); /* --retained: no walks near the peak from now on */
     lpf_thread *t = lpf_thread_get();
     const void *key;
     uint8_t kind;
@@ -1724,48 +1747,109 @@ LEAN_EXPORT b_lean_obj_res leanprof_task_get(b_lean_obj_arg task) {
 /* ---------- allocations ----------
  * Opt-in (LEANPROF_ALLOCS=1 when building through the wrapper): allocation
  * calls from compiled Lean code come here. Each is charged to the innermost
- * scope and to its call site. Frees happen inside the runtime and are not
- * seen, so these are allocation counts and bytes, not live memory.
+ * scope and to its call site. These are allocation counts and bytes; with
+ * --retained, objects are also followed until they are freed (retained.inc.c).
  */
 
-static inline void lpf_alloc(void *pc, size_t sz) {
+/* `small`: the allocation path that stores the size in m_cs_sz. */
+static inline void lpf_alloc(void *pc, size_t sz, void *o, int small) {
     lpf_thread *t = lpf_thread_get();
     if (LEAN_UNLIKELY(!__atomic_load_n(&lpf_allocs_on, __ATOMIC_RELAXED)))
         __atomic_store_n(&lpf_allocs_on, 1, __ATOMIC_RELAXED);
     t->allocs++;
     t->bytes += sz;
-    lpf_copy *c = lpf_copy_get(t, pc, lpf_site(t), LP_ALLOC);
-    if (c == NULL) return;
-    LP_ADD(c->count[0], 1);
-    LP_ADD(c->bytes, sz);
+    const lean_object *label = lpf_site(t);
+    lpf_copy *c = lpf_copy_get(t, pc, label, LP_ALLOC);
+    if (c != NULL) {
+        LP_ADD(c->count[0], 1);
+        LP_ADD(c->bytes, sz);
+    }
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) {
+        lpf_ret_site *s = c != NULL ? c->ret : NULL;
+        if (s == NULL) {
+            s = lpf_ret_site_get(pc, label);
+            if (c != NULL) c->ret = s;
+        }
+        lpf_ret_enter(s, (lean_object *)o, sz, small);
+    }
 }
 
 #if LEAN_VERSION_MAJOR > 4 || (LEAN_VERSION_MAJOR == 4 && LEAN_VERSION_MINOR >= 35)
 LEAN_EXPORT lean_object *leanprof_alloc_small_object_core(unsigned sz) {
-    lpf_alloc(LP_PC, sz);
-    return lean_alloc_small_object_core(sz);
+    lean_object *o = lean_alloc_small_object_core(sz);
+    lpf_alloc(LP_PC, sz, o, 1);
+    return o;
 }
 #endif
 
 LEAN_EXPORT lean_object *leanprof_alloc_object(size_t sz) {
-    lpf_alloc(LP_PC, sz);
-    return lean_alloc_object(sz);
+    lean_object *o = lean_alloc_object(sz);
+    lpf_alloc(LP_PC, sz, o, 0);
+    return o;
 }
 
 #ifdef LEAN_MIMALLOC
+/* Called by lean.h's lean_alloc_small_object, which then sets m_cs_sz. */
 LEAN_EXPORT void *leanprof_mi_malloc(size_t sz) {
-    lpf_alloc(LP_PC, sz);
-    return mi_malloc(sz);
+    void *o = mi_malloc(sz);
+    lpf_alloc(LP_PC, sz, o, 1);
+    return o;
 }
 
 LEAN_EXPORT void *leanprof_mi_malloc_small(size_t sz) {
-    lpf_alloc(LP_PC, sz);
-    return mi_malloc_small(sz);
+    void *o = mi_malloc_small(sz);
+    lpf_alloc(LP_PC, sz, o, 1);
+    return o;
 }
 #endif
 
+/* --retained: objects the runtime makes for a call from compiled code
+ * (`-Dlean_mk_array=leanprof_mk_array` and the others in the wrapper's
+ * LEANPROF_RETAINED block), entered at the call; and what it frees of what
+ * it consumes. */
+LEAN_EXPORT lean_object *leanprof_mk_array(lean_obj_arg n, lean_obj_arg v) {
+    lean_object *r = lean_mk_array(n, v);
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_fresh(LP_PC, r);
+    return r;
+}
+
+LEAN_EXPORT lean_object *leanprof_array_mk(lean_obj_arg l) {
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_consume_list(l);
+    lean_object *r = lean_array_mk(l);
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_fresh(LP_PC, r);
+    return r;
+}
+
+LEAN_EXPORT lean_object *leanprof_array_to_list(lean_obj_arg a) {
+    if (LEAN_UNLIKELY(LP_RET_TRACKING()) && lean_internal_get_rc(a) == 1) lpf_ret_free(a);
+    lean_object *r = lean_array_to_list(a);
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_fresh_list(LP_PC, r);
+    return r;
+}
+
+LEAN_EXPORT lean_obj_res leanprof_string_mk(lean_obj_arg cs) {
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_consume_list(cs);
+    lean_object *r = lean_string_mk(cs);
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_fresh(LP_PC, r);
+    return r;
+}
+
+LEAN_EXPORT lean_obj_res leanprof_string_data(lean_obj_arg s) {
+    if (LEAN_UNLIKELY(LP_RET_TRACKING()) && lean_internal_get_rc(s) == 1) lpf_ret_free(s);
+    lean_object *r = lean_string_data(s);
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_fresh_list(LP_PC, r);
+    return r;
+}
+
+LEAN_EXPORT lean_obj_res lean_st_mk_ref(lean_obj_arg);
+LEAN_EXPORT lean_obj_res leanprof_st_mk_ref(lean_obj_arg a) {
+    lean_object *r = lean_st_mk_ref(a);
+    if (LEAN_UNLIKELY(LP_RET_TRACKING())) lpf_ret_fresh(LP_PC, r);
+    return r;
+}
+
 #include "counters.inc.c"
-#include "memory.inc.c" /* frees, memory over time */
+#include "memory.inc.c" /* frees, memory over time; with --retained, what frees remove */
 #include "coverage.inc.c" /* Task.map/bind, IO.mapTask/bindTask; notes on --core */
 
 /* ---------- symbol names ----------
@@ -3138,6 +3222,7 @@ static void lpf_print(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf_copy
     }
     lpf_counters_print(f);
     lpf_mem_print(f, tick);
+    lpf_ret_print(f, tick, nallocs > 0);
     if (hidden > 0)
         fprintf(f, "\nleanprof: %zu sites only copied compile-time constants (--all-copies shows them)\n", hidden);
     lpf_untimed_load();
@@ -3319,6 +3404,7 @@ static void lpf_write_json(FILE *f, const lpf_scope_sum *S, size_t ns, const lpf
     }
     lpf_counters_json(f);
     lpf_mem_json(f, tick);
+    lpf_ret_json(f, tick);
     fprintf(f, "}\n");
 }
 
@@ -3425,9 +3511,10 @@ static void lpf_write_trace(const char *path, double tick) {
 
 static void lpf_report(void) {
     if ((lpf_threads == NULL || (lpf_threads->next == NULL && lpf_only_calibrated())) && !lpf_ctr_any() &&
-        !lpf_mem_wanted())
+        !lpf_mem_wanted() && !LP_LD(lpf_ret_on))
         return; /* linked but unused */
     lpf_mem_finish();
+    lpf_ret_finish(); /* the exit walk, before the report's own allocations */
     __atomic_store_n(&lpf_calibrated, 1, __ATOMIC_RELEASE);
     lpf_calibrate(); /* the CPU is warm now; keeps the lower estimate */
     double tick = lpf_ns_per_tick();
@@ -3635,6 +3722,7 @@ fail:
  * key's destructor) gets a record again, and gives it back the same way. */
 static void lpf_thread_retire(void *p) {
     lpf_thread *t = p;
+    lpf_ret_thread_exit(t); /* --retained: the next thread to use objects takes over */
     lpf_self = t; /* thread-local storage may already be torn down, and come back zeroed */
     while (t->depth > 0) lpf_exit();
     lpf_self = NULL;
@@ -3667,6 +3755,7 @@ __attribute__((constructor)) static void lpf_init(void) {
     lpf_clock_init();
     lpf_start = lpf_now();
     lpf_mem_init();
+    lpf_ret_init();
     atexit(lpf_report);
     lpf_live_init(); /* after atexit(lpf_report): the live thread stops before the report */
 }
