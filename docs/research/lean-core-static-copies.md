@@ -80,7 +80,7 @@ the update, so the update is in place. The scan counts the reference and
 not the release.
 
 Verified by reading the C: `Std/Sat/AIG/Cached.lean:116` (`mkGateCached`,
-`decls`; `lean_dec_ref(v___x_102_)` at `Cached.c:519` precedes the push at
+`decls`; `lean_dec_ref(v___x_102_)` at `Cached.c:522` precedes the push at
 527), `Lean/Elab/Binders.lean:446` (`elabFunBinderViews`, `localInsts`), and
 `Lean/Meta/Tactic/Grind/Main.lean:262` (`collectUsedOrigins`, the hash set
 in the state tuple). `released.py` looks for the pattern in all flags: 21
