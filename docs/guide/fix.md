@@ -12,7 +12,10 @@ the evidence, so a reviewer can see why the change is there.
 leanprof fix --exe myapp -- ARGS          # profile, fix, check, commit (or not)
 leanprof fix --dry-run --exe myapp -- ARGS  # print the findings and the diff only
 leanprof fix --dry-run                    # the same from the last report
+leanprof fix --elab FILE.lean...          # compile time: Lean's own edits, checked by an experiment
 ```
+
+For compile time, see [below](#compile-time-fix---elab).
 
 ## What it does
 
@@ -204,3 +207,60 @@ MB of Lean source. All four findings are `shared-on-entry`: the capture
 buffers and the sparse set arrive shared from the caller. `explain` prints no
 code for them, so `fix` reports that no finding has a mechanical fix and
 exits 1 without creating a branch.
+
+## Compile time: `fix --elab`
+
+```
+leanprof fix --elab FILE.lean...               # profile (elab --heartbeats --why), apply, check
+leanprof fix --elab --report elab.json         # from an `elab --why` report (--project works too)
+leanprof fix --elab --dry-run FILE.lean...     # the edits and the diff only
+```
+
+`elab --why` finds two edits that Lean computes itself:
+
+- a `simp`, `simp_all`, `simpa` or `dsimp` call becomes Lean's own
+  `simp only [...]` list for it (what `simp?` prints), laid out within 100
+  columns;
+- a recursive declaration with no `termination_by` gets the measure Lean's
+  search found (`showInferredTerminationBy`), on a line of its own after
+  it. Without it, Lean proves the recursive calls once for every measure it
+  tries.
+
+`fix --elab` takes the costliest of these (`--top N`, default 10; a call
+inside a costlier call's range waits for a later run), writes them as one
+commit on top of HEAD with a separate index (the checkout, its index and
+its stash are not touched), and judges that commit with
+[`leanprof experiment`](experiment.md) in library mode: the package builds
+(every proof is checked again), the proof-preservation guard passes on the
+changed modules and their dependents, the tests pass (`--test CMD`, the
+Lake test driver, or `--no-test`), and the heartbeats of those modules went
+down. If the build fails, the edits in the declarations it names are
+dropped; if a declaration got dearer, its edits are dropped; the rest is
+tried again, at most `--rounds` times (default 4). A KEEP becomes a commit
+with the evidence in its message on a new local branch
+(`leanprof-fix/elab-FILE`, or `--branch NAME`); nothing is pushed.
+
+`simp only` is faster but less robust: a renamed or new simp lemma no
+longer reaches the call. Many projects keep terminal `simp` calls
+unrestricted on purpose; `fix --elab` measures the speed, the choice is
+yours.
+
+On Batteries `v4.35.0`, from a `--why` report of
+`Batteries/Data/String/Lemmas.lean` and `Batteries/Data/BinomialHeap/Basic.lean`
+(2 inferred measures and 8 `simp only` lists, all kept in one round):
+
+```
+round 1: 10 edit(s), candidate cfa8d3427f1b
+  KEEP
+  - compile heartbeats: 129827.02 kHB -> 108127.91 kHB
+
+KEEP: committed 9b469d96d6a1 on branch leanprof-fix/elab-Lemmas (10 edit(s)); your checkout is unchanged.
+```
+
+The two measures did nearly all of it: `splitAux_of_valid` 16,274 → 5,960
+kHB and `firstDiffPos_loop_eq` 17,424 → 6,158 kHB. The eight `simp only`
+lists saved little: `HeapNode.realSize_toHeap` 382 → 345 kHB, `next` 1,487
+→ 1,460 kHB, the others less than 1% of their declarations. The guard audited 9
+modules (the changed ones and everything in the package that imports them,
+test modules included) and `lake test` passed
+([case study](../case-studies/compile-time-fixes.md)).

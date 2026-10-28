@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/experiment-status.schema.json",
+  "title": "leanprof experiment state",
+  "description": "An experiment's configuration, base and tries (experiment.json, `leanprof experiment status --json`).",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.experiment-status"
+        }
+      }
+    },
+    "version": {
+      "const": 1
+    },
+    "leanprof": {
+      "const": "experiment"
+    },
+    "id": {
+      "type": "string"
+    },
+    "created": {
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "exe",
+        "library"
+      ]
+    },
+    "exe": {
+      "type": "string"
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "start_commit": {
+      "type": "string"
+    },
+    "base_commit": {
+      "type": "string"
+    },
+    "finished": {
+      "type": "boolean"
+    },
+    "tries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "candidate": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "base": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "committed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "verdict",
+          "candidate",
+          "evidence"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "leanprof",
+    "id",
+    "mode",
+    "start_commit",
+    "base_commit",
+    "tries",
+    "finished"
+  ]
+}

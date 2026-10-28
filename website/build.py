@@ -38,6 +38,7 @@ NAV = [
         "docs/guide/getting-started.md",
         "docs/guide/run-time.md",
         "docs/guide/copies-and-allocations.md",
+        "docs/guide/static-copies.md",
         "docs/guide/fix.md",
         "docs/guide/experiment.md",
         "docs/guide/proof-audit.md",

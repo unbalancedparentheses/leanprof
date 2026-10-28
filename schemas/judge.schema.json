@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/judge.schema.json",
+  "title": "leanprof judge verdict",
+  "description": "KEEP or DISCARD from two measure summaries or one measure-pair session (`leanprof judge --json`). `outcome` says what the verdict means; `worse` holds every reason against, of which `correctness`, `incompatible` and `invalid` are the kinds that are not a measured cost.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.judge"
+        }
+      }
+    },
+    "leanprof": {
+      "const": "judge"
+    },
+    "kind": {
+      "enum": [
+        "summaries",
+        "paired"
+      ]
+    },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "string"
+        },
+        "new": {
+          "type": "string"
+        },
+        "pair": {
+          "type": "string"
+        }
+      }
+    },
+    "min_change": {
+      "type": "number"
+    },
+    "allow_overloaded": {
+      "type": "boolean"
+    },
+    "verdict": {
+      "enum": [
+        "KEEP",
+        "DISCARD"
+      ]
+    },
+    "keep": {
+      "type": "boolean"
+    },
+    "outcome": {
+      "$ref": "common.schema.json#/$defs/outcome"
+    },
+    "measurement_valid": {
+      "type": "boolean"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "worse": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "better": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "correctness": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "incompatible": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "invalid": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unsettled": {
+      "type": "boolean"
+    },
+    "overloaded": {
+      "type": "boolean",
+      "description": "time was not judged because the machine was overloaded while measuring"
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance_check"
+    },
+    "allow_incompatible": {
+      "type": "boolean"
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "what was not measured completely (self-check warning, a metric on one side only): the outcome is then insufficient_evidence, never KEEP"
+    }
+  },
+  "required": [
+    "schema",
+    "leanprof",
+    "kind",
+    "verdict",
+    "keep",
+    "outcome",
+    "measurement_valid",
+    "retryable",
+    "worse",
+    "better",
+    "notes",
+    "correctness",
+    "incompatible",
+    "invalid",
+    "unsettled"
+  ]
+}

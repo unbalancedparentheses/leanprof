@@ -75,6 +75,7 @@ static double lpf_parse_num(const char *v) {
 static int lpf_flight;                  /* the flight recorder is on: lpf_trace calls lpf_flight_trace */
 static char lpf_live_path[1024];        /* snapshot file ("" when off) */
 static uint64_t lpf_live_ms = 250;
+static void lpf_ret_live_json(FILE *f); /* retained.inc.c */
 static char lpf_flight_dir[1024];       /* where dumps go */
 static char lpf_flight_marker[1100];    /* $TMPDIR/leanprof-<pid>.flight */
 static char lpf_flight_last[1200];      /* the last dump written */
@@ -718,12 +719,13 @@ static void lpf_live_write(int final) {
     const char *mr = getenv("LEANPROF_LIVE_ROWS");
     if (lpf_parse_num(mr) >= 1) max_rows = (size_t)lpf_parse_num(mr);
     fprintf(f,
-            "{\"leanprof_live\":1,\"pid\":%d,\"seq\":%u,\"exited\":%s,\"interval_ms\":%llu,\"ts_ns\":%.0f,"
+            "{\"leanprof_live\":1,\"schema\":{\"name\":\"leanprof.live\",\"version\":1},\"pid\":%d,\"seq\":%u,\"exited\":%s,\"interval_ms\":%llu,\"ts_ns\":%.0f,"
             "\"overhead_ns\":%.1f,\"threads\":%u,",
             (int)getpid(), ++lpf_lv_seq, final ? "true" : "false", (unsigned long long)lpf_live_ms,
             (double)(now - lpf_start) * tick, lpf_unit_ticks() * tick, nthreads);
     fprintf(f, "\"memory\":{\"rss\":%llu,\"commit\":%llu,\"peak_rss\":%llu,\"peak_commit\":%llu},",
             (unsigned long long)rss, (unsigned long long)commit, (unsigned long long)pr, (unsigned long long)pc);
+    lpf_ret_live_json(f);
     fprintf(f, "\"cpu\":{\"user_ns\":%.0f,\"sys_ns\":%.0f},",
             (double)ru.ru_utime.tv_sec * 1e9 + (double)ru.ru_utime.tv_usec * 1e3,
             (double)ru.ru_stime.tv_sec * 1e9 + (double)ru.ru_stime.tv_usec * 1e3);

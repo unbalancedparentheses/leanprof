@@ -602,6 +602,22 @@ if (run) {
       table(arr(d.frees, "sites"), fc("function", "function", "where"), { what: "sites" })),
       panel("Per scope", null, table(arr(d.frees, "scopes"), fc("scope", "scope", "pos"), { what: "scopes" }))];
   });
+  if (d.retained) addTab("retained", "Retained", arr(d.retained, "sites").length, () => {
+    const r = d.retained, ws = arr(r, "walks");
+    const where = (fn, w) => (w ? fn + " (" + w + ")" : fn);
+    const holder = (h) => (!h.function ? h.kind + " (made where leanprof does not look)" : h.kind === "closure" ? "closure of " + where(h.function, h.where) : h.kind + " from " + where(h.function, h.where));
+    const root = (o) => ({ global: "global " + where(o.name, o.where), stack: "a local of " + (o.name || "an unknown function") + " (stack)", constant: "a module constant", cycle: "a reference cycle" }[o.kind] || "nothing leanprof can see");
+    const chain = (p) => arr(p, "held_by").map(holder).concat(p.elided ? ["..."] : [], [root(p.root || {})]).join(" \u2190 ");
+    const out = [panel("Live objects by allocation site",
+      "Objects compiled Lean code allocated, followed to their frees (run --retained): live at the program's peak (" + fBytes(num(r, "peak_bytes")) + ") and at exit (" + fBytes(num(r, "exit_bytes")) + "). " +
+      num(r, "unseen_objects") + " objects were freed where leanprof does not look (precompiled code, the runtime) and found later; objects made there are not tracked.",
+      table(arr(r, "sites"), [col("function", "function", null, { wrap: true }), col("scope", "scope"), pcol("where", "where"), ncol("at peak", "peak_bytes", fBytes, { bar: true }), ncol("objects", "peak_objects"),
+        ncol("at exit", "exit_bytes", fBytes), ncol("objects at exit", "exit_objects"), ncol("largest", "max_bytes", fBytes), { t: "trend", v: (x) => (x.growing ? "growing" : ""), f: (v) => v }], { what: "sites" }))];
+    for (const w of ws) out.push(panel("What holds it: " + w.when + " heap walk", fBytes(num(w, "live_bytes")) + " live; each object is given the first holder found, and the chain ends at its root.",
+      table(arr(w, "paths"), [{ t: "bytes", v: (p) => num(p, "bytes"), f: fBytes, num: true }, ncol("objects", "objects"), col("kind", "kind"), col("allocated in", "function", null, { wrap: true }), pcol("where", "where"),
+        { t: "held by", v: (p) => chain(p), f: (v) => v, wrap: true }, { t: "fix", v: (p) => p.hint || "", f: (v) => v, wrap: true }], { what: "paths" })));
+    return out;
+  });
   if (d.memory && arr(d.memory, "scopes").length) addTab("memory", "Memory", arr(d.memory, "scopes").length, () => panel(null,
     "Lean's committed memory sampled at scope exits (at most once per ms): the peak while a scope ran and the largest rise over one call.",
     table(arr(d.memory, "scopes"), [col("scope", "name"), pcol("where", "pos"), ncol("sampled calls", "sampled_calls"), ncol("peak", "peak_commit", fBytes), ncol("max rise", "max_rise", fBytes, { bar: true })], { what: "scopes" })));

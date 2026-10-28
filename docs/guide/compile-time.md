@@ -3,6 +3,9 @@
 ```
 leanprof elab [--heartbeats] [--compact] [--top N] [--out FILE] FILE.lean...
 leanprof elab --project [--module-glob GLOB] [--jobs N] [--heartbeats] [--compact]
+leanprof elab --heartbeats --why FILE.lean...       # why the costliest declarations are slow
+leanprof elab --max-heartbeats N FILE.lean...       # every declaration above a budget (for CI)
+leanprof fix --elab FILE.lean...                    # apply Lean's own fixes, checked
 ```
 
 elaborates the files with Lean's `trace.profiler` (each module with Lake's
@@ -59,6 +62,92 @@ way every time, or a definition that should be reducible. A definition that
 is unfolded thousands of times, or costs a lot from many sites, is a
 candidate for `@[irreducible]`, a lemma that avoids unfolding it, or a
 cheaper instance.
+
+## Why a declaration is slow: `--why`
+
+```
+leanprof elab --heartbeats --why FILE.lean...
+leanprof explain --elab               # the same from the last report (--report FILE for another)
+leanprof explain --elab --json        # for agents; also the MCP `elab` (why: true) and `explain` tools
+```
+
+For the costliest declarations (`--top`, at most 10), `--why` names the
+causes the profile shows and a change to try for each. It keeps two things
+apart: **observed** is measured in this profile (a cost, a count, a share
+of the declaration); **suggested** is what to try. A suggestion marked
+`[mechanical]` is an edit Lean computed itself, which
+[`leanprof fix --elab`](fix.md#compile-time-fix---elab) applies and checks;
+the others are hypotheses that nothing has checked.
+
+| cause | observed | suggested |
+|---|---|---|
+| `simp-set` | a `simp`, `simp_all`, `simpa` or `dsimp` call costing 2% or more of its declaration, and the lemmas it used | `simp only [...]` with Lean's own list for that call (`[mechanical]`). Not offered for a call already restricted with `only`, one run on several goals with different lemma lists (`<;>`), one that spans lines with a tactic block inside, or a `simp` a macro runs |
+| `termination` | `decreasing_tactic` run once per measure Lean tried (no `termination_by`), and the measure it found | that measure as a `termination_by` clause after the proof (`[mechanical]`). Not offered for `mutual` or `where` declarations, nor when a clause is there already |
+| `unfold`, `whnf` | `isDefEq` or `whnf` unfolding a definition, how often, and the work that followed | for a definition of this project: `@[irreducible]` with a lemma that unfolds it, or a `@[simp]` lemma about it; otherwise `attribute [local irreducible] f in`, or rewriting with its equations first |
+| `instance-failed` | an instance search that failed, how often and at what cost (searches with a metavariable, still being elaborated, are left out) | declare the instance (or `haveI` in the proof), or give explicitly the term that asks for it |
+| `instance` | an instance tried at a high cost | a priority for the instance that should apply, or a local instance |
+| `decide` | a `decide` call, the `whnf` work under it and the kernel's check | `decide +kernel` (the kernel evaluates, once); `rfl` for closed equations. `native_decide` is not a fix: it trusts the compiler (the axiom `Lean.ofReduceBool`), and the experiment guard rejects it |
+| `kernel` | the kernel's share, and with `--counts` what it unfolded | a lemma stating the computed value, used by `rw` or `simp only` |
+| `repeated` | the same operation (or term, or tactic) done 3 or more times | depends on the operation: `decreasing_by` with a direct proof for `decreasing_tactic`, a `have` or one call for all goals for a term or tactic |
+| `grind` | a `grind` call costing 20% or more | `grind?`, which prints `grind only [...]` |
+
+On Batteries `v4.35.0`, 3 of the 10 costliest declarations spend 78 to 90%
+of their heartbeats in `decreasing_tactic`, run once for each termination
+measure Lean tries:
+
+```
+$ leanprof explain --elab --top 3
+  2. 17489.50 kHB  Batteries/Data/String/Lemmas.lean:351  theorem firstDiffPos_loop_eq ...
+     termination
+       observed   `decreasing_tactic` ran 6× for 13728.69 kHB (78%): with no `termination_by`, Lean
+                  tries measures until one works, proving the recursive calls for each
+       observed   the measure Lean found (`showInferredTerminationBy`): `termination_by r₁`
+       suggested  state it after the proof: `termination_by r₁`; Lean then proves the calls for that
+                  measure only (`leanprof fix --elab` adds it and checks the proof and the
+                  heartbeats) [mechanical]
+```
+
+Stating it takes the declaration from 17,424 to 6,155 kHB
+([case study](../case-studies/compile-time-fixes.md)).
+
+`--why` turns on two Lean options while elaborating: `showInferredTerminationBy`
+for the file, and `tactic.simp.trace` (each `simp` reports its `simp only`
+list, as `simp?` does) for each `simp` call separately, by the driver. Set
+for a whole file, `tactic.simp.trace` stops Lean 4.35 at a `simpa` whose
+term has an antiquotation (Mathlib's `simpa using congr($h + 1)`: "Unknown
+constant `term.pseudo.antiquot`"), and everything after it went uncounted;
+the driver leaves the option off for such calls. Without the driver
+(`--no-driver`, or no driver for that Lean) there are no `simp only`
+lists. The options cost a little, so compare heartbeats from runs made the
+same way. The driver also records each `simp` call's whole source range
+(Lean's message covers only its first word) and where each command ends.
+
+A profile that stops at an error in some file is incomplete: what comes
+after the error is not counted. `elab.json` says so (`"complete": false`,
+and each file's `errors` and `first_error`), `--why` says so, and nothing
+judges such a profile as an improvement: `experiment` (and so `fix --elab`)
+returns INCONCLUSIVE, and `judge` does not compare the heartbeats of a
+`measure --heartbeats-files` summary made from one. `elab.json` has them as
+`simp_suggestions` and `termination_suggestions`, and failed instance
+searches per declaration as `instances_failed`.
+
+## A heartbeat budget: `--max-heartbeats`
+
+```
+leanprof elab --max-heartbeats 20000 FILE.lean...     # implies --heartbeats
+leanprof elab --project --compact --max-heartbeats 20000
+```
+
+lists every declaration that costs more than N thousand heartbeats (the
+unit of `maxHeartbeats`, whose default limit is 200,000) and exits 1 if
+there is one, so slow lemmas do not accumulate unnoticed. The total
+includes kernel, compiler and linter work, each shown. Profiling costs
+heartbeats too, so a full profile counts more than the build does;
+`--compact` comes closest to it. The list is also in `elab.json`
+(`budget`). In CI, `report-md --max-heartbeats N` and the Action's
+`max-heartbeats` input fail the job on any declaration of the head above
+the budget, marking those that were not above it on the base
+([CI](ci-and-regressions.md#a-heartbeat-budget)).
 
 ## The definitions behind the work
 

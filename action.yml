@@ -24,6 +24,12 @@ inputs:
     description: Lean files whose compile cost to measure with `leanprof elab --heartbeats` (space-separated, relative to working-directory).
     required: false
     default: ""
+  max-heartbeats:
+    description: >-
+      A heartbeat budget per declaration, in maxHeartbeats' unit (1,000 heartbeats): the job fails
+      when a declaration of elab-files on the head commit costs more, and the comment lists them.
+    required: false
+    default: ""
   fail-on:
     description: >-
       Exact metrics that fail the job when they regress: comma-separated from
@@ -119,6 +125,7 @@ runs:
         LP_ALLOCS: ${{ inputs.allocs }}
         LP_ELAB_FILES: ${{ inputs.elab-files }}
         LP_FAIL_ON: ${{ inputs.fail-on }}
+        LP_MAX_HB: ${{ inputs.max-heartbeats }}
         LP_EXPLAIN: ${{ inputs.explain }}
         LP_WORKDIR: ${{ inputs.working-directory }}
         LP_SETUP: ${{ inputs.setup }}
@@ -150,6 +157,6 @@ runs:
         if [ "$LP_HEAD_FAILED" = true ]; then
           echo "::error::leanprof could not profile the head commit (see the log of 'Profile base and head')"
         else
-          echo "::error::leanprof: a metric in fail-on ($LP_FAIL_ON) regressed; see the report"
+          echo "::error::leanprof: a metric in fail-on ($LP_FAIL_ON) regressed, or a declaration is above max-heartbeats; see the report"
         fi
         exit 1
