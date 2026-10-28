@@ -5,6 +5,7 @@ import Lean.Elab.ParseImportsFast
 import Lean.Util.Path
 import LeanprofElabRange
 import Leanprof.ElabWhy
+import Leanprof.Contract
 
 /-!
 # `leanprof elab`: compile cost per line, declaration, file and definition
@@ -1695,8 +1696,13 @@ def main (argv : List String) : IO UInt32 := do
   let suggestions ← if o.why then suggestionsJson acc else pure #[]
   let measures ← if o.why then measuresJson acc else pure #[]
   let tEnd ← IO.monoNanosNow
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload "" (if o.project then #[] else o.files))
+    (Json.mkObj [("mode", Json.str "elab"), ("heartbeats", Json.bool o.heartbeats), ("project", Json.bool o.project),
+      ("globs", toJson o.globs), ("counts", Json.bool o.diagnostics), ("defs", Json.bool o.defs),
+      ("threshold", toJson o.thresholdValue), ("driver", Json.bool !le.driver.isEmpty), ("compact", Json.bool o.compact)])
   let report :=
-    (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true), ("project", Json.bool o.project),
+    (Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "elab"), ("provenance", prov),
+      ("elab", Json.bool true), ("project", Json.bool o.project),
       ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
       ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("constants", Json.arr constants),
       ("files", Json.arr fileJson), ("copies", Json.arr #[]),

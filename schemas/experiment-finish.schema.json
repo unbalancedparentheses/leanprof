@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/experiment-finish.schema.json",
+  "title": "leanprof experiment finish result",
+  "description": "The end of an experiment (`leanprof experiment finish`, finish.json).",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.experiment-finish"
+        }
+      }
+    },
+    "version": {
+      "const": 1
+    },
+    "leanprof": {
+      "const": "experiment-finish"
+    },
+    "experiment": {
+      "type": "string"
+    },
+    "start_commit": {
+      "type": "string"
+    },
+    "final_commit": {
+      "type": "string"
+    },
+    "tries": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "kept": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "heldout_cases": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "heldout_identical": {
+      "type": "boolean"
+    },
+    "heldout_differences": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "leanprof",
+    "experiment",
+    "start_commit",
+    "final_commit",
+    "tries",
+    "kept",
+    "heldout_identical"
+  ]
+}

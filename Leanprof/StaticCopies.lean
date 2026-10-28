@@ -758,6 +758,7 @@ def explainStatic (argv : List String) : IO UInt32 := do
     let r ← IO.Process.output { cmd := "lake", args }
     if r.exitCode != 0 then
       IO.eprintln (r.stdout ++ r.stderr)
+      Contract.reportError "build_failed" s!"`lake build` failed (exit code {r.exitCode}) before the static scan"
       throw <| IO.userError s!"`lake {" ".intercalate args.toList}` failed; fix the build, or pass --no-build to scan what was built"
   let mut files := (← cFilesIn root (root / ".lake" / "build" / "ir")).filter fun (_, _, m) => selected o.modules m
   if o.deps then
@@ -864,7 +865,7 @@ def explainStatic (argv : List String) : IO UInt32 := do
   let hidden := flags.size - shown.size
   let confirmed := shown.filter (·.runtime.1 == "confirmed")
   let modules := (files.map (·.2.2)).foldl (fun (acc : Array String) m => if acc.contains m then acc else acc.push m) #[]
-  let summary := Json.mkObj [
+  let summary := Json.mkObj [("schema", Contract.schema "static"),
     ("static", true), ("modules", modules.size), ("functions", result.functions), ("updates", result.updates),
     ("flags", Json.arr (shown.map (·.json))), ("hidden_string_flags", hidden), ("suppressed_empty", result.empty),
     ("report", if report.isSome then toJson reportPath else Json.null),

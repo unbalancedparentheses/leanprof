@@ -109,7 +109,9 @@ finding through to a checked change.
 
 - An MCP server with run, sample, explain, static copies, elab, measure,
   paired timing, judge, fix and the experiment tools, restricted to Lake
-  projects ([security review](docs/reviews/security-review.md)), and an
+  projects ([security review](docs/reviews/security-review.md)); structured
+  results and typed errors, versioned JSON with schemas, ranked findings
+  with stable ids, and provenance on every report; and an
   [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
   that made a compiler written in Lean 22% faster, merged after review.
 
@@ -366,11 +368,19 @@ attributed, never estimated
 ### Agents: the MCP server
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
-`run`, `sample`, `stat`, `elab`, `measure`, `measure_pair`, `judge`, `static_copies`,
-`compare`, `explain`, `hot`, `report`, the four `experiment_*` operations,
-and `live` and `dump` for a running program. Paths it writes must be inside
-the project, and the binaries it runs must be Lake-built
-([MCP server](docs/guide/live.md#mcp-server)).
+`doctor` (what the project has and which modes work), `run`, `sample`,
+`stat`, `elab`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
+`static_copies`,
+`findings` and `finding` (a ranked page of findings with stable ids, then
+one in full with its source, cause and before/after), `hot`, `report`, the
+four `experiment_*` operations, and `live` and `dump` for a running
+program. Every result has `structuredContent` matching the tool's
+`outputSchema`; failures carry an error code, whether a retry may help,
+and a hint. Paths it writes must be inside the project, and the binaries
+it runs must be Lake-built ([MCP server](docs/guide/live.md#mcp-server)).
+Every JSON file the commands write names its schema in
+[`schemas/`](schemas/) and records its provenance
+([machine-readable output](docs/guide/reference.md#machine-readable-output)).
 
 ### Tiny functions
 

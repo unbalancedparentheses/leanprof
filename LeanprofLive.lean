@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import Leanprof.Contract
 
 /-!
 # Live commands: `leanprof top`, `leanprof dump`, `leanprof mcp`
@@ -517,6 +518,23 @@ def hotLines (j : Json) (kind : String) (limit : Nat) : Array String := Id.run d
     xs.map fun x => s!"{fmtCount (num x "waits")} waits, {fmtTime (num x "blocked_ns")} blocked in scope {str x "scope"}: {str x "function"}{str x (if live then "name" else "")}{w x}"
   | _ => #[s!"unknown kind {kind}: use scopes, copies, allocations, tasks or waits"]
 
+/-- The rows of one section of a report or a live snapshot, hottest first
+(as `hotLines` orders them; copies of tiny values left out). -/
+def hotRows (j : Json) (kind : String) : Array Json :=
+  let live := num j "leanprof_live" > 0
+  match kind with
+  | "scopes" => (arr j "scopes").qsort fun a b => num a "total_ns" > num b "total_ns"
+  | "copies" =>
+    let n (c : Json) := if live then num c "copies" else num c "shared" + num c "multi_threaded"
+    ((arr j "copies").filter fun c => n c > 0 && !bool c "tiny").qsort fun a b =>
+      if num a "copy_ns" != num b "copy_ns" then num a "copy_ns" > num b "copy_ns" else num a "bytes" > num b "bytes"
+  | "allocations" => (arr j "allocations").qsort fun a b =>
+      if num a "allocs" != num b "allocs" then num a "allocs" > num b "allocs" else num a "bytes" > num b "bytes"
+  | "tasks" => let run := if live then "run_ns" else "run_sum_ns"
+    (arr j "tasks").qsort fun a b => num a run > num b run
+  | "waits" => (arr j "waits").qsort fun a b => num a "blocked_ns" > num b "blocked_ns"
+  | _ => #[]
+
 def summarize (j : Json) (limit : Nat := 5) : String := Id.run do
   let mut out : Array String := #[]
   if bool j "elab" then
@@ -641,6 +659,166 @@ def explainFindings (ej : Json) (filter : String) (limit : Nat) : Array String :
     out := out.push s!"  confidence: {str f "confidence"}"
   return out
 
+/-! ## Findings: a ranked, queryable view of a report
+
+Every row of a report that costs something becomes a finding with a stable
+id: its kind and a hash of what names the site (a scope's name and position,
+a copy site's function, kind, scope and position, ...), not its numbers, so
+the same site has the same id in the next report of the same code. The MCP
+tools return a few findings first; `findings` filters and pages them, and
+`finding` returns one with its source, cause and before/after. -/
+
+/-- One finding of a report. `cost_ns` ranks them across kinds: a scope's own
+time, a copy site's time copying, an allocation site's estimated time, a
+wait's blocked time, a task group's waiting to start; counts without a time
+(failed reuse, closure calls, compile cost in heartbeats) rank by `value`
+after those. -/
+structure Finding where
+  id : String
+  kind : String
+  name : String
+  pos : String
+  scope : String := ""
+  metric : String
+  value : Float
+  unit : String
+  costNs : Float := 0
+  title : String
+  row : Json
+  deriving Inhabited
+
+/-- `Examples/CopyBug.lean:17` as (`Examples/CopyBug.lean`, 17). -/
+def splitPos (pos : String) : String × Nat :=
+  match pos.splitOn ":" with
+  | [f, l] => (f, l.toNat?.getD 0)
+  | f :: l :: _ => (f, l.toNat?.getD 0)
+  | _ => (pos, 0)
+
+/-- The module of a source file: `Examples/CopyBug.lean` as `Examples.CopyBug`; a
+file of Lean's own sources (`…/src/lean/Init/Prelude.lean`) as `Init.Prelude`. -/
+def moduleOf (file : String) : String :=
+  let f := match file.splitOn "/src/lean/" with
+    | [_, rest] => rest
+    | _ => file
+  if !f.endsWith ".lean" || f.startsWith "/" then "" else
+    (String.ofList (f.toList.take (f.length - 5))).replace "/" "."
+
+def Finding.file (f : Finding) : String := (splitPos f.pos).1
+def Finding.line (f : Finding) : Nat := (splitPos f.pos).2
+def Finding.module (f : Finding) : String := moduleOf f.file
+
+def findingId (kind key : String) : String :=
+  s!"{kind}-{(Leanprof.Contract.fnv1a key.toUTF8).take 10}"
+
+/-- The findings of a report, a compile-time report or a live snapshot, costliest first. -/
+def findingsOf (j : Json) : Array Finding := Id.run do
+  let live := num j "leanprof_live" > 0
+  let wall := num j "wall_ns"
+  let where_ (r : Json) := if live then str r "where" else if (str r "pos").isEmpty then str r "where" else str r "pos"
+  let mut out : Array Finding := #[]
+  if bool j "elab" then
+    let hb := str j "unit" == "heartbeats"
+    for s in arr j "scopes" do
+      let key := if (str s "key").isEmpty then s!"{str s "name"} {str s "pos"}" else str s "key"
+      let v := num s "total_ns"
+      out := out.push {
+        id := findingId "decl" key, kind := "declaration", name := str s "name", pos := str s "pos",
+        metric := (if hb then "heartbeats" else "compile_ns"), value := v, unit := (if hb then "heartbeats" else "ns"),
+        costNs := (if hb then 0 else v), row := s,
+        title := s!"{if hb then s!"{fmtCount v} heartbeats" else fmtTime v} to compile: {clip (str s "name") 80} ({str s "pos"})" }
+    for r in arr j "ranges" do
+      let v := num r "amount"
+      out := out.push {
+        id := findingId "range" (str r "range"), kind := s!"{str r "kind"}", name := clip (str r "text") 80,
+        pos := str r "pos", metric := (if hb then "heartbeats" else "compile_ns"), value := v,
+        unit := (if hb then "heartbeats" else "ns"), costNs := (if hb then 0 else v), row := r,
+        title := s!"{if hb then s!"{fmtCount v} heartbeats" else fmtTime v} in {str r "kind"} {clip (str r "text") 60} ({str r "range"})" }
+  else
+    for s in arr j "scopes" do
+      let v := num s "self_ns"
+      out := out.push {
+        id := findingId "scope" s!"{str s "name"}|{str s "pos"}", kind := "scope", name := str s "name",
+        pos := where_ s, metric := "self_ns", value := v, unit := "ns", costNs := v, row := s,
+        title := s!"{rowTime s "self_ns"} self, {rowTime s "total_ns"} total in {fmtCount (num s "calls")} calls: {str s "name"}" ++
+          (if wall > 0 && num s "total_ns" > 0 then s!" ({fixed (num s "total_ns" / wall * 100)}% of the run)" else "") }
+    for c in arr j "copies" do
+      let n := if live then num c "copies" else num c "shared" + num c "multi_threaded"
+      if n == 0 || bool c "tiny" then continue
+      let fn := if live then str c "name" else str c "function"
+      out := out.push {
+        id := findingId "copy" s!"{fn}|{str c "kind"}|{str c "scope"}|{where_ c}", kind := "copy",
+        name := fn, pos := where_ c, scope := str c "scope", metric := "copies", value := n, unit := "copies",
+        costNs := num c "copy_ns", row := c,
+        title := s!"{fmtCount n} copies of a shared {str c "kind"} ({fmtBytes (num c "bytes")}, {rowTime c "copy_ns" (tick := true)}) in {fn}" }
+    for a in arr j "allocations" do
+      let fn := if live then str a "name" else str a "function"
+      -- code without a symbol is named by its address, which moves between runs
+      let key := if fn.startsWith "0x" then "(no symbol)" else fn
+      out := out.push {
+        id := findingId "alloc" s!"{key}|{str a "scope"}|{where_ a}", kind := "allocation", name := fn,
+        pos := where_ a, scope := str a "scope", metric := "allocs", value := num a "allocs", unit := "allocations",
+        costNs := num a "est_ns", row := a,
+        title := s!"{fmtCount (num a "allocs")} allocations ({fmtBytes (num a "bytes")}) in {fn}" }
+    for w in arr j "waits" do
+      let fn := if live then str w "name" else str w "function"
+      out := out.push {
+        id := findingId "wait" s!"{fn}|{str w "scope"}", kind := "wait", name := fn, pos := where_ w,
+        scope := str w "scope", metric := "blocked_ns", value := num w "blocked_ns", unit := "ns", costNs := num w "blocked_ns",
+        row := w, title := s!"{fmtCount (num w "waits")} waits, {fmtTime (num w "blocked_ns")} blocked in {fn}" }
+    for t in arr j "tasks" do
+      let who := str t (if live then "name" else "spawned_by")
+      out := out.push {
+        id := findingId "task" who, kind := "task", name := who, pos := where_ t, metric := "wait_ns",
+        value := num t "wait_ns", unit := "ns", costNs := num t "wait_ns", row := t,
+        title := s!"{fmtCount (num t "tasks")} tasks spawned by {who}, {fmtTime (num t "wait_ns")} waiting to start" }
+    for r in arr j "reuse" do
+      if num r "failures" == 0 then continue
+      out := out.push {
+        id := findingId "reuse" s!"{str r "function"}|{str r "where"}", kind := "reuse", name := str r "function",
+        pos := str r "where", metric := "failures", value := num r "failures", unit := "failed reuses", row := r,
+        title := s!"{fmtCount (num r "failures")} of {fmtCount (num r "checks")} in-place updates failed in {str r "function"}" }
+    for c in arr j "closures" do
+      out := out.push {
+        id := findingId "closure" s!"{str c "function"}|{str c "target"}|{str c "where"}", kind := "closure",
+        name := str c "function", pos := str c "where", metric := "applications", value := num c "applications",
+        unit := "calls", row := c,
+        title := s!"{fmtCount (num c "applications")} calls of {str c "target"} through a closure in {str c "function"}" }
+  return out.qsort fun a b => if a.costNs != b.costNs then a.costNs > b.costNs else a.value > b.value
+
+/-- A finding as the tools list it: id, rank, kind, title, metric, value,
+unit, cost, location, module, name, scope. -/
+def Finding.compact (f : Finding) (rank : Nat) : Json :=
+  Json.mkObj [("id", Json.str f.id), ("rank", toJson rank), ("kind", Json.str f.kind), ("title", Json.str f.title),
+    ("metric", Json.str f.metric), ("value", toJson f.value), ("unit", Json.str f.unit), ("cost_ns", toJson f.costNs),
+    ("pos", Json.str f.pos), ("file", Json.str f.file), ("line", toJson f.line), ("module", Json.str f.module),
+    ("name", Json.str f.name), ("scope", Json.str f.scope)]
+
+/-- The findings a query keeps: `kind` exactly, `module` and its submodules,
+`declaration` and `file` as substrings. -/
+def Finding.matches (f : Finding) (kind module decl file : Option String) : Bool :=
+  let has (s t : String) := t.isEmpty || (s.splitOn t).length > 1
+  (kind.all (· == f.kind)) &&
+  (module.all fun m => f.module == m || f.module.startsWith (m ++ ".")) &&
+  (decl.all fun d => has f.name d || has f.scope d) &&
+  (file.all fun x => has f.file x)
+
+/-- A page of findings: what matched, `offset`, `limit`, and whether more are left. -/
+def findingsPage (fs : Array Finding) (offset limit : Nat) : List (String × Json) :=
+  let page := fs.extract offset (offset + limit)
+  [("findings", Json.arr ((List.range page.size).toArray.map fun i => page[i]!.compact (offset + i + 1))),
+   ("total", toJson fs.size), ("offset", toJson offset), ("returned", toJson page.size),
+   ("truncated", Json.bool (offset + page.size < fs.size)),
+   ("next_offset", if offset + page.size < fs.size then toJson (offset + page.size) else Json.null)]
+
+/-- Lines `first`..`last` of a file (1-based), each with its number, or none. -/
+def sourceLines (path : FilePath) (first last : Nat) : IO (Option Json) := do
+  let some text ← (try some <$> IO.FS.readFile path catch _ => pure none) | return none
+  let ls := (text.splitOn "\n").toArray
+  let first := max first 1
+  let last := min last ls.size
+  if first > last then return none
+  return some <| Json.arr ((List.range (last - first + 1)).toArray.map fun i =>
+    Json.mkObj [("line", toJson (first + i)), ("text", Json.str ls[first + i - 1]!)])
 /-- The flags of `leanprof explain --static --json` as text for the MCP
 `static_copies` tool: per likely copy its place, value, cause, why, fix and
 what a run said about it. `filter` keeps flags whose declaration or file
@@ -677,18 +855,74 @@ def staticFindings (sj : Json) (filter : String) (limit : Nat) : Array String :=
 def sProp (d : String) : Json := Json.mkObj [("type", Json.str "string"), ("description", Json.str d)]
 def bProp (d : String) : Json := Json.mkObj [("type", Json.str "boolean"), ("description", Json.str d)]
 def nProp (d : String) : Json := Json.mkObj [("type", Json.str "integer"), ("description", Json.str d)]
+def fProp (d : String) : Json := Json.mkObj [("type", Json.str "number"), ("description", Json.str d)]
+def oProp (d : String) : Json := Json.mkObj [("type", Json.str "object"), ("description", Json.str d)]
 def aProp (d : String) : Json :=
   Json.mkObj [("type", Json.str "array"), ("items", Json.mkObj [("type", Json.str "string")]), ("description", Json.str d)]
+def aoProp (d : String) : Json :=
+  Json.mkObj [("type", Json.str "array"), ("items", Json.mkObj [("type", Json.str "object")]), ("description", Json.str d)]
+/-- `p`, or null. -/
+def orNull (p : Json) : Json :=
+  match p.getObjVal? "type" with
+  | .ok (.str t) => p.setObjVal! "type" (Json.arr #[Json.str t, Json.str "null"])
+  | _ => p
 
-def tool (name desc : String) (props : List (String × Json)) (required : List String) : Json :=
-  Json.mkObj [("name", Json.str name), ("description", Json.str desc),
-    ("inputSchema", Json.mkObj [("type", Json.str "object"),
-      ("properties", Json.mkObj (props ++ [("cwd", sProp "project directory (default: the server's)")])),
-      ("required", toJson required)])]
+def enumProp (d : String) (xs : List String) : Json :=
+  Json.mkObj [("enum", toJson xs), ("description", Json.str d)]
+
+/-- The error of a structured result (`schemas/common.schema.json#/$defs/error`). -/
+def errorSchema : Json :=
+  Json.mkObj [("type", Json.str "object"),
+    ("properties", Json.mkObj [
+      ("code", enumProp "the kind of failure" (Leanprof.Contract.errorKinds.map (·.1))),
+      ("message", sProp "what went wrong"),
+      ("retryable", bProp "whether calling again unchanged may succeed"),
+      ("hint", sProp "what to do about it")]),
+    ("required", toJson ["code", "message", "retryable", "hint"])]
+
+/-- A tool's output schema: `ok`, `tool`, `error` (when not ok), `warnings`
+(problems that did not stop the call, such as an overloaded machine), and the
+tool's own fields. -/
+def outSchema (props : List (String × Json)) : Json :=
+  Json.mkObj [("type", Json.str "object"),
+    ("properties", Json.mkObj ([("ok", bProp "false when the call failed; then `error` says why"),
+      ("tool", sProp "the tool called"), ("error", errorSchema),
+      ("text_truncated", bProp "the text was cut at 30,000 characters (the structured content is not)"),
+      ("warnings", Json.mkObj [("type", Json.str "array"), ("items", errorSchema),
+        ("description", Json.str "problems that did not stop the call, in the error format")])] ++ props)),
+    ("required", toJson ["ok", "tool"])]
 
 def exeProps : List (String × Json) :=
   [("executable", sProp "a lean_exe target of the Lake project"),
    ("args", aProp "arguments for the program")]
+
+def tool (name desc : String) (props : List (String × Json)) (required : List String)
+    (out : List (String × Json) := []) : Json :=
+  Json.mkObj [("name", Json.str name), ("description", Json.str desc),
+    ("inputSchema", Json.mkObj [("type", Json.str "object"),
+      ("properties", Json.mkObj (props ++ [("cwd", sProp "project directory (default: the server's)")])),
+      ("required", toJson required)]),
+    ("outputSchema", outSchema out)]
+
+/-- The fields of a verdict (`judge --json`, experiment evidence). -/
+def verdictOut : List (String × Json) :=
+  [("verdict", enumProp "the verdict" ["KEEP", "DISCARD", "INCONCLUSIVE", "ERROR"]),
+   ("outcome", enumProp "what the verdict means (docs/guide/reference.md#verdict-outcomes)"
+     ["improved", "regression", "no_improvement", "insufficient_evidence", "correctness_failure", "incompatible",
+      "measurement_failed"]),
+   ("measurement_valid", bProp "false when the measurement failed or compared incompatible things"),
+   ("retryable", bProp "whether measuring again may change the outcome")]
+
+/-- The compact findings a tool returns first (`findingsPage`). -/
+def findingsOut : List (String × Json) :=
+  [("findings", aoProp ("the costliest findings first, each with a stable id (the `finding` tool returns one in " ++
+      "full): id, rank, kind, title, metric, value, unit, cost_ns, pos, file, line, module, name, scope")),
+   ("total", nProp "findings that matched"), ("offset", nProp "the first one returned"),
+   ("returned", nProp "how many were returned"), ("truncated", bProp "more findings matched than were returned"),
+   ("next_offset", orNull (nProp "offset of the next page, or null"))]
+
+def runOut : List (String × Json) :=
+  [("exit_code", nProp "the command's exit code"), ("report", sProp "the report written (schemas/run.schema.json)")]
 
 def tools : Array Json := #[
   tool "run" ("Build a Lake executable with leanprof's probes, run it and summarize the report: time per " ++
@@ -697,11 +931,13 @@ def tools : Array Json := #[
     (exeProps ++ [("auto", bProp "time every function of the package (no profile! needed)"),
       ("allocs", bProp "count allocations per site"), ("counters", bProp "failed reuse and closure counters"),
       ("frees", bProp "time freeing cascades"), ("core", bProp "also probe Lean's own libraries"),
-      ("json", sProp "where to save the report"), ("top", nProp "rows per section (default 8)")]) ["executable"],
+      ("json", sProp "where to save the report"), ("top", nProp "rows per section (default 8)")]) ["executable"]
+    (runOut ++ [("wall_ns", fProp "wall time of the run"), ("copies", nProp "copies of shared or multi-threaded values")] ++
+      findingsOut),
   tool "sample" "Sample a Lake executable with samply (no probes): CPU time per Lean declaration with file:line."
-    (exeProps ++ [("top", nProp "declarations shown (default 15)")]) ["executable"],
+    (exeProps ++ [("top", nProp "declarations shown (default 15)")]) ["executable"] runOut,
   tool "stat" "One-screen summary of a run: wall/CPU time, peak memory, allocations, copies, frees, tasks, top scopes."
-    exeProps ["executable"],
+    exeProps ["executable"] runOut,
   tool "elab" ("Compile cost per line and declaration of Lean files (elaboration, kernel, compiler), optionally in " ++
     "exact heartbeats. With why: for the costliest declarations, the causes the profile shows (a costly simp, " ++
     "definitions unfolded, instance searches that fail, decide, the kernel, repeated work), each with what was " ++
@@ -710,17 +946,49 @@ def tools : Array Json := #[
     [("files", aProp "Lean files"), ("heartbeats", bProp "count heartbeats (deterministic) instead of time"),
      ("why", bProp "explain the costliest declarations and record Lean's simp only list for each simp"),
      ("max_heartbeats", nProp "list every declaration above this many thousand heartbeats (implies heartbeats)"),
-     ("top", nProp "lines shown")] ["files"],
+     ("top", nProp "lines shown")] ["files"]
+    [("exit_code", nProp "the command's exit code"), ("report", sProp "the report written (schemas/elab.schema.json)"),
+     ("over_budget", bProp "declarations above max_heartbeats (listed in the text)")],
   tool "measure" "Run an executable several times with probes into one summary, for judge."
     (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)"),
       ("core", bProp "also count copies and allocations inside Lean's own libraries")])
-    ["executable"],
+    ["executable"]
+    [("summary", sProp "the summary written (schemas/measure.schema.json)"), ("exit_code", nProp "the program's exit code"),
+     ("time_ns", oProp "median, min, max, mean, stddev and runs"), ("copies_total", nProp "copies, exact"),
+     ("allocs_total", orNull (nProp "allocations, exact (null when not counted)")), ("overloaded", bProp "the machine was overloaded")],
   tool "report" "Summarize a leanprof report (run, sample or elab JSON) or a live snapshot: the hottest rows of each section."
-    [("path", sProp "report file (default .lake/leanprof/report.json)"), ("top", nProp "rows per section (default 5)")] [],
+    [("path", sProp "report file (default .lake/leanprof/report.json)"), ("top", nProp "rows per section (default 5)")] []
+    ([("path", sProp "the report read"), ("kind", enumProp "the report's kind" ["run", "sampled", "elab", "live"])] ++
+      findingsOut),
+  tool "findings" ("The findings of a report, compile-time report or live snapshot, costliest first, each with a " ++
+    "stable id (the same site has the same id in the next report): filter by kind, module (and its submodules), " ++
+    "declaration or file, and page with offset and limit. Small answers: ask for the next page, or for one finding " ++
+    "in full with the `finding` tool.")
+    [("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
+     ("kind", sProp "scope, copy, allocation, wait, task, reuse, closure (run reports), declaration, term, tactic (elab reports)"),
+     ("module", sProp "only findings in this module or its submodules (Foo.Bar)"),
+     ("declaration", sProp "only findings whose declaration, function or scope contains this"),
+     ("file", sProp "only findings whose file contains this"),
+     ("offset", nProp "skip this many (default 0)"), ("limit", nProp "at most this many (default 10, at most 200)")] []
+    ([("path", sProp "the report read"), ("report_kind", enumProp "the report's kind" ["run", "sampled", "elab", "live"])] ++
+      findingsOut),
+  tool "finding" ("One finding in full, by its id (from `run`, `report` or `findings`): the report's row, the source " ++
+    "lines, the cause (for a copy, `leanprof explain`'s diagnosis with its fix and confidence; for a scope, where its " ++
+    "time goes; for a declaration, what its compile time went to) and, with base, before and after.")
+    [("id", sProp "the finding's id"), ("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
+     ("base", sProp "an earlier report of the same program: the finding's value there, and the change"),
+     ("context", nProp "source lines around the finding (default 3)")] ["id"]
+    [("finding", oProp "the finding (as `findings` lists it)"), ("row", oProp "its row in the report, all fields"),
+     ("source", orNull (oProp "file, and the lines around it (null when the file cannot be read)")),
+     ("cause", aoProp "why it happens, as far as leanprof can tell, each with a confidence"),
+     ("before_after", orNull (oProp "with base: before, after, change and change_pct (status new, gone, changed or unchanged)")),
+     ("stale", bProp "the source file changed after the report was written: its lines may not be the ones measured")],
   tool "hot" "List the hottest scopes, copy sites, allocation sites, tasks or waits of a report or live snapshot, with file:line."
     [("kind", sProp "scopes, copies, allocations, tasks or waits"),
      ("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"), ("limit", nProp "rows (default 10)")]
-    ["kind"],
+    ["kind"]
+    [("kind", sProp "the section"), ("rows", aoProp "its rows as the report has them, hottest first"),
+     ("total", nProp "rows in the section"), ("truncated", bProp "rows were left out (limit)")],
   tool "explain" ("Explain the costliest findings of a run report or live snapshot: why each copy of a shared value " ++
     "happens and how to fix it (for a report, `leanprof explain`'s diagnosis from the compiler's IR, with the fix " ++
     "in the program's own names), where a scope's time goes (own or nested), tail latency, allocations per call, " ++
@@ -728,7 +996,8 @@ def tools : Array Json := #[
     "On an elab report (.lake/leanprof/elab.json): why the costliest declarations are slow to compile, observed " ++
     "causes kept apart from suggested changes.")
     [("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
-     ("name", sProp "only findings whose function, scope or name contains this"), ("limit", nProp "findings per kind (default 5)")] [],
+     ("name", sProp "only findings whose function, scope or name contains this"), ("limit", nProp "findings per kind (default 5)")] []
+    [("path", sProp "the report read"), ("findings", aoProp "explain's copy findings (schemas/explain.schema.json)")],
   tool "static_copies" ("Find likely copies of shared arrays and strings in a whole Lake package without " ++
     "running it (libraries too), from the compiler's IR: each with file:line, the value, why another reference is " ++
     "alive at the update, and `leanprof explain`'s fix. With a run report (default the last one, if any), marks the " ++
@@ -738,10 +1007,16 @@ def tools : Array Json := #[
      ("deps", bProp "also the package's dependencies"), ("all", bProp "also appends to strings outside loops"),
      ("no_build", bProp "scan what is built, without running lake build"),
      ("report", sProp "run report to check the flags against (default .lake/leanprof/report.json if it exists)"),
-     ("name", sProp "only flags whose declaration or file contains this"), ("limit", nProp "flags shown (default 20)")] [],
+     ("name", sProp "only flags whose declaration or file contains this"), ("limit", nProp "flags shown (default 20)")] []
+    [("flags", aoProp "the likely copies, as `leanprof explain --static --json` lists them"),
+     ("total", nProp "flags that matched"), ("returned", nProp "how many were returned"),
+     ("truncated", bProp "more flags matched than were returned (limit)"),
+     ("static", oProp "leanprof explain --static --json, without its flags")],
   tool "compare" "Compare two run reports: exact for copies and call counts, thresholded for time. Says whether anything regressed."
     [("base", sProp "baseline report"), ("new", sProp "new report"), ("threshold", nProp "time threshold in percent (default 10)")]
-    ["base", "new"],
+    ["base", "new"]
+    [("regressed", bProp "anything regressed"), ("regressions", orNull (nProp "how many rows regressed")),
+     ("comparison", orNull (oProp "compare --json (schemas/compare.schema.json)"))],
   tool "measure_pair" ("Run two binaries in alternating AB/BA order (no probes) into one paired session for " ++
     "judge, stopping once the time verdict is settled: every timing, exit code and output hash. Give base and " ++
     "candidate (prebuilt), or base_rev and exe (the base built at that git revision, cached; the candidate built here).")
@@ -754,13 +1029,16 @@ def tools : Array Json := #[
      ("min_change", sProp "smallest time change in percent that counts (default 1)"),
      ("scope", sProp "time only the region the program wraps in Leanprof.bench with this name"),
      ("warmup", nProp "warmup pairs (default 1)"), ("check_output", sProp "output file compared instead of stdout"),
-     ("out", sProp "session file (default .lake/leanprof/paired.json)")] [],
+     ("out", sProp "session file (default .lake/leanprof/paired.json)")] []
+    ([("session", sProp "the session written (schemas/measure-pair.schema.json)"),
+      ("judge", oProp "judge --json of the session (schemas/judge.schema.json)")] ++ verdictOut),
   tool "judge" ("KEEP or DISCARD a change: from two measure summaries (output, copies, allocations, heartbeats, " ++
     "time), or from one measure_pair session (output and a paired 95% median interval on time).")
     [("base", sProp "baseline measure summary"), ("new", sProp "new measure summary"),
      ("pair", sProp "measure_pair session, instead of base and new"),
      ("min_change", sProp "smallest time change in percent that counts (default 1)"),
-     ("allow_overloaded", bProp "judge a paired session's time even though the machine was overloaded")] [],
+     ("allow_overloaded", bProp "judge a paired session's time even though the machine was overloaded")] []
+    ([("judge", oProp "judge --json (schemas/judge.schema.json)")] ++ verdictOut),
   tool "experiment_start" ("Start an experiment: record the base (HEAD) in a git worktree: build, tests (the " ++
     "Lake test driver), behaviour on every case (stdout, stderr, exit code, output files; the workload args, plus " ++
     "one case per file of inputs) and exact counts. Without executable, the measure is compile heartbeats.")
@@ -774,7 +1052,8 @@ def tools : Array Json := #[
       ("runs", nProp "measure runs (default 3)"), ("pairs", nProp "most measure-pair pairs (default 30)"),
       ("min_change", sProp "smallest time change in percent that counts (default 1)"),
       ("time_all_cases", bProp "time every case in pairs, not only the workload (the first case)"),
-      ("base", sProp "the base revision (default HEAD)"), ("id", sProp "experiment id (default: the time)")]) [],
+      ("base", sProp "the base revision (default HEAD)"), ("id", sProp "experiment id (default: the time)")]) []
+    [("experiment", sProp "the experiment's id"), ("state", oProp "experiment status --json (schemas/experiment-status.schema.json)")],
   tool "experiment_try" ("Try one candidate in its own git worktree: build, proof-preservation guard (sorry, axioms, " ++
     "implemented_by, extern, changed theorem statements, tests or expected outputs), tests, identical behaviour on every " ++
     "case, then exact counts and paired timing (or compile heartbeats). Returns KEEP, DISCARD, INCONCLUSIVE or ERROR " ++
@@ -782,22 +1061,63 @@ def tools : Array Json := #[
     [("rev", sProp "commit to try (default HEAD)"), ("working_tree", bProp "try the working tree instead of a commit"),
      ("time", bProp "time it even when the generated code is the base's"),
      ("no_commit", bProp "do not commit a kept working tree"), ("message", sProp "subject of that commit"),
-     ("allow_overloaded", bProp "judge time on an overloaded machine"), ("id", sProp "experiment id (default: the current one)")] [],
+     ("allow_overloaded", bProp "judge time on an overloaded machine"), ("id", sProp "experiment id (default: the current one)")] []
+    ([("evidence", oProp "the try's evidence (schemas/experiment-try.schema.json)")] ++ verdictOut),
   tool "experiment_finish" "Finish an experiment: run the held-out inputs on the final base, compare with the baseline, remove the worktrees."
-    [("keep_worktrees", bProp "keep the base and candidate worktrees"), ("id", sProp "experiment id (default: the current one)")] [],
+    [("keep_worktrees", bProp "keep the base and candidate worktrees"), ("id", sProp "experiment id (default: the current one)")] []
+    [("result", oProp "experiment finish --json (schemas/experiment-finish.schema.json)")],
   tool "experiment_status" "The experiment's configuration, base and tries so far (JSON)."
-    [("id", sProp "experiment id (default: the current one)")] [],
+    [("id", sProp "experiment id (default: the current one)")] []
+    [("state", oProp "experiment status --json (schemas/experiment-status.schema.json)")],
   tool "live" ("What a running program is doing now: its latest live snapshot (it must run with LEANPROF_LIVE), " ++
     "with rates over a short interval and the scopes each thread is inside.")
     [("pid", sProp "process id (snapshot in $TMPDIR/leanprof-PID.live.json, from LEANPROF_LIVE=1)"),
-     ("path", sProp "snapshot file (LEANPROF_LIVE=path)"), ("seconds", nProp "interval for rates (default 1, at most 60)")] [],
+     ("path", sProp "snapshot file (LEANPROF_LIVE=path)"), ("seconds", nProp "interval for rates (default 1, at most 60)")] []
+    [("path", sProp "the snapshot read"), ("pid", nProp "the program's process id"), ("exited", bProp "the program has exited"),
+     ("seq", nProp "the snapshot's number"), ("scopes", aoProp "the hottest scopes, by total time")],
+  tool "doctor" ("Discover the setup before anything else: the Lean version and whether leanprof supports it, the " ++
+    "project's executables, libraries and test driver, which modes work here (run, stat, measure, sample, elab and " ++
+    "whether its driver is built, --auto, --core), samply and perf, and each setup failure with its error code and fix. " ++
+    "Builds and runs nothing of the project (a few seconds).")
+    [] []
+    [("doctor", oProp "leanprof doctor --json (schemas/doctor.schema.json)"),
+     ("ready", bProp "no required check failed"),
+     ("modes", oProp "per mode: available, and why not"),
+     ("setup_failures", aoProp "the required checks that failed, as errors (code, message, retryable, hint)")],
   tool "dump" "Write a running program's flight recorder (LEANPROF_FLIGHT) to a Perfetto trace of its last seconds; returns the path."
-    [("pid", sProp "process id")] ["pid"]]
+    [("pid", sProp "process id")] ["pid"]
+    [("path", sProp "the Perfetto trace written")]]
 
-def textResult (text : String) (isError : Bool := false) : Json :=
-  let text := if text.length > 30000 then String.ofList (text.toList.take 30000) ++ "\n… (truncated)" else text
+/-- A tool's result: the text for people (cut at 30,000 characters, and said
+so), and `structuredContent` for agents (`ok`, `tool`, its own fields), which
+follows the tool's `outputSchema`. -/
+def toolResult (name text : String) (fields : List (String × Json)) (isError : Bool := false)
+    (warnings : Array Json := #[]) : Json :=
+  let cut := text.length > 30000
+  let text := if cut then String.ofList (text.toList.take 30000) ++ "\n… (truncated)" else text
+  let structured := Json.mkObj ([("ok", Json.bool !isError), ("tool", Json.str name)] ++
+    (if warnings.isEmpty then [] else [("warnings", Json.arr warnings)]) ++
+    (if cut then [("text_truncated", Json.bool true)] else []) ++ fields)
   Json.mkObj [("content", Json.arr #[Json.mkObj [("type", Json.str "text"), ("text", Json.str text)]]),
-    ("isError", Json.bool isError)]
+    ("structuredContent", structured), ("isError", Json.bool isError)]
+
+/-- A failed call: the error (`code`, `message`, `retryable`, `hint`) in
+`structuredContent`, and as text. -/
+def errorResult (name : String) (err : Json) (text : String := "") (fields : List (String × Json) := []) : Json :=
+  let msg := (err.getObjValAs? String "message").toOption.getD ""
+  let hint := (err.getObjValAs? String "hint").toOption.getD ""
+  let text := if text.isEmpty then s!"leanprof: {msg}" else text
+  toolResult name (if hint.isEmpty then text else s!"{text}\nhint: {hint}") ([("error", err)] ++ fields) (isError := true)
+
+/-- An error a tool raises itself, with its kind (`Contract.errorKinds`). -/
+def toolFail {α} (code msg : String) : IO α := throw <| IO.userError s!"leanprof-error:{code}:{msg}"
+
+/-- The kind and message of an error a tool raised. -/
+def decodeError (e : IO.Error) : String × String :=
+  let s := toString e
+  match s.splitOn ":" with
+  | "leanprof-error" :: code :: rest => (code, ":".intercalate rest)
+  | _ => (Leanprof.Contract.classifyError s, s)
 
 def argStr (a : Json) (k : String) : Option String := (a.getObjVal? k >>= Json.getStr?).toOption
 def argBool (a : Json) (k : String) : Bool := (a.getObjVal? k >>= Json.getBool?).toOption.getD false
@@ -809,11 +1129,38 @@ def tailText (s : String) (n : Nat) : String :=
   let ls := (s.splitOn "\n").filter (!·.isEmpty)
   "\n".intercalate (ls.drop (ls.length - n))
 
+/-- `j` without its field `k`. -/
+def dropKey (j : Json) (k : String) : Json :=
+  match j with
+  | .obj kvs => .obj (kvs.erase k)
+  | x => x
+
+/-- What one of this executable's own subcommands did: its exit code, output,
+and the error it recorded (`LEANPROF_ERROR_JSON`), if any. -/
+structure Ran where
+  rc : UInt32
+  out : String
+  err : String
+  error? : Option Json := none
+
 /-- Run one of this executable's own subcommands. -/
-def runSelf (args : Array String) (cwd : Option String) (env : Array (String × Option String) := #[]) :
-    IO (UInt32 × String × String) := do
+def runSelf (args : Array String) (cwd : Option String) (env : Array (String × Option String) := #[]) : IO Ran := do
+  let errFile : FilePath := s!"{← tmpDir}/leanprof-mcp-{← IO.monoNanosNow}.error.json"
+  let env := env.push ("LEANPROF_ERROR_JSON", some errFile.toString)
   let out ← IO.Process.output { cmd := ← selfExe, args, cwd := cwd.map (⟨·⟩), env, stdin := .null }
-  return (out.exitCode, out.stdout, out.stderr)
+  let error? ← readJson? errFile
+  try IO.FS.removeFile errFile catch _ => pure ()
+  return { rc := out.exitCode, out := out.stdout, err := out.stderr, error? := error? }
+
+/-- The error of a subcommand that failed: the one it recorded, else one made
+from its output (`code` when the output does not say). -/
+def Ran.errorJson (r : Ran) (code : String := "failed") : Json :=
+  match r.error? with
+  | some e => dropKey e "schema"
+  | none =>
+    let tail := tailText (r.out ++ r.err) 6
+    let c := if code == "failed" then Leanprof.Contract.classifyError tail else code
+    Leanprof.Contract.errorJson c s!"exit code {r.rc}: {tail}"
 
 def inDir (cwd : Option String) (p : String) : FilePath :=
   match cwd with
@@ -828,7 +1175,7 @@ pointing out of the project, or `x.json` itself a link). -/
 def projectPath (cwd : Option String) (what p : String) : IO String := do
   let fp : FilePath := p
   let refuse {α} : IO α :=
-    throw <| IO.userError s!"{what} must be a path inside the project (relative, without .., not through a symbolic link): {p}"
+    toolFail "bad_argument" s!"{what} must be a path inside the project (relative, without .., not through a symbolic link): {p}"
   if fp.isAbsolute || fp.components.contains ".." || p.isEmpty then refuse
   let root ← IO.FS.realPath (cwd.getD ".")
   let inside (r : FilePath) := r == root || r.toString.startsWith (root.toString ++ "/")
@@ -850,65 +1197,264 @@ def projectPath (cwd : Option String) (what p : String) : IO String := do
 /-- A file name the server passes on as a command's argument: the command
 must not read it as an option (`leanprof elab`'s `--out F` among its files). -/
 def notOption (f : String) : IO Unit := do
-  if f.startsWith "-" then throw <| IO.userError s!"not a file name: {f} (an option cannot be passed as a file)"
+  if f.startsWith "-" then toolFail "bad_argument" s!"not a file name: {f} (an option cannot be passed as a file)"
 
 def isLakeProject (dir : FilePath) : IO Bool := do
   return (← (dir / "lakefile.lean").pathExists) || (← (dir / "lakefile.toml").pathExists)
 
+/-- `cmd` is an executable file in a directory of `PATH`. -/
+def onPath (cmd : String) : IO Bool := do
+  let path := (← IO.getEnv "PATH").getD ""
+  for d in path.splitOn ":" do
+    if !d.isEmpty && (← ((d : FilePath) / cmd).pathExists) then return true
+  return false
+
+/-- Before a tool builds or runs anything: the directory is a Lake project
+and Lake is on `PATH`. -/
+def requireProject (cwd : Option String) : IO Unit := do
+  let d := cwd.getD "."
+  unless ← (d : FilePath).isDir do toolFail "bad_argument" s!"cwd is not a directory: {d}"
+  unless ← isLakeProject d do
+    toolFail "not_lake_project" s!"not a Lake project (no lakefile.lean or lakefile.toml): {← IO.FS.realPath d}"
+  unless ← onPath "lake" do
+    toolFail "lean_not_found" "`lake` is not on the PATH the MCP server runs with"
+
+/-- The overloaded-machine warning, when a summary or session says so. -/
+def overloadWarnings (j : Json) : Array Json :=
+  let m := obj j "machine"
+  if bool m "overloaded" || bool j "overloaded" then
+    #[Leanprof.Contract.errorJson "overloaded"
+      s!"the machine was overloaded while measuring (load average {fixed (num m "load_avg_1m") 1} on {(num m "cpus").toUInt64} CPUs)"]
+  else #[]
+
+/-- The kind of a report: `run`, `sampled`, `elab` or `live`. -/
+def reportKind (j : Json) : String :=
+  if bool j "elab" then "elab" else if num j "leanprof_live" > 0 then "live" else if bool j "sampled" then "sampled" else "run"
+
+/-- The source of `file` changed after `report` was written (by modification
+time): its lines may not be the ones measured. -/
+def changedSince (report file : FilePath) : IO Bool := do
+  try
+    let r ← report.metadata
+    let f ← file.metadata
+    return f.modified.sec > r.modified.sec ||
+      (f.modified.sec == r.modified.sec && f.modified.nsec > r.modified.nsec)
+  catch _ => return false
+
+/-- Why a finding happens, as far as leanprof can tell: for a copy site of a
+run report, `leanprof explain`'s findings for it (cause, why, fix, lines,
+confidence); for a scope, where its time goes; for a declaration, what its
+compile time went to. -/
+def causeOf (f : Finding) (j : Json) (path : String) (cwd : Option String)
+    (runExplain : String → Option String → IO (Option Json)) : IO (Array Json) := do
+  let measured (why : String) := Json.mkObj [("why", Json.str why), ("confidence", Json.str "measured")]
+  match f.kind with
+  | "copy" =>
+    if num j "leanprof_live" > 0 then
+      return #[Json.mkObj [("cause", Json.str "shared"), ("confidence", Json.str "low: a live snapshot has no symbols"),
+        ("why", Json.str ("another reference to the value was alive at the update (Lean updates in place only when " ++
+          "the reference count is 1); `run` and `explain` on a report name the cause"))]]
+    let some ej ← runExplain path cwd | return #[]
+    return ((arr ej "findings").filter fun e => str e "function" == f.name && str e "where" == f.pos &&
+      (f.scope.isEmpty || str e "scope" == f.scope)).map fun e =>
+        Json.mkObj (["cause", "why", "fix", "fix_code", "lines", "confidence", "file"].filterMap fun k =>
+          (e.getObjVal? k).toOption.map (k, ·))
+  | "scope" =>
+    let r := f.row
+    let (total, self, calls) := (num r "total_ns", num r "self_ns", num r "calls")
+    let mut out : Array Json := #[]
+    if total > 0 && self / total < 0.2 then
+      out := out.push (measured s!"most of its time ({fixed ((total - self) / total * 100)}%) is in nested scopes: look at its children")
+    else if total > 0 && self / total > 0.8 then
+      out := out.push (measured "its time is its own (not in nested scopes): mark its parts with profile!, or use `run --auto` or `sample` to see inside")
+    let (p50, p99) := (num r "p50_ns", num r "p99_ns")
+    if p50 > 0 && p99 > 10 * p50 && calls >= 100 then
+      out := out.push (measured s!"tail: p99 {fmtTime p99} is {fixed (p99 / p50) 0}x the median {fmtTime p50}: a few calls are much slower")
+    if num r "allocs" > 0 && calls > 0 then
+      out := out.push (measured s!"allocates {fixed (num r "allocs" / calls)} objects per call, nested scopes included")
+    return out
+  | "declaration" =>
+    let top (k : String) := (arr f.row k).extract 0 5
+    return #[Json.mkObj [("why", Json.str "what its compile time went to: phases, repeated work, definitions unfolded"),
+      ("confidence", Json.str "measured"),
+      ("phases", Json.mkObj (["elab_ns", "kernel_ns", "compile_ns", "lint_ns"].filterMap fun k =>
+        (f.row.getObjVal? k).toOption.map (k, ·))),
+      ("repeated", Json.arr (top "repeated")), ("unfolded", Json.arr (top "unfolded")), ("causes", Json.arr (top "causes")),
+      ("steps", Json.arr (top "top"))]]
+  | _ => return #[]
+
+/-- The verdict fields of a `judge --json` result or an experiment's evidence. -/
+def verdictFields (j : Json) : List (String × Json) :=
+  ["verdict", "outcome", "measurement_valid", "retryable"].filterMap fun k =>
+    (j.getObjVal? k).toOption.map (k, ·)
+
 def callTool (name : String) (a : Json) : IO Json := do
   let cwd := argStr a "cwd"
   let exeArgs : IO (Array String) := do
-    let some exe := argStr a "executable" | throw <| IO.userError "missing argument: executable"
-    if exe.startsWith "-" then throw <| IO.userError s!"not an executable name: {exe}"
+    let some exe := argStr a "executable" | toolFail "bad_argument" "missing argument: executable"
+    if exe.startsWith "-" then toolFail "bad_argument" s!"not an executable name: {exe}"
     return #[exe, "--"] ++ argStrs a "args"
+  let res (text : String) (fields : List (String × Json)) := toolResult name text fields
   match name with
   | "run" =>
     let json ← projectPath cwd "json" (argStr a "json" |>.getD ".lake/leanprof/report.json")
     let flags := [("auto", "--auto"), ("allocs", "--allocs"), ("counters", "--counters"), ("frees", "--frees"),
       ("core", "--core")].filterMap fun (k, f) => if argBool a k then some f else none
-    let (rc, out, err) ← runSelf (#["run", "--json", json] ++ flags.toArray ++ (← exeArgs)) cwd
-      #[("LEANPROF_QUIET", some "1")]
+    let args ← exeArgs
+    requireProject cwd
+    let r ← runSelf (#["run", "--json", json] ++ flags.toArray ++ args) cwd #[("LEANPROF_QUIET", some "1")]
     let report ← readJson? (inDir cwd json)
-    let body := match report with
-      | some j => summarize j ((argNat a "top").getD 8)
-      | none => "no report was written"
-    return textResult s!"exit code {rc}; report {json}\n\n{body}\n\nlast output:\n{tailText (out ++ err) 15}" (report.isNone)
-  | "sample" =>
-    let (rc, out, err) ← runSelf (#["sample", "--top", toString ((argNat a "top").getD 15)] ++ (← exeArgs)) cwd
-    return textResult s!"{out}\n{tailText err 10}" (rc != 0 && out.isEmpty)
-  | "stat" =>
-    let (rc, out, err) ← runSelf (#["stat"] ++ (← exeArgs)) cwd
-    return textResult s!"{out}\n{tailText err 10}" (rc != 0 && out.isEmpty)
+    match report with
+    | none =>
+      return errorResult name (r.errorJson "build_failed")
+        s!"exit code {r.rc}; no report was written\n\nlast output:\n{tailText (r.out ++ r.err) 15}"
+        [("exit_code", toJson r.rc.toNat)]
+    | some j =>
+      let copies := (arr j "copies").foldl (fun s c => s + num c "shared" + num c "multi_threaded") 0
+      return res s!"exit code {r.rc}; report {json}\n\n{summarize j ((argNat a "top").getD 8)}\n\nlast output:\n{tailText (r.out ++ r.err) 15}"
+        ([("exit_code", toJson r.rc.toNat), ("report", Json.str json), ("wall_ns", toJson (num j "wall_ns")),
+         ("copies", toJson copies.toUInt64.toNat)] ++ findingsPage (findingsOf j) 0 5)
+  | "sample" | "stat" =>
+    let args ← exeArgs
+    requireProject cwd
+    let r ← runSelf ((if name == "sample" then #["sample", "--top", toString ((argNat a "top").getD 15)] else #["stat"]) ++
+      args) cwd
+    if r.rc != 0 && r.out.isEmpty then
+      return errorResult name (r.errorJson (if name == "sample" then "failed" else "build_failed"))
+        s!"{r.out}\n{tailText r.err 10}" [("exit_code", toJson r.rc.toNat)]
+    return res s!"{r.out}\n{tailText r.err 10}" [("exit_code", toJson r.rc.toNat), ("report", Json.str ".lake/leanprof/report.json")]
   | "elab" =>
     let files := argStrs a "files"
-    if files.isEmpty then throw <| IO.userError "missing argument: files"
+    if files.isEmpty then toolFail "bad_argument" "missing argument: files"
     -- `leanprof elab` reads options anywhere among its files (`--out F`)
     for f in files do notOption f
     let budget := (argNat a "max_heartbeats").map (#["--max-heartbeats", toString ·]) |>.getD #[]
-    let (rc, out, err) ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
+    requireProject cwd
+    let r ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
       (if argBool a "why" then #["--why"] else #[]) ++ budget ++
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
     -- exit code 1 with a budget: declarations above it (listed), not a failure to run
-    let overBudget := rc == 1 && !budget.isEmpty && (out.splitOn "heartbeat budget:").length > 1
-    return textResult s!"{if overBudget then "OVER BUDGET\n" else ""}{out}\n{tailText err 10}" (rc != 0 && !overBudget)
+    let overBudget := r.rc == 1 && !budget.isEmpty && (r.out.splitOn "heartbeat budget:").length > 1
+    if r.rc != 0 && !overBudget then
+      return errorResult name (r.errorJson) s!"{r.out}\n{tailText r.err 10}" [("exit_code", toJson r.rc.toNat)]
+    return res s!"{if overBudget then "OVER BUDGET\n" else ""}{r.out}\n{tailText r.err 10}"
+      [("exit_code", toJson r.rc.toNat), ("report", Json.str ".lake/leanprof/elab.json"), ("over_budget", Json.bool overBudget)]
   | "measure" =>
     let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
-    let (rc, out, err) ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++
-      (if argBool a "core" then #["--core"] else #[]) ++ (← exeArgs)) cwd
-    return textResult s!"summary {outFile}\n{out}\n{tailText err 10}" (rc != 0)
+    let args ← exeArgs
+    requireProject cwd
+    let r ← runSelf (#["measure", "--runs", toString ((argNat a "runs").getD 5), "--out", outFile] ++
+      (if argBool a "core" then #["--core"] else #[]) ++ args) cwd
+    let text := s!"summary {outFile}\n{r.out}\n{tailText r.err 10}"
+    if r.rc != 0 then return errorResult name (r.errorJson "build_failed") text
+    let some j ← readJson? (inDir cwd outFile)
+      | return errorResult name (Leanprof.Contract.errorJson "failed" s!"no summary at {outFile}") text
+    return toolResult name text (warnings := overloadWarnings j) [("summary", Json.str outFile), ("exit_code", j.getObjValD "exit_code"),
+      ("time_ns", dropKey (obj j "time_ns") "runs"), ("copies_total", j.getObjValD "copies_total"),
+      ("allocs_total", j.getObjValD "allocs_total"), ("overloaded", Json.bool (bool (obj j "machine") "overloaded"))]
+
   | "report" =>
     let path := argStr a "path" |>.getD ".lake/leanprof/report.json"
     match ← readJson? (inDir cwd path) with
-    | some j => return textResult s!"{path}\n{summarize j ((argNat a "top").getD 5)}"
-    | none => return textResult s!"cannot read a report at {path} (run the `run` tool first)" true
+    | some j =>
+      let kind := if bool j "elab" then "elab" else if num j "leanprof_live" > 0 then "live"
+        else if bool j "sampled" then "sampled" else "run"
+      return res s!"{path}\n{summarize j ((argNat a "top").getD 5)}"
+        ([("path", Json.str path), ("kind", Json.str kind)] ++ findingsPage (findingsOf j) 0 ((argNat a "top").getD 5))
+    | none =>
+      return errorResult name (Leanprof.Contract.errorJson "not_found" s!"cannot read a report at {path}")
+        s!"cannot read a report at {path} (run the `run` tool first)"
+  | "findings" =>
+    let path := argStr a "path" |>.getD ".lake/leanprof/report.json"
+    let some j ← readJson? (inDir cwd path)
+      | return errorResult name (Leanprof.Contract.errorJson "not_found" s!"cannot read a report at {path}")
+    let limit := min ((argNat a "limit").getD 10) 200
+    let offset := (argNat a "offset").getD 0
+    let fs := (findingsOf j).filter (·.matches (argStr a "kind") (argStr a "module") (argStr a "declaration") (argStr a "file"))
+    let page := fs.extract offset (offset + limit)
+    let lines := (List.range page.size).map fun i =>
+      let f := page[i]!
+      s!"{offset + i + 1}. [{f.id}] {f.title}{if f.pos.isEmpty then "" else s!"  ({f.pos})"}"
+    let more := if offset + page.size < fs.size then
+      s!"\n({fs.size - offset - page.size} more: offset {offset + page.size})" else ""
+    return res (s!"{fs.size} findings in {path}" ++ (if lines.isEmpty then "" else "\n" ++ "\n".intercalate lines) ++ more)
+      ([("path", Json.str path), ("report_kind", Json.str (reportKind j))] ++ findingsPage fs offset limit)
+  | "finding" =>
+    let some id := argStr a "id" | toolFail "bad_argument" "missing argument: id"
+    let path := argStr a "path" |>.getD ".lake/leanprof/report.json"
+    let some j ← readJson? (inDir cwd path)
+      | return errorResult name (Leanprof.Contract.errorJson "not_found" s!"cannot read a report at {path}")
+    let fs := findingsOf j
+    let base ← match argStr a "base" with
+      | some b => do
+        let some bj ← readJson? (inDir cwd b)
+          | return errorResult name (Leanprof.Contract.errorJson "not_found" s!"cannot read the base report at {b}")
+        pure (some (findingsOf bj))
+      | none => pure none
+    let idx? := fs.findIdx? (·.id == id)
+    -- in the base only: gone from this report
+    let some i := idx? | match base.bind (·.find? (·.id == id)) with
+      | some bf => return res s!"{id} is gone: it was {bf.title} in the base" [("finding", bf.compact 0), ("row", bf.row),
+          ("source", Json.null), ("cause", Json.arr #[]),
+          ("before_after", Json.mkObj [("status", Json.str "gone"), ("before", toJson bf.value), ("after", Json.null),
+            ("unit", Json.str bf.unit)]), ("stale", Json.bool false)]
+      | none => return errorResult name (Leanprof.Contract.errorJson "not_found"
+          s!"no finding {id} in {path} (the `findings` tool lists them)")
+    let f := fs[i]!
+    let ctx := (argNat a "context").getD 3
+    let runExplain (p : String) (c : Option String) : IO (Option Json) := do
+      let r ← runSelf #["explain", "--json", "--top", "1000", "--report", p] c
+      return if r.rc == 0 then (Json.parse r.out).toOption else none
+    let cause ← causeOf f j path cwd runExplain
+    -- the source: the lines explain names for a copy, else the finding's line, with context
+    let lines := cause.foldl (fun acc c => acc ++ (arr c "lines").filterMap (·.getNat?.toOption)) #[]
+    let (lo, hi) := if lines.isEmpty then (f.line, f.line) else (lines.foldl min lines[0]!, lines.foldl max 0)
+    let srcPath := inDir cwd f.file
+    let source ← if f.file.isEmpty || f.line == 0 then pure Json.null else do
+      match ← sourceLines srcPath (lo - ctx) (hi + ctx) with
+      | some ls => pure (Json.mkObj [("file", Json.str f.file), ("lines", ls)])
+      | none => pure Json.null
+    let stale ← if source == Json.null then pure false else changedSince (inDir cwd path) srcPath
+    let beforeAfter := match base with
+      | none => Json.null
+      | some bfs => match bfs.find? (·.id == id) with
+        | some bf => Json.mkObj [("status", Json.str (if bf.value == f.value then "unchanged" else "changed")),
+            ("before", toJson bf.value), ("after", toJson f.value), ("change", toJson (f.value - bf.value)),
+            ("change_pct", if bf.value != 0 then toJson ((f.value - bf.value) / bf.value * 100) else Json.null),
+            ("unit", Json.str f.unit)]
+        | none => Json.mkObj [("status", Json.str "new"), ("before", Json.null), ("after", toJson f.value),
+            ("unit", Json.str f.unit)]
+    let srcText := match source with
+      | .null => ""
+      | s => "\n".intercalate ((arr s "lines").toList.map fun l => s!"  {(num l "line").toUInt64}  {str l "text"}")
+    let causeText := "\n".intercalate (cause.toList.map fun c =>
+      s!"  cause{if (str c "cause").isEmpty then "" else s!" ({str c "cause"})"}: {str c "why"}" ++
+        (if (str c "fix").isEmpty then "" else s!"\n  fix: {str c "fix"}") ++ s!"\n  confidence: {str c "confidence"}")
+    let text := s!"[{f.id}] {f.title}{if f.pos.isEmpty then "" else s!"  ({f.pos})"}" ++
+      (if causeText.isEmpty then "" else "\n" ++ causeText) ++
+      (if srcText.isEmpty then "" else s!"\n{f.file}:\n{srcText}") ++
+      (if stale then s!"\nwarning: {f.file} changed after the report was written: these lines may not be the ones measured" else "") ++
+      (match beforeAfter with
+        | .null => ""
+        | ba => s!"\nbefore/after: {str ba "status"}, {ba.getObjValD "before"} -> {ba.getObjValD "after"} {f.unit}")
+    let warnings := if stale then #[Leanprof.Contract.errorJson "stale_source"
+        s!"{f.file} changed after the report was written: its lines may not be the ones measured"] else #[]
+    return toolResult name text (warnings := warnings) [("finding", f.compact (i + 1)), ("row", f.row), ("source", source),
+      ("cause", Json.arr cause), ("before_after", beforeAfter), ("stale", Json.bool stale)]
   | "hot" =>
     let path := argStr a "path" |>.getD ".lake/leanprof/report.json"
     let kind := argStr a "kind" |>.getD "scopes"
+    unless ["scopes", "copies", "allocations", "tasks", "waits"].contains kind do
+      toolFail "bad_argument" s!"unknown kind {kind}: use scopes, copies, allocations, tasks or waits"
     match ← readJson? (inDir cwd path) with
     | some j =>
-      let ls := hotLines j kind ((argNat a "limit").getD 10)
-      return textResult (if ls.isEmpty then s!"no {kind} in {path}" else "\n".intercalate ls.toList)
-    | none => return textResult s!"cannot read a report at {path}" true
+      let limit := (argNat a "limit").getD 10
+      let ls := hotLines j kind limit
+      let rows := hotRows j kind
+      return res (if ls.isEmpty then s!"no {kind} in {path}" else "\n".intercalate ls.toList)
+        [("kind", Json.str kind), ("rows", Json.arr (rows.extract 0 limit)), ("total", toJson rows.size),
+         ("truncated", Json.bool (rows.size > limit))]
+    | none => return errorResult name (Leanprof.Contract.errorJson "not_found" s!"cannot read a report at {path}")
   | "explain" =>
     let path := argStr a "path" |>.getD ".lake/leanprof/report.json"
     let filter := (argStr a "name").getD ""
@@ -922,49 +1468,63 @@ def callTool (name : String) (a : Json) : IO Json := do
         return textResult s!"{out}\n{tailText err 5}" (rc != 0)
       -- as `leanprof explain`: a sampled report has no copies and no call counts
       if bool j "sampled" then
-        return textResult (s!"{path} is from `leanprof sample`, which counts no copies or calls: " ++
-          "use the `run` tool, then explain its report") true
-      if num j "leanprof_live" > 0 then return textResult (explain j filter limit)
+        return errorResult name (Leanprof.Contract.errorJson "bad_argument"
+          s!"{path} is from `leanprof sample`, which counts no copies or calls: use the `run` tool, then explain its report")
+      if num j "leanprof_live" > 0 then return res (explain j filter limit) [("path", Json.str path), ("findings", Json.arr #[])]
       -- copies: the command's own diagnosis, from the IR next to the report
-      let (rc, out, err) ← runSelf #["explain", "--json", "--top", "1000", "--report", path] cwd
-      let copyLines ← match rc, Json.parse out with
-        | 0, .ok ej => pure (explainFindings ej filter limit)
-        | _, _ => pure #[s!"COPY  (leanprof explain failed: {tailText (out ++ err) 3})"]
-      return textResult (explain j filter limit (some copyLines))
-    | none => return textResult s!"cannot read a report at {path}" true
+      let r ← runSelf #["explain", "--json", "--top", "1000", "--report", path] cwd
+      let (copyLines, findings) ← match r.rc, Json.parse r.out with
+        | 0, .ok ej => pure (explainFindings ej filter limit,
+            (arr ej "findings").filter fun f => filter.isEmpty || ((str f "function").splitOn filter).length > 1)
+        | _, _ => pure (#[s!"COPY  (leanprof explain failed: {tailText (r.out ++ r.err) 3})"], #[])
+      return res (explain j filter limit (some copyLines)) [("path", Json.str path), ("findings", Json.arr findings)]
+    | none => return errorResult name (Leanprof.Contract.errorJson "not_found" s!"cannot read a report at {path}")
   | "static_copies" =>
     let mods := argStrs a "modules"
     for m in mods do notOption m
+    requireProject cwd
     let report ← match argStr a "report" with
       | some r => do notOption r; pure #["--report", r]
       | none => pure #[]
     let flags := [("deps", "--deps"), ("all", "--all"), ("no_build", "--no-build")].filterMap fun (k, f) =>
       if argBool a k then some f else none
-    let (rc, out, err) ← runSelf (#["explain", "--static", "--json"] ++ flags.toArray ++ report ++ mods) cwd
-    match rc, Json.parse out with
+    let r ← runSelf (#["explain", "--static", "--json"] ++ flags.toArray ++ report ++ mods) cwd
+    match r.rc, Json.parse r.out with
     | 0, .ok sj =>
-      return textResult ("\n".intercalate (staticFindings sj ((argStr a "name").getD "") ((argNat a "limit").getD 20)).toList)
-    | _, _ => return textResult s!"leanprof explain --static failed:\n{tailText (out ++ err) 15}" true
+      let filter := (argStr a "name").getD ""
+      let limit := (argNat a "limit").getD 20
+      let has (f : Json) (k : String) := ((str f k).splitOn filter).length > 1
+      let fs := (arr sj "flags").filter fun f => filter.isEmpty || has f "declaration" || has f "file"
+      return res ("\n".intercalate (staticFindings sj filter limit).toList)
+        [("flags", Json.arr (fs.extract 0 limit)), ("total", toJson fs.size), ("returned", toJson (min limit fs.size)),
+         ("truncated", Json.bool (fs.size > limit)), ("static", dropKey sj "flags")]
+    | _, _ =>
+      return errorResult name (r.errorJson "build_failed")
+        s!"leanprof explain --static failed:\n{tailText (r.out ++ r.err) 15}"
   | "compare" =>
-    let (some b, some n) := (argStr a "base", argStr a "new") | throw <| IO.userError "missing argument: base or new"
+    let (some b, some n) := (argStr a "base", argStr a "new") | toolFail "bad_argument" "missing argument: base or new"
     let thr := (argNat a "threshold").map (#["--threshold", toString ·]) |>.getD #[]
     for f in [b, n] do notOption f
-    let (rc, out, err) ← runSelf (#["compare"] ++ thr ++ #[b, n]) cwd
-    let verdict := if rc == 0 then "no regressions" else if rc == 1 then "REGRESSION" else "error"
-    return textResult s!"{verdict}\n{out}{err}" (rc > 1)
+    let r ← runSelf (#["compare"] ++ thr ++ #[b, n]) cwd
+    let verdict := if r.rc == 0 then "no regressions" else if r.rc == 1 then "REGRESSION" else "error"
+    let text := s!"{verdict}\n{r.out}{r.err}"
+    if r.rc > 1 then return errorResult name (r.errorJson) text
+    let cj := match ← runSelf (#["compare", "--json"] ++ thr ++ #[b, n]) cwd with
+      | x => (Json.parse x.out).toOption.getD Json.null
+    return res text [("regressed", Json.bool (r.rc == 1)), ("regressions", cj.getObjValD "regressions"), ("comparison", cj)]
   | "measure_pair" =>
     let (bins, sides) ← match argStr a "base", argStr a "candidate", argStr a "base_rev", argStr a "exe" with
       | some b, some c, none, none => pure ([b, c], #["--base", b, "--candidate", c])
       | none, none, some r, some e => pure ([], #["--base-rev", r, "--exe", e])
-      | _, _, _, _ => throw <| IO.userError "give base and candidate, or base_rev and exe"
+      | _, _, _, _ => toolFail "bad_argument" "give base and candidate, or base_rev and exe"
     let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/paired.json")
     -- Only what a Lake project built, run in a Lake project: the tool must not
     -- become a way to run any program, or to delete files (measure-pair
     -- removes the checked output file before each run).
     for bin in bins do
-      let real ← try IO.FS.realPath (inDir cwd bin) catch _ => throw <| IO.userError s!"no such binary: {bin}"
+      let real ← try IO.FS.realPath (inDir cwd bin) catch _ => toolFail "not_found" s!"no such binary: {bin}"
       unless (real.toString.splitOn "/.lake/build/bin/").length > 1 do
-        throw <| IO.userError s!"{bin} is not a binary built by Lake (.lake/build/bin/)"
+        toolFail "bad_argument" s!"{bin} is not a binary built by Lake (.lake/build/bin/)"
     -- the directories it really runs in: `base_cwd` and `candidate_cwd`
     -- default to `cwd` (itself the server's directory when not given),
     -- where the session is written too
@@ -972,29 +1532,37 @@ def callTool (name : String) (a : Json) : IO Json := do
     let dirs := [("cwd", top)] ++ ["base_cwd", "candidate_cwd"].map fun k =>
       (k, ((argStr a k).map fun d => (inDir cwd d).toString).getD top)
     for (k, d) in dirs do
-      unless ← isLakeProject d do throw <| IO.userError s!"{k} is not a Lake project: {d}"
+      unless ← isLakeProject d do toolFail "not_lake_project" s!"{k} is not a Lake project: {d}"
     if let some f := argStr a "check_output" then
       for (_, d) in dirs.drop 1 do discard <| projectPath (some d) "check_output" f
     let opt (k flag : String) := (argStr a k).map (#[flag, ·]) |>.getD #[]
     let num (k flag : String) := (argNat a k).map (#[flag, toString ·]) |>.getD #[]
     if argStr a "base_rev" |>.isSome then
       unless ← isLakeProject (inDir cwd ((argStr a "candidate_cwd").getD ".")) do
-        throw <| IO.userError "base_rev needs candidate_cwd (default the project) to be a Lake project"
-    let (rc, out, err) ← runSelf (#["measure-pair"] ++ sides ++ #["--out", outFile] ++
+        toolFail "not_lake_project" "base_rev needs candidate_cwd (default the project) to be a Lake project"
+    let r ← runSelf (#["measure-pair"] ++ sides ++ #["--out", outFile] ++
       opt "base_cwd" "--base-cwd" ++ opt "candidate_cwd" "--candidate-cwd" ++ opt "check_output" "--check-output" ++
       opt "min_change" "--min-change" ++ opt "scope" "--scope" ++ (if argBool a "fixed" then #["--fixed"] else #[]) ++
       num "runs" "--runs" ++ num "warmup" "--warmup" ++ #["--"] ++ argStrs a "args") cwd
-    return textResult s!"session {outFile}\n{out}\n{tailText err 10}" (rc != 0)
+    let text := s!"session {outFile}\n{r.out}\n{tailText r.err 10}"
+    if r.rc != 0 then return errorResult name (r.errorJson) text
+    let jr ← runSelf (#["judge", "--json"] ++ opt "min_change" "--min-change" ++ #[outFile]) cwd
+    let jj := (Json.parse jr.out).toOption.getD Json.null
+    let session := (← readJson? (inDir cwd outFile)).getD Json.null
+    return toolResult name text (warnings := overloadWarnings session)
+      ([("session", Json.str outFile), ("judge", jj)] ++ verdictFields jj)
   | "judge" =>
     let files ← match argStr a "pair", argStr a "base", argStr a "new" with
       | some p, none, none => pure #[p]
       | none, some b, some n => pure #[b, n]
-      | _, _, _ => throw <| IO.userError "give pair, or base and new"
+      | _, _, _ => toolFail "bad_argument" "give pair, or base and new"
     for f in files do notOption f
     let minChange := (argStr a "min_change").map (#["--min-change", ·]) |>.getD #[]
     let allow := if argBool a "allow_overloaded" then #["--allow-overloaded"] else #[]
-    let (rc, out, err) ← runSelf (#["judge"] ++ minChange ++ allow ++ files) cwd
-    return textResult s!"{out}{err}" (rc > 1)
+    let r ← runSelf (#["judge"] ++ minChange ++ allow ++ files) cwd
+    if r.rc > 1 then return errorResult name (r.errorJson) s!"{r.out}{r.err}"
+    let jj := (Json.parse (← runSelf (#["judge", "--json"] ++ minChange ++ allow ++ files) cwd).out).toOption.getD Json.null
+    return toolResult name s!"{r.out}{r.err}" (warnings := overloadWarnings jj) ([("judge", jj)] ++ verdictFields jj)
   | "experiment_start" | "experiment_try" | "experiment_finish" | "experiment_status" =>
     -- paths inside the project only (check_output files are deleted before
     -- each run); no shell command for tests: the project's Lake test driver
@@ -1006,7 +1574,7 @@ def callTool (name : String) (a : Json) : IO Json := do
     let opt (k f : String) : IO (Array String) := do
       match argStr a k with
       | some v =>
-        if v.startsWith "-" then throw <| IO.userError s!"{k} cannot start with -: {v}"
+        if v.startsWith "-" then toolFail "bad_argument" s!"{k} cannot start with -: {v}"
         return #[f, v]
       | none => return #[]
     let num (k f : String) := (argNat a k).map (#[f, toString ·]) |>.getD #[]
@@ -1014,7 +1582,7 @@ def callTool (name : String) (a : Json) : IO Json := do
       | "experiment_start" => do
         let mut xs := #["start"]
         if let some exe := argStr a "executable" then
-          if exe.startsWith "-" then throw <| IO.userError s!"not an executable name: {exe}"
+          if exe.startsWith "-" then toolFail "bad_argument" s!"not an executable name: {exe}"
           xs := xs ++ #["--exe", exe]
         for k in ["inputs", "cases", "heldout"] do
           if let some p ← inside k then xs := xs ++ #[s!"--{k}", p]
@@ -1028,7 +1596,7 @@ def callTool (name : String) (a : Json) : IO Json := do
       | "experiment_try" => do
         let rev ← match argStr a "rev" with
           | some r => do
-            if r.startsWith "-" then throw <| IO.userError s!"not a revision: {r}"
+            if r.startsWith "-" then toolFail "bad_argument" s!"not a revision: {r}"
             pure #[r]
           | none => pure #[]
         pure (#["try", "--json"] ++ rev ++ flag "working_tree" "--working-tree" ++ flag "time" "--time" ++
@@ -1036,28 +1604,67 @@ def callTool (name : String) (a : Json) : IO Json := do
           (match argStr a "message" with | some m => #["--message", m] | none => #[]) ++ (← opt "id" "--id"))
       | "experiment_finish" => pure (#["finish", "--json"] ++ flag "keep_worktrees" "--keep-worktrees" ++ (← opt "id" "--id"))
       | _ => pure (#["status", "--json"] ++ (← opt "id" "--id"))
-    let (rc, out, err) ← runSelf (#["experiment"] ++ args) cwd
-    let verdict := match name, rc with
+    requireProject cwd
+    let r ← runSelf (#["experiment"] ++ args) cwd
+    let verdict := match name, r.rc with
       | "experiment_try", 0 => "KEEP\n" | "experiment_try", 1 => "DISCARD\n"
       | "experiment_try", 3 => "INCONCLUSIVE\n" | "experiment_try", _ => "ERROR\n"
       | _, _ => ""
-    return textResult s!"{verdict}{out}\n{tailText err 10}" (rc == 2 || (name != "experiment_try" && rc != 0 && out.isEmpty))
+    let text := s!"{verdict}{r.out}\n{tailText r.err 10}"
+    let parsed := (Json.parse r.out).toOption
+    match name with
+    | "experiment_try" =>
+      match parsed with
+      | some ev => return toolResult name text ([("evidence", ev)] ++ verdictFields ev) (r.rc == 2)
+      | none => return errorResult name (r.errorJson) text
+    | "experiment_finish" =>
+      match parsed with
+      | some j => return res text [("result", j)]
+      | none => return errorResult name (r.errorJson) text
+    | "experiment_status" =>
+      match parsed with
+      | some j => return res text [("state", j)]
+      | none => return errorResult name (r.errorJson) text
+    | _ =>
+      if r.rc != 0 then return errorResult name (r.errorJson) text
+      let st := (Json.parse (← runSelf (#["experiment", "status", "--json"] ++ (← opt "id" "--id")) cwd).out).toOption.getD Json.null
+      return res text [("experiment", st.getObjValD "id"), ("state", st)]
   | "live" =>
     let path ← match argStr a "path", argStr a "pid" with
       | some p, _ => pure (inDir cwd p)
-      | none, some pid => livePathFor pid
-      | none, none => throw <| IO.userError "give pid or path"
+      | none, some pid =>
+        try livePathFor pid catch e => toolFail "bad_argument" (toString e)
+      | none, none => toolFail "bad_argument" "give pid or path"
     let some first ← readJson? path
-      | return textResult s!"no live snapshot at {path} (start the program with LEANPROF_LIVE=1)" true
+      | return errorResult name (Leanprof.Contract.errorJson "not_found" s!"no live snapshot at {path}"
+          "start the program with LEANPROF_LIVE=1 (or LEANPROF_LIVE=path)")
     if !bool first "exited" then IO.sleep ((min ((argNat a "seconds").getD 1) 60) * 1000).toUInt32
     let cur := (← readJson? path).getD first
     let prev := if num cur "seq" != num first "seq" then some first else none
-    return textResult ("\n".intercalate (render path.toString prev cur 220 60 (some 10)).toList)
+    let scopes := ((arr cur "scopes").qsort fun x y => num x "total_ns" > num y "total_ns").extract 0 10
+    return res ("\n".intercalate (render path.toString prev cur 220 60 (some 10)).toList)
+      [("path", Json.str path.toString), ("pid", cur.getObjValD "pid"), ("exited", Json.bool (bool cur "exited")),
+       ("seq", cur.getObjValD "seq"), ("scopes", Json.arr scopes)]
+  | "doctor" =>
+    let d := cwd.getD "."
+    unless ← (d : FilePath).isDir do toolFail "bad_argument" s!"cwd is not a directory: {d}"
+    let r ← runSelf #["doctor", "--json"] cwd
+    let some doc := (Json.parse r.out).toOption | return errorResult name (r.errorJson) s!"{r.out}{r.err}"
+    let lines := (arr doc "checks").map fun c =>
+      s!"  {if bool c "ok" then "ok " else "!! "} {str c "message"}" ++
+        (if bool c "ok" || (str c "fix").isEmpty then "" else s!"\n       {str c "fix"}")
+    let n := num doc "problems"
+    let text := "\n".intercalate (#["leanprof doctor"] ++ lines ++
+      #[s!"  elab driver: {str (obj doc "elab_driver") "status"}",
+        if n == 0 then "everything leanprof needs is here" else s!"{n.toUInt64} problem(s)"]).toList
+    return res text [("doctor", doc), ("ready", Json.bool (bool doc "ok")), ("modes", doc.getObjValD "modes"),
+      ("setup_failures", doc.getObjValD "setup_failures")]
   | "dump" =>
-    let some pid := argStr a "pid" | throw <| IO.userError "missing argument: pid"
+    let some pid := argStr a "pid" | toolFail "bad_argument" "missing argument: pid"
+    try checkPid pid catch e => toolFail "bad_argument" (toString e)
     let p ← dumpPid pid
-    return textResult s!"wrote {p} (Chrome trace format: open in https://ui.perfetto.dev)"
-  | _ => throw <| IO.userError s!"unknown tool {name}"
+    return res s!"wrote {p} (Chrome trace format: open in https://ui.perfetto.dev)" [("path", Json.str p)]
+  | _ => toolFail "bad_argument" s!"unknown tool {name}"
 
 def protocolVersions : List String := ["2025-06-18", "2025-03-26", "2024-11-05"]
 
@@ -1079,18 +1686,22 @@ def handle (msg : Json) : IO (Option Json) := do
     let v := if protocolVersions.contains asked then asked else protocolVersions.head!
     return some <| rpcResult id <| Json.mkObj [("protocolVersion", Json.str v),
       ("capabilities", Json.mkObj [("tools", Json.mkObj [])]),
-      ("serverInfo", Json.mkObj [("name", Json.str "leanprof"), ("version", Json.str "0.1.0")]),
+      ("serverInfo", Json.mkObj [("name", Json.str "leanprof"), ("version", Json.str Leanprof.Contract.leanprofVersion)]),
       ("instructions", Json.str ("leanprof profiles compiled Lean 4 programs. Run tools from the Lake project " ++
         "directory (or pass cwd). `run` builds with probes and summarizes; `hot` and `report` read the saved " ++
         "report; `compare` and `judge` decide whether a change regressed; `live` and `dump` look at a running " ++
-        "program started with LEANPROF_LIVE / LEANPROF_FLIGHT."))]
+        "program started with LEANPROF_LIVE / LEANPROF_FLIGHT. Every result has structuredContent (each tool's " ++
+        "outputSchema): `ok`, and on failure `error` with a `code`, whether it is `retryable` and a `hint`; " ++
+        "verdicts carry an `outcome` that tells a valid DISCARD from a failed measurement."))]
   | "ping" => return some (rpcResult id (Json.mkObj []))
   | "tools/list" => return some (rpcResult id (Json.mkObj [("tools", Json.arr tools)]))
   | "tools/call" =>
     let name := str params "name"
     unless tools.any (str · "name" == name) do
       return some (rpcError id (-32602) s!"unknown tool: {name}")
-    let r ← try callTool name (obj params "arguments") catch e => pure (textResult s!"leanprof: {e}" true)
+    let r ← try callTool name (obj params "arguments") catch e =>
+      let (code, msg) := decodeError e
+      pure (errorResult name (Leanprof.Contract.errorJson code msg))
     return some (rpcResult id r)
   | _ => return some (rpcError id (-32601) s!"method not found: {method}")
 

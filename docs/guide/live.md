@@ -172,6 +172,7 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 
 | tool | does |
 |---|---|
+| `doctor` | discovery, before anything else: the Lean version and whether it is supported, the project's executables, libraries and test driver, which modes work here and why not, samply and perf, each setup failure with its error code and fix (`leanprof doctor --json`; a few seconds, nothing of the project is built) |
 | `run` | build with probes (`auto`, `allocs`, `counters`, `frees`, `core`), run, summarize the report |
 | `sample` | samply: CPU per Lean declaration with file:line |
 | `stat` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks |
@@ -179,6 +180,8 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `measure` | repeated runs into one summary, for `judge` |
 | `measure_pair` | two prebuilt binaries run in alternating AB/BA order (no builds, no probes) into one paired session, for `judge` |
 | `report` | summary of a saved report or live snapshot |
+| `findings` | the findings of a report, compile-time report or live snapshot, costliest first, each with a stable id; filter by `kind`, `module` (and its submodules), `declaration` or `file`, page with `offset` and `limit` |
+| `finding` | one finding in full by its `id`: the report's row, the source lines, the cause with its confidence (for a copy, `leanprof explain`'s diagnosis and fix), and with `base` the value before and after |
 | `hot` | hottest scopes, copies, allocations, tasks or waits, with file:line |
 | `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted). On an `elab` report: why its costliest declarations are slow, as `elab --why` |
 | `static_copies` | likely copies across the whole package without running it, from the compiler's IR (`leanprof explain --static`): file:line, value, cause and fix, and what a run report said about each |
@@ -188,10 +191,81 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `live` | a running program's current state, with rates over `seconds` (it must run with `LEANPROF_LIVE`) |
 | `dump` | a running program's flight recorder as a Perfetto trace |
 
+### Structured results
+
+Every tool result has the text above for people and `structuredContent`
+for agents, which follows the `outputSchema` each tool declares in
+`tools/list`. It always has `ok` and `tool`; the rest is the tool's own:
+`run` the report's path, exit code, wall time and copies; `measure` the
+summary's path and its time, copy and allocation totals; `compare` the
+whole of `compare --json`; `judge` and `measure_pair` the verdict of
+`judge --json`, with its `outcome`, `measurement_valid` and `retryable`
+([verdict outcomes](reference.md#verdict-outcomes)); `experiment_try` the
+evidence; `hot` the section's rows as the report has them, with `total`
+and `truncated`. Agents do not need to parse the text.
+
+### Findings: a small answer first
+
+`run` and `report` return the five costliest findings of the report (and
+`report` `top` of them), `findings` returns a page of them, and `finding`
+one in full, so an agent never has to read a whole report. Each finding
+has an `id` made of its kind and a hash of what names the site (a scope's
+name and position; a copy site's function, kind, scope and position; a
+declaration's key), not of its numbers: the same site has the same id in
+the next report of the same code, which is how `finding` with `base`
+finds the value before a change.
+
+```json
+{"id": "copy-31d8f61864", "rank": 1, "kind": "copy",
+ "title": "1,999 copies of a shared Array (15.3 MiB, 3.2 ms) in buildWithHistory (in Std.Legacy.Range.forIn'.loop)",
+ "metric": "copies", "value": 1999, "unit": "copies", "cost_ns": 3176842,
+ "pos": "Examples/CopyBug.lean:17", "file": "Examples/CopyBug.lean", "line": 17,
+ "module": "Examples.CopyBug", "name": "buildWithHistory (in Std.Legacy.Range.forIn'.loop)", "scope": "buildWithHistory"}
+```
+
+Findings are ranked by time across kinds (a scope's own time, a copy
+site's time copying, an allocation site's estimated time, blocked time,
+time tasks waited to start); counts without a time (failed reuse,
+closure calls, heartbeats) come after, by count. Kinds: `scope`, `copy`,
+`allocation`, `wait`, `task`, `reuse`, `closure` in run reports and live
+snapshots, `declaration`, `term` and `tactic` in compile-time reports.
+Copies of empty or tiny values are left out, as in `run`'s report.
+
+A page says what it left out: `total` findings matched, `returned`,
+`truncated` and `next_offset`. When a tool's text is cut at 30,000
+characters, `text_truncated` says so; the structured content is not cut.
+`finding` warns (`stale_source`) when the source file changed after the
+report was written, since its lines may then not be the ones measured.
+
+A call that fails has `isError: true`, `ok: false` and an `error`:
+
+```json
+{"ok": false, "tool": "run",
+ "error": {"code": "build_failed", "retryable": false,
+           "message": "`lake build nosuchexe` with leanprof's probes failed (exit code 1)",
+           "hint": "the project does not build: fix the error in the message (`lake build EXE` shows it), then call again"}}
+```
+
+| `code` | when | retryable |
+|---|---|---|
+| `not_lake_project` | `cwd` (or a working directory) has no `lakefile.lean` or `lakefile.toml` | no |
+| `build_failed` | the project, or the instrumented build, does not build | no |
+| `lean_not_found` | `lake` or `lean` is not on the server's `PATH` | no |
+| `samply_missing` | `sample` without samply | no |
+| `overloaded` | the machine ran more jobs than CPUs while measuring: time not judged (a warning in `warnings`, with the verdict's outcome `insufficient_evidence`) | yes |
+| `bad_argument` | an argument is missing, malformed, outside the project, or an option where a file belongs | no |
+| `not_found` | a report, summary or snapshot that does not exist | no |
+| `failed` | anything else; the message has the command's last output | no |
+
+The commands report these too: with `LEANPROF_ERROR_JSON=FILE`, a command
+that fails writes its error to FILE (`schemas/error.schema.json`).
+
 CI runs a scripted session against it ([`scripts/mcp-check.py`](../../scripts/mcp-check.py)):
 two `run`s of `copybug`, `report`, `hot`, `explain`, `compare` both ways,
 `measure` and `judge`, `measure_pair` and a paired `judge`, `live` and `dump` on a running `server`, an
-experiment on a copy of `Tests/Experiment` (start, a KEEP, status, finish), and the error cases.
+experiment on a copy of `Tests/Experiment` (start, a KEEP, status, finish), and the error cases. Every
+result is validated against its tool's `outputSchema`, and each error kind above except `failed` is
+produced and checked.
 
 ## Overhead
 
