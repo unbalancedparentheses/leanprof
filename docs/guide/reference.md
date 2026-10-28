@@ -13,6 +13,7 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--json F] [--cwd DIR] EXE [-- ARGS]` | sample with samply (`--out`: samply's profile), report per Lean declaration (`--json`: a copy of the report); exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
 | `elab [--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [--since-last [--keep-base]] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)); `--why`: the causes of the costliest declarations and what to try; `--max-heartbeats N`: every declaration above N thousand heartbeats, exit 1 if any |
+| `build-memory [--mem-limit SIZE] [--max-memory SIZE] [--jobs N] [--clean] [--no-imports] [--decls N] [--top N] [--out F] [--no-sample] [--log F] [FILE.lean…] [-- TARGETS…]` | peak memory of each module's `lean` in a real `lake build` (resident set, private memory, imports apart), modules running together, the most jobs under a limit, a per-module budget (exit 1 above `--max-memory`), memory per command of a serial run ([memory of compilation](compile-time.md#memory-of-compilation)) |
 | `compare [--threshold PCT] [--min-ms MS] [--explain F] [--json] BASE.json NEW.json` | exit 1 on regressions; `--json` prints the comparison as JSON |
 | `measure [--runs N] [--scope NAME] [--heartbeats-files F…] [--check-output F] [--ignore-lines TEXT…] [--no-allocs] [--core] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time of the process or, with `--scope`, of one `profile!` scope, output; `self_check_warning`, empty unless copies may be undercounted) |
 | `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output F] [--ignore-lines TEXT…] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries until the time verdict is settled (at most N pairs, default 30); `--scope` times one `Leanprof.bench` region; `--ignore-lines TEXT` leaves stdout's lines containing TEXT out of the output hash (in `measure` too: a benchmark's own timings); no builds or added probes |
@@ -104,6 +105,7 @@ describes it:
 | `run` | `run --json`, `stat --json`, `sample`, `LEANPROF_JSON` (`report.json`) |
 | `live` | `LEANPROF_LIVE` snapshots |
 | `elab` | `elab` (`elab.json`, `--out`) |
+| `build-memory` | `build-memory` (`build-memory.json`, `--out`; checked by `scripts/build-memory-check.sh`) |
 | `measure` | `measure` (`measure.json`) |
 | `measure-pair` | `measure-pair` (`paired.json`) |
 | `judge` | `judge --json` |
@@ -271,6 +273,39 @@ costliest functions: `name`, `ns`). Compile reports from `elab` have
 
 Compile reports also have `kinds`: self cost per operation kind (`class`,
 `total`), for `leanprof html`.
+
+## Build memory report
+
+`build-memory.json` has `schema` (`leanprof.build-memory`), `provenance`,
+`"kind": "build-memory"`, `version` (1), `platform`,
+`cpus`, `jobs` (`--jobs`, or null), `build_exit` (Lake's exit code),
+`max_concurrent` (the most `lean` processes running together), and:
+
+- `modules`, heaviest first: `module`, `file`, `peak_rss` (bytes),
+  `private_peak` (macOS: the physical footprint's peak; Linux: the largest
+  `RssAnon` read every 20 ms; null when unknown), `private_sampled`,
+  `imports_rss` and `imports_private` (`lean` on the header alone; null with
+  `--no-imports`), `own_rss` and `own_private` (the peak minus the imports'),
+  `wall_ms`, `cpu_ms`, `exit`, `start_ms`, `end_ms` (wall clock);
+- `concurrent_peak`: `sum_of_peaks`, the largest sum of the peaks of the
+  modules running at one moment, and those `modules`;
+- `sampled` (null with `--no-sample`): `rss_sum` and `private_sum_plus_shared`,
+  the largest of the sums taken every 0.2 s, the files running then
+  (`rss_files`, `private_files`), and `samples`;
+- `mem_limit` (with `--mem-limit`): `limit`, `safe_jobs` and
+  `largest_rss_sum` (the bound), `estimated_jobs`, `estimated_sum` and
+  `largest_shared` (the estimate with shared pages counted once), `near`
+  (modules above 75% of the limit);
+- `budget` (with `--max-memory`): `limit`, `over` (`module`, `peak_rss`);
+- `declarations` (with `--decls` or files): per module, `module`, `file`,
+  `imports_rss`, `imports_private`, `peak_rss`, `private_peak`, `error`, and
+  `commands`: `line`, `end_line`, `name`, `text`, `heartbeats`,
+  `rss_before`, `rss_after`, `peak_rise`, `peak_after`, `private_before`,
+  `private_after`, `private_peak_rise`.
+
+The wrapper's own records (one JSON line per `lean` process, see
+`c/leanwrap.c`) are kept in `.lake/leanprof/build-memory/lean.jsonl`;
+`--log FILE` reads such a file again without building.
 
 ## Measure summary
 

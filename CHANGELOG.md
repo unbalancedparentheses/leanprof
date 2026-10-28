@@ -6,6 +6,33 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Memory of compilation
+
+- `leanprof build-memory`: runs a real `lake build` in which every `lean`
+  process is started by a small C wrapper (`c/leanwrap.c`, reached through
+  `LEAN_SYSROOT` and `LAKE_OVERRIDE_LEAN`), and reports each module's peak
+  resident set and private memory (macOS: the physical footprint's peak;
+  Linux: `RssAnon`, read every 20 ms), CPU and wall time. The imports are
+  measured apart (`lean` on the module's header alone); the rest of the
+  peak is shown as the module's own, approximately. It names the modules
+  running together when their peaks added up to the most, and adds up the
+  running processes' memory every 0.2 s during the build.
+- `--mem-limit SIZE`: modules above 75% of it, and the most jobs whose
+  largest peaks add up to at most the limit (a bound), with an estimate that
+  counts shared `.olean` pages once. `--jobs N` runs Lake with N jobs
+  (`LEAN_NUM_THREADS` for Lake only) to check a number.
+- `--max-memory SIZE`: exit 1 when a module's peak is above it, for CI.
+- `--decls N` (or files): the heaviest modules elaborated serially in
+  `leanprof-elab-driver --memory` (`Elab.async` off), with the process's
+  memory and heartbeats around each command; the report names the commands
+  during which the peak rose, labeled approximate.
+- `build-memory.json` (`schemas/build-memory.schema.json`), a Build memory tab in `leanprof html`, and the MCP
+  tool `build_memory`. `scripts/build-memory-check.sh` runs it on a real
+  build in CI, on every supported Lean.
+- Measured on Batteries, leanprof and a project using Mathlib: within 1%
+  (resident set) and 3% (footprint) of `/usr/bin/time -l`
+  ([case study](docs/case-studies/build-memory.md)).
+
 ### Retained memory
 
 - `leanprof run --retained` follows every object compiled Lean code

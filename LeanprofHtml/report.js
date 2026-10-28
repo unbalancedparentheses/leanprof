@@ -1026,6 +1026,33 @@ if (meas) addTab("measure", "Measure", null, () => {
     arr(d, "heartbeats").length ? panel("Heartbeats per declaration", null, table(arr(d, "heartbeats"), [col("declaration", "key", null, { wrap: true }), ncol("heartbeats", "heartbeats", fHB, { bar: true })])) : null];
 });
 
+// ---------- the memory of a build (leanprof build-memory) ----------
+const bmem = by["build-memory"] && by["build-memory"].cur;
+if (bmem) addTab("build-memory", "Build memory", arr(bmem.data, "modules").length, () => {
+  const d = bmem.data, ms = arr(d, "modules"), cp = d.concurrent_peak || {}, sm = d.sampled, lim = d.mem_limit, bud = d.budget;
+  const kv = (rows) => h("div", { class: "kv" }, rows.flatMap(([k, v]) => [h("div", null, k), h("div", null, v)]));
+  const priv = d.platform === "macOS" ? "footprint" : "anonymous";
+  const bOpt = (k) => (v, r) => (r[k] == null ? "–" : fBytes(v));
+  const rows = [["modules compiled", fN(ms.length) + (d.build_exit ? " (the build failed, exit code " + d.build_exit + ")" : "")],
+    ["at most at a time", fN(num(d, "max_concurrent")) + (d.jobs ? " (--jobs " + d.jobs + ")" : "") + " on " + d.cpus + " CPUs, " + d.platform],
+    ["peaks of the modules running together, added up", fBytes(num(cp, "sum_of_peaks")) + " (" + arr(cp, "modules").join(", ") + ")"]];
+  if (sm) rows.push(["sampled while the build ran", "resident sets added up: " + fBytes(num(sm, "rss_sum")) + "; private memory added up, plus the largest shared part once: " + fBytes(num(sm, "private_sum_plus_shared")) + " (" + fN(num(sm, "samples")) + " samples)"]);
+  if (lim) rows.push(["memory limit " + fBytes(num(lim, "limit")), "at most " + num(lim, "safe_jobs") + " jobs: the largest resident peaks add up to " + fBytes(num(lim, "largest_rss_sum")) +
+    (lim.estimated_jobs != null ? "; with shared .olean pages counted once (an estimate): " + lim.estimated_jobs + " jobs" : "") + (arr(lim, "near").length ? "; near the limit: " + arr(lim, "near").join(", ") : "")]);
+  if (bud) rows.push(["budget per module " + fBytes(num(bud, "limit")), arr(bud, "over").length ? arr(bud, "over").map((o) => o.module + " (" + fBytes(num(o, "peak_rss")) + ")").join(", ") : "no module above it"]);
+  const out = [panel("Summary", "From " + bmem.path + " (leanprof build-memory): the peak memory of each `lean` process of a real lake build.", kv(rows)),
+    panel("Modules", "peak RSS: resident set, with the pages of mapped .olean files, which processes share; " + priv + ": private memory; imports: `lean` on the module's header alone (the environment after its imports); own: the rest of the peak, approximately the module's own elaboration.",
+      table(ms, [col("module", "module", null, { wrap: true }), ncol("peak RSS", "peak_rss", fBytes, { bar: true }), ncol(priv, "private_peak", bOpt("private_peak")),
+        ncol("imports", "imports_rss", bOpt("imports_rss")), ncol("own", "own_rss", bOpt("own_rss")), ncol("wall", "wall_ms", (v) => fNs(v * 1e6))], { what: "modules" }))];
+  for (const s of arr(d, "declarations")) {
+    out.push(panel(s.module + ": memory per command", "Elaborated serially (one command at a time, no parallel proofs). Peak rise: how much the process's peak rose while the command ran: when memory was reached, not memory the command owns. " +
+      (s.error ? "Not measured: " + s.error : "After the imports: " + fBytes(num(s, "imports_rss")) + " resident; peak of the run: " + fBytes(num(s, "peak_rss")) + "."),
+      table(arr(s, "commands").map((c) => Object.assign({ pos: s.file + ":" + c.line }, c)), [pcol("line", "pos"), col("command", "name", (v, r) => v || r.text, { wrap: true }),
+        ncol("peak rise", "peak_rise", fBytes, { bar: true }), ncol("resident after", "rss_after", fBytes), ncol("heartbeats", "heartbeats", fHB)], { what: "commands" })));
+  }
+  return out;
+});
+
 const filesWithSource = Object.keys(sources);
 if (filesWithSource.length) addTab("source", "Source", filesWithSource.length, () => {
   const order = filesWithSource.map((f) => /** @type {[string, number]} */ ([f, [...hints.keys()].filter((p) => splitPos(p)[0] === f).length])).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));

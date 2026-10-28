@@ -423,6 +423,83 @@ def run (a : Args) : IO UInt32 := do
       ("data", Json.str s!"leanprof-range {kind}")]).compress
   return if ← errors.get then 1 else 0
 
+/-! ## Memory per command (`--memory`)
+
+`leanprof build-memory --decls` elaborates a file serially (`Elab.async` off, one
+command at a time, each command's proofs and kernel checks finished before the
+next starts) and reads the process's memory between commands (`c/memstat.c`).
+With nothing else running in the process, a rise of the process's peak during
+a command happened while that command was elaborated. It does not say the
+command owns that memory: the peak includes the imported environment and
+everything earlier commands left behind, and memory the allocator keeps after a
+free still counts as resident. Output: one JSON line after the imports, then one
+per command. -/
+
+@[extern "leanprof_mem_stat"]
+opaque memStat (which : UInt32) : IO Nat
+
+/-- The process's memory and Lean's heartbeat counter, at one moment. -/
+def memSample (tag : String) : IO (List (String × Json)) := do
+  let hb ← IO.getNumHeartbeats
+  return [(s!"rss_{tag}", toJson (← memStat 0)), (s!"peak_{tag}", toJson (← memStat 1)),
+    (s!"private_{tag}", toJson (← memStat 2)), (s!"private_peak_{tag}", toJson (← memStat 3)),
+    (s!"heartbeats_{tag}", toJson hb)]
+
+/-- The name a command declares, if any. -/
+def declaredName (stx : Syntax) : String :=
+  match stx.find? (·.isOfKind ``Parser.Command.declId) with
+  | some d => d[0].getId.toString
+  | none => ""
+
+def memoryRun (a : Args) : IO UInt32 := do
+  initSearchPath (← findSysroot)
+  unsafe enableInitializersExecution
+  let input ← IO.FS.readFile a.file
+  let inputCtx := Parser.mkInputContext input a.file
+  let setup? ← a.setup.mapM ModuleSetup.load
+  let mainModule ← match setup? with
+    | some s => pure s.name
+    | none => try moduleNameOfFileName a.file none catch _ => pure `_stdin
+  let start ← memSample "start"
+  let mut opts : Options := {}
+  if let some s := setup? then opts := opts.mergeBy (fun _ _ v => v) s.options.toOptions
+  -- serial: each command, with its proofs, finished before the next
+  opts := Elab.async.set opts false
+  if let some s := setup? then s.dynlibs.forM Lean.loadDynlib
+  let (header, parserState, msgs) ← Parser.parseHeader inputCtx
+  let header : HeaderSyntax := header
+  let (env, msgs) ← loadHeader header (setup?.bind (·.imports?) |>.getD header.imports)
+    (setup?.any (·.isModule) || header.isModule) opts msgs inputCtx (believerTrustLevel () + 1) setup? mainModule
+  if msgs.hasErrors then
+    for m in msgs.toList do IO.eprintln (← m.toString)
+    return 3
+  IO.println (Json.mkObj ([("imports", Json.bool true)] ++ start ++ (← memSample "after"))).compress
+  let opts' ← Language.Lean.reparseOptions opts
+  let cmdState := { Command.mkState env msgs opts' with infoState.enabled := true }
+  let mut st : Frontend.State := { commandState := cmdState, parserState, cmdPos := parserState.pos }
+  let mut i := 0
+  repeat
+    let before ← memSample "before"
+    let (done, st') ← (Frontend.processCommand { inputCtx }).run st
+    -- the kernel's checks of what the command declared
+    let _ ← IO.wait st'.commandState.env.checked
+    let after ← memSample "after"
+    if let some cmd := st'.commands.back? then
+      if let some p := cmd.getPos? then
+        let e := (cmd.getTailPos?).getD p
+        let line := (inputCtx.fileMap.toPosition p).line
+        let text := ((String.Pos.Raw.extract input p e).splitOn "\n").headD ""
+        IO.println (Json.mkObj ([("command", toJson i), ("line", toJson line),
+          ("end_line", toJson (inputCtx.fileMap.toPosition e).line), ("name", Json.str (declaredName cmd)),
+          ("text", Json.str (String.ofList (text.toList.take 100)))] ++ before ++ after)).compress
+    i := i + 1
+    st := { st' with commands := #[] }
+    if done then break
+  let log := st.commandState.messages
+  for m in log.toList do
+    if m.severity == .error then IO.eprintln (← m.toString)
+  return if log.hasErrors then 1 else 0
+
 /-! ## Where constants are declared
 
 `leanprof elab` looks the constants behind the work up in the environment of the
@@ -498,6 +575,10 @@ def main (args : List String) : IO UInt32 := do
     return 0
   if let ["--locate", request] := args then
     return ← Leanprof.ElabDriver.locate request
+  if let "--memory" :: rest := args then
+    match Leanprof.ElabDriver.parseArgs {} rest with
+    | .ok a => return ← Leanprof.ElabDriver.memoryRun a
+    | .error e => IO.eprintln s!"leanprof-elab-driver: {e}"; return 2
   match Leanprof.ElabDriver.parseArgs {} args with
   | .error e =>
     IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--why] [--threshold N] [--setup FILE] FILE.lean"
