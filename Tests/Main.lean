@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.StaticCopies
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.ElabWhy import Tests.StaticCopies
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -889,7 +889,9 @@ def main (args : List String) : IO UInt32 := do
     let _ ← IO.lazyPure fun _ => wrapLoop k (2 * 65536)
     let _ ← IO.lazyPure fun _ => wrapParent 60000
     return 0
-  let ((), failures) ← (do tests; contractTests; experimentTests).run 0
+  let compileTime : StateT Nat IO Unit := do
+    for (name, ok, detail) in Tests.ElabWhy.cases do check name ok detail
+  let ((), failures) ← (do tests; contractTests; experimentTests; compileTime).run 0
   if failures == 0 then
     IO.println "all tests passed"
     return 0

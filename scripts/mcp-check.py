@@ -206,6 +206,15 @@ check("report: a missing report is not_found, with a hint", err and code() == "n
 text, err = tool("run", executable="nosuchexe")
 check("run: an executable the project does not have is build_failed", err and code() == "build_failed", last)
 
+# compile time: why the costliest declarations are slow, and a heartbeat budget
+text, err = tool("elab", files=["Examples/ElabHeavy.lean"], heartbeats=True, why=True, top=5)
+check("elab why", not err and "why the costliest declarations are slow" in text and "observed" in text
+      and "suggested" in text, text)
+text, err = tool("explain", path=".lake/leanprof/elab.json", limit=3)
+check("explain on an elab report", not err and "compile-time report" in text and "observed" in text, text)
+text, err = tool("elab", files=["Examples/ElabHeavy.lean"], max_heartbeats=1, top=3)
+check("elab max_heartbeats", not err and text.startswith("OVER BUDGET") and "heartbeat budget:" in text, text)
+
 text, err = tool("compare", base=".lake/leanprof/mcp-small.json", new=".lake/leanprof/mcp-small.json")
 check("compare (same)", not err and text.startswith("no regressions"), text)
 text, err = tool("compare", base=".lake/leanprof/mcp-small.json", new=".lake/leanprof/mcp-large.json")

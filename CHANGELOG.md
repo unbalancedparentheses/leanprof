@@ -67,6 +67,34 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ### Added
 
+- `leanprof elab --why`: for the costliest declarations, the causes the
+  profile shows and a change to try, observed facts and suggestions kept
+  apart. Causes: a costly `simp` (with Lean's own `simp only [...]` list for
+  each call, from `tactic.simp.trace`), a termination measure Lean searched
+  for (`decreasing_tactic` run once per measure tried, with the measure it
+  found, from `showInferredTerminationBy`), definitions `isDefEq` or `whnf`
+  unfolded, instance searches that failed (new in `elab.json`:
+  `instances_failed` per declaration), costly instances, `decide` (with
+  `decide +kernel` or `rfl`, and why `native_decide` is not a fix), the
+  kernel, repeated work and `grind`. Also `leanprof explain --elab` (or
+  `--report` an elab report), `--json`, and over MCP (`elab` with `why`,
+  `explain` on an elab report). `elab.json` gains `simp_suggestions` and
+  `termination_suggestions`.
+- `leanprof elab --max-heartbeats N`: every declaration above N thousand
+  heartbeats (`maxHeartbeats`' unit), exit 1 if there is one; in
+  `elab.json` as `budget`. `report-md --max-heartbeats N`, the Action's
+  `max-heartbeats` input and the MCP `elab` tool's `max_heartbeats` do the
+  same in CI.
+- `leanprof fix --elab [FILE.lean...]`: applies the mechanical edits `--why`
+  finds (`simp` → Lean's `simp only` list; Lean's inferred `termination_by`
+  after a recursive declaration) as one commit, judged by `leanprof
+  experiment`: build, proof-preservation guard, tests, heartbeats of the
+  changed modules and their dependents. Edits whose file no longer builds or
+  whose declaration got dearer are dropped and the rest tried again. A KEEP
+  is a commit with the evidence on a new local branch; the checkout is not
+  touched. `scripts/experiment-check.sh` runs it on `Tests/FixElab`.
+- [Case study](docs/case-studies/compile-time-fixes.md): Batteries and
+  Mathlib, heartbeats before and after.
 - `leanprof explain --static [MODULE...]`: likely copies of shared arrays and
   strings across a whole package, libraries included, without running
   anything, from the C Lake keeps in `.lake/build/ir`. Each flag gives
@@ -78,10 +106,39 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   hints and by the MCP tool `static_copies`. It replaces the prototype
   scripts in `scripts/static-copies` ([guide](docs/guide/static-copies.md)).
 
+### Changed
+
+- `judge` and `experiment` keep a change that makes some declarations
+  cheaper by more than 1% and 1,000 heartbeats each and none dearer, even
+  when that is less than 1% of a large module's total.
+- The proof-preservation auditor records symbolic links other than Lean
+  sources by their target instead of refusing the project (Batteries has
+  one), and imports modules one at a time when they cannot be imported
+  together (Batteries' test modules).
+
 ### Fixed
 
+- `elab --why` set `tactic.simp.trace` for whole files, and Lean 4.35 then
+  stopped at a `simpa` with an antiquotation (`simpa using congr($h + 1)`:
+  "Unknown constant `term.pseudo.antiquot`"), so two Mathlib profiles were
+  cut short. The driver now sets it per `simp` call and leaves it off for
+  such calls (without the driver, `--why` has no `simp only` lists).
+- An incomplete profile is never an improvement: `elab.json` has
+  `complete`; `experiment` (and `fix --elab`) returns INCONCLUSIVE when a
+  heartbeat profile stops at an error; `measure --heartbeats-files` records
+  `heartbeats_complete` and `judge` does not compare incomplete heartbeats.
+- `experiment` timed only the first case while checking all of them, and
+  did not say so. Each verdict now says which case was timed, and `start
+  --time-all-cases` (MCP: `time_all_cases`) times every case: slower on any
+  is a DISCARD.
+- `elab` takes the name a declaration declares from the source: a doc
+  comment and `set_option ... in` before a long name could push it past the
+  200-character description, and six of Mathlib's `def
+  UniversalCoprimeFactorizationRing.…` were one key (`UniversalCo`) to
+  `compare` and `experiment`.
 - `explain` read the last parameter of a C function wrongly on Lean before
   4.30 (`x_5)`), which hid causes found through parameters.
+
 
 ## [0.1.0] - 2026-10-26
 

@@ -176,14 +176,14 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `run` | build with probes (`auto`, `allocs`, `counters`, `frees`, `core`), run, summarize the report |
 | `sample` | samply: CPU per Lean declaration with file:line |
 | `stat` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks |
-| `elab` | compile cost per line and declaration, or exact heartbeats |
+| `elab` | compile cost per line and declaration, or exact heartbeats; `why`: the causes of the costliest declarations, observed and suggested apart, with Lean's own `simp only` lists and inferred termination measures; `max_heartbeats`: every declaration above a budget (`OVER BUDGET`) |
 | `measure` | repeated runs into one summary, for `judge` |
 | `measure_pair` | two prebuilt binaries run in alternating AB/BA order (no builds, no probes) into one paired session, for `judge` |
 | `report` | summary of a saved report or live snapshot |
 | `findings` | the findings of a report, compile-time report or live snapshot, costliest first, each with a stable id; filter by `kind`, `module` (and its submodules), `declaration` or `file`, page with `offset` and `limit` |
 | `finding` | one finding in full by its `id`: the report's row, the source lines, the cause with its confidence (for a copy, `leanprof explain`'s diagnosis and fix), and with `base` the value before and after |
 | `hot` | hottest scopes, copies, allocations, tasks or waits, with file:line |
-| `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted) |
+| `explain` | why each costly copy happens and its fix, from the compiler's IR as `leanprof explain` gives them (in a live snapshot, which has no symbols, the usual causes); where each scope's time goes, task groups, failed reuse and closure calls. Refuses sampled reports (no copies or calls counted). On an `elab` report: why its costliest declarations are slow, as `elab --why` |
 | `static_copies` | likely copies across the whole package without running it, from the compiler's IR (`leanprof explain --static`): file:line, value, cause and fix, and what a run report said about each |
 | `compare` | regressions between two reports (exact for copies and calls) |
 | `judge` | KEEP or DISCARD from two `measure` summaries (`base`, `new`) or one paired session (`pair`); `min_change` in percent |

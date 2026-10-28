@@ -938,10 +938,17 @@ def tools : Array Json := #[
     (exeProps ++ [("top", nProp "declarations shown (default 15)")]) ["executable"] runOut,
   tool "stat" "One-screen summary of a run: wall/CPU time, peak memory, allocations, copies, frees, tasks, top scopes."
     exeProps ["executable"] runOut,
-  tool "elab" "Compile cost per line and declaration of Lean files (elaboration, kernel, compiler), optionally in exact heartbeats."
+  tool "elab" ("Compile cost per line and declaration of Lean files (elaboration, kernel, compiler), optionally in " ++
+    "exact heartbeats. With why: for the costliest declarations, the causes the profile shows (a costly simp, " ++
+    "definitions unfolded, instance searches that fail, decide, the kernel, repeated work), each with what was " ++
+    "observed and a change to try, among them Lean's own `simp only [...]` list for each simp. With max_heartbeats: " ++
+    "every declaration above that budget (maxHeartbeats' unit, 1,000 heartbeats), an error if there is one.")
     [("files", aProp "Lean files"), ("heartbeats", bProp "count heartbeats (deterministic) instead of time"),
+     ("why", bProp "explain the costliest declarations and record Lean's simp only list for each simp"),
+     ("max_heartbeats", nProp "list every declaration above this many thousand heartbeats (implies heartbeats)"),
      ("top", nProp "lines shown")] ["files"]
-    [("exit_code", nProp "the command's exit code"), ("report", sProp "the report written (schemas/elab.schema.json)")],
+    [("exit_code", nProp "the command's exit code"), ("report", sProp "the report written (schemas/elab.schema.json)"),
+     ("over_budget", bProp "declarations above max_heartbeats (listed in the text)")],
   tool "measure" "Run an executable several times with probes into one summary, for judge."
     (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)"),
       ("core", bProp "also count copies and allocations inside Lean's own libraries")])
@@ -985,7 +992,9 @@ def tools : Array Json := #[
   tool "explain" ("Explain the costliest findings of a run report or live snapshot: why each copy of a shared value " ++
     "happens and how to fix it (for a report, `leanprof explain`'s diagnosis from the compiler's IR, with the fix " ++
     "in the program's own names), where a scope's time goes (own or nested), tail latency, allocations per call, " ++
-    "task granularity, failed reuse and closure calls. Not for sampled reports (they count no copies or calls).")
+    "task granularity, failed reuse and closure calls. Not for sampled reports (they count no copies or calls). " ++
+    "On an elab report (.lake/leanprof/elab.json): why the costliest declarations are slow to compile, observed " ++
+    "causes kept apart from suggested changes.")
     [("path", sProp "report or live snapshot (default .lake/leanprof/report.json)"),
      ("name", sProp "only findings whose function, scope or name contains this"), ("limit", nProp "findings per kind (default 5)")] []
     [("path", sProp "the report read"), ("findings", aoProp "explain's copy findings (schemas/explain.schema.json)")],
@@ -1042,6 +1051,7 @@ def tools : Array Json := #[
       ("no_test", bProp "run no tests even if the project has a Lake test driver"),
       ("runs", nProp "measure runs (default 3)"), ("pairs", nProp "most measure-pair pairs (default 30)"),
       ("min_change", sProp "smallest time change in percent that counts (default 1)"),
+      ("time_all_cases", bProp "time every case in pairs, not only the workload (the first case)"),
       ("base", sProp "the base revision (default HEAD)"), ("id", sProp "experiment id (default: the time)")]) []
     [("experiment", sProp "the experiment's id"), ("state", oProp "experiment status --json (schemas/experiment-status.schema.json)")],
   tool "experiment_try" ("Try one candidate in its own git worktree: build, proof-preservation guard (sorry, axioms, " ++
@@ -1318,12 +1328,17 @@ def callTool (name : String) (a : Json) : IO Json := do
     if files.isEmpty then toolFail "bad_argument" "missing argument: files"
     -- `leanprof elab` reads options anywhere among its files (`--out F`)
     for f in files do notOption f
+    let budget := (argNat a "max_heartbeats").map (#["--max-heartbeats", toString ·]) |>.getD #[]
     requireProject cwd
     let r ← runSelf (#["elab"] ++ (if argBool a "heartbeats" then #["--heartbeats"] else #[]) ++
+      (if argBool a "why" then #["--why"] else #[]) ++ budget ++
       #["--top", toString ((argNat a "top").getD 15)] ++ files) cwd
-    if r.rc != 0 then
+    -- exit code 1 with a budget: declarations above it (listed), not a failure to run
+    let overBudget := r.rc == 1 && !budget.isEmpty && (r.out.splitOn "heartbeat budget:").length > 1
+    if r.rc != 0 && !overBudget then
       return errorResult name (r.errorJson) s!"{r.out}\n{tailText r.err 10}" [("exit_code", toJson r.rc.toNat)]
-    return res s!"{r.out}\n{tailText r.err 10}" [("exit_code", toJson r.rc.toNat), ("report", Json.str ".lake/leanprof/elab.json")]
+    return res s!"{if overBudget then "OVER BUDGET\n" else ""}{r.out}\n{tailText r.err 10}"
+      [("exit_code", toJson r.rc.toNat), ("report", Json.str ".lake/leanprof/elab.json"), ("over_budget", Json.bool overBudget)]
   | "measure" =>
     let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let args ← exeArgs
@@ -1446,6 +1461,11 @@ def callTool (name : String) (a : Json) : IO Json := do
     let limit := (argNat a "limit").getD 5
     match ← readJson? (inDir cwd path) with
     | some j =>
+      -- a compile-time report: why its costliest declarations are slow
+      if bool j "elab" then
+        notOption path
+        let (rc, out, err) ← runSelf #["explain", "--report", path, "--top", toString limit] cwd
+        return textResult s!"{out}\n{tailText err 5}" (rc != 0)
       -- as `leanprof explain`: a sampled report has no copies and no call counts
       if bool j "sampled" then
         return errorResult name (Leanprof.Contract.errorJson "bad_argument"
@@ -1569,7 +1589,8 @@ def callTool (name : String) (a : Json) : IO Json := do
         for f in argStrs a "check_output" do xs := xs ++ #["--check-output", ← projectPath cwd "check_output" f]
         for g in argStrs a "protect" do xs := xs ++ #["--protect", g]
         for t in argStrs a "ignore_lines" do xs := xs ++ #["--ignore-lines", t]
-        xs := xs ++ flag "no_test" "--no-test" ++ num "runs" "--runs" ++ num "pairs" "--pairs" ++
+        xs := xs ++ flag "no_test" "--no-test" ++ flag "time_all_cases" "--time-all-cases" ++
+          num "runs" "--runs" ++ num "pairs" "--pairs" ++
           (← opt "min_change" "--min-change") ++ (← opt "base" "--base") ++ (← opt "id" "--id")
         pure (xs ++ #["--"] ++ argStrs a "args")
       | "experiment_try" => do

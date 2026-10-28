@@ -124,8 +124,11 @@ users than the rest of v0.2.0, and take priority over its long tail.
   Speedups are easy to verify: the proofs still check and heartbeat counts
   repeat nearly exactly. Results stay local branches until the maintainer
   decides to propose them upstream.
-  - [ ] *(in progress)* Causes and fixes per declaration: `elab --why`,
-    `fix --elab` checked by `experiment`, a heartbeat budget for CI.
+  - [x] Causes and fixes per declaration: `elab --why`,
+    `fix --elab` checked by `experiment`, a heartbeat budget for CI
+    ([case study](docs/case-studies/compile-time-fixes.md): on Batteries,
+    kept edits cut three lemmas from 25.2, 17.4 and 16.3 M heartbeats to
+    8.3, 6.2 and 6.0 M).
   - [ ] *(in progress)* **Whole-project build time.** Real `lake build`
     task timings (not inferred from the import graph): the critical path,
     each module's slack, parallelism over time, the measured rebuild cost
@@ -267,8 +270,9 @@ Ranked; the open ones are planned after v0.2.0.
   memory at peak, and what keeps it alive; sites with sustained growth worth
   investigating (not necessarily leaks: caches grow too). Heap walks only
   while no other thread can change the heap.
-- [ ] *(in progress)* **A heartbeat budget.** `elab --max-heartbeats N` in
-  CI flags any declaration above N, so slow lemmas do not accumulate.
+- [x] **A heartbeat budget.** `elab --max-heartbeats N` in
+  CI flags any declaration above N, so slow lemmas do not accumulate
+  (`report-md --max-heartbeats`, the Action's `max-heartbeats`).
 - [ ] *(in progress)* **Compile time against the previous run.** `elab
   --heartbeats --since-last FILE`: the declarations that changed and why
   (the unfolds, instances and `simp` lemmas whose counts moved), for

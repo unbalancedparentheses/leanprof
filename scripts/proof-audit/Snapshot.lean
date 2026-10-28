@@ -105,10 +105,10 @@ def record (env : Environment) (ci : ConstantInfo) : CoreM Declaration := do
     axioms := (← collectAxioms ci.name).map Name.toString
   }
 
-def snapshot (modules : Array Name) : IO Json := do
-  initSearchPath (← findSysroot)
-  unsafe enableInitializersExecution
-  let env ← importModules (modules.map fun n => { module := n }) {} (loadExts := true)
+/-- The declarations of `modules` (all imported in `env`) and everything their
+statements and definitions depend on, and every runtime escape in `env`. -/
+def collect (env : Environment) (modules : Array Name) :
+    IO (Array Name × List (String × Json) × Array Declaration) := do
   let mut roots : Array Name := #[]
   let mut escapes : List (String × Json) := []
   for (n, ci) in env.constants.toList do
@@ -118,7 +118,7 @@ def snapshot (modules : Array Name) : IO Json := do
     if let some idx := env.getModuleIdxFor? n then
       if modules.contains env.header.moduleNames[idx]! then roots := roots.push n
   roots := roots.qsort Name.lt
-  let action : CoreM Json := do
+  let action : CoreM (Array Declaration) := do
     let mut pending := roots
     let mut seen : NameSet := {}
     let mut declarations : Array Declaration := #[]
@@ -133,15 +133,41 @@ def snapshot (modules : Array Name) : IO Json := do
       pending := pending ++ dependencies ci
       -- Axioms' types must be preserved too, not just their names.
       pending := pending ++ (← collectAxioms n)
-    return Json.mkObj [
-      ("schema", toJson (1 : Nat)), ("leanVersion", toJson Lean.versionString),
-      ("leanGithash", toJson Lean.githash),
-      ("modules", toJson (modules.map Name.toString)),
-      ("roots", toJson (roots.map Name.toString)),
-      ("runtimeEscapes", Json.mkObj escapes),
-      ("declarations", toJson (declarations.qsort fun a b => a.name < b.name))]
-  let (j, _) ← action.toIO { fileName := "<proof-audit>", fileMap := default, maxRecDepth := 10000 } { env }
-  return j
+    return declarations
+  let (ds, _) ← action.toIO { fileName := "<proof-audit>", fileMap := default, maxRecDepth := 10000 } { env }
+  return (roots, escapes, ds)
+
+def snapshot (modules : Array Name) : IO Json := do
+  initSearchPath (← findSysroot)
+  unsafe enableInitializersExecution
+  -- all at once; modules that cannot be imported together (two test modules that each
+  -- declare `foo`): one at a time, the results put together
+  let joint ← try some <$> importModules (modules.map fun n => { module := n }) {} (loadExts := true)
+    catch _ => pure none
+  let (roots, escapes, declarations) ← match joint with
+    | some env => collect env modules
+    | none => do
+      let mut roots : Array Name := #[]
+      let mut escapes : Std.HashMap String Json := {}
+      let mut decls : Std.HashMap String Declaration := {}
+      for m in modules do
+        -- each import with extensions needs it again (a failed import used it up). The
+        -- environments are kept: names and strings of the results live in their .olean data
+        unsafe enableInitializersExecution
+        let env ← importModules #[{ module := m }] {} (loadExts := true)
+        let (r, e, d) ← collect env #[m]
+        roots := roots ++ r
+        for (k, v) in e do escapes := escapes.insert k v
+        for x in d do decls := decls.insert x.name x
+      -- two modules may declare the same name (test modules): it is a root once
+      pure ((roots.qsort Name.lt).toList.eraseDups.toArray, escapes.toList, decls.toArray.map (·.2))
+  return Json.mkObj [
+    ("schema", toJson (1 : Nat)), ("leanVersion", toJson Lean.versionString),
+    ("leanGithash", toJson Lean.githash),
+    ("modules", toJson (modules.map Name.toString)),
+    ("roots", toJson (roots.map Name.toString)),
+    ("runtimeEscapes", Json.mkObj (escapes.toArray.qsort (fun a b => a.1 < b.1)).toList),
+    ("declarations", toJson (declarations.qsort fun a b => a.name < b.name))]
 
 end Leanprof.ProofAudit
 

@@ -18,6 +18,10 @@
 #                                              base's, the measure is heartbeats
 #     nothing changed                       -> DISCARD
 #     finish                                -> the held-out input differs (exit 1)
+#   fix --elab on Tests/FixElab (compile time, through an experiment)
+#     --dry-run                             -> Lean's simp only lists, nothing changed
+#     the costliest simp calls              -> KEEP: simp only, on a new branch, with
+#                                              the evidence in the commit message
 #
 # After each step the checkout must be clean (the checks run in git worktrees
 # under .lake/leanprof/experiments). Exits 1 on any unexpected result. CI runs
@@ -108,6 +112,7 @@ echo "-- the working tree: Array.modify, and a value that moves only beyond the 
 perl -0pi -e "$modify" Exp/Buckets.lean
 perl -0pi -e 's/let i := bucketOf v k/let i := if v == 200000 then 1 else bucketOf v k/' Exp/Buckets.lean
 "$lp" experiment try --working-tree --message "Array.modify in buckets" > "$out/try.txt" 2>&1 || fail "working tree: not KEEP (exit $?)"
+grep -q "measured on case 0 only" "$out/try.txt" || fail "working tree: the verdict does not say which case was timed"
 cat "$out/try.txt"
 clean "working tree"
 git log -1 --format=%B > "$out/message.txt"
@@ -170,6 +175,35 @@ grep -q "held out: DIFFER on 1 of 1" "$out/finish.txt" || fail "finish: no held-
 [ ! -e .lake/leanprof/experiments/current ] || fail "finish: the experiment is still current"
 [ "$(git worktree list | wc -l)" -eq 1 ] || fail "finish: worktrees left: $(git worktree list)"
 clean "finish"
+
+echo
+echo "== fix --elab: simp only, checked by an experiment"
+fe=$(mktemp -d "${TMPDIR:-/tmp}/leanprof-fixelab.XXXXXX")
+cp -R "$root/Tests/FixElab/." "$fe/"
+rm -rf "$fe/.lake"
+cd "$fe"
+git init -q -b main
+printf '.lake\n' > .gitignore
+git add -A
+git commit -q -m "fixture"
+lake build >/dev/null 2>&1 || fail "fix --elab: the fixture does not build"
+code=0
+"$lp" fix --elab --dry-run FixElab.lean > "$out/fixelab.txt" 2>&1 || code=$?
+cat "$out/fixelab.txt"
+[ "$code" = 0 ] || fail "fix --elab --dry-run: exit code $code"
+grep -q "+  simpa only using Nat.max_eq_right h" "$out/fixelab.txt" || fail "fix --elab --dry-run: no simpa only edit"
+clean "fix --elab --dry-run"
+code=0
+"$lp" fix --elab --no-test FixElab.lean > "$out/fixelab.txt" 2>&1 || code=$?
+cat "$out/fixelab.txt"
+[ "$code" = 0 ] || fail "fix --elab: exit code $code, expected 0 (KEEP)"
+grep -q "guard      PASS" "$(ls .lake/leanprof/fix/message.txt)" || fail "fix --elab: no guard evidence in the message"
+git show leanprof-fix/elab-FixElab > "$out/fixelab-commit.txt" 2>&1 || fail "fix --elab: no branch"
+grep -q "^+  simpa only using Nat.max_eq_right h" "$out/fixelab-commit.txt" || fail "fix --elab: the commit lacks the simpa only edit"
+grep -q "KEEP against" "$out/fixelab-commit.txt" || fail "fix --elab: no evidence in the commit message"
+[ "$(git rev-parse HEAD)" = "$(git rev-parse main)" ] || fail "fix --elab: the checkout moved"
+[ "$(git worktree list | wc -l)" -eq 1 ] || fail "fix --elab: worktrees left: $(git worktree list)"
+clean "fix --elab"
 
 [ $failed = 0 ] && echo "experiment-check: all passed"
 exit $failed

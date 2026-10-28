@@ -96,6 +96,16 @@ changed. Each step runs only if the one before passed:
    pairs, stopping once the time verdict is settled (at most `--pairs N`,
    default 30, given to `start`).
 
+Exact counts and time are measured on the workload, the first case (`ARGS`,
+or `ARGS` with the first input), and every verdict says so: "exact counts
+and time measured on case 0 only (...); the other N case(s) were checked for
+identical behaviour, not timed". A change can therefore be faster on the
+workload and slower on another case without a DISCARD. `start
+--time-all-cases` times every case in pairs instead: slower on any case is a
+DISCARD, an unsettled case leaves the verdict INCONCLUSIVE unless something
+else improved, and each reason names its case. It costs one paired session
+per case.
+
 The verdict: DISCARD if the paired time is slower; KEEP if copies or
 allocations went down (exact) or the paired time is faster; INCONCLUSIVE if
 nothing changed beyond noise and the time was not settled (the machine was
@@ -105,7 +115,17 @@ a 95% median interval, at least `--min-change` percent (default 1).
 
 A library's verdict comes from heartbeats: KEEP when the total of the
 changed modules and their dependents went down by more than 1% and 1,000,
-DISCARD otherwise. The base's heartbeats are cached by commit.
+DISCARD otherwise. In a large module 1% can be more than a whole
+declaration, so a change is also kept when, declaration by declaration, some
+went down by more than 1% and 1,000 each, none went up by as much, none
+appeared or disappeared, and the total went down by more than 1,000
+(heartbeats are exact, so this needs no noise margin beyond the one for
+neighbours that move by a few heartbeats when one declaration is edited).
+The base's heartbeats are cached by commit.
+
+The guard imports the audited modules together; modules that cannot be
+imported together (Batteries' test modules each declare `foo`) are imported
+one at a time and their evidence put together.
 
 ### The guard
 

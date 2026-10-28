@@ -22,7 +22,10 @@ DISCARD when any of these hold:
   small to measure in any run).
 
 Otherwise KEEP when copies went down, allocations went down by at least 1%
-and 100, heartbeats went down by more than 1% and 1,000, or every new run was
+and 100, heartbeats went down by more than 1% and 1,000 (in total, or, for a
+change to a few declarations of a large module, per declaration: some went
+down by that much, none went up by that much, none appeared or disappeared,
+and the total went down by more than 1,000), or every new run was
 faster than every base run by at least `minChange` percent (default 1).
 Independent runs would not overlap by chance 1 time in 252 with 5 runs each,
 but base and new are measured one after the other and a quiet machine drifts
@@ -72,6 +75,8 @@ structure Summary where
   allocs : Option (Nat × Nat × Nat) := none
   allocSites : Std.HashMap String Nat := {}
   heartbeats : Option (Std.HashMap String Float) := none
+  /-- every file of the heartbeat profile elaborated to its end -/
+  heartbeatsComplete : Bool := true
   /-- the machine ran more jobs than it has CPUs while measuring -/
   overloaded : Bool := false
   loadAvg : Option Float := none
@@ -165,6 +170,7 @@ def Summary.ofJson (j : Json) : Except String Summary := do
     command := toJson command, scope := str j "scope", exitCode
     outputSource, outputHash, outputStable, median, min, max, copies, copiesMin, copiesMax, selfCheckWarning,
     sites, calls, allocs, allocSites, heartbeats,
+    heartbeatsComplete := (j.getObjValAs? Bool "heartbeats_complete").toOption.getD true,
     overloaded, loadAvg := (machine.getObjValAs? Float "load_avg_1m").toOption, core, tooSmallRuns,
     provenance := field "provenance" }
 
@@ -301,12 +307,27 @@ def judge (b n : Summary) (minChange : Float := 1) (judgeTime : Bool := true) (a
   -- compile heartbeats: exact, but editing one declaration moves its
   -- neighbours by a few, so only changes above 1% and 1,000 count. Judged
   -- on the total, since experiments move code between declarations.
-  if let (some bh, some nh) := (b.heartbeats, n.heartbeats) then
+  if b.heartbeats.isSome && n.heartbeats.isSome && !(b.heartbeatsComplete && n.heartbeatsComplete) then
+    notes := notes.push "compile heartbeats: a profile stops at an error, so its counts are incomplete; not compared"
+  else if let (some bh, some nh) := (b.heartbeats, n.heartbeats) then
     let kHB (x : Float) := s!"{fmt2 (x / 1000)} kHB"
     let (x, y) := (bh.fold (fun a _ v => a + v) 0, nh.fold (fun a _ v => a + v) 0)
     let margin := max (x * 0.01) 1000
     if y - x > margin then worse := worse.push s!"compile heartbeats: {kHB x} -> {kHB y}"
     else if x - y > margin then better := better.push s!"compile heartbeats: {kHB x} -> {kHB y}"
+    else if x - y > 1000 then
+      -- one declaration of a large module made cheaper: 1% of the module can be more than
+      -- the whole declaration. Heartbeats are exact, so judged per declaration, with the
+      -- same margin: some cheaper, none dearer, the same declarations
+      let keys := (bh.toList.map (·.1) ++ nh.toList.map (·.1)).eraseDups
+      let moved (up : Bool) := keys.filter fun k => match bh.get? k, nh.get? k with
+        | some a, some b => (if up then b - a else a - b) > max (a * 0.01) 1000
+        | _, _ => false
+      let same := keys.all fun k => (bh.get? k).isSome == (nh.get? k).isSome
+      let downs := moved false
+      if same && (moved true).isEmpty && !downs.isEmpty then
+        better := better.push (s!"compile heartbeats: {kHB x} -> {kHB y}: {downs.length} " ++
+          s!"{if downs.length == 1 then "declaration" else "declarations"} cheaper by more than 1% and 1,000, none dearer")
     for k in (bh.toList.map (·.1) ++ nh.toList.map (·.1)).eraseDups do
       match bh.get? k, nh.get? k with
       | some x, some y =>

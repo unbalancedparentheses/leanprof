@@ -20,8 +20,9 @@ module names, Lean version and Lean compiler Git hash. Each must be the root of
 its Git repository/worktree, with source modules at `MyProject/Proofs.lean`, or
 at `SUBDIR/MyProject/Proofs.lean` with `--subdir SUBDIR` when the Lake package
 is in a subdirectory (lean-regex's `regex/`). Custom Lake `srcDir`, unusual
-quoted module names, source symlinks and Git submodules are currently
-unsupported. Both working trees may be dirty: their
+quoted module names, Lean sources that are symbolic links and Git submodules
+are currently unsupported; other symbolic links (Batteries' `docs/README.md`)
+are recorded by their target, never followed. Both working trees may be dirty: their
 actual file contents, including nonignored untracked files, are fingerprinted.
 
 The command runs `lake build MODULE...` in each checkout and then runs the
