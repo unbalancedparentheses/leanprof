@@ -96,6 +96,10 @@ def cases : List (String × Bool × String) :=
      ProjectFix.lockedElapsed "no time" == none, ""),
    ("project fix: `variable (x) in` is part of the declaration",
      ProjectFix.declKeyword #["variable (W') in", "/-- doc -/", "abbrev CoordinateRing : Type := Nat"] 1 == some ("abbrev", 3), ""),
+   ("project fix: an instance problem with local variables has no shortcut instance",
+     ProjectFix.mentionsLocals "NPow R" && ProjectFix.mentionsLocals "CoeT Bool __do_lift✝ Prop" &&
+       ProjectFix.mentionsLocals "HMul M₁ M₁ M₁" && ProjectFix.mentionsLocals "Inhabited α" &&
+       !ProjectFix.mentionsLocals "Lean.MonadRef Lean.Elab.Tactic.TacticM" && !ProjectFix.mentionsLocals "OfNat Nat 2", ""),
    ("project fix: a line appended", ProjectFix.appendLine "a\nb" "c" == "a\nb\nc\n" && ProjectFix.appendLine "a\n" "c" == "a\nc\n", ""),
    ("project fix: build times: worse only when every candidate run is slower",
      ProjectFix.buildTimeVerdict #[10, 10.2, 10.1] #[11, 11.2, 11.1] == "worse" &&

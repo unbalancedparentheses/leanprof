@@ -110,6 +110,17 @@ def mentions (text name : String) : Bool :=
     let isName (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '\''
     !isName before && !isName after
 
+/-- Whether an instance problem mentions what only exists inside a declaration: a
+metavariable (`?m`), an inaccessible name (`x✝`, `__do_lift`), or a variable (a name of one
+letter, with subscripts or primes: `R`, `α`, `M₁`, `R'`). -/
+def mentionsLocals (problem : String) : Bool :=
+  let toks := (problem.splitOn " ").flatMap (·.splitOn "(") |>.flatMap (·.splitOn ")") |>.flatMap (·.splitOn ",")
+  (problem.splitOn "✝").length > 1 || (problem.splitOn "?").length > 1 || (problem.splitOn "__").length > 1 ||
+    toks.any fun t =>
+      match t.toList with
+      | c :: rest => (c.isAlpha || (c.val ≥ 0x391 && c.val ≤ 0x3C9)) && rest.all fun d => d == '\'' || ('₀' ≤ d && d ≤ '₉') || d.isDigit
+      | [] => false
+
 /-- The candidates an `elab --project` report supports, ranked: by the number of
 files the work was observed in, then by the exact count. `inProject f` says
 whether a source file (relative to the package) belongs to the package. -/
@@ -207,6 +218,8 @@ def hypotheses (r : Json) (inProject : String → Bool) (declares : String → S
     let files := natOf x "files"
     let n := natOf x "count"
     if files < minFiles || n < minCount then continue
+    -- `NPow R`, `CoeT Bool __do_lift✝ Prop`: each declaration's own variables, no global instance
+    if mentionsLocals (jstr x "op") then continue
     let byFile := jarr x "by_file"
     out := out.push {
       kind := "shortcut-instance", target := jstr x "op", count := n, countWhat := "instance searches",

@@ -236,6 +236,12 @@ proofs still check, the proof-preservation guard passes and the heartbeats
 went down. On Batteries, stating Lean's inferred `termination_by` cut two
 lemmas from 17.4 and 16.2 M heartbeats to 6.2 and 5.9 M
 ([case study](docs/case-studies/compile-time-fixes.md)).
+`leanprof fix --elab --project` turns a project profile with exact counts
+into changes that act across files (a definition made irreducible, an
+instance at a lower priority, a `@[simp]` removed, every inferred measure
+stated), each listed with its evidence and checked against the same base on
+every module it affects; the heartbeats a report charges overlap, so they
+rank nothing and are never presented as savings.
 `elab --max-heartbeats N` fails CI on any declaration above a budget.
 
 `leanprof html` turns a report into one self-contained page that drills
@@ -414,6 +420,7 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
 | Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
 | Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
+| Find project-wide compile-time changes (irreducible definitions, instance priorities, `@[simp]` removals) and check each on every module it affects | [`leanprof fix --elab --project`](docs/guide/compile-time.md#project-wide-changes-fix---elab---project) |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |

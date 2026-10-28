@@ -1,0 +1,422 @@
+start Wed Oct 28 13:55:22 -03 2026 load { 10.78 16.74 18.99 }
+leanprof fix --elab --project: 124 candidate(s) from .lake/leanprof/ec-project.json
+  ranked by the files the work was seen in, then its exact count. The heartbeats a constant is charged overlap (inclusive costs, and CPU totals of parallel elaboration exceed wall time): they are evidence, not savings.
+
+  1. shortcut-instance  NPow R
+     ranked by: 16 files, 246 instance searches
+     observed the search `NPow R` ran 246× in 16 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:53
+     observed the report attributes 2836.40 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 15 of its files also show #2 (shortcut-instance HMul R R R): their effects may overlap
+     suggested a shortcut instance `instance : NPow R := inferInstance` in a module all 16 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  2. shortcut-instance  HMul R R R
+     ranked by: 15 files, 603 instance searches
+     observed the search `HMul R R R` ran 603× in 15 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:53
+     observed the report attributes 8419.36 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 15 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : HMul R R R := inferInstance` in a module all 15 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  3. shortcut-instance  OfNat R 0
+     ranked by: 15 files, 238 instance searches
+     observed the search `OfNat R 0` ran 238× in 15 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:159
+     observed the report attributes 3076.36 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 14 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : OfNat R 0 := inferInstance` in a module all 15 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  4. shortcut-instance  HSub R R R
+     ranked by: 15 files, 204 instance searches
+     observed the search `HSub R R R` ran 204× in 15 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:53
+     observed the report attributes 2590.14 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 15 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : HSub R R R := inferInstance` in a module all 15 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  5. shortcut-instance  OfNat R 2
+     ranked by: 15 files, 103 instance searches
+     observed the search `OfNat R 2` ran 103× in 15 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:45
+     observed the report attributes 1295.48 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 15 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : OfNat R 2 := inferInstance` in a module all 15 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  6. shortcut-instance  CharZero R
+     ranked by: 13 files, 206 instance searches
+     observed the search `CharZero R` ran 206× in 13 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Basic.lean:164
+     observed the report attributes 12571.97 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 13 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : CharZero R := inferInstance` in a module all 13 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  7. shortcut-instance  Mul R
+     ranked by: 13 files, 170 instance searches
+     observed the search `Mul R` ran 170× in 13 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:117
+     observed the report attributes 1852.77 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 13 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : Mul R := inferInstance` in a module all 13 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  8. shortcut-instance  OfNat R 3
+     ranked by: 13 files, 56 instance searches
+     observed the search `OfNat R 3` ran 56× in 13 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:53
+     observed the report attributes 717.27 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 13 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : OfNat R 3 := inferInstance` in a module all 13 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  9. shortcut-instance  MonadExcept Lean.Macro.Exception Lean.MacroM
+     ranked by: 13 files, 54 instance searches
+     observed the search `MonadExcept Lean.Macro.Exception Lean.MacroM` ran 54× in 13 files, first
+                at Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:43
+     observed the report attributes 1052.19 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 12 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : MonadExcept Lean.Macro.Exception Lean.MacroM :=
+                inferInstance` in a module all 13 files import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  10. irreducible  WeierstrassCurve.Affine  (Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Basic.lean:72)
+     ranked by: 12 files, 13735 unfoldings (elaborator and kernel)
+     observed the elaborator unfolded it 13471× and the kernel 264× (`diagnostics`, exact), from 423
+                sites in 12 files
+     observed `diagnostics` names it `Affine` (relative to an open namespace); the one declaration
+                of the profiled files whose name ends so is `WeierstrassCurve.Affine`
+     observed in Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:242
+                sym2x_add_sub_eq_addSubMap_sym2x,
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:193
+                sym2x_self_eq_addSubMap,
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:227
+                sym2x_add_self_zero,
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:204
+                addSubMap_sym2x_some_some,
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:215
+                addSubMap_sym2x_some_self, ...
+     overlap 11 of its files also show #9 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested `attribute [irreducible] WeierstrassCurve.Affine` at the end of
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Basic.lean: the modules importing it
+                no longer unfold it while unifying (its own file is unchanged); proofs that need its
+                definition then say so (`unfold WeierstrassCurve.Affine`, `simp
+                [WeierstrassCurve.Affine]`). Lean's `WeierstrassCurve.Affine.eq_def` is the unfold
+                lemma
+     not tried WeierstrassCurve.Affine is an `abbrev` (reducible already): Lean does not make it
+                irreducible by an attribute
+
+  11. shortcut-instance  HMul F F F
+     ranked by: 12 files, 320 instance searches
+     observed the search `HMul F F F` ran 320× in 12 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:204
+     observed the report attributes 4051.35 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 12 of its files also show #12 (shortcut-instance OfNat F 0): their effects may overlap
+     suggested a shortcut instance `instance : HMul F F F := inferInstance` in a module all 12 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  12. shortcut-instance  OfNat F 0
+     ranked by: 12 files, 231 instance searches
+     observed the search `OfNat F 0` ran 231× in 12 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:215
+     observed the report attributes 2648.09 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 12 of its files also show #11 (shortcut-instance HMul F F F): their effects may overlap
+     suggested a shortcut instance `instance : OfNat F 0 := inferInstance` in a module all 12 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  13. shortcut-instance  HAdd R R R
+     ranked by: 12 files, 184 instance searches
+     observed the search `HAdd R R R` ran 184× in 12 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:53
+     observed the report attributes 2550.02 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 11 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : HAdd R R R := inferInstance` in a module all 12 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  14. shortcut-instance  Neg R
+     ranked by: 12 files, 115 instance searches
+     observed the search `Neg R` ran 115× in 12 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:53
+     observed the report attributes 1370.17 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 12 of its files also show #3 (shortcut-instance OfNat R 0): their effects may overlap
+     suggested a shortcut instance `instance : Neg R := inferInstance` in a module all 12 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  15. shortcut-instance  Add R
+     ranked by: 12 files, 99 instance searches
+     observed the search `Add R` ran 99× in 12 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:117
+     observed the report attributes 1000.35 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 12 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : Add R := inferInstance` in a module all 12 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  16. shortcut-instance  Zero R
+     ranked by: 12 files, 90 instance searches
+     observed the search `Zero R` ran 90× in 12 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:125
+     observed the report attributes 1039.87 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 12 of its files also show #3 (shortcut-instance OfNat R 0): their effects may overlap
+     suggested a shortcut instance `instance : Zero R := inferInstance` in a module all 12 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  17. shortcut-instance  CoeT Lean.Name `tactic Lean.SyntaxNodeKinds
+     ranked by: 12 files, 28 instance searches
+     observed the search `CoeT Lean.Name `tactic Lean.SyntaxNodeKinds` ran 28× in 12 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Basic.lean:55
+     observed the report attributes 405.32 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 12 of its files also show #9 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : CoeT Lean.Name `tactic Lean.SyntaxNodeKinds :=
+                inferInstance` in a module all 12 files import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  18. shortcut-instance  NeZero 1
+     ranked by: 11 files, 38 instance searches
+     observed the search `NeZero 1` ran 38× in 11 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:178
+     observed the report attributes 2126.20 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 10 of its files also show #3 (shortcut-instance OfNat R 0): their effects may overlap
+     suggested a shortcut instance `instance : NeZero 1 := inferInstance` in a module all 11 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  19. shortcut-instance  MulOneClass R
+     ranked by: 11 files, 34 instance searches
+     observed the search `MulOneClass R` ran 34× in 11 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:159
+     observed the report attributes 347.03 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 11 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : MulOneClass R := inferInstance` in a module all 11
+                files import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  20. shortcut-instance  IsRightCancelAdd R
+     ranked by: 10 files, 87 instance searches
+     observed the search `IsRightCancelAdd R` ran 87× in 10 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean:307
+     observed the report attributes 7215.98 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 10 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : IsRightCancelAdd R := inferInstance` in a module all
+                10 files import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  21. shortcut-instance  Neg F
+     ranked by: 10 files, 73 instance searches
+     observed the search `Neg F` ran 73× in 10 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:242
+     observed the report attributes 779.14 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 10 of its files also show #11 (shortcut-instance HMul F F F): their effects may overlap
+     suggested a shortcut instance `instance : Neg F := inferInstance` in a module all 10 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  22. shortcut-instance  CoeT Lean.Name `term Lean.SyntaxNodeKinds
+     ranked by: 10 files, 64 instance searches
+     observed the search `CoeT Lean.Name `term Lean.SyntaxNodeKinds` ran 64× in 10 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:43
+     observed the report attributes 934.19 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 10 of its files also show #1 (shortcut-instance NPow R): their effects may overlap
+     suggested a shortcut instance `instance : CoeT Lean.Name `term Lean.SyntaxNodeKinds :=
+                inferInstance` in a module all 10 files import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  23. shortcut-instance  CharZero F
+     ranked by: 10 files, 62 instance searches
+     observed the search `CharZero F` ran 62× in 10 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:204
+     observed the report attributes 3709.97 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 10 of its files also show #11 (shortcut-instance HMul F F F): their effects may overlap
+     suggested a shortcut instance `instance : CharZero F := inferInstance` in a module all 10 files
+                import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  24. shortcut-instance  NoZeroDivisors F
+     ranked by: 10 files, 62 instance searches
+     observed the search `NoZeroDivisors F` ran 62× in 10 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean:131
+     observed the report attributes 1525.40 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 10 of its files also show #11 (shortcut-instance HMul F F F): their effects may overlap
+     suggested a shortcut instance `instance : NoZeroDivisors F := inferInstance` in a module all 10
+                files import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  25. shortcut-instance  IsReduced F
+     ranked by: 10 files, 60 instance searches
+     observed the search `IsReduced F` ran 60× in 10 files, first at
+                Mathlib/AlgebraicGeometry/EllipticCurve/Affine/AddSubMap.lean:227
+     observed the report attributes 3719.87 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 10 of its files also show #11 (shortcut-instance HMul F F F): their effects may overlap
+     suggested a shortcut instance `instance : IsReduced F := inferInstance` in a module all 10
+                files import
+     not tried where to declare it is a choice for a person; a new instance can also change the
+                terms statements elaborate to, which the proof-preservation guard compares
+
+  ... 99 more in .lake/leanprof/fix/project-fixes-run.json
+
+leanprof fix --elab --project: trying 5 candidate(s) with `leanprof experiment` (fix-project-1303387544), each against 56a005855ea1
+
+#41 irreducible WeierstrassCurve.b₆
+  heartbeats 1903612.98 kHB -> 1903647.99 kHB (+0.00%) in 21 module(s): 0 cheaper, 0 dearer; declarations: 10 cheaper, 8 dearer
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Weierstrass.lean attribute [irreducible] WeierstrassCurve #2: 0.00 kHB -> 16.21 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Weierstrass.lean attribute [irreducible] WeierstrassCurve #1: 0.00 kHB -> 13.39 kHB
+    dearer  Mathlib.lean set_option linter.style.longLine false #1: 113.26 kHB -> 119.70 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean open scoped Polynomial.Bivariate #1: 13.73 kHB -> 19.39 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Point.lean CoordinateRing: 202.81 kHB -> 207.92 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/Weierstrass.lean end WeierstrassCurve #2: 16.21 kHB -> 0.00 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/DivisionPolynomial/Basic.lean Ψ₂Sq_eq: 180.97 kHB -> 169.83 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Point.lean FunctionField: 111.99 kHB -> 101.84 kHB
+  plain lake build of 21 module(s): median 34.68 s -> 33.81 s (3 runs each, within noise; load 16.84 14.17 16.57 / 15.25 14.51 16.16)
+  DISCARD
+  - compile heartbeats did not go down by more than 1% and 1,000
+
+#60 irreducible WeierstrassCurve.Δ
+  heartbeats 1903612.98 kHB -> 1903639.89 kHB (+0.00%) in 21 module(s): 0 cheaper, 0 dearer; declarations: 12 cheaper, 10 dearer
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Weierstrass.lean attribute [irreducible] WeierstrassCurve #2: 0.00 kHB -> 16.21 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Weierstrass.lean attribute [irreducible] WeierstrassCurve #1: 0.00 kHB -> 13.39 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Basic.lean open Polynomial #1: 13.10 kHB -> 18.96 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean open Polynomial #1: 13.24 kHB -> 18.84 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Point.lean CoordinateRing: 202.81 kHB -> 208.01 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/Weierstrass.lean end WeierstrassCurve #2: 16.21 kHB -> 0.00 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Point.lean FunctionField: 111.99 kHB -> 101.76 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Basic.lean @[expose] public section #1: 18.59 kHB -> 12.86 kHB
+  plain lake build of 21 module(s): median 27.33 s -> 26.66 s (3 runs each, within noise; load 11.05 12.33 14.72 / 11.53 12.03 14.18)
+  DISCARD
+  - compile heartbeats did not go down by more than 1% and 1,000
+
+#103 irreducible WeierstrassCurve.preΨ
+  heartbeats 119970.00 kHB -> 119974.45 kHB (+0.00%) in 3 module(s): 0 cheaper, 0 dearer; declarations: 3 cheaper, 3 dearer
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/DivisionPolynomial/Basic.lean attribute [irreducible] WeierstrassCurve #2: 0.00 kHB -> 16.27 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/DivisionPolynomial/Basic.lean attribute [irreducible] WeierstrassCurve #1: 0.00 kHB -> 13.41 kHB
+    dearer  Mathlib.lean set_option linter.style.longLine false #1: 113.50 kHB -> 119.70 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/DivisionPolynomial/Basic.lean end WeierstrassCurve #2: 16.27 kHB -> 0.00 kHB
+    cheaper Mathlib.lean set_option linter.style.longLine false #2: 116.69 kHB -> 110.50 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/DivisionPolynomial/Degree.lean public section #1: 16.29 kHB -> 13.77 kHB
+  plain lake build of 3 module(s): median 7.22 s -> 12.36 s (3 runs each, within noise; load 9.98 11.05 13.18 / 10.82 11.04 13.02)
+  DISCARD
+  - compile heartbeats did not go down by more than 1% and 1,000
+
+#107 simp-attr WeierstrassCurve.a₄_of_isCharTwoJNeZeroNF
+  heartbeats 95949.76 kHB -> 95867.89 kHB (-0.09%) in 3 module(s): 0 cheaper, 0 dearer; declarations: 4 cheaper, 3 dearer
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/NormalForms.lean namespace WeierstrassCurve #1: 12.32 kHB -> 14.96 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/NormalForms.lean a₁_of_isCharNeTwoNF: 87.71 kHB -> 89.67 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/NormalForms.lean /-! ## Normal forms of characteristic ≠  #1: 10.93 kHB -> 12.53 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/NormalForms.lean a₄_of_isCharTwoJNeZeroNF: 60.39 kHB -> 54.97 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/NormalForms.lean @[expose] public section #1: 18.42 kHB -> 14.07 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/NormalForms.lean a₃_of_isCharNeTwoNF: 65.96 kHB -> 64.00 kHB
+  plain lake build of 3 module(s): median 7.78 s -> 12.32 s (3 runs each, within noise; load 7.62 9.65 11.94 / 11.68 10.48 12.08)
+  DISCARD
+  - compile heartbeats did not go down by more than 1% and 1,000
+
+#111 irreducible WeierstrassCurve.Affine.linePolynomial
+  heartbeats 1397976.69 kHB -> 1397901.97 kHB (-0.01%) in 12 module(s): 0 cheaper, 0 dearer; declarations: 8 cheaper, 9 dearer
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean attribute [irreducible] WeierstrassCurve #2: 0.00 kHB -> 16.12 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean attribute [irreducible] WeierstrassCurve #1: 0.00 kHB -> 13.30 kHB
+    dearer  Mathlib.lean set_option linter.style.longLine false #2: 110.50 kHB -> 116.69 kHB
+    dearer  Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean open Polynomial #1: 13.53 kHB -> 18.94 kHB
+    dearer  Mathlib/NumberTheory/Height/EllipticCurve.lean Point.naiveHeight_eq_logHeight: 63.79 kHB -> 69.15 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Point.lean XYIdeal_eq₂: 5757.57 kHB -> 5665.12 kHB
+    cheaper Mathlib/AlgebraicGeometry/EllipticCurve/Affine/Formula.lean end WeierstrassCurve #2: 16.12 kHB -> 0.00 kHB
+    cheaper Mathlib.lean set_option linter.style.longLine false #1: 119.70 kHB -> 113.50 kHB
+  plain lake build of 12 module(s): median 20.99 s -> 21.46 s (3 runs each, within noise; load 11.17 10.33 11.48 / 10.35 10.51 11.42)
+  DISCARD
+  - compile heartbeats did not go down by more than 1% and 1,000
+
+leanprof fix --elab --project: 0 of 5 kept; your checkout is unchanged.
+  #41 irreducible WeierstrassCurve.b₆: DISCARD
+  #60 irreducible WeierstrassCurve.Δ: DISCARD
+  #103 irreducible WeierstrassCurve.preΨ: DISCARD
+  #107 simp-attr WeierstrassCurve.a₄_of_isCharTwoJNeZeroNF: DISCARD
+  #111 irreducible WeierstrassCurve.Affine.linePolynomial: DISCARD
+  evidence: .lake/leanprof/fix/project-fixes-run.json; log: .lake/leanprof/fix/project-log.txt
+exit 1 end Wed Oct 28 14:31:48 -03 2026 load { 12.69 11.02 11.58 }

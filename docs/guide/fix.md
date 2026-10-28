@@ -13,6 +13,7 @@ leanprof fix --exe myapp -- ARGS          # profile, fix, check, commit (or not)
 leanprof fix --dry-run --exe myapp -- ARGS  # print the findings and the diff only
 leanprof fix --dry-run                    # the same from the last report
 leanprof fix --elab FILE.lean...          # compile time: Lean's own edits, checked by an experiment
+leanprof fix --elab --project             # compile time: project-wide changes, each checked
 ```
 
 For compile time, see [below](#compile-time-fix---elab).
@@ -264,3 +265,14 @@ lists saved little: `HeapNode.realSize_toHeap` 382 → 345 kHB, `next` 1,487
 modules (the changed ones and everything in the package that imports them,
 test modules included) and `lake test` passed
 ([case study](../case-studies/compile-time-fixes.md)).
+
+### Project-wide: `fix --elab --project`
+
+`fix --elab --project` forms changes that act across files from a project
+report with exact counts: a definition unfolded in many files made
+irreducible (or reducible), an instance at a lower priority, a `@[simp]`
+removed from a lemma tried often and rarely used, every inferred
+termination measure stated. It checks each one against the same base, on
+the changed module and every module importing it, and reports the
+heartbeats per declaration and module (dearer ones included) and the plain
+build time of those modules. See [compile time](compile-time.md#project-wide-changes-fix---elab---project).

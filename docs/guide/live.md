@@ -7,7 +7,7 @@ server never produces one. Three tools look at a program while it runs:
 |---|---|---|
 | Live view | `leanprof top EXE`, or `LEANPROF_LIVE=1` and `leanprof top --pid PID` | hottest scopes, copy sites, allocation sites, tasks, waits, memory and CPU, with rates per second, refreshed like `top` |
 | Flight recorder | `LEANPROF_FLIGHT=DIR`, `LEANPROF_SLOW_MS=MS`, `leanprof dump PID` | a Perfetto trace of the last seconds, written on demand or when a scope is slow |
-| MCP server | `leanprof mcp` | profiling tools for AI agents: run, sample, stat, elab, explain, static_copies, compare, judge, experiments, live, dump |
+| MCP server | `leanprof mcp` | profiling tools for AI agents: run, sample, stat, elab, explain, static_copies, compare, judge, experiments, project_fixes, live, dump |
 
 ## `leanprof top`
 
@@ -187,6 +187,7 @@ or in a client's configuration: `{"mcpServers": {"leanprof": {"command":
 | `static_copies` | likely copies across the whole package without running it, from the compiler's IR (`leanprof explain --static`): file:line, value, cause and fix, and what a run report said about each |
 | `compare` | regressions between two reports (exact for copies and calls) |
 | `judge` | KEEP or DISCARD from two `measure` summaries (`base`, `new`) or one paired session (`pair`); `min_change` in percent |
+| `project_fixes` | [`leanprof fix --elab --project`](compile-time.md#project-wide-changes-fix---elab---project): project-wide compile-time hypotheses with their evidence and, unless `dry_run`, each checked by an experiment; `result` is the `fix-project` document |
 | `experiment_start`, `experiment_try`, `experiment_finish`, `experiment_status` | [`leanprof experiment`](experiment.md): record a baseline, try a commit or the working tree (verdict and evidence JSON), run the held-out inputs; tests are the project's Lake test driver (no shell command), paths must be inside the project |
 | `live` | a running program's current state, with rates over `seconds` (it must run with `LEANPROF_LIVE`) |
 | `dump` | a running program's flight recorder as a Perfetto trace |

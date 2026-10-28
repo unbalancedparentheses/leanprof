@@ -6,6 +6,7 @@ leanprof elab --project [--module-glob GLOB] [--jobs N] [--heartbeats] [--compac
 leanprof elab --heartbeats --why FILE.lean...       # why the costliest declarations are slow
 leanprof elab --max-heartbeats N FILE.lean...       # every declaration above a budget (for CI)
 leanprof fix --elab FILE.lean...                    # apply Lean's own fixes, checked
+leanprof fix --elab --project                       # project-wide changes, each checked
 ```
 
 elaborates the files with Lean's `trace.profiler` (each module with Lake's
@@ -148,6 +149,87 @@ heartbeats too, so a full profile counts more than the build does;
 `max-heartbeats` input fail the job on any declaration of the head above
 the budget, marking those that were not above it on the base
 ([CI](ci-and-regressions.md#a-heartbeat-budget)).
+
+## Project-wide changes: `fix --elab --project`
+
+```
+leanprof fix --elab --project --dry-run          # the hypotheses, their evidence and the edits
+leanprof fix --elab --project                    # check the first 5 mechanical ones
+leanprof fix --elab --project --only 2,15 --report elab.json --build-runs 3
+```
+
+`--why` explains one declaration at a time. Some changes act on many: a
+definition unfolded in every file that uses it, an instance tried by every
+search for its class, a simp lemma every `simp` tries. `fix --elab
+--project` reads a project report (`elab --project --heartbeats --counts
+--why`, made first unless `--report` names one) and lists such candidates
+with their evidence:
+
+| candidate | evidence (from `--counts`, exact) | the change |
+|---|---|---|
+| `irreducible` | a definition of the package the elaborator and the kernel unfolded at least 10 times, in at least 2 files | `attribute [irreducible] f` at the end of its file: the modules importing it stop unfolding it (its own file is unchanged) |
+| `reducible` | the same, and failed instance searches in at least 2 files name it (instance search unfolds reducible definitions only) | `attribute [reducible] f` at the end of its file |
+| `instance-priority` | an instance of the package tried at least 10 times in at least 2 files and used in fewer than half of the tries | `instance (priority := low)` |
+| `simp-attr` | a simp lemma of the package tried at least 10 times in at least 2 files and used at most once in 10 tries | `simp` removed from its `@[...]` |
+| `termination` | the declarations whose termination measure Lean searched for (`--why`'s inferred measures), all at once | each measure stated after its declaration |
+| `shortcut-instance` | the same instance problem solved at least 10 times in at least 2 files | not tried: where to declare it is a choice for a person, and a new instance can change the terms statements elaborate to |
+
+Each candidate lists the declarations and files where the work was seen.
+`diagnostics` prints a name relative to the namespaces open where it was
+used (`Affine` for `WeierstrassCurve.Affine`); such a name is matched to
+the one declaration of the profiled files whose name ends so, the evidence
+says so, and the edit uses the full name. An `abbrev` is not made
+irreducible (Lean refuses), and a name that matches only a `protected`
+declaration is left out (Lean prints those with their namespace).
+
+**The evidence is not a saving.** What the report charges to a constant is
+inclusive (unfolding `f` can unfold `g`, and both are charged), different
+candidates count the same work, and with parallel elaboration the summed
+costs exceed the build's wall time. So candidates are ranked by the number
+of files the work was seen in, then by their exact count, never by summed
+heartbeats, each says which other candidate shares most of its files, and
+nothing is projected: each one is measured.
+
+**Checking a candidate.** Each of the first `--top` mechanical candidates
+(default 5), or those `--only` names, becomes one commit on top of HEAD
+(the checkout is not touched), judged by
+[`experiment try --keep-base`](experiment.md) against the same base, so
+the candidates are alternatives, not a sequence:
+
+1. the package builds, so every proof still checks, and the modules that
+   import the changed one build too;
+2. the proof-preservation guard passes on the changed module and every
+   module that imports it;
+3. the tests pass (`--test CMD`, the Lake test driver, or `--no-test`);
+4. compile heartbeats of those modules, per declaration and per module: the
+   total must go down by more than 1% and 1,000; the declarations and
+   modules that got dearer are listed with the ones that got cheaper;
+5. the plain `lake build` of those modules (their build outputs removed
+   first) is timed in both worktrees, base and candidate alternating, 3
+   times each (`--build-runs N`; `--lock FILE` takes an `flock` on FILE for
+   each build and times it once the lock is held, so other timing jobs on
+   the machine wait). With fewer than 3 builds a side the times are
+   reported, not judged.
+
+The verdict is the experiment's. A KEEP becomes INCONCLUSIVE when every
+timed build of the candidate was slower than every build of the base and
+its median by more than 2%. A KEEP is committed with the evidence on a new
+local branch (`leanprof-fix/project-KIND-NAME`); nothing is pushed. When a
+candidate does not build, Lean's first errors are in its reasons.
+Everything goes to `.lake/leanprof/fix/project-fixes.json`
+([`schemas/fix-project.schema.json`](../../schemas/fix-project.schema.json);
+`--json` prints it), and the MCP tool `project_fixes` does the same.
+
+On Batteries `v4.35.0` (6 candidates checked, [case
+study](../case-studies/project-compile-fixes.md)), stating the 27 inferred
+termination measures was kept: the 61 modules affected went from 751,103 to
+655,223 kHB, 24 declarations cheaper and none dearer, and their plain
+build took 8.01 to 8.34 s against 8.35 to 9.59 s (3 builds each, machine
+load 13 to 23). The four `irreducible` candidates were discarded: two broke
+proofs in other modules, one changed nothing measurable, and one was an
+`abbrev`, which Lean refused (leanprof now leaves those out). Removing
+`@[simp]` from `SatisfiesM_Except_eq` (tried 19 times, never used) changed
+the heartbeats by 0.1%: discarded.
 
 ## The definitions behind the work
 
