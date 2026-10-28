@@ -73,12 +73,13 @@ def commands : List (String × String × String) := [
     "(line:column); --compact times only those (close to plain lean). On another Lean than leanprof's,\n" ++
     "the first run builds its driver for that Lean (seconds, once; ~/.cache/leanprof/drivers).\n" ++
     "--no-driver elaborates with `lean --json` instead."),
-  ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] BASE.json NEW.json",
+  ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] [--json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
     "by more than PCT% (default 10) and MS ms (default 1). For each declaration that got more\n" ++
     "expensive, what changed inside it (definitions unfolded, instances, simp lemmas, repeated work,\n" ++
-    "`--counts` counters); --explain names explain's cause for each copy site that copies more."),
+    "`--counts` counters); --explain names explain's cause for each copy site that copies more.\n" ++
+    "--json prints the comparison as JSON instead (schemas/compare.schema.json); the exit code is the same."),
   ("measure", "[--runs N] [--warmup N] [--scope NAME] [--heartbeats-files F.lean...] [--check-output FILE] [--ignore-lines TEXT]... [--no-allocs] [--core] [--no-deps] [--out FILE] EXE [-- ARGS...]",
     "Run EXE N times (default 5) with probes and write one summary: time spread, copies,\n" ++
     "allocations (unless --no-allocs), calls, compile heartbeats, exit code and an output hash.\n" ++
@@ -98,12 +99,16 @@ def commands : List (String × String × String) := [
     "and build settings, and builds the candidate with `lake build NAME` in --candidate-cwd (default .).\n" ++
     "No probes are added. Saves every timing, exit status and output hash in one session,\n" ++
     "and prints `judge PAIR.json`'s verdict."),
-  ("judge", "[--min-change PCT] [--allow-overloaded] BASE.json NEW.json | PAIR.json",
+  ("judge", "[--min-change PCT] [--allow-overloaded] [--allow-incompatible] [--json] BASE.json NEW.json | PAIR.json",
     "KEEP (exit 0) if nothing got worse and something improved beyond noise; DISCARD (exit 1) if\n" ++
     "output or exit code changed, or copies, allocations, heartbeats or time got worse. Time counts only\n" ++
     "when the runs do not overlap and the median moved by at least PCT% (default 1), and never when the\n" ++
     "machine was overloaded while measuring (--allow-overloaded judges a paired session anyway, for a\n" ++
-    "machine that is always shared; the verdict says so)."),
+    "machine that is always shared; the verdict says so). --json prints the verdict as JSON (schemas/judge.schema.json):\n" ++
+    "its outcome tells a valid DISCARD (regression, no_improvement, correctness_failure) from too little evidence\n" ++
+    "(insufficient_evidence) and from a measurement that cannot be judged (incompatible, measurement_failed).\n" ++
+    "Summaries measured with another Lean version or on another platform are incompatible (their provenance says so);\n" ++
+    "--allow-incompatible judges them anyway, and the verdict says so."),
   ("report-md", "[--fail-on copies,allocs,calls,heartbeats|none] [--title T] [--threshold PCT] [--min-ms MS] [--top N] [--explain NEW_EXPLAIN.json] [--max-chars N] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]",
     "Markdown summary of two `run --json` reports (and optionally two `elab --heartbeats` reports), for a\n" ++
     "pull-request comment: copies, allocations, calls, compile heartbeats and time, base against head,\n" ++
@@ -121,7 +126,7 @@ def commands : List (String × String × String) := [
     "update whose value the IR shows still referenced (in the function, a caller or an `initialize` global),\n" ++
     "with file:line and the fix; with a run report, which flags it confirmed and which never ran. Runs\n" ++
     "`lake build` first (--no-build skips it); writes .lake/leanprof/static.json (or --out FILE)."),
-  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]",
+  ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] [--json]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
     "inserted back, an index loop for a loop over the array it updates), then check it: on a new git\n" ++
@@ -132,7 +137,8 @@ def commands : List (String × String × String) := [
     "why. The checkout is left as it was; a tree with uncommitted changes is refused. --exe profiles\n" ++
     "EXE first (otherwise the last report is read); --finding N picks finding N of the list printed;\n" ++
     "--all also considers copy sites of only empty or tiny values (as explain --all); --dry-run\n" ++
-    "prints the findings and the diff only."),
+    "prints the findings and the diff only. The result is written to .lake/leanprof/fix/result.json\n" ++
+    "(schemas/fix.schema.json); --json prints it, with the steps on stderr."),
   ("experiment", "start [--exe EXE [--inputs DIR] [--cases FILE] [--heldout DIR] [--check-output FILE]... [--ignore-lines TEXT]... [-- ARGS...]] [--test CMD | --no-test] [--protect GLOB]... [--runs N] [--pairs N] [--min-change PCT] [--no-deps] [--base REV] [--id ID] | try [REV | --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID] | finish [--keep-worktrees] [--json] [--id ID] | status [--json] [--id ID]",
     "One experiment, from baseline to verdict. `start` records the base (HEAD, or --base REV) in a git\n" ++
     "worktree under .lake/leanprof/experiments/ID: the build (default targets and EXE), the tests (--test CMD,\n" ++
@@ -174,8 +180,11 @@ def commands : List (String × String × String) := [
     "measure_pair targets, read reports, list hot scopes/copies/allocations with file:line, compare,\n" ++
     "judge (measure summaries or a paired session), and\n" ++
     "query (live) or dump (dump) a running program."),
-  ("doctor", "",
-    "Check that the tools leanprof needs are installed and the project is set up, and say what to fix."),
+  ("doctor", "[--json]",
+    "Check that the tools leanprof needs are installed and the project is set up, and say what to fix.\n" ++
+    "--json prints it for agents (schemas/doctor.schema.json): the Lean version and whether it is supported,\n" ++
+    "the project's executables, libraries and test driver, which modes work here (run, sample, elab and its\n" ++
+    "driver, --auto, --core), samply and perf, and each setup failure with what to do."),
   ("help", "[COMMAND]", "Show this overview, or one command's options.")]
 
 /-- What each command is for, in one line. -/
@@ -424,7 +433,10 @@ def checkInterrupted : IO Unit := do
 
 def spawnWait (cmd : String) (args : Array String) (env : Array (String × Option String))
     (cwd : Option FilePath := none) : IO UInt32 := do
-  let child ← IO.Process.spawn { cmd, args, env, cwd }
+  let child ← try IO.Process.spawn { cmd, args, env, cwd } catch e =>
+    if cmd == "lake" || cmd == "lean" then
+      Leanprof.Contract.reportError "lean_not_found" s!"cannot run `{cmd}` ({e}): is elan's bin directory on PATH?"
+    throw e
   guardSignals child.pid
   try child.wait finally guardSignals 0
 
@@ -695,8 +707,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
   let leanOk ← try pure ((← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).exitCode == 0)
     catch _ => pure false
   unless leanOk do
-    throw <| IO.userError ("`lean` was not found on PATH: add elan's bin directory " ++
-      "(export PATH=$HOME/.elan/bin:$PATH); `leanprof doctor` checks the setup")
+    let msg := "`lean` was not found on PATH: add elan's bin directory " ++
+      "(export PATH=$HOME/.elan/bin:$PATH); `leanprof doctor` checks the setup"
+    Leanprof.Contract.reportError "lean_not_found" msg
+    throw <| IO.userError msg
   -- a normal executable kept aside by an interrupted or `--keep` run comes back first
   restoreExe exe (removeUnsaved := false)
   -- From here every step changes the build (the executable is kept aside and
@@ -767,7 +781,10 @@ def buildWithShims (exe : String) (auto : Option String) (allocs : Bool := false
     undo
     checkInterrupted
     -- the probes are compiled by the system's C compiler: say so when it is the cause
-    if let some p ← ccProblem then IO.eprintln s!"leanprof: {p}"
+    let cc ← ccProblem
+    if let some p := cc then IO.eprintln s!"leanprof: {p}"
+    Leanprof.Contract.reportError "build_failed" s!"`lake build {exe}` with leanprof's probes failed (exit code {rc})"
+      (cc.map (s!"the C compiler cannot build leanprof's runtime: " ++ ·) |>.getD "")
   else
     discard <| dropBuildRecords deps exe
   return rc
@@ -826,6 +843,15 @@ def publishReport (json : FilePath) : IO Unit := do
   if (← absPath json) == (← absPath lastReport) then return
   IO.FS.writeBinFile lastReport (← IO.FS.readBinFile json)
 
+/-- The provenance of a report of `run` or `stat` (`Contract.provenance`):
+the flags it was built with, and the instrumented binary and its inputs. -/
+def runProvenance (mode exe : String) (opts : RunOpts) (allocs frees : Bool) : IO Json := do
+  let build := Json.mkObj [("mode", Json.str mode), ("auto", match opts.auto with | some a => Json.str a | none => Json.null),
+    ("time_tiny", Json.bool opts.timeTiny), ("allocs", Json.bool allocs), ("counters", Json.bool opts.counters),
+    ("frees", Json.bool frees), ("core", Json.bool opts.core), ("deps", Json.bool opts.deps),
+    ("all_copies", Json.bool opts.allCopies)]
+  Leanprof.Contract.provenance (← Leanprof.Contract.workload exe opts.args (some (exePath exe))) build
+
 def run (argv : List String) : IO UInt32 := do
   let opts ← IO.ofExcept (parseRun {} argv)
   let some exe := opts.exe | throw <| IO.userError (usageFor "run")
@@ -837,7 +863,9 @@ def run (argv : List String) : IO UInt32 := do
   if rc != 0 then return rc
   -- written where asked (--json/--out), and always as the last report
   let json := opts.json.getD lastReport.toString
-  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json)] ++
+  let prov ← runProvenance "run" exe opts opts.allocs opts.frees
+  let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json),
+      ("LEANPROF_PROVENANCE", some prov.compress)] ++
     (if opts.allCopies then #[("LEANPROF_ALL_COPIES", some "1")] else #[])
   let rc ← try runInstrumented exe opts runEnv
     finally
@@ -1018,6 +1046,8 @@ def loadFindings (path : Option String) : IO (Option (Array Leanprof.Regress.Fin
   return some (Leanprof.Regress.loadExplain (← IO.ofExcept (Json.parse (← IO.FS.readFile p))))
 
 def compare (argv : List String) : IO UInt32 := do
+  let json := argv.contains "--json"
+  let argv := argv.filter (· != "--json")
   let rec parse (thr minMs : Float) (ex : Option String) (files : List String) :
       List String → Except String (Float × Float × Option String × List String)
     | [] => .ok (thr, minMs, ex, files.reverse)
@@ -1026,13 +1056,26 @@ def compare (argv : List String) : IO UInt32 := do
     | "--explain" :: v :: rest => parse thr minMs (some v) files rest
     | a :: rest => parse thr minMs ex (a :: files) rest
   let (thr, minMs, explainPath, files) ← IO.ofExcept (parse 10 1 none [] argv)
+  -- --json: the same comparison as rows (schemas/compare.schema.json), no text
+  let say (l : String) : IO Unit := unless json do IO.println l
+  let scopeRows ← IO.mkRef (#[] : Array Json)
+  let copyRows ← IO.mkRef (#[] : Array Json)
+  let allocRows ← IO.mkRef (#[] : Array Json)
+  let notes ← IO.mkRef (#[] : Array String)
+  let optF (x : Option Float) : Json := match x with | some v => toJson v | none => Json.null
   let [basePath, newPath] := files | throw <| IO.userError (usageFor "compare")
   let base ← loadReport basePath
   let new ← loadReport newPath
   let findings ← loadFindings explainPath
+  -- reports of another Lean version or platform are not of the same code: said first
+  let (provCheck, refusals, provWarnings) := Leanprof.Contract.provenanceCheck
+    (← IO.ofExcept (Json.parse (← IO.FS.readFile basePath))) (← IO.ofExcept (Json.parse (← IO.FS.readFile newPath)))
+  for w in refusals ++ provWarnings do
+    say s!"warning: {w}{if refusals.contains w then " (the reports may not be comparable)" else ""}"
+    notes.modify (·.push w)
   let mut regressions := 0
   let mut slowerDecls : Array String := #[]
-  IO.println s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
+  say s!"scopes (time: regression above +{fmt2 thr}% and {fmt2 minMs} ms; calls: any change)"
   let keys := (base.scopes.toList.map (·.1) ++ new.scopes.toList.map (·.1)).eraseDups
   let amt (x : Float) := if base.exact then s!"{fmt2 (x / 1000)} kHB" else fmtTime x
   -- the largest changes first (a project report has thousands of scopes)
@@ -1058,56 +1101,88 @@ def compare (argv : List String) : IO UInt32 := do
         if base.exact then s!"{fmt2 (x / 1000)} kHB" else time r x
       let change := if (small base || small new) && !base.exact then "" else s!" ({fmt2 pct}%)"
       let calls := if base.isElab then "" else s!", calls {bc} -> {nc}"
-      IO.println s!"  {mark}  {k}: {amt base bt} -> {amt new nt}{change}{calls}"
+      say s!"  {mark}  {k}: {amt base bt} -> {amt new nt}{change}{calls}"
+      scopeRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str (if slower then "slower" else if callsChanged then "calls_changed" else if pct < -thr then "faster" else "ok")),
+        ("regression", Json.bool (slower || callsChanged)), ("base", toJson bt), ("new", toJson nt), ("change_pct", toJson pct),
+        ("base_calls", toJson bc), ("new_calls", toJson nc), ("too_small", Json.bool (small base || small new))]))
     | none, some (nt, nc) =>
-      IO.println s!"  new  {k}: {if base.exact then s!"{fmt2 (nt / 1000)} kHB" else time new nt}{if base.isElab then "" else s!", calls {nc}"}"
-    | some (bt, _), none => IO.println s!"  gone {k}: was {if base.exact then s!"{fmt2 (bt / 1000)} kHB" else time base bt}"
+      scopeRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str "new"), ("regression", Json.bool false),
+        ("base", Json.null), ("new", toJson nt), ("new_calls", toJson nc)]))
+      say s!"  new  {k}: {if base.exact then s!"{fmt2 (nt / 1000)} kHB" else time new nt}{if base.isElab then "" else s!", calls {nc}"}"
+    | some (bt, bc), none =>
+      scopeRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str "gone"), ("regression", Json.bool false),
+        ("base", toJson bt), ("new", Json.null), ("base_calls", toJson bc)]))
+      say s!"  gone {k}: was {if base.exact then s!"{fmt2 (bt / 1000)} kHB" else time base bt}"
     | none, none => pure ()
   if base.isElab && new.isElab && base.total > 0 then
-    IO.println s!"total: {amt base.total} -> {amt new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
+    say s!"total: {amt base.total} -> {amt new.total} ({fmt2 ((new.total - base.total) / base.total * 100)}%)"
   if base.exact && new.exact && !slowerDecls.isEmpty then
     let bj ← IO.ofExcept (Json.parse (← IO.FS.readFile basePath))
     let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile newPath))
-    IO.println "why (what changed inside each declaration that got more expensive; counts are exact, heartbeats nearly so)"
+    say "why (what changed inside each declaration that got more expensive; counts are exact, heartbeats nearly so)"
     for e in explainElab bj nj slowerDecls do
-      for l in whyText e 8 do IO.println l
-  IO.println "copies of shared or multi-threaded values (any increase is a regression)"
+      for l in whyText e 8 do say l
+  say "copies of shared or multi-threaded values (any increase is a regression)"
   let ckeys := (base.copies.toList.map (·.1) ++ new.copies.toList.map (·.1)).eraseDups
   for k in ckeys do
     let b := base.copies.getD k 0
     let n := new.copies.getD k 0
+    let cause := if n > b then copyCauseText findings k n else none
+    if n != b then
+      copyRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str (if n > b then "more" else "fewer")),
+        ("regression", Json.bool (n > b)), ("base", toJson b), ("new", toJson n),
+        ("why", match cause with | some c => Json.str c | none => Json.null)]))
     if n > b then
       regressions := regressions + 1
-      IO.println s!"  REGRESSION  {k}: {b} -> {n}"
-      if let some c := copyCauseText findings k n then IO.println s!"    why: {c}"
+      say s!"  REGRESSION  {k}: {b} -> {n}"
+      if let some c := cause then say s!"    why: {c}"
     else if n < b then
-      IO.println s!"  fewer  {k}: {b} -> {n}"
+      say s!"  fewer  {k}: {b} -> {n}"
   -- allocations: exact; judged on the total, since inlining and refactoring
   -- move them between sites
   if !base.allocs.isEmpty && !new.allocs.isEmpty then
     let total (r : Report) := r.allocs.fold (fun a _ n => a + n) 0
     let (b, n) := (total base, total new)
-    IO.println "allocations by compiled Lean code (an increase of the total is a regression)"
+    say "allocations by compiled Lean code (an increase of the total is a regression)"
     if n > b then
       regressions := regressions + 1
-      IO.println s!"  REGRESSION  total: {b} -> {n}"
-    else IO.println s!"  {if n < b then "fewer" else "ok"}  total: {b} -> {n}"
+      say s!"  REGRESSION  total: {b} -> {n}"
+    else say s!"  {if n < b then "fewer" else "ok"}  total: {b} -> {n}"
     let akeys := (base.allocs.toList.map (·.1) ++ new.allocs.toList.map (·.1)).eraseDups
     let changed := (akeys.filterMap fun k =>
       let (x, y) := (base.allocs.getD k 0, new.allocs.getD k 0)
       if x == y then none else some (k, x, y)).toArray.qsort fun (_, x1, y1) (_, x2, y2) =>
         (Int.ofNat y1 - x1).natAbs > (Int.ofNat y2 - x2).natAbs
+    allocRows.modify (·.push (Json.mkObj [("key", Json.str "total"), ("status", Json.str (if n > b then "more" else if n < b then "fewer" else "ok")),
+      ("regression", Json.bool (n > b)), ("base", toJson b), ("new", toJson n)]))
+    for (k, x, y) in changed do
+      allocRows.modify (·.push (Json.mkObj [("key", Json.str k), ("status", Json.str (if y > x then "more" else "fewer")),
+        ("regression", Json.bool false), ("base", toJson x), ("new", toJson y)]))
     for (k, x, y) in changed.toList.take 10 do
-      IO.println s!"  {if y > x then "more" else "fewer"}  {k}: {x} -> {y}"
+      say s!"  {if y > x then "more" else "fewer"}  {k}: {x} -> {y}"
       if y > x && findings.isSome then
-        IO.println "    why: cause not attributed: explain explains copies, not allocations"
-    if changed.size > 10 then IO.println s!"  ({changed.size - 10} more sites changed)"
+        say "    why: cause not attributed: explain explains copies, not allocations"
+    if changed.size > 10 then say s!"  ({changed.size - 10} more sites changed)"
   else if base.allocs.isEmpty != new.allocs.isEmpty then
-    IO.println "allocations counted in only one report (run --allocs); not compared"
+    notes.modify (·.push "allocations counted in only one report (run --allocs); not compared")
+    say "allocations counted in only one report (run --allocs); not compared"
+  if json then
+    let allocs ← allocRows.get
+    IO.println (Json.mkObj [("schema", Leanprof.Contract.schema "compare"), ("leanprof", Json.str "compare"),
+      ("base", Json.str basePath), ("new", Json.str newPath),
+      ("kind", Json.str (if base.isElab then "elab" else "run")),
+      ("unit", Json.str (if base.exact then "heartbeats" else "ns")),
+      ("threshold_pct", toJson thr), ("min_ms", toJson minMs),
+      ("regressions", toJson regressions), ("regressed", Json.bool (regressions > 0)),
+      ("scopes", Json.arr (← scopeRows.get)), ("copies", Json.arr (← copyRows.get)),
+      ("allocations", if base.allocs.isEmpty || new.allocs.isEmpty then Json.null else Json.arr allocs),
+      ("total", if base.isElab && new.isElab && base.total > 0 then
+          Json.mkObj [("base", toJson base.total), ("new", toJson new.total)] else Json.null),
+      ("notes", toJson (← notes.get)), ("provenance", provCheck)]).pretty
   if regressions == 0 then
-    IO.println "no regressions"
+    say "no regressions"
     return 0
-  IO.println s!"{regressions} regressions"
+  say s!"{regressions} regressions"
   return 1
 
 /-! ## sample -/
@@ -1227,7 +1302,9 @@ def sample (argv : List String) : IO UInt32 := do
     unless ← bin.pathExists do throw <| IO.userError s!"{target}: no such file"
   else
     let rc ← spawnWait "lake" #["build", target] #[]
-    if rc != 0 then return rc
+    if rc != 0 then
+      Leanprof.Contract.reportError "build_failed" s!"`lake build {target}` failed (exit code {rc})"
+      return rc
   clearReports o.json
   let out : FilePath := o.out.getD s!".lake/leanprof/{exe}.json"
   if let some dir := out.parent then IO.FS.createDirAll dir
@@ -1236,6 +1313,8 @@ def sample (argv : List String) : IO UInt32 := do
     "-o", (← absPath out).toString, (← absPath bin).toString] ++ o.args
   let some samply ← findSamply | do
     IO.eprintln s!"leanprof: `leanprof sample` needs samply, which is not installed; get it with:\n  {← samplyInstallCmd}\n(or brew install samply / cargo install samply)"
+    Leanprof.Contract.reportError "samply_missing" "`leanprof sample` needs samply, which is not installed"
+      s!"install it with: {← samplyInstallCmd} (or brew install samply / cargo install samply), or use `run` or `stat`"
     return 1
   let rc ← try spawnWait samply samplyArgs ((← lakeRunEnv) ++ #[("LEANPROF_QUIET", some "1")]) (o.cwd.map (·))
     catch e =>
@@ -1483,7 +1562,10 @@ def sample (argv : List String) : IO UInt32 := do
   -- where the runtime's time went, for `leanprof` with no arguments' findings
   let runtime := (catT.toArray.qsort (fun a b => a.2 > b.2)).map fun (c, w) =>
     Json.mkObj [("category", Json.str c), ("self_ns", toJson (w * 1000))]
-  let report := Json.mkObj [("version", toJson (3 : Nat)), ("sampled", Json.bool true),
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload exe o.args (some bin))
+    (Json.mkObj [("mode", Json.str "sample"), ("rate", toJson o.rate)])
+  let report := Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "run"), ("sampled", Json.bool true),
+    ("provenance", prov),
     ("exe", Json.str exe), ("exit_code", toJson rc.toNat),
     ("wall_ns", toJson (total * 1000)), ("scopes", Json.arr scopes), ("copies", Json.arr #[]),
     ("runtime", Json.arr runtime)]
@@ -1672,8 +1754,9 @@ def measureCmd (argv : List String) : IO UInt32 := do
   let allocRuns := reports.map allocTotal
   let allocsStable := allocRuns.all (· == allocTotal last)
   let outputStable := hashes.all (· == hashes.back!)
+  let copyRuns := reports.map copyTotal
   unless copiesStable do
-    IO.eprintln "leanprof: copy counts differ between runs (threads?); using the last run's"
+    IO.eprintln "leanprof: copy counts differ between runs (threads?); judge compares their ranges"
   if o.allocs && !allocsStable then
     IO.eprintln "leanprof: allocation counts differ between runs (threads?); judge compares their ranges"
   unless outputStable do
@@ -1685,8 +1768,15 @@ def measureCmd (argv : List String) : IO UInt32 := do
     discard <| IO.FS.withIsolatedStreams
       (elabCmd (["--heartbeats", "--out", hbPath.toString] ++ o.hbFiles.toList))
     hb := some ((← loadReport hbPath.toString).scopes.toList.map fun (k, (t, _)) => (k, t))
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload exe o.args (some (exePath exe)))
+    (Json.mkObj [("mode", Json.str "measure"), ("runs", toJson o.runs), ("warmup", toJson o.warmup),
+      ("scope", match o.scope with | some s => Json.str s | none => Json.null), ("allocs", Json.bool o.allocs),
+      ("core", Json.bool o.core), ("deps", Json.bool o.deps),
+      ("check_output", match o.checkOutput with | some f => Json.str f | none => Json.null),
+      ("ignore_lines", toJson o.ignoreLines)])
   let summary := Json.mkObj [
-    ("version", toJson (1 : Nat)), ("leanprof", Json.str "measure"),
+    ("version", toJson (1 : Nat)), ("schema", Leanprof.Contract.schema "measure"), ("leanprof", Json.str "measure"),
+    ("provenance", prov),
     ("command", toJson (#[exe] ++ o.args)), ("runs", toJson o.runs), ("core", Json.bool o.core),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("exit_code", toJson codes.back!.toNat),
@@ -1698,7 +1788,14 @@ def measureCmd (argv : List String) : IO UInt32 := do
     ("machine", Json.mkObj [("load_avg_1m", match loadMax with | some l => toJson l | none => Json.null),
       ("cpus", match cpus with | some c => toJson c | none => Json.null), ("overloaded", Json.bool overloaded)]),
     ("copies_total", toJson (copyTotal last)), ("copies_stable", Json.bool copiesStable),
+    ("copies_runs", toJson copyRuns),
     ("self_check_warning", Json.str last.selfCheck),
+    -- what was measured, and how completely: judge gives no KEEP on a gap
+    ("coverage", Json.mkObj [
+      ("copies", Json.str (if last.selfCheck.isEmpty then "counted" else "undercounted")),
+      ("allocations", Json.str (if o.allocs then "counted" else "not_counted")),
+      ("heartbeats", Json.str (if o.hbFiles.isEmpty then "not_counted" else "counted")),
+      ("time", Json.str (if smallRuns > 0 then "too_small" else "measured"))]),
     ("copies", keyedArr "copies" (last.copies.toList.map fun (k, n) => (k, toJson n))),
     ("calls", keyedArr "calls" (last.scopes.toList.map fun (k, (_, c)) => (k, toJson c))),
     ("allocs_total", if o.allocs then toJson (allocTotal last) else Json.null),
@@ -1966,7 +2063,13 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let overloaded := match maxLoad, cpus with | some l, some c => l > c.toFloat | _, _ => false
   let finalHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
   unless finalHashes == binaryHashes do throw <| IO.userError "a benchmark binary changed during measurement"
-  let j := Json.mkObj [("version", toJson (2 : Nat)), ("leanprof", "measure-pair"),
+  let prov ← Leanprof.Contract.provenance
+    (← Leanprof.Contract.workload (binaries[1]!.fileName.getD "") o.args none)
+    (Json.mkObj [("mode", Json.str "measure-pair"), ("runs", toJson o.runs), ("fixed", Json.bool o.fixed),
+      ("warmup", toJson o.warmup), ("min_change", toJson o.minChange),
+      ("scope", match o.scope with | some s => Json.str s | none => Json.null)])
+  let j := Json.mkObj [("version", toJson (2 : Nat)), ("schema", Leanprof.Contract.schema "measure-pair"), ("leanprof", "measure-pair"),
+    ("provenance", prov),
     ("mode", "plain"), ("runs", toJson changes.size), ("warmup", toJson o.warmup),
     ("design", design.json), ("min_change", toJson o.minChange),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
@@ -1999,9 +2102,17 @@ rules are in `Leanprof.Judge`). Exits 0 for KEEP. -/
 def judgeCmd (argv : List String) : IO UInt32 := do
   let mut minChange : Float := 1
   let mut allowOverloaded := false
+  let mut allowIncompatible := false
+  let mut json := false
   let mut argv := argv
   repeat
     match argv with
+    | "--json" :: rest =>
+      json := true
+      argv := rest
+    | "--allow-incompatible" :: rest =>
+      allowIncompatible := true
+      argv := rest
     | "--min-change" :: v :: rest =>
       let some pct := parseDecimal? v | throw <| IO.userError "--min-change must be a percentage from 0 to 100"
       unless pct ≤ 100 do throw <| IO.userError "--min-change must be a percentage from 0 to 100"
@@ -2015,9 +2126,26 @@ def judgeCmd (argv : List String) : IO UInt32 := do
     | [pairPath] => do
       let j ← IO.ofExcept (Json.parse (← IO.FS.readFile pairPath))
       IO.ofExcept (Leanprof.Judge.judgePaired j minChange allowOverloaded)
-    | [basePath, newPath] => pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange)
+    | [basePath, newPath] =>
+      pure (Leanprof.Judge.judge (← loadSummary basePath) (← loadSummary newPath) minChange (allowIncompatible := allowIncompatible))
     | _ => throw <| IO.userError (usageFor "judge")
-  IO.print v.render
+  -- whether the two summaries can be compared (another Lean or platform: refused above)
+  let provCheck ← match argv with
+    | [basePath, newPath] => do
+      let (j, _, _) := Leanprof.Contract.provenanceCheck (← IO.ofExcept (Json.parse (← IO.FS.readFile basePath)))
+        (← IO.ofExcept (Json.parse (← IO.FS.readFile newPath)))
+      pure j
+    | _ => pure Json.null
+  if json then
+    let inputs := match argv with
+      | [p] => [("pair", Json.str p)]
+      | xs => [("base", Json.str (xs.headD "")), ("new", Json.str (xs.getLastD ""))]
+    IO.println (Json.mkObj ([("schema", Leanprof.Contract.schema "judge"), ("leanprof", Json.str "judge"),
+      ("kind", Json.str (if argv.length == 1 then "paired" else "summaries")),
+      ("inputs", Json.mkObj inputs), ("min_change", toJson minChange), ("allow_overloaded", Json.bool allowOverloaded),
+      ("allow_incompatible", Json.bool allowIncompatible), ("provenance", provCheck)] ++
+      v.json)).pretty
+  else IO.print v.render
   return if v.keep then 0 else 1
 
 /-! ## report-md -/
@@ -2323,34 +2451,87 @@ def reportMd (argv : List String) : IO UInt32 := do
 
 /-! ## doctor -/
 
-def doctor : IO UInt32 := do
-  let mut problems := 0
-  let report (ok : Bool) (what fix : String) : IO Bool := do
-    IO.println s!"  {if ok then "ok " else "!! "} {what}{if ok || fix.isEmpty then "" else s!"\n       {fix}"}"
+/-- The oldest Lean leanprof supports, and the newest it is tested with. -/
+def minLean : Nat × Nat := (4, 27)
+def testedLean : String := "4.27.0 to 4.35.0"
+
+/-- `4.35.0`, `4.36.0-rc1` or `4.36.0-nightly-2026-10-23` as (major, minor). -/
+def leanMajorMinor (v : String) : Option (Nat × Nat) :=
+  match (v.splitOn "-").headD v |>.splitOn "." with
+  | a :: b :: _ => do return (← a.toNat?, ← b.toNat?)
+  | _ => none
+
+/-- How the elab driver for the project's Lean is had: `bundled` (built with
+leanprof, the same Lean), `cached` (built for this Lean before), `on_first_use`
+(built the first time `elab` runs, in seconds), or `unavailable`. -/
+def driverStatus : IO (String × String) := do
+  let some theirs ← Leanprof.Elab.githashOf "lean" | return ("unavailable", "")
+  if let some p ← Leanprof.Elab.bundledDriver then
+    if Lean.githash == theirs then return ("bundled", p.toString)
+  let pre ← try pure (← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }).stdout.trimAscii.toString
+    catch _ => return ("unavailable", "")
+  let dir ← Leanprof.Elab.cachedDriverDir pre theirs
+  let p := dir / Leanprof.Elab.driverExe
+  return if ← p.pathExists then ("cached", p.toString) else ("on_first_use", p.toString)
+
+/-- `leanprof doctor [--json]`: what leanprof needs, what the project has, and
+which modes work here. `--json` prints it as one document
+(`schemas/doctor.schema.json`) for agents. -/
+def doctor (argv : List String) : IO UInt32 := do
+  let json := argv.contains "--json"
+  unless argv.all (· == "--json") do throw <| IO.userError "usage: leanprof doctor [--json]"
+  let checks ← IO.mkRef (#[] : Array Json)
+  let failures ← IO.mkRef (#[] : Array Json)
+  let problems ← IO.mkRef 0
+  -- one line per check; a required check that fails is a problem, and a setup failure for agents
+  let report (id : String) (ok : Bool) (what fix : String) (required := true) (code := "failed") : IO Bool := do
+    unless json do
+      IO.println s!"  {if ok then "ok " else "!! "} {what}{if ok || fix.isEmpty then "" else s!"\n       {fix}"}"
+    checks.modify (·.push (Json.mkObj [("id", Json.str id), ("ok", Json.bool ok), ("required", Json.bool required),
+      ("message", Json.str what), ("fix", Json.str (if ok then "" else fix))]))
+    if !ok && required then
+      problems.modify (· + 1)
+      failures.modify (·.push (Leanprof.Contract.errorJson code what fix))
     return ok
   let tryCmd (cmd : String) (args : Array String) : IO (Option IO.Process.Output) := do
-    try return some (← IO.Process.output { cmd, args }) catch _ => return none
-  IO.println "leanprof doctor"
+    try return some (← IO.Process.output { cmd, args, stdin := .null }) catch _ => return none
+  let firstLine (o : Option IO.Process.Output) : String :=
+    (o.map fun x => (x.stdout.trimAscii.toString.splitOn "\n").headD "").getD ""
+  unless json do IO.println "leanprof doctor"
   -- Lean
   let lean ← tryCmd "lean" #["--version"]
   let leanOk := lean.any (·.exitCode == 0)
-  unless ← report leanOk s!"Lean: {(lean.map (·.stdout.trimAscii.toString)).getD "not found"}"
-      "install Lean with elan: https://github.com/leanprover/elan" do problems := problems + 1
+  let short ← if leanOk then pure (firstLine (← tryCmd "lean" #["--short-version"])) else pure ""
+  let supported := match leanMajorMinor short with
+    | some v => v.1 > minLean.1 || (v.1 == minLean.1 && v.2 ≥ minLean.2)
+    | none => false
+  discard <| report "lean" leanOk s!"Lean: {if leanOk then firstLine lean else "not found"}"
+    "install Lean with elan: https://github.com/leanprover/elan" (code := "lean_not_found")
+  if leanOk then
+    discard <| report "lean_supported" supported
+      s!"Lean {short} is {if supported then "" else "not "}supported (4.27 and later; tested {testedLean})"
+      "use Lean 4.27 or later in lean-toolchain"
   let lake ← tryCmd "lake" #["--version"]
-  unless ← report (lake.any (·.exitCode == 0)) "Lake" "comes with Lean; is elan's bin directory on PATH?" do
-    problems := problems + 1
+  let lakeOk := lake.any (·.exitCode == 0)
+  discard <| report "lake" lakeOk "Lake" "comes with Lean; is elan's bin directory on PATH?" (code := "lean_not_found")
   -- project
   let isProject := (← ("lakefile.toml" : FilePath).pathExists) || (← ("lakefile.lean" : FilePath).pathExists)
-  unless ← report isProject "inside a Lake project" "run leanprof from a project's root directory" do
-    problems := problems + 1
-  if let some t ← projectTargets then
-    let what := match Leanprof.Workload.choose t with
-      | .exe e why => s!"`{e}` ({why})"
-      | .ambiguous exes _ => s!"one of {exes.size} executables, named: leanprof EXE -- ARGS"
-      | .elab => "compile time of the libraries (no executable)"
-      | .nothing => "nothing (no lean_exe or lean_lib in the lakefile)"
-    discard <| report true s!"`leanprof` with no arguments profiles {what}" ""
+  discard <| report "lake_project" isProject "inside a Lake project" "run leanprof from a project's root directory"
+    (code := "not_lake_project")
+  let targets ← projectTargets
+  let mut workload := Json.null
+  if let some t := targets then
+    let (what, w) := match Leanprof.Workload.choose t with
+      | .exe e why => (s!"`{e}` ({why})",
+          Json.mkObj [("kind", Json.str "executable"), ("executable", Json.str e), ("why", Json.str why)])
+      | .ambiguous exes _ => (s!"one of {exes.size} executables, named: leanprof EXE -- ARGS",
+          Json.mkObj [("kind", Json.str "ambiguous"), ("executables", toJson exes)])
+      | .elab => ("compile time of the libraries (no executable)", Json.mkObj [("kind", Json.str "elab")])
+      | .nothing => ("nothing (no lean_exe or lean_lib in the lakefile)", Json.mkObj [("kind", Json.str "nothing")])
+    workload := w
+    discard <| report "workload" true s!"`leanprof` with no arguments profiles {what}" ""
   -- an instrumented build left by an interrupted (or `--keep`) run: put the normal one back
+  let mut restored := false
   if isProject then
     let stashed ← (← workspacePackages).filterM fun p => (stashDir p).isDir
     let saved ← if ← savedDir.isDir then
@@ -2359,64 +2540,128 @@ def doctor : IO UInt32 := do
           else some e.fileName)
       else pure #[]
     if stashed.isEmpty && saved.isEmpty then
-      discard <| report true "no instrumented build left in .lake/build" ""
+      discard <| report "normal_build" true "no instrumented build left in .lake/build" ""
     else
       restoreObjects
       for exe in saved do restoreExe exe (removeUnsaved := false)
-      discard <| report true (s!"an interrupted or --keep run had left instrumented objects in {stashed.size} " ++
+      restored := true
+      discard <| report "normal_build" true (s!"an interrupted or --keep run had left instrumented objects in {stashed.size} " ++
         s!"package(s){if saved.isEmpty then "" else s!" and {", ".intercalate saved.toList}"}: the normal build is back") ""
   let dep ← (pure (← ((".lake" : FilePath) / "packages" / "leanprof").pathExists) <||>
     (do return (← IO.FS.realPath (← packageRoot)) == (← IO.FS.realPath (← IO.currentDir))))
-  discard <| report true (if dep then "project depends on leanprof (profile!, #leanprof, test assertions available)"
+  discard <| report "depends_on_leanprof" true (if dep then "project depends on leanprof (profile!, #leanprof, test assertions available)"
     else "project does not depend on leanprof (run/sample/elab still work; add it for profile! and #leanprof)") ""
   -- leanprof's own files
   let root ← packageRoot
-  unless ← report (← (root / "scripts" / "leanprof-cc").pathExists) s!"leanprof files at {root}"
-      "reinstall with scripts/install.sh" do problems := problems + 1
-  -- C compiler for probes
+  let filesOk ← report "leanprof_files" (← (root / "scripts" / "leanprof-cc").pathExists) s!"leanprof files at {root}"
+    "reinstall with scripts/install.sh"
+  -- C compiler for probes, the runtime's self-check, clang for --auto
+  let mut ccOk := false
+  let mut clangOk := false
+  let mut selfCheck := Json.null
   if leanOk then
-    let leanPrefix := ((← tryCmd "lean" #["--print-prefix"]).map (·.stdout.trimAscii.toString)).getD ""
+    let leanPrefix := firstLine (← tryCmd "lean" #["--print-prefix"])
     let tmp := (← IO.FS.createTempFile).2
     let out ← tryCmd "cc" #["-fsyntax-only", "-I", leanPrefix ++ "/include", (root / "c" / "leanprof.c").toString]
     let ccFix ← match ← ccProblem with
       | some p => pure p
       | none => pure s!"{(out.map (·.stderr.take 300 |>.toString)).getD "cc not found"}"
-    unless ← report (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean (for run, stat, measure)"
-        ccFix do problems := problems + 1
+    ccOk ← report "cc" (out.any (·.exitCode == 0)) "C compiler builds leanprof's runtime for this Lean (for run, stat, measure)"
+      ccFix
     -- the runtime's self-check, built and linked as `leanprof run` builds a program
-    if out.any (·.exitCode == 0) then
-      let leanVersion := ((← tryCmd "lean" #["--short-version"]).map (·.stdout.trimAscii.toString)).getD "?"
+    if ccOk then
       match ← selfCheckProbe root with
       | .ok (ops, "") =>
-        discard <| report true s!"copy detection works with Lean {leanVersion} ({ops})" ""
-      | .ok (_, warning) =>
-        discard <| report false warning ""
-        problems := problems + 1
+        discard <| report "self_check" true s!"copy detection works with Lean {short} ({ops})" ""
+        selfCheck := Json.mkObj [("ok", Json.bool true), ("checked", Json.str ops), ("warning", Json.str "")]
+      | .ok (ops, warning) =>
+        discard <| report "self_check" false warning ""
+        selfCheck := Json.mkObj [("ok", Json.bool false), ("checked", Json.str ops), ("warning", Json.str warning)]
       | .error e =>
-        discard <| report false s!"copy detection self-check could not run: {e}" ""
-        problems := problems + 1
+        discard <| report "self_check" false s!"copy detection self-check could not run: {e}" ""
+        selfCheck := Json.mkObj [("ok", Json.bool false), ("checked", Json.str ""), ("warning", Json.str e)]
     let probe := tmp.withExtension "c"
     IO.FS.writeFile probe "int f(int x) { return x + 1; }\n"
     let clang ← tryCmd "sh" #["-c", s!"LEANPROF_AUTO=1 {root / "scripts" / "leanprof-cc"} -c {probe} -o {tmp}.o"]
-    unless ← report (clang.any (·.exitCode == 0)) "clang with -finstrument-functions-after-inlining (for --auto)"
-        s!"install clang: {← installHint "clang"}" do problems := problems + 1
+    clangOk ← report "clang_auto" (clang.any (·.exitCode == 0)) "clang with -finstrument-functions-after-inlining (for --auto)"
+      s!"install clang: {← installHint "clang"}" (required := false)
   -- samply: optional, but what `leanprof sample` and `leanprof` with no arguments use
-  match ← findSamply with
+  let samply ← findSamply
+  let blocked ← samplingBlocked
+  let mut samplyJson := Json.mkObj [("found", Json.bool false)]
+  match samply with
   | some s =>
-    let v := ((← tryCmd s #["--version"]).map (·.stdout.trimAscii.toString)).getD "samply"
-    discard <| report true s!"{v}{if s == "samply" then "" else s!" at {s}"} (for `leanprof sample`)" ""
-    if let some why ← samplingBlocked then
-      discard <| report false "sampling allowed on this machine" s!"{why}\n       (until then `leanprof` with no arguments uses `leanprof stat`)"
+    let v := firstLine (← tryCmd s #["--version"])
+    discard <| report "samply" true s!"{if v.isEmpty then "samply" else v}{if s == "samply" then "" else s!" at {s}"} (for `leanprof sample`)" ""
+      (required := false)
+    if let some why := blocked then
+      discard <| report "sampling_allowed" false "sampling allowed on this machine"
+        s!"{why}\n       (until then `leanprof` with no arguments uses `leanprof stat`)" (required := false)
+    samplyJson := Json.mkObj [("found", Json.bool true), ("path", Json.str s), ("version", Json.str v),
+      ("sampling_allowed", Json.bool blocked.isNone), ("blocked", Json.str (blocked.getD ""))]
   | none =>
-    discard <| report false "samply (for `leanprof sample`; without it, `leanprof` with no arguments rebuilds with probes)"
+    discard <| report "samply" false "samply (for `leanprof sample`; without it, `leanprof` with no arguments rebuilds with probes)"
       s!"optional; get it (samply 0.13.1, checksum-verified, into {← leanprofHome}/samply):\n         {← samplyInstallCmd}\n       or: brew install samply / cargo install samply"
+      (required := false)
+  -- perf (Linux): the kernel's sampler, which samply uses there
+  let mut perfJson := Json.mkObj [("found", Json.bool false), ("applies", Json.bool (!System.Platform.isOSX))]
+  unless System.Platform.isOSX do
+    let perf ← tryCmd "perf" #["--version"]
+    let paranoid ← try pure (some (← IO.FS.readFile "/proc/sys/kernel/perf_event_paranoid").trimAscii.toString)
+      catch _ => pure none
+    perfJson := Json.mkObj [("found", Json.bool (perf.any (·.exitCode == 0))), ("applies", Json.bool true),
+      ("version", Json.str (firstLine perf)),
+      ("perf_event_paranoid", match paranoid.bind (·.toInt?) with | some n => toJson n | none => Json.null)]
   -- objcopy, for `run --core`
   let objcopy ← findObjcopy
-  discard <| report objcopy.isSome
-    s!"{objcopy.getD "llvm-objcopy"} (for `leanprof run --core`)"
-    s!"optional; install it with: {← installHint "objcopy"}"
-  IO.println (if problems == 0 then "everything leanprof needs is here" else s!"{problems} problem(s)")
-  return if problems == 0 then 0 else 1
+  discard <| report "objcopy" objcopy.isSome s!"{objcopy.getD "llvm-objcopy"} (for `leanprof run --core`)"
+    s!"optional; install it with: {← installHint "objcopy"}" (required := false)
+  -- the elab driver for this Lean
+  let (drv, drvPath) ← if leanOk then driverStatus else pure ("unavailable", "")
+  unless json do
+    IO.println s!"  {if drv == "unavailable" then "!! " else "ok "} elab driver: {match drv with
+      | "bundled" => "built with leanprof (the project's Lean)"
+      | "cached" => s!"built for this Lean, cached at {drvPath}"
+      | "on_first_use" => "built for this Lean the first time `elab` runs (seconds, once)"
+      | _ => "unavailable (`elab --no-driver` uses `lean --json`)"}"
+  let n ← problems.get
+  if json then
+    let mode (ok : Bool) (why : String) : Json :=
+      Json.mkObj [("available", Json.bool ok), ("why", Json.str (if ok then "" else why))]
+    let probes := leanOk && lakeOk && isProject && ccOk && filesOk
+    let probesWhy := if !isProject then "not a Lake project" else if !leanOk || !lakeOk then "Lean or Lake not found"
+      else if !ccOk then "the C compiler cannot build leanprof's runtime" else "leanprof's files are missing"
+    let t := targets.getD {}
+    let doc := Json.mkObj [("schema", Leanprof.Contract.schema "doctor"), ("leanprof", Json.str "doctor"),
+      ("leanprof_version", Json.str Leanprof.Contract.leanprofVersion), ("ok", Json.bool (n == 0)), ("problems", toJson n),
+      ("lean", Json.mkObj [("found", Json.bool leanOk), ("version", Json.str (firstLine lean)),
+        ("short_version", Json.str short), ("supported", Json.bool supported), ("minimum", Json.str "4.27.0"),
+        ("tested", Json.str testedLean), ("lake", Json.bool lakeOk),
+        ("toolchain", match ← (try some <$> IO.FS.readFile "lean-toolchain" catch _ => pure none) with
+          | some s => Json.str s.trimAscii.toString | none => Json.null)]),
+      ("project", Json.mkObj [("lake_project", Json.bool isProject), ("dir", Json.str (← IO.currentDir).toString),
+        ("executables", toJson t.exes), ("libraries", toJson t.libs),
+        ("test_driver", match t.testDriver with | some d => Json.str d | none => Json.null),
+        ("default_workload", workload), ("depends_on_leanprof", Json.bool dep),
+        ("restored_instrumented_build", Json.bool restored)]),
+      ("tools", Json.mkObj [("cc", Json.bool ccOk), ("clang_auto", Json.bool clangOk), ("samply", samplyJson),
+        ("perf", perfJson), ("objcopy", match objcopy with | some o => Json.str o | none => Json.null)]),
+      ("self_check", selfCheck),
+      ("elab_driver", Json.mkObj [("status", Json.str drv), ("path", Json.str drvPath)]),
+      ("modes", Json.mkObj [
+        ("run", mode probes probesWhy), ("stat", mode probes probesWhy), ("measure", mode probes probesWhy),
+        ("live", mode probes probesWhy), ("auto", mode (probes && clangOk) "clang with -finstrument-functions-after-inlining is missing"),
+        ("core", mode (probes && objcopy.isSome) "llvm-objcopy or objcopy is missing"),
+        ("sample", mode (samply.isSome && blocked.isNone && isProject && lakeOk)
+          (if samply.isNone then "samply is not installed" else blocked.getD "not a Lake project")),
+        ("measure_pair", mode (isProject && lakeOk) "not a Lake project"),
+        ("elab", mode (leanOk && isProject) "Lean not found, or not a Lake project"),
+        ("elab_driver", mode (drv != "unavailable") "the elab driver cannot be had for this Lean (elab --no-driver works)")]),
+      ("checks", Json.arr (← checks.get)), ("setup_failures", Json.arr (← failures.get))]
+    IO.println doc.pretty
+  else
+    IO.println (if n == 0 then "everything leanprof needs is here" else s!"{n} problem(s)")
+  return if n == 0 then 0 else 1
 
 /-! ## stat -/
 
@@ -2445,8 +2690,9 @@ def statCmd (argv : List String) : IO UInt32 := do
   let rc ← buildWithShims exe opts.auto allocs (frees := frees) (extraEnv := tinyEnv opts) (deps := opts.deps)
   if rc != 0 then return rc
   let json := opts.json.getD lastReport.toString
+  let prov ← runProvenance "stat" exe opts allocs frees
   let env := #[("LEANPROF_QUIET", some "1"), ("LEANPROF_STAT", some "1"), ("LEANPROF_JSON", some json),
-    ("LEANPROF_TRACE", opts.trace)]
+    ("LEANPROF_TRACE", opts.trace), ("LEANPROF_PROVENANCE", some prov.compress)]
   -- the first launch of a freshly linked binary is slower (on macOS, the
   -- system checks a new binary's signature: 2.3 s for a 106 MB compiler);
   -- launched once first, without running it (leanprof's runtime exits at
@@ -2718,7 +2964,7 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
     match commandHelp c with
     | some h => IO.println h; return 0
     | none => IO.eprintln usage; return 2
-  | ["doctor"] => doctor
+  | "doctor" :: rest => doctor rest
   | "run" :: rest => run rest
   | "stat" :: rest => statCmd rest
   | "measure" :: rest => measureCmd rest
@@ -2763,8 +3009,11 @@ def dispatch (argv : List String) : IO UInt32 := do
   try dispatchCmd argv
   catch e =>
     let s ← caughtSignal
-    if s != 0 then return 128 + s  -- said by `main`
+    if s != 0 then
+      Leanprof.Contract.reportError "cancelled" s!"interrupted by signal {s}"
+      return 128 + s  -- said by `main`
     IO.eprintln s!"leanprof: {e}"
+    Leanprof.Contract.reportError (Leanprof.Contract.classifyError (toString e)) (toString e)
     return 2
 
 def main (argv : List String) : IO UInt32 := do

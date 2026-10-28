@@ -44,6 +44,13 @@ clean() {
 }
 # the measurements are small: 3 runs, 10 pairs
 opts="--runs 3 --pairs 10"
+# result.json follows schemas/fix.schema.json, with status $1 (and outcome $2)
+result() {
+  python3 "$root/scripts/contract-check.py" --validate fix .lake/leanprof/fix/result.json > contract.txt ||
+    { cat contract.txt; fail "$3: result.json does not follow schemas/fix.schema.json"; }
+  got=$(python3 -c "import json; d=json.load(open('.lake/leanprof/fix/result.json')); print(d['status'], d.get('outcome', '-'))")
+  [ "$got" = "$1 $2" ] || fail "$3: result.json says $got, expected $1 $2"
+}
 
 echo
 echo "== a tree with uncommitted changes is refused"
@@ -62,6 +69,7 @@ grep -q '^+    bs := bs.modify i (·.push v)$' dry.txt || fail "dry run: no Arra
 grep -q '^-    bs := bs.set! i (bs\[i\]!.push v)$' dry.txt || fail "dry run: the old line is not shown"
 clean "dry run"
 [ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "dry run created a branch"
+result dry_run - "dry run"
 
 echo
 echo "== buckets: KEEP (with git hooks that must not run)"
@@ -77,6 +85,7 @@ rm -f "$hooks/pre-commit" "$hooks/post-checkout" "$hooks/post-commit"
 [ ! -e "$work/hook-ran" ] || fail "buckets: a git hook ran"
 cat keep.txt
 grep -q "^KEEP: committed" keep.txt || fail "buckets: not kept"
+result kept improved "buckets"
 clean "buckets"
 branch=leanprof-fix/buckets-nested-array-element
 git rev-parse -q --verify "refs/heads/$branch" >/dev/null || fail "buckets: no branch $branch"
@@ -99,6 +108,7 @@ if "$lp" fix $opts --exe buckets -- --smooth > refused-loop.txt 2>&1; then fail 
 sed -n '/^leanprof fix: [0-9]* finding/,$p' refused-loop.txt
 grep -q "which fix cannot show" refused-loop.txt || fail "smooth: no reason given for refusing the loop rewrite"
 grep -q "none of these findings has a mechanical fix" refused-loop.txt || fail "smooth: not refused before any change"
+result no_mechanical_fix - "smooth"
 clean "smooth"
 [ -z "$(git branch --list 'leanprof-fix/smooth*')" ] || fail "smooth: a branch was created"
 git diff --quiet HEAD -- Fix.lean || fail "smooth: Fix.lean changed"
@@ -110,6 +120,7 @@ if "$lp" fix $opts --exe buckets --test 'grep -q "bs.set!" Fix.lean' > discard.t
 cat discard.txt
 grep -q "^DISCARD" discard.txt || fail "discard: no DISCARD"
 grep -q "the tests fail" discard.txt || fail "discard: the reason is not the tests"
+result discarded correctness_failure "discard"
 clean "discard"
 [ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "discard: the branch was not deleted"
 git diff --quiet HEAD -- Fix.lean || fail "discard: Fix.lean changed"
@@ -121,6 +132,7 @@ if "$lp" fix $opts --exe buckets --test 'echo "-- by the test" >> Fix.lean' > re
 fi
 sed -n '/^leanprof fix: alternative/,$p' rewritten.txt
 grep -q "changed while it was checked" rewritten.txt || fail "rewritten: the reason is not the changed file"
+result discarded measurement_failed "rewritten"
 clean "rewritten"
 [ -z "$(git branch --list 'leanprof-fix/*')" ] || fail "rewritten: a branch was created"
 

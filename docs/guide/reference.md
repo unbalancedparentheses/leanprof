@@ -13,19 +13,19 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--json F] [--cwd DIR] EXE [-- ARGS]` | sample with samply (`--out`: samply's profile), report per Lean declaration (`--json`: a copy of the report); exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
 | `elab [--heartbeats] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)) |
-| `compare [--threshold PCT] [--min-ms MS] BASE.json NEW.json` | exit 1 on regressions |
+| `compare [--threshold PCT] [--min-ms MS] [--explain F] [--json] BASE.json NEW.json` | exit 1 on regressions; `--json` prints the comparison as JSON |
 | `measure [--runs N] [--scope NAME] [--heartbeats-files F…] [--check-output F] [--ignore-lines TEXT…] [--no-allocs] [--core] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time of the process or, with `--scope`, of one `profile!` scope, output; `self_check_warning`, empty unless copies may be undercounted) |
 | `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output F] [--ignore-lines TEXT…] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries until the time verdict is settled (at most N pairs, default 30); `--scope` times one `Leanprof.bench` region; `--ignore-lines TEXT` leaves stdout's lines containing TEXT out of the output hash (in `measure` too: a benchmark's own timings); no builds or added probes |
-| `judge [--min-change PCT] BASE.json NEW.json` or `judge [--min-change PCT] PAIR.json` | KEEP (exit 0) or DISCARD (exit 1); paired sessions use a 95% median interval |
+| `judge [--min-change PCT] [--allow-overloaded] [--json] BASE.json NEW.json` or `judge [--min-change PCT] [--allow-overloaded] [--json] PAIR.json` | KEEP (exit 0) or DISCARD (exit 1); paired sessions use a 95% median interval; `--json` prints the verdict with its [outcome](#verdict-outcomes) |
 | `explain [--report F] [--out F] [--top N] [--all] [--json] [--why EXE [-- ARGS]]` | why each copy of a shared value happened, with the fix as Lean code when the cause is recognised ([copies](copies-and-allocations.md#why-it-was-shared-leanprof-explain)) |
-| `fix [--exe EXE [-- ARGS]] [--test CMD] [--check-output F] [--finding N] [--all] [--dry-run] [--report F] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded]` | apply the fix `explain` prints for the costliest mechanically fixable copy. In a git worktree of HEAD, it builds, tests, compares the output, measures, times the plain binaries in pairs and judges. KEEP commits with the evidence on a new branch (exit 0); DISCARD creates no branch (exit 1). The checkout is never touched, also when interrupted; a tree with uncommitted changes is refused ([fix](fix.md)) |
+| `fix [--exe EXE [-- ARGS]] [--test CMD] [--check-output F] [--finding N] [--all] [--dry-run] [--report F] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] [--json]` | apply the fix `explain` prints for the costliest mechanically fixable copy. In a git worktree of HEAD, it builds, tests, compares the output, measures, times the plain binaries in pairs and judges. KEEP commits with the evidence on a new branch (exit 0); DISCARD creates no branch (exit 1). The checkout is never touched, also when interrupted; a tree with uncommitted changes is refused. The result is written to `.lake/leanprof/fix/result.json`; `--json` prints it, with the steps on stderr ([fix](fix.md)) |
 | `experiment start [--exe EXE [--inputs DIR] [--cases F] [--heldout DIR] [--check-output F]… [-- ARGS]] [--test CMD \| --no-test] [--protect GLOB]… [--runs N] [--pairs N] [--min-change PCT] [--no-deps] [--base REV] [--id ID]`, `experiment try [REV \| --working-tree] [--time] [--no-commit] [--message MSG] [--allow-overloaded] [--json] [--id ID]`, `experiment finish [--keep-worktrees] [--json] [--id ID]`, `experiment status [--json] [--id ID]` | one experiment from baseline to verdict: `start` records the base in a git worktree (build, tests, behaviour on every case, held-out hashes, `measure`); `try` checks a commit or the working tree in its own worktree (build, proof-preservation guard, tests, identical behaviour on every case, then heartbeats if the generated C is unchanged, else exact counts and paired timing; without `--exe`, heartbeats of the changed modules and their dependents). Exit 0 KEEP, 1 DISCARD, 2 ERROR, 3 INCONCLUSIVE, evidence in `tries/N/evidence.json`; a KEEP becomes the base and is committed (working tree) or noted (commit). `finish` runs the held-out cases ([experiments](experiment.md)) |
 | `report-md [--fail-on M,… \| none] [--title T] BASE.json NEW.json [BASE_ELAB.json NEW_ELAB.json]` | Markdown comparison for a pull-request comment; exit 1 if a `--fail-on` metric regressed |
 | `html [-o F] [--trace F] [--profile F] [REPORT.json…]` | one self-contained HTML page: summary, flame graph, tables, source, comparison of two reports ([HTML report](html-report.md)) |
 | `top [--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS] \| --attach F \| --pid PID` | live view of a running program, refreshed like `top` ([live](live.md)) |
 | `dump [--timeout S] PID` | Perfetto trace of a running program's last seconds (flight recorder) |
 | `mcp` | Model Context Protocol server on stdio for AI agents ([live](live.md#mcp-server)) |
-| `doctor` | check the tools and project setup leanprof needs, and that copy detection works with this Lean ([self-check](how-it-works.md#self-check-is-copy-detection-working)) |
+| `doctor [--json]` | check the tools and project setup leanprof needs, and that copy detection works with this Lean ([self-check](how-it-works.md#self-check-is-copy-detection-working)); `--json` reports it for agents: the Lean version and whether it is supported, the project's executables, libraries and test driver, which modes work (run, stat, measure, sample, elab and whether its driver is built, `--auto`, `--core`) and why not, samply and perf, and each setup failure with its error code and fix |
 
 Reports go to `.lake/leanprof/`: `report.json` (run, stat, sample and
 measure), `elab.json`, `measure.json`, samply's profile `EXE.json`, and the
@@ -45,6 +45,7 @@ For programs that link leanprof:
 | variable | effect |
 |---|---|
 | `LEANPROF_JSON=path` | also write the report as JSON |
+| `LEANPROF_ERROR_JSON=path` | a command that fails writes its error there: `code` (`not_lake_project`, `build_failed`, `lean_not_found`, `samply_missing`, `bad_argument`, `not_found`, `failed`, ...), `retryable`, `hint` ([MCP errors](live.md#structured-results)) |
 | `LEANPROF_QUIET=1` | no table on stderr |
 | `LEANPROF_ALL=1` | include copies of compile-time constants and non-Lean functions |
 | `LEANPROF_ALL_COPIES=1` | list copies of compile-time constants and of empty or tiny values row by row (set by `run --all-copies`) |
@@ -89,6 +90,96 @@ For builds through the compiler wrapper `scripts/leanprof-cc` (set as
 | `LEANPROF_RUNTIME=file.o` | link this leanprof runtime (set by `run` for projects without the dependency) |
 | `LEANPROF_CORE_LIB=dir` | search `dir` first for `-lInit`, `-lStd`, ... (set by `run --core` to the rewritten copies) |
 | `LEANPROF_REAL_CC=cc` | compiler to forward to (default: Lean's own `leanc` on Linux, so instrumented builds compile and link like Lake's; elsewhere, and for sanitizer builds, the first `clang` on `PATH` that is not Lean's own) |
+
+## Machine-readable output
+
+Every JSON document leanprof writes names its schema in a `schema` field,
+`{"name": "leanprof.NAME", "version": N}`, and
+[`schemas/NAME.schema.json`](../../schemas/) (JSON Schema 2020-12)
+describes it:
+
+| `NAME` | written by |
+|---|---|
+| `run` | `run --json`, `stat --json`, `sample`, `LEANPROF_JSON` (`report.json`) |
+| `live` | `LEANPROF_LIVE` snapshots |
+| `elab` | `elab` (`elab.json`, `--out`) |
+| `measure` | `measure` (`measure.json`) |
+| `measure-pair` | `measure-pair` (`paired.json`) |
+| `judge` | `judge --json` |
+| `explain` | `explain --json` |
+| `static` | `explain --static --json` (`.lake/leanprof/static.json`) |
+| `compare` | `compare --json` |
+| `experiment-try`, `experiment-finish`, `experiment-status` | `experiment try --json` (`tries/N/evidence.json`), `experiment finish --json` (`finish.json`), `experiment status --json` (`experiment.json`) |
+| `fix` | `fix --json` (`.lake/leanprof/fix/result.json`) |
+| `doctor` | `doctor --json` |
+| `error` | a command that fails, to the file `LEANPROF_ERROR_JSON` names (`code`, `message`, `retryable`, `hint`; the MCP server's `error`) |
+
+A schema's version goes up only when a field is removed or changes meaning.
+New fields are added without a new version, so readers should ignore fields
+they do not know. The older `version` and `leanprof` fields stay as they
+were. `scripts/contract-check.py` runs every command on leanprof's examples
+and validates the outputs against the schemas (in CI);
+`python3 scripts/contract-check.py --validate NAME FILE…` validates other
+files.
+
+`explain`'s `explain.json` (for `#leanprof` hovers) stays a plain array of
+findings; `explain --json` prints the same findings in a document with its
+schema, with `sites` (copy sites in the report), `shown` (those explained,
+`--top`) and `tiny_sites` (left out for copying only empty or tiny values).
+
+### Provenance
+
+Reports and summaries made by leanprof (`run`, `stat`, `sample`, `elab`,
+`measure`, `measure-pair`, and the experiment's evidence; `explain --json`
+and `fix` carry the report's) record where they came from in `provenance`:
+
+| field | holds |
+|---|---|
+| `leanprof_version` | leanprof's version |
+| `lean` | the project's Lean: `version`, `commit` (`lean --version`) |
+| `platform` | `target` (the LLVM triple), `os` |
+| `git` | `rev`, `dirty`, and `dirty_fingerprint` (a hash of `git status`, `git diff HEAD` and the contents of untracked files that are not ignored) when there are uncommitted changes; null outside a repository |
+| `build` | the mode and the flags that change what is measured (`--auto`, `--allocs`, `--core`, `--runs`, `--scope`, ...) |
+| `workload` | `executable`, `args`, `args_hash`, the binary's `binary_hash`, and `inputs`: each argument that names a file, with its hash (FNV-1a over the whole file, at any size) |
+| `created` | when (UTC) |
+
+A program run with `LEANPROF_JSON` by itself writes no provenance (the
+runtime writes the one `leanprof run` passes in `LEANPROF_PROVENANCE`).
+
+`judge` refuses two summaries measured with another Lean version or on
+another platform: the outcome is `incompatible` (`--allow-incompatible`
+judges them anyway, and says so); another leanprof, other flags or another
+workload are notes. `compare` warns about the same differences and goes on
+(its exit code is unchanged); `judge --json` and `compare --json` include
+the check as `provenance` (`compatible`, `refusals`, `warnings`).
+Documents without provenance are not checked.
+
+`explain` warns when a source file changed after the report was written,
+or differs from the revision the report records: its lines may no longer be
+the ones measured (`stale` on each finding and `stale_sources` in
+`explain --json`). `fix` warns the same way before it edits, and the MCP
+`finding` tool returns a `stale_source` warning.
+
+### Verdict outcomes
+
+`judge --json`, experiment evidence and `fix`'s result carry an `outcome`
+next to the verdict, so that a valid DISCARD is not confused with a failed
+measurement:
+
+| `outcome` | verdict | means |
+|---|---|---|
+| `improved` | KEEP | something got better beyond noise, nothing got worse |
+| `regression` | DISCARD | a measured cost got worse (copies, allocations, heartbeats, time) |
+| `no_improvement` | DISCARD | measured; nothing worse and nothing better beyond noise |
+| `correctness_failure` | DISCARD | behaviour changed: exit code, output, a test, the build, or a proof the guard rejects |
+| `insufficient_evidence` | DISCARD (`judge`), INCONCLUSIVE (experiment) | the time was not settled, or not judged on an overloaded machine; measuring again or longer may settle it |
+| `incompatible` | DISCARD (`judge`), INCONCLUSIVE or ERROR (experiment) | the two sides measured different things (another command, scope, `--core`, output file or build configuration): no verdict on the change |
+| `measurement_failed` | DISCARD (`judge`), ERROR (experiment) | the measurement failed, or its output differed between runs of the same code: no verdict on the change |
+
+`measurement_valid` is false for the last two; `retryable` is true for
+`insufficient_evidence` and `measurement_failed`. `judge --json` also
+splits `worse` into `correctness`, `incompatible` and `invalid` (the
+reasons that are not a measured cost).
 
 ## JSON report
 
@@ -194,7 +285,14 @@ Lean code), `allocs_runs` (each run's total), `allocs_stable`,
 `alloc_bytes_total`, `allocs` (`key` "function in scope", `allocs`), and
 `heartbeats_total` and `heartbeats` (`key`, `heartbeats`) with
 `--heartbeats-files`. The allocation fields are `null` with `--no-allocs`;
-`judge` then does not compare allocations.
+`judge` then does not compare allocations. `copies_runs` holds each run's
+copy total (judged by range when they differ), and `coverage` says what
+was measured and how completely: `copies` (`counted`, or `undercounted`
+when the runtime's self-check warned), `allocations` and `heartbeats`
+(`counted` or `not_counted`), `time` (`measured` or `too_small`). `judge`
+gives no KEEP when the self-check warned or a metric was counted on one
+side only (outcome `insufficient_evidence`), and reads summaries strictly:
+a missing or mistyped metric is an error naming it.
 
 ## Live snapshot
 
