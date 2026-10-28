@@ -218,7 +218,7 @@ cat "$out/projectfix.txt"
 grep -q "irreducible  double  (PF/Defs.lean:13)" "$out/projectfix.txt" || fail "fix --elab --project: no irreducible hypothesis"
 grep -q "simp-attr  double_of_big" "$out/projectfix.txt" || fail "fix --elab --project: no simp-attr hypothesis"
 grep -q "+attribute \[irreducible\] double" "$out/projectfix.txt" || fail "fix --elab --project --dry-run: no edit"
-grep -q "not what the change would save\|inclusive and overlapping" "$out/projectfix.txt" || fail "fix --elab --project: overlap not stated"
+grep -q "they are evidence, not savings" "$out/projectfix.txt" || fail "fix --elab --project: overlap not stated"
 clean "fix --elab --project --dry-run"
 code=0
 "$lp" fix --elab --project --no-test --build-runs 1 > "$out/projectfix.txt" 2>&1 || code=$?
