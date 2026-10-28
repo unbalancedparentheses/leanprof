@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn a project's compile-time report into a published profile.
 
-    publish-profile.py [--leanprof BIN] [--ranges N] [--keep N] [--title T] PROJECT_DIR ELAB_JSON OUT_DIR
+    publish-profile.py [--leanprof BIN] [--ranges N] [--keep N] [--decls N] [--title T] PROJECT_DIR ELAB_JSON OUT_DIR
 
 Writes OUT_DIR/index.html (`leanprof html`, run in PROJECT_DIR so the page
 keeps the source lines around what it reports) and OUT_DIR/elab.json.gz (the
@@ -10,7 +10,8 @@ that made the report; the editor uses it, the page does not), so nothing of
 that machine is published. The page keeps the N costliest term and tactic
 ranges (default 6000) and, with --keep N, the N costliest repeated operations
 and definitions and the operations inside the N costliest declarations
-(`leanprof html --keep`, default 3000); elab.json.gz keeps the whole report.
+(`leanprof html --keep`, default 3000) and, with --decls N, only the N costliest
+declarations (default all); elab.json.gz keeps the whole report.
 """
 import argparse
 import gzip
@@ -34,6 +35,7 @@ def main():
     ap.add_argument("--leanprof", default=shutil.which("leanprof") or "leanprof")
     ap.add_argument("--ranges", type=int, default=6000)
     ap.add_argument("--keep", type=int, default=3000)
+    ap.add_argument("--decls", type=int, default=0)
     ap.add_argument("--title")
     ap.add_argument("project")
     ap.add_argument("report")
@@ -47,7 +49,7 @@ def main():
     with open(rep, "w") as f:
         json.dump(d, f, ensure_ascii=False, separators=(",", ":"))
     page = os.path.abspath(os.path.join(o.out, "index.html"))
-    cmd = [o.leanprof, "html", "-o", page, "--ranges", str(o.ranges), "--keep", str(o.keep)] + (["--title", o.title] if o.title else [])
+    cmd = [o.leanprof, "html", "-o", page, "--ranges", str(o.ranges), "--keep", str(o.keep), "--decls", str(o.decls)] + (["--title", o.title] if o.title else [])
     subprocess.run(cmd, cwd=o.project, check=True)
     with gzip.open(os.path.join(o.out, "elab.json.gz"), "wt", encoding="utf-8", compresslevel=9) as f:
         json.dump(d, f, ensure_ascii=False, separators=(",", ":"))

@@ -854,6 +854,8 @@ const PV = elab ? (function () {
   }
   // what the page left out of a large report
   const cut = (k, what) => (num(elab, k + "_total") > arr(elab.data, k).length ? " This page keeps the " + fN(arr(elab.data, k).length) + " costliest of " + fN(num(elab, k + "_total")) + " " + what + "." : "");
+  // a page that keeps only the costliest declarations (`html --decls N`); totals count all
+  const declCut = num(elab, "scopes_total") > arr(elab.data, "scopes").length ? " (this page keeps the " + fN(arr(elab.data, "scopes").length) + " costliest of " + fN(num(elab, "scopes_total")) + " declarations and commands; module and folder totals count all of them)" : "";
   const kindName = (k) => ({ unfold: "isDefEq unfolds", whnf: "whnf reduces", instance: "instance tried", simp: "simp lemma" }[k] || k);
   const DEFS_NOTE = "The isDefEq, whnf, instance and simp work each definition caused, with where it is defined. Costs overlap: unfolding one definition can unfold another.";
   // folder-level sums of the per-file lists (each file keeps its 10 costliest)
@@ -906,7 +908,7 @@ const PV = elab ? (function () {
       ? { n: r.name, v: num(r, "total_ns"), k: "file", c: under(cur, r._dir).map((x) => ({ n: x.file.split("/").pop(), v: num(x, "total_ns"), k: "file" })).sort((a, b) => b.v - a.v) }
       : { n: r.name, v: num(r, "total_ns"), k: "file", c: (cur.decls.get(r.file) || []).map((s) => ({ n: shortName(s), v: num(s, "total_ns"), p: s.pos, k: "elab" })).sort((a, b) => b.v - a.v) }).sort((a, b) => b.v - a.v) };
     return [levelTiles(o, b),
-      panel(top ? "Folders and modules" : "In " + folder + "/", fN(files.length) + " modules, " + fN(decls.length) + " declarations with cost. Click a folder or module to go down a level." + (base ? " Compared with " + elabB.path + ": modules by name." : ""), legend, childTable),
+      panel(top ? "Folders and modules" : "In " + folder + "/", fN(files.length) + " modules, " + fN(decls.length) + " declarations with cost" + (top ? declCut : "") + ". Click a folder or module to go down a level." + (base ? " Compared with " + elabB.path + ": modules by name." : ""), legend, childTable),
       tree.c.length ? panel("Where it went", "Each box's width is its share; click to zoom.", flame(tree, { fmt: f })) : null,
       panel("Costliest declarations", null, declTable(decls, bDecls, all)),
       reps.length || (bReps && bReps.length) ? panel("Repeated work", top ? "The same operation (up to metavariable numbers) done more than once, across the project: candidates for a cached instance, a lemma or `termination_by`/`decreasing_by`." + cut("repeated", "repeated operations")
@@ -921,7 +923,7 @@ const PV = elab ? (function () {
     const ranges = cur.ranges.get(file) || [], bRanges = bx ? base.ranges.get(bx.file) || [] : base ? [] : null;
     return [levelTiles(x, bx),
       x.first_error ? panel("Error", "Lean stopped on this module; costs stop at the error.", h("pre", { class: "mono pv-err" }, x.first_error)) : null,
-      panel("Declarations in " + file, (x.module ? "Module " + x.module + ". " : "") + fN(decls.length) + " declarations and commands with cost" + (num(x, "wall_ns") ? "; the module's process took " + fNs(num(x, "wall_ns")) + " of wall time, imports included" : "") + ". Click one for its terms and tactics.",
+      panel("Declarations in " + file, (x.module ? "Module " + x.module + ". " : "") + fN(decls.length) + " declarations and commands with cost" + (declCut ? " in this page" : "") + (num(x, "wall_ns") ? "; the module's process took " + fNs(num(x, "wall_ns")) + " of wall time, imports included" : "") + ". Click one for its terms and tactics.",
         legend, declTable(decls, bDecls, num(x, "total_ns"))),
       arr(x, "repeated").length ? panel("Repeated work in this module", "Its 10 costliest repeated operations: how often and what they cost here, and in all files.", repTable(arr(x, "repeated"), bx ? bx.repeated || null : base ? [] : null, true)) : null,
       arr(x, "unfolded").length ? panel("Definitions behind the work in this module", DEFS_NOTE + " Its 10 costliest; sites are declarations of this module.", constTable(arr(x, "unfolded"), bx ? bx.unfolded || null : base ? [] : null, "declarations")) : null,

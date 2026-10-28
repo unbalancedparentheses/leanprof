@@ -177,7 +177,7 @@ def commands : List (String × String × String) := [
     "A KEEP becomes the base; from the working tree it is committed on the current branch with the evidence\n" ++
     "in the message (--no-commit: not), a commit gets a git note (refs/notes/leanprof-experiments).\n" ++
     "`finish` runs the held-out cases on the final base and removes the worktrees; exit 1 if they differ."),
-  ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [--ranges N] [--keep N] [REPORT.json...]",
+  ("html", "[-o FILE] [--trace FILE] [--profile FILE] [--threshold PCT] [--min-ms MS] [--context N] [--title T] [--ranges N] [--keep N] [--decls N] [REPORT.json...]",
     "One self-contained HTML page (no network) from reports (default: report.json, elab.json and\n" ++
     "measure.json in .lake/leanprof/), written to .lake/leanprof/report.html unless -o is given:\n" ++
     "summary, flame graph, sortable tables, source lines with hints, and a comparison when given\n" ++
@@ -187,7 +187,8 @@ def commands : List (String × String × String) := [
     "on a drill-down: project, folder, module, declaration, term or tactic, each with repeated work and\n" ++
     "the definitions behind the work, compared level by level with a base; --ranges N keeps the N\n" ++
     "costliest term and tactic ranges (default 2000), --keep N the N costliest repeated operations and\n" ++
-    "definitions, and the operations inside the N costliest declarations (default 3000)."),
+    "definitions, and the operations inside the N costliest declarations (default 3000); --decls N keeps\n" ++
+    "only the N costliest declarations (module and folder totals still count all)."),
   ("top", "[--interval MS] [--rows N] [--frames N] [--plain] [--flight DIR] [--slow-ms MS] [run options] EXE [-- ARGS...] | --attach FILE | --pid PID",
     "Run EXE with probes (as `run`) and show it live, refreshed like top: hottest scopes, copy sites,\n" ++
     "allocation sites, tasks and waits with rates per second, memory, CPU and what each thread is inside.\n" ++

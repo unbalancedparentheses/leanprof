@@ -281,6 +281,9 @@ structure Opts where
   /-- How many repeated operations and definitions an elab report's page keeps, and for how
   many declarations (the costliest) it keeps the operations and definitions inside them. -/
   keep : Nat := 3000
+  /-- How many declarations and commands an elab report's page keeps (the costliest; 0: all).
+  Module and folder totals come from the report's per-module totals, so they count all of them. -/
+  decls : Nat := 0
   files : Array String := #[]
 
 partial def parse (o : Opts) : List String → Except String Opts
@@ -294,6 +297,7 @@ partial def parse (o : Opts) : List String → Except String Opts
   | "--title" :: v :: rest => parse { o with title := some v } rest
   | "--ranges" :: v :: rest => parse { o with ranges := v.toNat! } rest
   | "--keep" :: v :: rest => parse { o with keep := v.toNat! } rest
+  | "--decls" :: v :: rest => parse { o with decls := v.toNat! } rest
   | a :: rest =>
     if a.startsWith "-" then .error s!"unknown option {a}" else parse { o with files := o.files.push a } rest
 
@@ -349,6 +353,11 @@ def htmlCmd (usage : String) (argv : List String) : IO UInt32 := do
         j.setObjVal! "ranges" (Json.arr ((arr j "ranges").extract 0 o.ranges)) else j
     -- a large project's report (Mathlib's: 25,000 repeated operations) is cut the same way
     let (repTotal, constTotal) := ((arr j "repeated").size, (arr j "constants").size)
+    -- all of Mathlib has hundreds of thousands of declarations: keep the costliest (scopes
+    -- are listed costliest first)
+    let scopesTotal := (arr j "scopes").size
+    let j := if kind == "elab" && o.decls > 0 && scopesTotal > o.decls then
+        j.setObjVal! "scopes" (Json.arr ((arr j "scopes").extract 0 o.decls)) else j
     let j := if kind != "elab" then j else
       let j := if repTotal > o.keep then j.setObjVal! "repeated" (Json.arr ((arr j "repeated").extract 0 o.keep)) else j
       let j := if constTotal > o.keep then j.setObjVal! "constants" (Json.arr ((arr j "constants").extract 0 o.keep)) else j
@@ -359,7 +368,7 @@ def htmlCmd (usage : String) (argv : List String) : IO UInt32 := do
             | x => x))
       else j
     let mut entry : List (String × Json) := [("path", Json.str f), ("kind", Json.str kind),
-      ("role", Json.str role), ("data", j)] ++ (if kind == "elab" then [("ranges_total", toJson rangesTotal),
+      ("role", Json.str role), ("data", j)] ++ (if kind == "elab" then [("ranges_total", toJson rangesTotal), ("scopes_total", toJson scopesTotal),
         ("repeated_total", toJson repTotal), ("constants_total", toJson constTotal)] else [])
     -- a call tree for the flame graph, for the report shown (not a base)
     if role != "base" then
