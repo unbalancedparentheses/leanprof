@@ -1219,10 +1219,17 @@ instance : Ser Acc where
              ranges := ← f "ranges", tacticRanges := ← f "tactic_ranges", suggestions := ← f "suggestions",
              tacRanges := ← f "tac_ranges", measures := ← f "measures", cmdEnds := ← f "cmd_ends" }
 
+/-- When the running leanprof and the driver were built: a rebuilt leanprof does not reuse
+results the previous build made. -/
+def toolStamp (le : LeanEnv) : IO String := do
+  let stamp (f : FilePath) : IO String := do
+    try let m ← f.metadata; pure s!"{m.modified.sec}.{m.modified.nsec}" catch _ => pure "-"
+  return s!"{← stamp (← IO.appPath)} {← stamp le.driver}"
+
 /-- What decides a file's result besides its source: the options that change what is
-recorded, which Lean elaborates it with which search path, and leanprof itself. -/
-def cacheKey (le : LeanEnv) (o : Opts) (source : String) : String :=
-  s!"v1 {Lean.githash} {le.lean} {hash le.path} {o.heartbeats} {o.thresholdValue} {o.diagnostics} {o.defs} {o.compact} {o.why} {o.driver && !le.driver.isEmpty} {o.setup} {hash source}"
+recorded, which Lean elaborates it with which search path, and leanprof itself (`toolStamp`). -/
+def cacheKey (le : LeanEnv) (o : Opts) (tool source : String) : String :=
+  s!"v1 {Lean.githash} {tool} {le.lean} {hash le.path} {o.heartbeats} {o.thresholdValue} {o.diagnostics} {o.defs} {o.compact} {o.why} {o.driver && !le.driver.isEmpty} {o.setup} {hash source}"
 
 def cacheFile (o : Opts) (module : String) : FilePath := (o.cache : FilePath) / s!"{module}.json"
 
@@ -1230,7 +1237,7 @@ def cacheFile (o : Opts) (module : String) : FilePath := (o.cache : FilePath) / 
 def cacheLoad (le : LeanEnv) (o : Opts) (file module : String) : IO (Option Acc) := do
   if o.cache.isEmpty then return none
   let some text ← (try some <$> IO.FS.readFile (cacheFile o module) catch _ => pure none) | return none
-  let key := cacheKey le o (← try IO.FS.readFile file catch _ => pure "")
+  let key := cacheKey le o (← toolStamp le) (← try IO.FS.readFile file catch _ => pure "")
   let some j := (Json.parse text).toOption | return none
   if (j.getObjValAs? String "key").toOption != some key then return none
   return (j.getObjVal? "acc" >>= Ser.dec).toOption
@@ -1240,7 +1247,7 @@ stopped while writing leaves no partial result). -/
 def cacheSave (le : LeanEnv) (o : Opts) (file module : String) (a : Acc) : IO Unit := do
   if o.cache.isEmpty then return
   IO.FS.createDirAll o.cache
-  let key := cacheKey le o (← try IO.FS.readFile file catch _ => pure "")
+  let key := cacheKey le o (← toolStamp le) (← try IO.FS.readFile file catch _ => pure "")
   let dst := cacheFile o module
   let tmp : FilePath := dst.toString ++ ".tmp"
   IO.FS.writeFile tmp (Json.mkObj [("key", Json.str key), ("file", Json.str file), ("acc", Ser.enc a)]).compress

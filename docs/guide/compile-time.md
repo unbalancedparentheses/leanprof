@@ -320,7 +320,8 @@ in `DIR` as soon as it is profiled (one JSON file per module) and a later
 run with the same options reads it instead of elaborating the module again:
 the run can be stopped and resumed, or split into several runs with
 `--module-glob` and finished by a run over everything, which then only
-merges. A cached result is used only when the module's source, leanprof,
+merges. A cached result is used only when the module's source, the
+leanprof build (a rebuilt leanprof profiles every module again),
 the Lean and its search path and the options that change what is recorded
 (`--heartbeats`, `--threshold`, `--counts`, `--compact`, `--why`, the
 driver) are all the same; the report is then the one a single run would

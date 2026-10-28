@@ -6,6 +6,22 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Compile time of whole large projects
+
+- `leanprof elab --project --cache DIR` keeps each module's result in DIR
+  as soon as it is profiled and reuses it in a later run with the same
+  source, Lean, search path and options: a run of hours can be stopped,
+  resumed, or split with `--module-glob` and finished by a run that only
+  merges (the report is the same, to the bit).
+- `leanprof html --decls N` keeps only the N costliest declarations in the
+  page; module and folder totals still count all of them, and the page says
+  how many it kept. Pages no longer carry what they do not show about each
+  declaration (`causes`, `counts`, failed instances, its repeated
+  operations; `compare` and `report-md` read those from the report).
+- `scripts/profile-mathlib.sh` profiles every Mathlib module, sharded by
+  folder and resumable; the [published profile of all of
+  Mathlib](docs/profiles/README.md) was made with it.
+
 ### Retained memory
 
 - `leanprof run --retained` follows every object compiled Lean code
