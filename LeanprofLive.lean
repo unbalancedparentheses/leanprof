@@ -1464,8 +1464,10 @@ def callTool (name : String) (a : Json) : IO Json := do
       -- a compile-time report: why its costliest declarations are slow
       if bool j "elab" then
         notOption path
-        let (rc, out, err) ← runSelf #["explain", "--report", path, "--top", toString limit] cwd
-        return textResult s!"{out}\n{tailText err 5}" (rc != 0)
+        let r ← runSelf #["explain", "--report", path, "--top", toString limit] cwd
+        if r.rc != 0 then
+          return errorResult name (r.errorJson) s!"{r.out}\n{tailText r.err 5}" [("exit_code", toJson r.rc.toNat)]
+        return res s!"{r.out}\n{tailText r.err 5}" [("path", Json.str path), ("findings", Json.arr #[])]
       -- as `leanprof explain`: a sampled report has no copies and no call counts
       if bool j "sampled" then
         return errorResult name (Leanprof.Contract.errorJson "bad_argument"
