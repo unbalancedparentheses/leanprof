@@ -377,13 +377,28 @@ def removeOutputs (dir : FilePath) (m : String) : IO Unit := do
       if e.fileName.startsWith (stem ++ ".") then
         unless ← e.path.isDir do IO.FS.removeFile e.path
 
-/-- The fcntl lock other timing runs on the machine hold, as a command prefix. -/
+/-- The fcntl lock other timing runs on the machine hold, as a command prefix. The wrapper
+times the command itself once it holds the lock (the wait is not the build's time) and
+prints `leanprof-elapsed SECONDS` last on stderr. -/
 def lockedCmd (lock : Option String) (cmd : String) (args : Array String) : String × Array String :=
   match lock with
   | none => (cmd, args)
   | some l => ("python3", #["-c",
-      "import fcntl,os,subprocess,sys\nf=open(os.path.expanduser(sys.argv[1]),'w')\nfcntl.flock(f,fcntl.LOCK_EX)\nsys.exit(subprocess.call(sys.argv[2:]))",
+      "import fcntl,os,subprocess,sys,time\nf=open(os.path.expanduser(sys.argv[1]),'w')\nfcntl.flock(f,fcntl.LOCK_EX)\n" ++
+      "t=time.monotonic()\nr=subprocess.call(sys.argv[2:])\nsys.stderr.write('\\nleanprof-elapsed %.6f\\n' % (time.monotonic()-t))\nsys.exit(r)",
       l, cmd] ++ args)
+
+/-- The seconds the lock wrapper measured (`leanprof-elapsed S` on stderr). -/
+def lockedElapsed (stderr : String) : Option Float :=
+  ((stderr.splitOn "\n").reverse.find? (·.startsWith "leanprof-elapsed ")).bind fun l =>
+    let n := (l.drop 17).toString
+    match n.splitOn "." with
+    | [i, f] => do
+      let a ← i.toNat?
+      let b ← f.toNat?
+      return a.toFloat + b.toFloat / (10 : Float) ^ f.length.toFloat
+    | [i] => i.toNat?.map (·.toFloat)
+    | _ => none
 
 /-- One timed plain `lake build` of `mods` in `dir`, their outputs removed first. -/
 def timeBuild (lock : Option String) (dir : FilePath) (mods : Array String) : IO (Except String Float) := do
@@ -394,7 +409,7 @@ def timeBuild (lock : Option String) (dir : FilePath) (mods : Array String) : IO
   let out ← capture cmd args (cwd := dir)
   let t := ((← IO.monoNanosNow) - t0).toFloat / 1e9
   if out.exitCode != 0 then return .error (tailOf (out.stdout ++ out.stderr))
-  return .ok t
+  return .ok ((if lock.isSome then lockedElapsed out.stderr else none).getD t)
 
 /-- Per module (file) totals of an `elab` report. -/
 def moduleTotals (path : FilePath) : IO (Std.HashMap String Float) := do
@@ -657,7 +672,15 @@ def fixProjectBody (o : Opts) (runSelf : Array String → FilePath → IO IO.Pro
         verdict := "INCONCLUSIVE"
         outcome := "insufficient_evidence"
         reasons := reasons.push "the heartbeats went down, but every timed build of the candidate was slower than every build of the base"
+    -- a build that fails: Lean's errors, which Lake prints before its last lines
+    if reasons.any (·.startsWith "it does not build") || reasons.any (·.startsWith "a module that imports the change does not build") then
+      let p := expDir / "tries" / toString (jnum ev "try").toUInt64 / "log.txt"
+      let logText ← if ← p.pathExists then IO.FS.readFile p else pure ""
+      let errs := (logText.splitOn "\n").filter fun l => ((trim l).startsWith "error:") && !((trim l).startsWith "error: build failed")
+      unless errs.isEmpty do
+        reasons := reasons ++ ((errs.eraseDups.take 3).toArray.map fun l => s!"Lean: {String.ofList ((trim l).toList.take 300)}")
     IO.println s!"  {verdict}"
+    (← IO.getStdout).flush
     for x in reasons.toList.take 4 do IO.println (wrap s!"  - {String.ofList (x.toList.take 600)}" "    ")
     let mut branch := ""
     if verdict == "KEEP" then

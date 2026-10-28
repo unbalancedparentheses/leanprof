@@ -89,6 +89,8 @@ def cases : List (String × Bool × String) :=
        inProject).any (·.target == "double")), ""),
    ("project fix: no declaration starts on a `public section` line",
      ProjectFix.declKeyword #["public section", "", "namespace Foo", "def drop := 1"] 1 == none, ""),
+   ("project fix: the time the lock wrapper measured", ProjectFix.lockedElapsed "x\nleanprof-elapsed 12.500000\n" == some 12.5 &&
+     ProjectFix.lockedElapsed "no time" == none, ""),
    ("project fix: a line appended", ProjectFix.appendLine "a\nb" "c" == "a\nb\nc\n" && ProjectFix.appendLine "a\n" "c" == "a\nc\n", ""),
    ("project fix: build times: worse only when every candidate run is slower",
      ProjectFix.buildTimeVerdict #[10, 10.2, 10.1] #[11, 11.2, 11.1] == "worse" &&
