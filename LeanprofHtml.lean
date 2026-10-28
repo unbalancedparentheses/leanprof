@@ -345,6 +345,10 @@ def htmlCmd (usage : String) (argv : List String) : IO UInt32 := do
     -- editor), and tactics by line when the report has them by exact range
     let j := if kind == "elab" then
         let j := dropField "path" j
+        -- what `compare` and `report-md` read about each declaration, and the page does not
+        let j := j.setObjVal! "scopes" (Json.arr <| (arr j "scopes").map fun
+          | .obj kvs => .obj ((((kvs.erase "causes").erase "counts").erase "instances_failed").erase "repeated")
+          | x => x)
         if flag j "exact_ranges" then j.setObjVal! "tactics" (Json.arr #[]) else j
       else j
     -- the costliest source ranges (an elab report lists up to 20,000)
