@@ -719,7 +719,7 @@ static void lpf_live_write(int final) {
     const char *mr = getenv("LEANPROF_LIVE_ROWS");
     if (lpf_parse_num(mr) >= 1) max_rows = (size_t)lpf_parse_num(mr);
     fprintf(f,
-            "{\"leanprof_live\":1,\"pid\":%d,\"seq\":%u,\"exited\":%s,\"interval_ms\":%llu,\"ts_ns\":%.0f,"
+            "{\"leanprof_live\":1,\"schema\":{\"name\":\"leanprof.live\",\"version\":1},\"pid\":%d,\"seq\":%u,\"exited\":%s,\"interval_ms\":%llu,\"ts_ns\":%.0f,"
             "\"overhead_ns\":%.1f,\"threads\":%u,",
             (int)getpid(), ++lpf_lv_seq, final ? "true" : "false", (unsigned long long)lpf_live_ms,
             (double)(now - lpf_start) * tick, lpf_unit_ticks() * tick, nthreads);

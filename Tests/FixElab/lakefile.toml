@@ -1,0 +1,7 @@
+# The project `scripts/experiment-check.sh` runs `leanprof fix --elab` on
+# (see FixElab.lean). No dependency on leanprof.
+name = "fixelabdemo"
+defaultTargets = ["FixElab"]
+
+[[lean_lib]]
+name = "FixElab"

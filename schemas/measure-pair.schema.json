@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/measure-pair.schema.json",
+  "title": "leanprof measure-pair session",
+  "description": "Two plain binaries timed in alternating AB/BA order (`leanprof measure-pair`), for `judge`.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.measure-pair"
+        }
+      }
+    },
+    "version": {
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "leanprof": {
+      "const": "measure-pair"
+    },
+    "mode": {
+      "const": "plain"
+    },
+    "runs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warmup": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "design": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "type": "string"
+        },
+        "max_runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_look": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "look_every": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "alpha": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "max_runs",
+        "first_look"
+      ]
+    },
+    "min_change": {
+      "type": "number"
+    },
+    "scope": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "builds": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "base": {
+      "type": "string"
+    },
+    "candidate": {
+      "type": "string"
+    },
+    "base_hash": {
+      "type": "string"
+    },
+    "candidate_hash": {
+      "type": "string"
+    },
+    "base_cwd": {
+      "type": "string"
+    },
+    "candidate_cwd": {
+      "type": "string"
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "output_source": {
+      "type": "string"
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pair": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "side": {
+            "enum": [
+              "base",
+              "candidate"
+            ]
+          },
+          "time_ns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stdout_hash": {
+            "type": "string"
+          },
+          "stderr_hash": {
+            "type": "string"
+          },
+          "output_hash": {
+            "type": "string"
+          },
+          "output_present": {
+            "type": "boolean"
+          },
+          "process_ns": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "pair",
+          "side",
+          "time_ns",
+          "exit_code",
+          "stdout_hash",
+          "stderr_hash",
+          "output_hash",
+          "output_present"
+        ]
+      }
+    },
+    "machine": {
+      "type": "object",
+      "properties": {
+        "overloaded": {
+          "type": "boolean"
+        },
+        "load_avg_1m": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cpus": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pair_loads": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "overloaded"
+      ]
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "leanprof",
+    "runs",
+    "samples",
+    "base",
+    "candidate",
+    "base_hash",
+    "candidate_hash",
+    "machine"
+  ]
+}
