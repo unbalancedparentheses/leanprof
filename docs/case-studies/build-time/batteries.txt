@@ -1,109 +1,108 @@
-leanprof build: `lake build` (Lean 4.35.0), exit code 0, 28.0 s
+leanprof build: `lake build` (Lean 4.35.0), exit code 0, 15.5 s
   220 processes: 196 modules elaborated, 23 C compiles, 1 links/archives
   modules: 195 built, 0 up to date, 0 from a cache (Lake's -v)
-  machine: 18 hardware threads, load 49.09 before and 77.54 after
+  machine: 18 hardware threads, load 16.65 before and 22.34 after
 
-Critical path: 12 jobs, 21.5 s of work and 6.00 s of waits between them, of 28.0 s
-  (before the first: 0.51 s of Lake starting up; after the last: 0.04 s)
+Critical path: 12 jobs, 11.5 s of work and 3.59 s of waits between them, of 15.5 s
+  (before the first: 0.37 s of Lake starting up; after the last: 0.05 s)
       start      time     wait  job
-     0.52 s    1.93 s           lean Batteries.Tactic.Lint.Basic
-     7.02 s    1.67 s   4.58 s  lean Batteries.Tactic.Lint.Misc
-     9.91 s    4.90 s   1.22 s  lean Batteries.Util.ProofWanted
-     14.8 s    0.86 s   0.03 s  lean Batteries.Tactic.Basic
-     15.7 s    0.86 s   0.02 s  lean Batteries.Classes.Order
-     16.6 s    3.16 s   0.03 s  lean Batteries.Recycling.RBTree.Basic
-     19.8 s    2.36 s   0.02 s  lean Batteries.Recycling.RBTree.WF
-     22.2 s    1.28 s   0.02 s  lean Batteries.Recycling.RBTree.Alter
-     23.5 s    2.39 s   0.02 s  lean Batteries.Recycling.RBTree.Lemmas
-     25.9 s    0.77 s   0.02 s  lean Batteries.Data.RBMap.Lemmas
-     26.7 s    0.57 s   0.02 s  lean Batteries.Data.RBMap
-     27.3 s    0.71 s   0.02 s  lean Batteries
-  With unlimited workers and no time between jobs the build would take 21.5 s (the longest chain of dependent jobs).
+     0.38 s    1.14 s           lean Batteries.Tactic.Lint.Basic
+     4.01 s    0.99 s   2.50 s  lean Batteries.Tactic.Lint.Misc
+     5.65 s    2.54 s   0.64 s  lean Batteries.Util.ProofWanted
+     8.21 s    0.39 s   0.02 s  lean Batteries.Tactic.Basic
+     8.91 s    0.40 s   0.32 s  lean Batteries.Classes.Order
+     9.33 s    1.36 s   0.02 s  lean Batteries.Recycling.RBTree.Basic
+     10.7 s    1.37 s   0.02 s  lean Batteries.Recycling.RBTree.WF
+     12.1 s    0.78 s   0.02 s  lean Batteries.Recycling.RBTree.Alter
+     12.9 s    1.58 s   0.02 s  lean Batteries.Recycling.RBTree.Lemmas
+     14.5 s    0.34 s   0.02 s  lean Batteries.Data.RBMap.Lemmas
+     14.8 s    0.26 s   0.01 s  lean Batteries.Data.RBMap
+     15.1 s    0.33 s   0.01 s  lean Batteries
+  With unlimited workers and no time between jobs the build would take 11.5 s (the longest chain of dependent jobs).
 
-Parallelism: 11.18 jobs running on average while any ran, at most 18 (18 workers assumed)
-    0 running:    0.61 s   2%
-    1 running:    1.55 s   6%
-    2 running:    1.72 s   6%
-    3 running:    1.32 s   5%
-    4 running:    1.73 s   6%
-    5 running:    1.60 s   6%
-    6 running:    1.64 s   6%
-    7 running:    1.87 s   7%
-    8 running:    0.63 s   2%
-    9 running:    0.25 s   1%
-   10 running:    1.49 s   5%
-   11 running:    0.12 s   0%
-   13 running:    0.15 s   1%
-   14 running:    0.18 s   1%
-   15 running:    0.25 s   1%
-   16 running:    0.45 s   2%
-   17 running:    2.70 s  10%
-   18 running:    9.73 s  35%
-  Serialized (at most one job running for 1.00 s or more):
-    26.7 s to 28.0 s (1.31 s): lean Batteries.Data.RBMap.Lemmas, lean Batteries.Data.RBMap, lean Batteries
+Parallelism: 10.92 jobs running on average while any ran, at most 18 (18 workers assumed)
+    0 running:    0.44 s   3%
+    1 running:    0.61 s   4%
+    2 running:    0.40 s   3%
+    3 running:    1.93 s  12%
+    4 running:    1.01 s   6%
+    5 running:    0.88 s   6%
+    6 running:    0.75 s   5%
+    7 running:    1.25 s   8%
+    8 running:    0.36 s   2%
+    9 running:    0.20 s   1%
+   10 running:    0.25 s   2%
+   11 running:    0.13 s   1%
+   12 running:    0.05 s   0%
+   14 running:    0.09 s   1%
+   15 running:    0.08 s   1%
+   16 running:    0.51 s   3%
+   17 running:    1.95 s  13%
+   18 running:    4.57 s  29%
 
 Longest jobs:
-     6.46 s  slack   9.29 s  357.1 MiB  lean Batteries.Data.BinaryHeap.WF
-     5.33 s  slack   4.20 s  582.6 MiB  lean Batteries.Data.List.Lemmas
-     4.90 s  slack   0.00 s  460.0 MiB  lean Batteries.Util.ProofWanted  (critical)
-     4.08 s  slack   12.1 s  118.0 MiB  cc Batteries.Tactic.Lint.Frontend
-     4.07 s  slack   11.3 s  403.0 MiB  lean Batteries.Data.UnionFind.Basic
-     4.03 s  slack   11.5 s  123.5 MiB  cc Batteries.Tactic.Alias
-     3.92 s  slack   5.26 s  470.9 MiB  lean Batteries.Data.BinomialHeap.Basic
-     3.62 s  slack   8.42 s  145.5 MiB  cc Batteries.Util.ProofWanted
-     3.58 s  slack   5.69 s  350.6 MiB  lean Batteries.Data.List.Basic
-     3.52 s  slack   6.28 s  513.1 MiB  lean Batteries.Data.String.Lemmas
+     3.45 s  slack   4.54 s  364.0 MiB  lean Batteries.Data.BinaryHeap.WF
+     2.66 s  slack   1.92 s  588.6 MiB  lean Batteries.Data.List.Lemmas
+     2.54 s  slack   0.00 s  458.3 MiB  lean Batteries.Util.ProofWanted  (critical)
+     2.32 s  slack   2.59 s  346.6 MiB  lean Batteries.Data.List.Basic
+     2.11 s  slack   8.27 s  433.1 MiB  lean Batteries.Tactic.GeneralizeProofs
+     2.10 s  slack   6.43 s  431.2 MiB  lean Batteries.CodeAction.Misc
+     2.10 s  slack   6.19 s  401.3 MiB  lean Batteries.Data.UnionFind.Basic
+     1.89 s  slack   3.04 s  469.7 MiB  lean Batteries.Data.BinomialHeap.Basic
+     1.87 s  slack   5.76 s  119.3 MiB  cc Batteries.Tactic.Lint.Frontend
+     1.83 s  slack   5.42 s  124.0 MiB  cc Batteries.Tactic.Alias
 
 Peak memory (resident, per process):
-  1398.1 MiB  lean runLinter
-   914.9 MiB  link runLinter
-   582.6 MiB  lean Batteries.Data.List.Lemmas
-   545.5 MiB  lean Batteries.Recycling.RBTree.WF
-   527.2 MiB  lean Batteries.Recycling.RBTree.Lemmas
+  1397.1 MiB  lean runLinter
+   916.2 MiB  link runLinter
+   588.6 MiB  lean Batteries.Data.List.Lemmas
+   541.0 MiB  lean Batteries.Recycling.RBTree.WF
+   532.5 MiB  lean Batteries.Recycling.RBTree.Lemmas
 
-Model: from the first job's start to the last one's end the build took 27.5 s. Replaying the measured wall times with 18 workers and the median wait between dependent jobs (0.85 s) gives 34.5 s (26% off).
-  With each job's time alone (its CPU time when it waited for a core) sharing 18 cores, and 0.03 s between jobs (a quarter of the waits were shorter), the rebuild model gives 18.9 s: the difference is time lost to contention, from this build's own jobs and from other load.
+Model: from the first job's start to the last one's end the build took 15.1 s. Replaying the measured wall times with 18 workers and the median wait between dependent jobs (0.46 s) gives 18.7 s (24% off).
+  With each job's time alone (its CPU time when it waited for a core) sharing 18 cores, and 0.02 s between jobs (a quarter of the waits were shorter), the rebuild model gives 13.2 s: the difference is time lost to contention, from this build's own jobs and from other load.
 
-Rebuild after touching a module (estimated: a no-op build, 0.49 s, plus the jobs it reruns in the rebuild model):
+Rebuild after touching a module (estimated: a no-op build, 0.39 s, plus the jobs it reruns in the rebuild model):
     elapsed  jobs  job time  module
-     16.5 s    43    70.2 s  Batteries.Tactic.Lint.Basic
-     15.5 s    39    62.4 s  Batteries.Tactic.Lint.Misc
-     15.0 s    37    52.6 s  Batteries.Lean.TagAttribute
-     14.6 s    35    56.6 s  Batteries.Util.ProofWanted
-     14.5 s    36    51.7 s  Batteries.Tactic.Unreachable
-     14.4 s    36    51.3 s  Batteries.Lean.AttributeExtra
-     13.8 s    35    51.1 s  Batteries.Linter.UnnecessarySeqFocus
-     13.8 s    35    50.8 s  Batteries.Linter.UnreachableTactic
-     13.2 s    36    53.2 s  Batteries.Tactic.Init
-     13.1 s    36    54.1 s  Batteries.Tactic.SeqFocus
+     10.9 s    43    37.8 s  Batteries.Tactic.Lint.Basic
+     10.0 s    39    33.0 s  Batteries.Tactic.Lint.Misc
+     9.44 s    37    28.2 s  Batteries.Lean.TagAttribute
+     9.22 s    36    27.8 s  Batteries.Tactic.Unreachable
+     9.22 s    35    29.6 s  Batteries.Util.ProofWanted
+     8.82 s    36    27.4 s  Batteries.Lean.AttributeExtra
+     8.50 s    35    27.3 s  Batteries.Linter.UnreachableTactic
+     8.44 s    35    27.2 s  Batteries.Linter.UnnecessarySeqFocus
+     8.25 s    36    28.6 s  Batteries.Tactic.Init
+     8.10 s    36    29.0 s  Batteries.Tactic.SeqFocus
 
 Validation: touched 8 modules in a worktree and rebuilt (each twice: touched, then put back)
-  Batteries.Tactic.Lint.Basic: estimated 16.5 s, measured 16.9 s, 16.3 s (error -2.70%, +0.80%); rebuilt modules as predicted
-  Batteries.Recycling.RBTree.Alter: estimated 6.12 s, measured 5.88 s, 5.94 s (error +4.00%, +3.00%); rebuilt modules as predicted
-  Batteries.Data.BinaryHeap.Lemmas: estimated 3.60 s, measured 3.49 s, 3.60 s (error +3.20%, +0.10%); rebuilt modules as predicted
-  Batteries.Tactic.Trans: estimated 2.57 s, measured 2.44 s, 2.48 s (error +5.70%, +3.90%); rebuilt modules as predicted
-  Batteries.Tactic.Congr: estimated 2.18 s, measured 2.58 s, 1.83 s (error -15.50%, +19.30%); rebuilt modules as predicted
-  Batteries.Classes.Cast: estimated 1.89 s, measured 1.61 s, 1.65 s (error +17.50%, +15.10%); rebuilt modules as predicted
-  Batteries.Recycling.MonadSatisfying: estimated 1.66 s, measured 1.60 s, 1.73 s (error +3.60%, -3.90%); rebuilt modules as predicted
-  Batteries: estimated 1.14 s, measured 1.88 s, 1.09 s (error -39.30%, +4.60%); rebuilt modules as predicted
-  mean absolute error 8.90%, largest 39.30%
+  Batteries.Tactic.Lint.Basic: estimated 10.9 s, measured 9.56 s, 9.55 s (error +14.30%, +14.40%); rebuilt modules as predicted
+  Batteries.CodeAction.Attr: estimated 4.12 s, measured 2.91 s, 2.71 s (error +41.80%, +51.90%); rebuilt modules as predicted
+  Batteries.Tactic.GeneralizeProofs: estimated 2.42 s, measured 1.78 s, 1.65 s (error +35.70%, +46.90%); rebuilt modules as predicted
+  Batteries.Data.Nat.Bitwise.Lemmas: estimated 1.78 s, measured 1.34 s, 1.24 s (error +32.80%, +43.40%); rebuilt modules as predicted
+  Batteries.Data.RBMap.Alter: estimated 1.46 s, measured 0.63 s, 0.59 s (error +131.40%, +148.10%); rebuilt modules differ: predicted but not rebuilt: Batteries.Data.RBMap, Batteries
+  Batteries.Data.MLList.IO: estimated 1.25 s, measured 1.03 s, 1.02 s (error +21.10%, +22.90%); rebuilt modules as predicted
+  Batteries.Data.Char: estimated 1.08 s, measured 1.05 s, 0.92 s (error +2.80%, +16.90%); rebuilt modules as predicted
+  Batteries: estimated 0.72 s, measured 0.72 s, 0.71 s (error -0.10%, +0.40%); rebuilt modules as predicted
+  mean absolute error 39.10%, largest 148.10%
+  (replaying the clean build's wall times instead: mean absolute error 120.00%, largest 305.60%)
 
-Imports: 377 imports of rebuilt modules considered: 112 name declarations of the module they import, 240 are in modules that define nothing (they re-export), 11 are reached through another import too; 9 candidates shown, the best 3 tried in a worktree
-  Batteries.Classes.Order without `import Batteries.Tactic.Basic`: estimated 6.01 s off the clean build, 10.2 s off a rebuild after touching Batteries.Tactic.Basic (29 modules no longer depend on it)
-  Batteries.Data.List.Lemmas without `import Batteries.Control.ForInStep.Lemmas`: estimated 0.00 s off the clean build, 5.36 s off a rebuild after touching Batteries.Control.ForInStep.Lemmas (1 module no longer depends on it)
-  Batteries.Data.String.Lemmas without `import Batteries.Data.String.Basic`: estimated 0.00 s off the clean build, 3.09 s off a rebuild after touching Batteries.Data.String.Basic (1 module no longer depends on it)
-  Batteries.Tactic.Lint.Simp without `import Batteries.Util.LibraryNote`: estimated -0.34 s off the clean build, 2.35 s off a rebuild after touching Batteries.Util.LibraryNote (3 modules no longer depend on it)
-  Batteries.Data.List.Lemmas without `import Batteries.Tactic.Alias`: estimated -0.14 s off the clean build, 2.32 s off a rebuild after touching Batteries.Tactic.Alias (1 module no longer depends on it)
-  Batteries.Lean.Meta.DiscrTree without `import Batteries.Lean.Meta.Expr`: estimated 0.00 s off the clean build, 0.46 s off a rebuild after touching Batteries.Lean.Meta.Expr (1 module no longer depends on it)
-  Batteries.Data.Array.Lemmas without `import Batteries.Data.List.Lemmas`: estimated -0.14 s off the clean build, 0.18 s off a rebuild after touching Batteries.Data.List.Lemmas (1 module no longer depends on it)
+Imports: 377 imports of rebuilt modules considered: 112 name declarations of the module they import, 240 are in modules that define nothing (they re-export), 11 are reached through another import too, 0 would leave a module that imports the module without a declaration it names; 9 candidates shown, the best 3 tried in a worktree
+  Batteries.Classes.Order without `import Batteries.Tactic.Basic`: estimated 3.13 s off the clean build, 5.55 s off a rebuild after touching Batteries.Tactic.Basic (29 modules no longer depend on it)
+  Batteries.Data.List.Lemmas without `import Batteries.Control.ForInStep.Lemmas`: estimated 0.00 s off the clean build, 2.68 s off a rebuild after touching Batteries.Control.ForInStep.Lemmas (1 module no longer depends on it)
+  Batteries.Tactic.Lint.Simp without `import Batteries.Util.LibraryNote`: estimated 0.00 s off the clean build, 2.14 s off a rebuild after touching Batteries.Util.LibraryNote (3 modules no longer depend on it)
+  Batteries.Data.String.Lemmas without `import Batteries.Data.String.Basic`: estimated 0.00 s off the clean build, 1.46 s off a rebuild after touching Batteries.Data.String.Basic (1 module no longer depends on it)
+  Batteries.Lean.Meta.DiscrTree without `import Batteries.Lean.Meta.Expr`: estimated 0.00 s off the clean build, 0.34 s off a rebuild after touching Batteries.Lean.Meta.Expr (1 module no longer depends on it)
+  Batteries.Data.List.Lemmas without `import Batteries.Tactic.Alias`: estimated -0.12 s off the clean build, 0.07 s off a rebuild after touching Batteries.Tactic.Alias (1 module no longer depends on it)
+  Batteries.Data.String.Matcher without `import Batteries.Data.String.Basic`: estimated 0.09 s off the clean build, 0.00 s off a rebuild after touching Batteries.Data.String.Basic (1 module no longer depends on it)
   Batteries.Data.UnionFind.Basic without `import Batteries.Tactic.SeqFocus`: estimated 0.00 s off the clean build, 0.00 s off a rebuild after touching Batteries.Tactic.SeqFocus (1 module no longer depends on it)
-  Batteries.Data.Nat.Bisect without `import Batteries.Tactic.Init`: estimated -0.03 s off the clean build, 0.00 s off a rebuild after touching Batteries.Tactic.Init (1 module no longer depends on it)
+  Batteries.Data.Nat.Bisect without `import Batteries.Tactic.Init`: estimated -0.06 s off the clean build, 0.00 s off a rebuild after touching Batteries.Tactic.Init (1 module no longer depends on it)
   tried: Batteries.Classes.Order without `import Batteries.Tactic.Basic` (importing Lean.Elab.Tactic.ElabTerm, Batteries.Linter, Batteries.Tactic.Init, Batteries.Util.ProofWanted instead): builds
-    rebuild after touching Batteries.Tactic.Basic: 3.57 s before, 0.84 s after (measured, mean of 2 builds each); clean build estimated 6.01 s shorter
+    rebuild after touching Batteries.Tactic.Basic: 2.62 s before, 0.71 s after (measured, mean of 2 builds each); clean build estimated 3.13 s shorter
   tried: Batteries.Data.List.Lemmas without `import Batteries.Control.ForInStep.Lemmas`: does not build
     error: Batteries/Data/List/Lemmas.lean:251:9: No applicable extensionality theorem found for type
-  tried: Batteries.Data.String.Lemmas without `import Batteries.Data.String.Basic`: does not build
-    error: Batteries/Data/String/Lemmas.lean:864:82: Application type mismatch: The argument
+  tried: Batteries.Tactic.Lint.Simp without `import Batteries.Util.LibraryNote` (importing Lean.Elab.Command instead): does not build
+    error: Batteries/Tactic/Lint/Simp.lean:222:0: unexpected identifier; expected command
 
 JSON: /private/tmp/claude-501/-Users-unbalancedparen/6b44ecbc-2fb8-4f5f-aaf3-47a00e3d1a1f/scratchpad/bt/results/batteries.json
 HTML: /private/tmp/claude-501/-Users-unbalancedparen/6b44ecbc-2fb8-4f5f-aaf3-47a00e3d1a1f/scratchpad/bt/results/batteries.html

@@ -136,12 +136,15 @@ users than the rest of v0.2.0, and take priority over its long tail.
     rebuilds (`--validate`), and import changes accepted only after a build
     proves them (`--imports`) ([build time](docs/guide/build-time.md),
     [case study](docs/case-studies/build-time.md)).
-  - [ ] Build time, next: a critical-path-first job order for Lake (on
-    Batteries the critical path waited for a free worker; a simulation can
-    say how much an order would save before proposing it upstream); rebuild
-    estimates for edits that keep a module's interface (Lake then skips the
-    importers); import changes across packages, checked against downstream
-    users.
+  - [ ] Build time, next: rebuild estimates that account for a clean
+    build's slower CPU time per job (mean errors of 23 to 39%, mostly too high, in the
+    [case study](docs/case-studies/build-time.md); `--validate` already
+    measures the factor); a target's `needs`, which Lake adds to its
+    modules' inputs; edits that keep a module's interface (Lake then skips
+    the importers); a critical-path-first job order for Lake, simulated
+    before it is proposed (on the Mathlib project the chain's first module
+    started 10 s after the first modules); import changes checked against
+    downstream packages.
   - [ ] *(in progress)* **Project-wide compile-time fixes.** Cross-file
     candidates (make a definition irreducible, an instance's priority, a
     `@[simp]` lemma tried often and rarely used), each verified by

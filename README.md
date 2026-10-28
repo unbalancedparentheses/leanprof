@@ -256,10 +256,13 @@ was serialized, and an estimate of the rebuild after touching each module
 (a scheduling simulation of the measured jobs). `--validate K` checks those
 estimates against real rebuilds in a git worktree, and `--imports K` tries
 removing imports there, keeping a change only if the package still builds
-with its proofs. On Batteries, eight touched modules rebuilt in a mean 8.9%
-from the estimate (largest 39%), and one import change, measured, cut the
-rebuild after touching `Batteries.Tactic.Basic` from 3.57 s to 0.84 s
-([build time](docs/guide/build-time.md), [case study](docs/case-studies/build-time.md)).
+with its proofs. On a Mathlib project of 225 modules, 189 s of a 205 s
+clean build was one chain of 23 modules, so more cores would not help;
+the estimates were 22.9% off on average over 6 touched modules (39.1% on
+Batteries, mostly too high); and two import changes built, cutting the
+rebuild after touching the imported module from 25.6 s to 10.9 s and from
+17.0 s to 10.6 s ([build time](docs/guide/build-time.md),
+[case study](docs/case-studies/build-time.md)).
 `--html` draws the build as a timeline with the critical path.
 
 ### Copies, allocations and counters: `run` and `explain`

@@ -1,0 +1,83 @@
+leanprof build: `lake build leanprof` (Lean 4.35.0), exit code 0, 25.4 s
+  50 processes: 23 modules elaborated, 23 C compiles, 4 links/archives
+  modules: 23 built, 0 up to date, 0 from a cache (Lake's -v)
+  machine: 18 hardware threads, load 11.44 before and 15.55 after
+
+Critical path: 9 jobs, 20.7 s of work and 0.17 s of waits between them, of 25.4 s
+  (before the first: 0.79 s of Lake starting up; after the last: 0.06 s)
+      start      time     wait  job
+     4.45 s    0.60 s           lean Leanprof.Contract
+     5.07 s    2.36 s   0.02 s  lean Leanprof.Explain
+     7.46 s    3.92 s   0.03 s  lean Leanprof.Fix
+     11.4 s    3.37 s   0.03 s  lean Leanprof.Experiment
+     14.8 s    1.09 s   0.02 s  lean Leanprof.Build
+     15.9 s    0.81 s   0.02 s  lean Leanprof.BuildCmd
+     16.7 s    3.50 s   0.02 s  lean LeanprofCli
+     20.3 s    4.76 s   0.02 s  cc LeanprofCli
+     25.0 s    0.35 s   0.01 s  link leanprof
+  With unlimited workers and no time between jobs the build would take 20.8 s (the longest chain of dependent jobs).
+
+Parallelism: 3.22 jobs running on average while any ran, at most 9 (18 workers assumed)
+    0 running:    0.97 s   4%
+    1 running:    9.03 s  36%
+    2 running:    1.42 s   6%
+    3 running:    2.28 s   9%
+    4 running:    3.42 s  13%
+    5 running:    4.40 s  17%
+    6 running:    3.09 s  12%
+    7 running:    0.46 s   2%
+    8 running:    0.12 s   0%
+    9 running:    0.23 s   1%
+  Serialized (at most one job running for 1.00 s or more):
+    2.72 s to 4.45 s (1.73 s): cc LeanprofElabDriver, link leanprof-elab-driver, lean Leanprof.Core
+    18.7 s to 25.4 s (6.63 s): lean LeanprofCli, cc LeanprofCli, link leanprof
+
+Longest jobs:
+     6.17 s  slack   11.2 s  288.1 MiB  cc LeanprofLive
+     5.77 s  slack   2.41 s  781.4 MiB  lean LeanprofElab
+     5.48 s  slack   12.0 s  212.4 MiB  cc Leanprof.Explain
+     4.76 s  slack   0.00 s  360.3 MiB  cc LeanprofCli  (critical)
+     4.47 s  slack   6.20 s  334.6 MiB  cc LeanprofElab
+     3.92 s  slack   0.00 s  561.1 MiB  lean Leanprof.Fix  (critical)
+     3.90 s  slack   6.27 s  289.1 MiB  cc Leanprof.Experiment
+     3.50 s  slack   0.00 s  857.5 MiB  lean LeanprofCli  (critical)
+     3.39 s  slack   10.1 s  208.4 MiB  cc Leanprof.Fix
+     3.37 s  slack   0.00 s  608.3 MiB  lean Leanprof.Experiment  (critical)
+
+Peak memory (resident, per process):
+  1334.1 MiB  lean LeanprofElabDriver
+   857.5 MiB  lean LeanprofCli
+   857.5 MiB  link leanprof-elab-driver
+   781.4 MiB  lean LeanprofElab
+   715.0 MiB  link leanprof
+
+Model: from the first job's start to the last one's end the build took 24.6 s. Replaying the measured wall times with 18 workers and the median wait between dependent jobs (0.02 s) gives 20.9 s (0% off).
+  With each job's time alone (its CPU time when it waited for a core) sharing 18 cores, and 0.02 s between jobs (a quarter of the waits were shorter), the rebuild model gives 19.3 s: the difference is time lost to contention, from this build's own jobs and from other load.
+
+Rebuild after touching a module (estimated: a no-op build, 0.66 s, plus the jobs it reruns in the rebuild model):
+    elapsed  jobs  job time  module
+     15.2 s    15    30.0 s  Leanprof.Contract
+     15.2 s    14    29.0 s  Leanprof.Retained
+     14.6 s    12    31.1 s  Leanprof.Explain
+     13.2 s     9    16.2 s  Leanprof.Judge
+     12.2 s     8    17.6 s  Leanprof.Fix
+     10.1 s     6    13.2 s  Leanprof.ElabWhy
+     10.1 s     4    14.1 s  LeanprofElab
+     9.85 s     7    14.2 s  Leanprof.Experiment
+     9.71 s     5    10.5 s  LeanprofElabRange
+     9.30 s     3    8.61 s  LeanprofCli
+
+Validation: touched 6 modules in a worktree and rebuilt (each twice: touched, then put back)
+  Leanprof.Contract: estimated 15.2 s, measured 11.2 s, 11.0 s (error +36.20%, +38.00%); rebuilt modules as predicted
+  Leanprof.Fix: estimated 12.2 s, measured 9.06 s, 10.3 s (error +35.00%, +19.00%); rebuilt modules as predicted
+  LeanprofCli: estimated 9.30 s, measured 10.5 s, 9.50 s (error -11.40%, -2.10%); rebuilt modules as predicted
+  Leanprof.StaticCopies: estimated 6.37 s, measured 5.35 s, 5.12 s (error +19.10%, +24.50%); rebuilt modules as predicted
+  Leanprof.BuildCmd: estimated 5.36 s, measured 4.80 s, 5.02 s (error +11.70%, +6.80%); rebuilt modules as predicted
+  LeanprofBuildShim: estimated 1.15 s, measured 4.40 s, 4.39 s (error -73.90%, -73.80%); rebuilt modules differ: rebuilt but not predicted: LeanprofCli
+  mean absolute error 29.30%, largest 73.90%
+  (replaying the clean build's wall times instead: mean absolute error 34.70%, largest 66.50%)
+
+Imports: 39 imports of rebuilt modules considered: 38 name declarations of the module they import, 0 are in modules that define nothing (they re-export), 0 are reached through another import too, 1 would leave a module that imports the module without a declaration it names; 0 candidates shown, the best 0 tried in a worktree
+
+JSON: /private/tmp/claude-501/-Users-unbalancedparen/6b44ecbc-2fb8-4f5f-aaf3-47a00e3d1a1f/scratchpad/bt/results/leanprof.json
+HTML: /private/tmp/claude-501/-Users-unbalancedparen/6b44ecbc-2fb8-4f5f-aaf3-47a00e3d1a1f/scratchpad/bt/results/leanprof.html

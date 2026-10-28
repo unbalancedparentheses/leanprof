@@ -96,7 +96,8 @@ def validate (o : Opts) (a : Analysis) (noop : Float) (projAbs : String) (work e
   let mut errsReplay : Array Float := #[]
   for (m, (_, _, e)) in picks do
     -- the same jobs with their wall times as measured in this build (what the model would be without times alone)
-    let replay := noop + simulate (simOf a.jobs (rebuildSet a.jobs m)) a.workers a.latency
+    let ids := rebuildSet a.jobs m
+    let replay := noop + simulate (simOf a.jobs ids) a.workers a.latency
     let some j := a.jobs.find? fun j => j.kind == "lean" && j.name == m | continue
     let file := sourceIn projAbs work j
     say o s!"validate: touching {m} (estimated {fmtS e})"
@@ -115,6 +116,11 @@ def validate (o : Opts) (a : Analysis) (noop : Float) (projAbs : String) (work e
       samples := samples.push <| Json.mkObj [("module", Json.str m), ("estimate_s", toJson (r3 e)),
         ("measured_s", toJson (ms.map r3)), ("error_pct", toJson (ep.map fun x => (x * 10).round / 10)),
         ("replay_estimate_s", toJson (r3 replay)), ("replay_error_pct", toJson (epr.map fun x => (x * 10).round / 10)),
+        -- the same jobs' wall and CPU time, summed, in the measured build and in the first rebuild
+        ("clean_wall_s", toJson (r3 (ids.foldl (fun s i => s + a.jobs[i]!.dur) 0))),
+        ("clean_cpu_s", toJson (r3 (ids.foldl (fun s i => s + a.jobs[i]!.user + a.jobs[i]!.sys) 0))),
+        ("rebuild_wall_s", toJson (r3 (r1.jobs.foldl (fun s j => s + j.dur) 0))),
+        ("rebuild_cpu_s", toJson (r3 (r1.jobs.foldl (fun s j => s + j.user + j.sys) 0))),
         ("predicted_modules", toJson pred.size), ("rebuilt_modules", toJson actual.size),
         ("same_modules", Json.bool same), ("module_difference", Json.str (setDifference pred actual)),
         ("exit_codes", toJson #[r1.exitCode.toNat, r2.exitCode.toNat]),
@@ -152,7 +158,9 @@ def withImports (a : Analysis) (direct : Std.HashMap String (Array String)) (m :
   -- in start order: a module's imports were rebuilt before it
   for i in affected.qsort (· < ·) do
     let j := a.jobs[i]!
-    let ds := if j.name == m then direct' else (direct.get? j.name).getD #[]
+    let some ds := if j.name == m then some direct' else direct.get? j.name
+      | closure := closure.insert j.name j.imports   -- header unknown: as measured
+        continue
     let mut acc : Std.HashSet String := {}
     for d in ds do
       if let some di := leanId.get? d then
@@ -192,6 +200,8 @@ structure Skipped where
   redundant : Nat := 0
   reexport : Nat := 0
   noIlean : Nat := 0
+  importers : Nat := 0
+  kept : Nat := 0
 
 /-- The imports whose removal changes the measured graph, each with what
 the module would import instead: the modules of the declarations it names
@@ -201,7 +211,8 @@ modules that define nothing (they exist to re-export). Ranked by the
 estimated gain on the clean build's critical path plus on the rebuild after
 touching the import. -/
 def candidates (a : Analysis) (noop : Float) (direct : Std.HashMap String (Array String)) (roots : Array String)
-    (uses : Std.HashMap String (Array String × Nat)) : Nat × Skipped × Array Cand := Id.run do
+    (uses : Std.HashMap String (Array String × Nat)) (kept : Std.HashMap String (Array String) := {}) :
+    Nat × Skipped × Array Cand := Id.run do
   let leanJob : Std.HashMap String Job := a.jobs.foldl (init := {}) fun h j => if j.kind == "lean" then h.insert j.name j else h
   let mut out := #[]
   let mut considered := 0
@@ -212,6 +223,7 @@ def candidates (a : Analysis) (noop : Float) (direct : Std.HashMap String (Array
     for imp in ds do
       unless leanJob.contains imp do continue
       considered := considered + 1
+      if ((kept.get? m).getD #[]).contains imp then sk := { sk with kept := sk.kept + 1 }; continue
       let some (used, decls) := uses.get? m | sk := { sk with noIlean := sk.noIlean + 1 }; continue
       if decls == 0 then sk := { sk with reexport := sk.reexport + 1 }; continue
       if used.contains imp then sk := { sk with needed := sk.needed + 1 }; continue
@@ -222,11 +234,21 @@ def candidates (a : Analysis) (noop : Float) (direct : Std.HashMap String (Array
         reach := reach.insert d
         if let some jd := leanJob.get? d then
           for x in jd.allImports do reach := reach.insert x
-      let extra := used.filter fun u => u != m && jm0.allImports.contains u && !reach.contains u
+      let lost := used.filter fun u => u != m && jm0.allImports.contains u && !reach.contains u
+      -- modules of this build by name; modules of other packages (cached, not rebuilt)
+      -- through what the import itself imports from them, which keeps the header short
+      let extra := lost.filter leanJob.contains
+      let extra := if lost.all leanJob.contains then extra else
+        extra ++ ((direct.get? imp).getD #[]).filter fun d => !leanJob.contains d && !reach.contains d && !rest.contains d
       let jobs' := withImports a direct m (rest ++ extra)
       let some jm := jobs'.find? fun j => j.kind == "lean" && j.name == m | continue
       -- still imported through another import: nothing changes
       if jm.imports.contains imp then sk := { sk with redundant := sk.redundant + 1 }; continue
+      -- a module importing `m` names a declaration it would no longer reach: it would break
+      let breaks := jobs'.any fun j => j.kind == "lean" && j.id != jm.id &&
+        let gone := a.jobs[j.id]!.imports.filter (!j.imports.contains ·)
+        !gone.isEmpty && ((uses.get? j.name).map (·.1.any gone.contains)).getD false
+      if breaks then sk := { sk with importers := sk.importers + 1 }; continue
       let freed := (jobs'.filter fun j => j.kind == "lean" && a.jobs[j.id]!.imports.contains imp && !j.imports.contains imp).size
       let (_, cp') := cpm jobs'
       let a' : Analysis := { a with jobs := jobs' }
@@ -361,17 +383,28 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
   let loadAfter ← loadNow
   let a := analyze run.jobs workers hw
   -- a build with nothing to do: Lake's own time around any rebuild
-  let noop ← if run.exitCode == 0 then do
-      say o "timing a build with nothing to do"
-      let r ← runLake proj work o.targets false
-      pure (some r)
-    else pure none
+  -- (three times, the fastest: the first after a clean build can take several
+  -- times longer, with the dependencies' files not yet in the page cache)
+  let noops ← if run.exitCode == 0 then do
+      say o "timing a build with nothing to do (three times)"
+      let mut rs : Array Run := #[]
+      for _ in [0:3] do rs := rs.push (← runLake proj work o.targets false)
+      pure rs
+    else pure #[]
+  let noop : Option Run := noops.foldl (fun b r => match b with
+    | some x => if r.elapsed < x.elapsed then some r else some x
+    | none => some r) none
   let noopS := match noop with
     | some r => r.elapsed
     | none => a.first + (run.elapsed - a.last)
   let graph ← Experiment.importGraph proj
   let (mods, other) := modulesJson a run noopS graph projAbs
-  let direct : Std.HashMap String (Array String) := graph.foldl (init := {}) fun h (m, is) => h.insert m is
+  let mut direct : Std.HashMap String (Array String) := graph.foldl (init := {}) fun h (m, is) => h.insert m is
+  -- modules outside the default layout (an executable's `srcDir`, another package): their headers
+  for j in a.jobs do
+    if j.kind == "lean" && !direct.contains j.name && !j.source.isEmpty then
+      if let some src ← (try some <$> IO.FS.readFile j.source catch _ => pure none) then
+        direct := direct.insert j.name (directImports src)
   let critical : Std.HashSet Nat := a.path.foldl (fun s (i, _) => s.insert i) {}
   let prof := a.prof
   let span := a.last - a.first
@@ -409,7 +442,7 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
       ("simulated_span_s", toJson (r3 a.simulated)), ("measured_span_s", toJson (r3 span)),
       ("cores", toJson a.cores), ("latency_free_s", toJson (r3 a.latencyFree)),
       ("simulated_alone_span_s", toJson (r3 a.simulatedShared)),
-      ("noop_s", toJson (r3 noopS)), ("noop_measured", Json.bool noop.isSome),
+      ("noop_s", toJson (r3 noopS)), ("noop_runs_s", toJson (noops.map (r3 ·.elapsed))), ("noop_measured", Json.bool noop.isSome),
       ("noop_jobs", toJson ((noop.map (·.jobs.size)).getD 0))])]
   -- experiments in a worktree
   if (o.validate > 0 || o.imports > 0) && run.exitCode == 0 then
@@ -430,7 +463,13 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
         for j in a.jobs do
           if j.kind == "lean" && j.output.endsWith ".olean" then
             if let some u ← readIlean ((j.output.dropEnd 6).toString ++ ".ilean") then uses := uses.insert j.name u
-        let (considered, sk, cands) := candidates a noopS direct roots uses
+        let mut kept : Std.HashMap String (Array String) := {}
+        for j in a.jobs do
+          if j.kind == "lean" && !j.source.isEmpty then
+            if let some src ← (try some <$> IO.FS.readFile j.source catch _ => pure none) then
+              let k := keptImports src
+              unless k.isEmpty do kept := kept.insert j.name k
+        let (considered, sk, cands) := candidates a noopS direct roots uses kept
         -- the clean build's estimate, simulated with the workers, for those that may be tried
         let cands := (cands.extract 0 (3 * o.imports)).map fun c =>
           let ds := ((direct.get? c.m).getD #[]).filter (· != c.imp)
@@ -440,7 +479,7 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
           tryCand o projAbs wdir exp a direct c settle.sorries i
         report := report ++ [("imports", Json.mkObj [("considered", toJson considered),
           ("needed", toJson sk.needed), ("redundant", toJson sk.redundant), ("reexport", toJson sk.reexport),
-          ("no_ilean", toJson sk.noIlean),
+          ("no_ilean", toJson sk.noIlean), ("importers_use_it", toJson sk.importers), ("marked_keep", toJson sk.kept),
           ("candidates", Json.arr (cands.map candJson)), ("tried", Json.arr tried)])]
     finally
       unless o.keep do Experiment.removeWorktree wt

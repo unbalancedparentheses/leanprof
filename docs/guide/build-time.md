@@ -54,15 +54,17 @@ dependencies' builds (Mathlib from its cache, for instance) stay.
 
   The jobs' wall times in a clean build are not what they take in a
   rebuild: a clean build keeps every core busy with many jobs, so each one
-  waits for a core. On Batteries the median `lean` process got half a
-  core's worth of CPU time per second of wall time. So each job is given
-  its time alone: its CPU time when that is less than its wall time (it
-  waited), else its wall time (it used several threads, and keeps that
-  many cores busy). When the running jobs want more cores than the machine
-  has, they all slow down by the same factor. Replaying the wall times as
-  measured gave rebuild estimates up to 2.5 times the real rebuilds on
-  Batteries; the time-alone model brought the mean error to 8.9%
-  ([case study](../case-studies/build-time.md)).
+  waits for a core (in the Batteries run of the case study, the median
+  `lean` process had 0.79 s of CPU time per second of wall time). So each
+  job is given its time alone: its CPU time when that is less than its
+  wall time (it waited), else its wall time (it used several threads, and
+  keeps that many cores busy). When the running jobs want more cores than
+  the machine has, they all slow down by the same factor. On Batteries,
+  replaying the wall times as measured put the estimates 120% off on
+  average; the time-alone model, 39% (22.9% on a Mathlib project). The
+  estimates remain mostly too high: with every core busy, a job also needs
+  more CPU time for the same work than in a rebuild
+  ([case study](../case-studies/build-time.md#rebuild-estimates-checked)).
 
   Both models are also run over the whole build and printed next to it:
   the replay checks the dependencies and the scheduling (it should come

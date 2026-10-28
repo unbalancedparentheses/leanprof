@@ -1,0 +1,59 @@
+{
+ "a": {
+  "elapsed_s": [
+   22.784,
+   17.105,
+   15.539,
+   15.872
+  ],
+  "critical_path_work_s": [
+   16.257,
+   12.971,
+   11.687,
+   12.079
+  ],
+  "unlimited_workers_s": [
+   16.255,
+   12.97,
+   11.687,
+   12.079
+  ],
+  "load_before": [
+   29.56,
+   60.32,
+   59.95,
+   48.33
+  ],
+  "median_elapsed_s": 16.488500000000002
+ },
+ "b": {
+  "elapsed_s": [
+   16.813,
+   15.86,
+   15.131,
+   14.757
+  ],
+  "critical_path_work_s": [
+   12.391,
+   12.004,
+   11.187,
+   11.085
+  ],
+  "unlimited_workers_s": [
+   12.391,
+   12.005,
+   11.187,
+   11.086
+  ],
+  "load_before": [
+   56.24,
+   63.67,
+   55.87,
+   42.04
+  ],
+  "median_elapsed_s": 15.4955
+ },
+ "a_is": "Batteries v4.35.0 as released",
+ "b_is": "Batteries.Classes.Order importing Lean.Elab.Tactic.ElabTerm, Batteries.Linter, Batteries.Tactic.Init, Batteries.Util.ProofWanted instead of Batteries.Tactic.Basic",
+ "design": "clean builds (leanprof build --clean), a and b alternated, 4 each, under the benchmark lock"
+}

@@ -688,6 +688,18 @@ def withoutImport (src : String) (imp : String) (extra : Array String := #[]) : 
 /-- The modules a module imports directly, from its header. -/
 def directImports (src : String) : Array String := Experiment.parseImports src
 
+/-- The imports a header marks as kept on purpose (`-- shake: keep`, the
+comment Mathlib's and Batteries' import tools honour): a module re-exporting
+something for its users. -/
+def keptImports (src : String) : Array String := Id.run do
+  let mut out := #[]
+  for l in src.splitOn "\n" do
+    if (l.splitOn "shake: keep").length > 1 then
+      let code := ((l.splitOn "--").headD "")
+      if (code.splitOn "import ").length > 1 then
+        out := out ++ Experiment.parseImports code
+  return out
+
 /-! ## The report -/
 
 /-- "12.34" as 12.34. -/
@@ -875,7 +887,7 @@ def render (r : Json) (top : Nat) : String := Id.run do
   unless im.isNull do
     out := out.push ""
     let cands := jarr im "candidates"
-    out := out.push s!"Imports: {jnatv im "considered"} imports of rebuilt modules considered: {jnatv im "needed"} name declarations of the module they import, {jnatv im "reexport"} are in modules that define nothing (they re-export), {jnatv im "redundant"} are reached through another import too{if jnatv im "no_ilean" > 0 then s!", {jnatv im "no_ilean"} without an .ilean" else ""}; {cands.size} candidates shown, the best {(jarr im "tried").size} tried in a worktree"
+    out := out.push s!"Imports: {jnatv im "considered"} imports of rebuilt modules considered: {jnatv im "needed"} name declarations of the module they import, {jnatv im "reexport"} are in modules that define nothing (they re-export), {jnatv im "redundant"} are reached through another import too, {jnatv im "importers_use_it"} would leave a module that imports the module without a declaration it names, {jnatv im "marked_keep"} are marked `-- shake: keep`{if jnatv im "no_ilean" > 0 then s!", {jnatv im "no_ilean"} without an .ilean" else ""}; {cands.size} candidates shown, the best {(jarr im "tried").size} tried in a worktree"
     let names (k : String) (c : Json) := ", ".intercalate ((jarr c k).filterMap (·.getStr?.toOption)).toList
     for c in cands.extract 0 top do
       let instead := if (jarr c "replace_with").isEmpty then "" else s!" (importing {names "replace_with" c} instead)"

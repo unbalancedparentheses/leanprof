@@ -1,0 +1,118 @@
+leanprof build: `lake build` (Lean 4.35.0), exit code 0, 205.1 s
+  226 processes: 226 modules elaborated, 0 C compiles, 0 links/archives
+  modules: 226 built, 0 up to date, 0 from a cache (Lake's -v)
+  machine: 18 hardware threads, load 10.69 before and 14.85 after
+
+Critical path: 23 jobs, 189.1 s of work and 3.79 s of waits between them, of 205.1 s
+  (before the first: 1.84 s of Lake starting up; after the last: 0.15 s)
+      start      time     wait  job
+     12.0 s    23.0 s           lean ExtremeValueTheory.OrderContinuity
+     35.6 s    12.5 s   0.54 s  lean ExtremeValueTheory.PseudoInverses
+     48.2 s    7.22 s   0.20 s  lean ExtremeValueTheory.TransformedCDF
+     55.6 s    5.83 s   0.16 s  lean ExtremeValueTheory.LimitRelationManipulation
+     61.6 s    7.95 s   0.17 s  lean ExtremeValueTheory.DomainOfAttraction.Frechet
+     69.7 s    8.97 s   0.13 s  lean ExtremeValueTheory.DomainOfAttraction.Weibull
+     78.8 s    7.13 s   0.17 s  lean ExtremeValueTheory.PeaksOverThreshold.Balkema
+     86.1 s    10.2 s   0.18 s  lean ExtremeValueTheory.PeaksOverThreshold.Converse
+     96.5 s    9.64 s   0.19 s  lean ExtremeValueTheory.Statistics.Pickands
+    106.3 s    5.79 s   0.14 s  lean ExtremeValueTheory.Statistics.Moment
+  … 3 more
+    131.9 s    11.8 s   0.21 s  lean ExtremeValueTheory.Statistics.GPDLikelihood
+    143.9 s    10.1 s   0.20 s  lean ExtremeValueTheory.Statistics.Wald
+    154.2 s    6.55 s   0.16 s  lean ExtremeValueTheory.Statistics.WaldEReal
+    160.9 s    5.48 s   0.12 s  lean ExtremeValueTheory.Statistics.GPDJointMLE
+    166.5 s    9.54 s   0.14 s  lean ExtremeValueTheory.Statistics.GPDJointNormality
+    176.1 s    13.7 s   0.13 s  lean ExtremeValueTheory.Statistics.GPDJointNormalityNeg
+    189.9 s    3.98 s   0.13 s  lean ExtremeValueTheory.Statistics.GPDMLENormality
+    194.0 s    4.09 s   0.12 s  lean ExtremeValueTheory.Statistics.ReturnLevelNormality
+    198.3 s    3.35 s   0.14 s  lean ExtremeValueTheory.Statistics.ConfidenceIntervals
+    201.7 s    3.23 s   0.12 s  lean ExtremeValueTheory
+  With unlimited workers and no time between jobs the build would take 189.1 s (the longest chain of dependent jobs).
+
+Parallelism: 8.00 jobs running on average while any ran, at most 18 (18 workers assumed)
+    0 running:    2.42 s   1%
+    1 running:    15.3 s   7%
+    2 running:    25.3 s  12%
+    3 running:    6.61 s   3%
+    4 running:    8.53 s   4%
+    5 running:    6.74 s   3%
+    6 running:    21.9 s  11%
+    7 running:    23.6 s  11%
+    8 running:    18.5 s   9%
+    9 running:    16.1 s   8%
+   10 running:    5.45 s   3%
+   11 running:    10.5 s   5%
+   12 running:    2.22 s   1%
+   13 running:    5.03 s   2%
+   14 running:    4.89 s   2%
+   15 running:    2.06 s   1%
+   16 running:    6.72 s   3%
+   17 running:    5.77 s   3%
+   18 running:    17.5 s   9%
+  Serialized (at most one job running for 4.10 s or more):
+    192.1 s to 204.9 s (12.8 s): lean ExtremeValueTheory.Statistics.GPDMLENormality, lean ExtremeValueTheory.Statistics.ReturnLevelNormality, lean ExtremeValueTheory.Statistics.ConfidenceIntervals, lean ExtremeValueTheory
+
+Longest jobs:
+     23.7 s  slack  150.8 s  5613.8 MiB lean ExtremeValueTheory.Statistics.MeasurableArgmax
+     23.3 s  slack  162.7 s  5640.9 MiB lean ExtremeValueTheory.ClassificationCalculation
+     23.0 s  slack   0.00 s  5604.6 MiB lean ExtremeValueTheory.OrderContinuity  (critical)
+     18.9 s  slack   60.5 s  6033.0 MiB lean ExtremeValueTheory.Statistics.TailEmpiricalProcessRV
+     17.7 s  slack   27.1 s  5864.2 MiB lean ExtremeValueTheory.Statistics.ExtremeQuantileSecondOrder
+     15.4 s  slack   46.4 s  5876.9 MiB lean ExtremeValueTheory.Statistics.ExtremeQuantileRhoZero
+     15.1 s  slack   84.9 s  3006.0 MiB lean ExtremeValueTheory.Dependence.MovingAverageTailProcess
+     15.0 s  slack   36.0 s  5799.1 MiB lean ExtremeValueTheory.Dependence.InfiniteMovingAverageTailProcess
+     14.0 s  slack   73.7 s  5789.6 MiB lean ExtremeValueTheory.Statistics.MomentGeneral
+     13.7 s  slack   0.00 s  6288.2 MiB lean ExtremeValueTheory.Statistics.GPDJointNormalityNeg  (critical)
+
+Peak memory (resident, per process):
+  6288.2 MiB  lean ExtremeValueTheory.Statistics.GPDJointNormalityNeg
+  6033.0 MiB  lean ExtremeValueTheory.Statistics.TailEmpiricalProcessRV
+  5996.8 MiB  lean ExtremeValueTheory.Statistics.GPDJointNormality
+  5876.9 MiB  lean ExtremeValueTheory.Statistics.ExtremeQuantileRhoZero
+  5864.2 MiB  lean ExtremeValueTheory.Statistics.ExtremeQuantileSecondOrder
+
+Model: from the first job's start to the last one's end the build took 203.1 s. Replaying the measured wall times with 18 workers and the median wait between dependent jobs (0.15 s) gives 199.6 s (0% off).
+  With each job's time alone (its CPU time when it waited for a core) sharing 18 cores, and 0.08 s between jobs (a quarter of the waits were shorter), the rebuild model gives 177.9 s: the difference is time lost to contention, from this build's own jobs and from other load.
+
+Rebuild after touching a module (estimated: a no-op build, 2.61 s, plus the jobs it reruns in the rebuild model):
+    elapsed  jobs  job time  module
+    175.4 s   102   840.9 s  ExtremeValueTheory.OrderContinuity
+    172.0 s   109   889.4 s  ExtremeValueTheory.CumulativeDistributionFunction
+    167.6 s   108   879.3 s  ExtremeValueTheory.DegenerateCDF
+    165.2 s    98   792.6 s  ExtremeValueTheory.PseudoInverses
+    162.6 s   107   873.0 s  ExtremeValueTheory.AffineTransformation
+    157.4 s    97   780.1 s  ExtremeValueTheory.TransformedCDF
+    156.8 s   159  1135.6 s  ExtremeValueTheory.RegularVariation.Basic
+    150.8 s    99   798.8 s  ExtremeValueTheory.ExtremeValueDistribution
+    150.5 s    96   772.9 s  ExtremeValueTheory.LimitRelationManipulation
+    148.9 s    91   653.3 s  ExtremeValueTheory.RegularVariation.Karamata
+
+Validation: touched 6 modules in a worktree and rebuilt (each twice: touched, then put back)
+  ExtremeValueTheory.OrderContinuity: estimated 175.4 s, measured 155.6 s, 169.2 s (error +12.70%, +3.70%); rebuilt modules as predicted
+  ExtremeValueTheory.StableLaws.GeneralizedCLT.StableIntegral: estimated 91.7 s, measured 61.2 s, 62.8 s (error +49.80%, +45.90%); rebuilt modules as predicted
+  ExtremeValueTheory.Statistics.WaldEReal: estimated 53.0 s, measured 56.9 s, 56.5 s (error -6.80%, -6.10%); rebuilt modules as predicted
+  ExtremeValueTheory.Statistics.LMoments: estimated 28.3 s, measured 26.4 s, 20.4 s (error +7.10%, +38.50%); rebuilt modules as predicted
+  ExtremeValueTheory.Minimality.ClassicalGeneralizedCLT: estimated 16.5 s, measured 12.0 s, 12.0 s (error +37.30%, +37.70%); rebuilt modules as predicted
+  ExtremeValueTheory: estimated 5.80 s, measured 6.94 s, 6.70 s (error -16.40%, -13.40%); rebuilt modules as predicted
+  mean absolute error 22.90%, largest 49.80%
+  (replaying the clean build's wall times instead: mean absolute error 26.80%, largest 54.90%)
+
+Imports: 585 imports of rebuilt modules considered: 309 name declarations of the module they import, 230 are in modules that define nothing (they re-export), 19 are reached through another import too, 9 would leave a module that imports the module without a declaration it names; 9 candidates shown, the best 3 tried in a worktree
+  ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Complete without `import ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Separable` (importing ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Cadlag, ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Metric, ExtremeValueTheory.ForMathlib.Topology.Skorokhod.TimeChange instead): estimated -0.13 s off the clean build, 47.9 s off a rebuild after touching ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Separable (8 modules no longer depend on it)
+  ExtremeValueTheory.Statistics.ExtremalIndexEstimators without `import ExtremeValueTheory.Statistics.HillCluster` (importing ExtremeValueTheory.Statistics.HillDependent instead): estimated 0.00 s off the clean build, 12.3 s off a rebuild after touching ExtremeValueTheory.Statistics.HillCluster (2 modules no longer depend on it)
+  ExtremeValueTheory.Minimality.ClassicalGeneralizedCLT without `import ExtremeValueTheory.StableLaws.GaussianDomain` (importing ExtremeValueTheory.StableLaws.GaussianDomain.Necessity instead): estimated 0.00 s off the clean build, 10.7 s off a rebuild after touching ExtremeValueTheory.StableLaws.GaussianDomain (2 modules no longer depend on it)
+  ExtremeValueTheory.MaxStable.Spectral without `import ExtremeValueTheory.RegularVariation.Multivariate` (importing ExtremeValueTheory.RegularVariation.Multivariate.Polar instead): estimated 0.00 s off the clean build, 8.09 s off a rebuild after touching ExtremeValueTheory.RegularVariation.Multivariate (9 modules no longer depend on it)
+  ExtremeValueTheory.Dependence.EchoProcess.Tools without `import ExtremeValueTheory.Dependence.ThetaGap`: estimated 0.00 s off the clean build, 7.13 s off a rebuild after touching ExtremeValueTheory.Dependence.ThetaGap (1 module no longer depends on it)
+  ExtremeValueTheory.Dependence.Anticlustering.Basic without `import ExtremeValueTheory.Dependence.StationaryWindows` (importing ExtremeValueTheory.Dependence.TailProcess, ExtremeValueTheory.Dependence.TailProcess.Polar, ExtremeValueTheory.Dependence.TimeChange, ExtremeValueTheory.ForMathlib.MeasureTheory.Measure.Portmanteau instead): estimated 0.00 s off the clean build, 6.95 s off a rebuild after touching ExtremeValueTheory.Dependence.StationaryWindows (1 module no longer depends on it)
+  ExtremeValueTheory.Dependence.Anticlustering.Basic without `import ExtremeValueTheory.Dependence.ExtremalIndex` (importing ExtremeValueTheory.Dependence.Leadbetter instead): estimated 0.00 s off the clean build, 6.95 s off a rebuild after touching ExtremeValueTheory.Dependence.ExtremalIndex (1 module no longer depends on it)
+  ExtremeValueTheory.StableLaws.GeneralizedCLT.StableIntegral without `import ExtremeValueTheory.StableLaws.DomainOfAttraction` (importing ExtremeValueTheory.StableLaws.TailIntegral, Mathlib.Probability.CentralLimitTheorem, Mathlib.Probability.Distributions.Pareto instead): estimated -0.13 s off the clean build, 5.03 s off a rebuild after touching ExtremeValueTheory.StableLaws.DomainOfAttraction (1 module no longer depends on it)
+  ExtremeValueTheory.Statistics.GEVGumbelLimit without `import ExtremeValueTheory.Statistics.GEVHessian` (importing ExtremeValueTheory.GEV.Family, ExtremeValueTheory.GEV.Moments, ExtremeValueTheory.Statistics.GEVFisherInformation, ExtremeValueTheory.Statistics.GEVLikelihood, ExtremeValueTheory.Statistics.GEVMLE, ExtremeValueTheory.Statistics.GEVMLEFisher, ExtremeValueTheory.Statistics.GPDFisherInformation, ExtremeValueTheory.Statistics.GPDJointMLE, ExtremeValueTheory.Statistics.GPDLikelihood instead): estimated 0.00 s off the clean build, 4.77 s off a rebuild after touching ExtremeValueTheory.Statistics.GEVHessian (1 module no longer depends on it)
+  tried: ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Complete without `import ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Separable` (importing ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Metric, ExtremeValueTheory.ForMathlib.Topology.Skorokhod.Cadlag, ExtremeValueTheory.ForMathlib.Topology.Skorokhod.TimeChange instead): does not build
+    error: ExtremeValueTheory/ForMathlib/Topology/Skorokhod/Complete.lean:696:2: failed to synthesize instance of type class
+  tried: ExtremeValueTheory.Statistics.ExtremalIndexEstimators without `import ExtremeValueTheory.Statistics.HillCluster` (importing ExtremeValueTheory.Statistics.HillDependent instead): builds
+    rebuild after touching ExtremeValueTheory.Statistics.HillCluster: 25.6 s before, 10.9 s after (measured, mean of 2 builds each); clean build estimated 0.00 s shorter
+  tried: ExtremeValueTheory.Minimality.ClassicalGeneralizedCLT without `import ExtremeValueTheory.StableLaws.GaussianDomain` (importing ExtremeValueTheory.StableLaws.GaussianDomain.Necessity instead): builds
+    rebuild after touching ExtremeValueTheory.StableLaws.GaussianDomain: 17.0 s before, 10.6 s after (measured, mean of 2 builds each); clean build estimated 0.00 s shorter
+
+JSON: /private/tmp/claude-501/-Users-unbalancedparen/6b44ecbc-2fb8-4f5f-aaf3-47a00e3d1a1f/scratchpad/bt/results/evt.json
+HTML: /private/tmp/claude-501/-Users-unbalancedparen/6b44ecbc-2fb8-4f5f-aaf3-47a00e3d1a1f/scratchpad/bt/results/evt.html

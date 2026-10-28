@@ -976,6 +976,8 @@ def buildTests : StateT Nat IO Unit := do
     (Build.withoutImport src "C.D" #["G"] == some "/- header -/\nmodule\n\npublic import A.B -- two\npublic import G\nimport E\n\ndef x := 1\nimport F\n" &&
       Build.withoutImport src "E" == some "/- header -/\nmodule\n\npublic import A.B C.D -- two\n\ndef x := 1\nimport F\n" &&
       Build.withoutImport src "F" == none) (toString (Build.withoutImport src "C.D" #["G"]))
+  check "build: imports marked `-- shake: keep` are kept"
+    (Build.keptImports "module\npublic import A.B -- shake: keep\nimport C\n-- shake: keep the next\n" == #["A.B"]) ""
   check "build: a touch adds a public definition to a module file"
     ((Build.touched "module\ndef x := 1" 3).endsWith "\npublic def leanprofTouch3 : Nat := 3\n" &&
       (Build.touched "def x := 1\n" 4).endsWith "\n\ndef leanprofTouch4 : Nat := 4\n") ""

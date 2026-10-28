@@ -26,15 +26,18 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   build. `--clean` rebuilds the whole package first.
 - `--validate K` touches K modules in a git worktree and rebuilds, twice
   each, to compare with the estimates and with the predicted set of
-  rebuilt modules. On Batteries: a mean error of 8.9% over 8 modules
-  (largest 39%), every rebuilt set as predicted.
+  rebuilt modules. Mean errors of 39.1% on Batteries (8 modules), 29.3% on
+  leanprof and 22.9% on a Mathlib project (6 each), mostly too high; 18 of
+  20 rebuilt sets as predicted.
 - `--imports K` ranks imports by the estimated gain from removing them (the
   module's `.ilean` says which declarations it names, so needed imports are
-  left out and a heavy import is replaced by the modules of what it uses),
-  tries the best K in the worktree, and accepts one only if the package
-  builds with no more `sorry` warnings; the rebuild after touching the
-  removed import is then measured before and after. On Batteries one
-  change built, and cut that rebuild from 3.57 s to 0.84 s.
+  left out and a heavy import is replaced by the modules of what it uses;
+  imports an importer relies on, and imports marked `-- shake: keep`, are
+  left out too), tries the best K in the worktree, and accepts one only if
+  the package builds with no more `sorry` warnings; the rebuild after
+  touching the removed import is then measured before and after. On the
+  Mathlib project two changes built, cutting that rebuild from 25.6 s to
+  10.9 s and from 17.0 s to 10.6 s.
 - JSON in `.lake/leanprof/build.json` (`schemas/build.schema.json`), an
   HTML timeline with the critical path (`--html`), `--from FILE` for a
   saved report, and the MCP tool `build`.

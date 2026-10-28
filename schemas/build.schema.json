@@ -356,6 +356,12 @@
         "simulated_alone_span_s": {
           "type": "number"
         },
+        "noop_runs_s": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
         "noop_measured": {
           "type": "boolean"
         },
@@ -410,6 +416,18 @@
                 "items": {
                   "type": "number"
                 }
+              },
+              "clean_wall_s": {
+                "type": "number"
+              },
+              "clean_cpu_s": {
+                "type": "number"
+              },
+              "rebuild_wall_s": {
+                "type": "number"
+              },
+              "rebuild_cpu_s": {
+                "type": "number"
               },
               "rebuilt_modules": {
                 "type": "integer",
@@ -488,6 +506,14 @@
           "minimum": 0
         },
         "no_ilean": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "importers_use_it": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "marked_keep": {
           "type": "integer",
           "minimum": 0
         },
