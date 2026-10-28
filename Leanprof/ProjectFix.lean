@@ -128,10 +128,19 @@ def hypotheses (r : Json) (inProject : String → Bool) (declares : String → S
     let wh := jstr c "where"
     let file := (ElabWhy.splitPos wh).1
     if name.isEmpty || file.isEmpty || !inProject file || generatedName name then continue
-    -- located only by the end of its name: perhaps another constant
-    if (c.getObjValAs? Bool "located_by_suffix").toOption.getD false then continue
-    -- the source there must declare it (`declares`: the file's text at that line)
-    unless declares wh name do continue
+    -- `diagnostics` prints names relative to the namespaces open where they were used
+    -- (`Affine` for `WeierstrassCurve.Affine`): the report located such a name by the one
+    -- declaration of the profiled files whose name ends so, and edits use that name
+    let bySuffix := (c.getObjValAs? Bool "located_by_suffix").toOption.getD false
+    let printed := name
+    let name := if bySuffix then jstr c "declared_as" else name
+    if name.isEmpty then continue
+    -- the source there must declare it (`declares`: the file's text at that line); a name
+    -- found by its end must not be `protected` (Lean never prints those by their end alone)
+    unless declares wh (if bySuffix then printed else name) do continue
+    let suffixNote := if bySuffix then
+        #[s!"`diagnostics` names it `{printed}` (relative to an open namespace); the one declaration of the profiled files whose name ends so is `{name}`"]
+      else #[]
     let files := natOf c "files"
     let sites := natOf c "sites"
     let keys := (jarr c "site_keys").filterMap (·.getStr?.toOption)
@@ -142,7 +151,8 @@ def hypotheses (r : Json) (inProject : String → Bool) (declares : String → S
     let base : Candidate := {
       kind := "", target := name, defined := wh, files := files, sites := sites, amount := jnum c "amount",
       decls := decls, fileList := fileList }
-    let attributed := if jnum c "amount" > 0 then #[s!"the report attributes {amt (jnum c "amount")} to it ({overlap})"] else #[]
+    let attributed := suffixNote ++
+      (if jnum c "amount" > 0 then #[s!"the report attributes {amt (jnum c "amount")} to it ({overlap})"] else #[])
     -- definitions unfolded across files
     let unfolds := natOf c "unfolds"
     let kernel := natOf c "kernel"
@@ -204,7 +214,7 @@ def hypotheses (r : Json) (inProject : String → Bool) (declares : String → S
       observed := #[s!"the search `{jstr x "op"}` ran {n}× in {files} files, first at {jstr x "first_at"}",
         s!"the report attributes {amt (jnum x "total")} to these searches ({overlap})"]
       suggested := s!"a shortcut instance `instance : {jstr x "op"} := inferInstance` in a module all {files} files import"
-      notMechanical := "where to declare it is a choice, and it changes the elaborated statements that use it, which the proof-preservation guard cannot accept as a speedup" }
+      notMechanical := "where to declare it is a choice for a person; a new instance can also change the terms statements elaborate to, which the proof-preservation guard compares" }
   return out.qsort fun a b => a.files > b.files || (a.files == b.files && (a.count > b.count ||
     (a.count == b.count && (a.kind < b.kind || (a.kind == b.kind && a.target < b.target)))))
 
@@ -245,6 +255,8 @@ def declKeyword (lines : Array String) (line : Nat) : Option (String × Nat) := 
       else if depth == 0 && ch != ']' then word := ch :: word
     for w in words do
       if declKeywords.contains w then return some (w, i + 1)
+    -- `variable (x) in`, `open Foo in`, `set_option o v in`: the same command goes on
+    if t.endsWith " in" then continue
     -- another command, or a blank line: the declaration does not start on `line`
     if t.isEmpty || (words[0]?.any stopWords.contains) || (t.startsWith "public section") ||
         (t.startsWith "noncomputable section") then
@@ -255,6 +267,9 @@ def declKeyword (lines : Array String) (line : Nat) : Option (String × Nat) := 
 `name` or the end of it (`Foo.bar` in `namespace Foo`), or it is an `instance` with none. -/
 def declares (lines : Array String) (line : Nat) (name : String) : Bool := Id.run do
   let some (kw, i) := declKeyword lines line | return false
+  -- a protected declaration is printed with its namespace: a one-part name is another constant
+  if (name.splitOn ".").length == 1 && ((lines.extract (line - 1) i).toList.any fun l => (l.splitOn "protected ").length > 1) then
+    return false
   let ws := ((lines[i - 1]!.splitOn kw).drop 1 |> kw.intercalate).splitOn " " |>.filter (· != "")
   let id := (ws.head?.getD "").replace "_root_." ""
   let named := !id.isEmpty && !id.startsWith "(" && !id.startsWith ":" && !id.startsWith "[" && !id.startsWith "{"
@@ -318,7 +333,14 @@ def editsFor (c : Candidate) (read : String → IO String) : IO (Except String (
   | "irreducible" | "reducible" =>
     let src ← read file
     match declKeyword (src.splitOn "\n").toArray line with
-    | some ("def", _) | some ("abbrev", _) | some ("opaque", _) =>
+    | some ("abbrev", _) =>
+      return .error s!"{c.target} is an `abbrev` (reducible already): Lean does not make it {c.kind} by an attribute"
+    | some ("def", i) | some ("opaque", i) =>
+      let ls := (src.splitOn "\n").toArray
+      -- `@[reducible]` (or `@[irreducible]`) on the declaration already
+      let attrs := " ".intercalate ((ls.extract (line - 1) i).toList)
+      if (attrs.splitOn "@[reducible").length > 1 || (attrs.splitOn "@[irreducible").length > 1 then
+        return .error s!"{c.target} has a reducibility attribute already"
       return .ok #[(file, appendLine src s!"attribute [{c.kind}] {c.target}")]
     | some (k, _) => return .error s!"{c.target} is declared with `{k}`, not `def`"
     | none => return .error s!"no declaration found at {c.defined}"
@@ -528,6 +550,13 @@ def fixProjectBody (o : Opts) (runSelf : Array String → FilePath → IO IO.Pro
   let cands := hypotheses r (fun f => inProject f && known.contains f) fun wh name =>
     let (f, l) := ElabWhy.splitPos wh
     (srcs.get? f).any (declares · l name)
+  -- a candidate whose edit cannot be made (an `abbrev` made irreducible) is a hypothesis only
+  let readRel (f : String) : IO String := IO.FS.readFile f
+  let cands ← cands.mapM fun c => do
+    unless c.mechanical do return c
+    match ← editsFor c readRel with
+    | .ok _ => return c
+    | .error e => return { c with notMechanical := e }
   IO.println s!"leanprof fix --elab --project: {cands.size} candidate(s) from {report}"
   IO.println ("  ranked by the files the work was seen in, then its exact count. The heartbeats a constant is " ++
     "charged overlap (inclusive costs, and CPU totals of parallel elaboration exceed wall time): they are evidence, not savings.")
@@ -547,7 +576,6 @@ def fixProjectBody (o : Opts) (runSelf : Array String → FilePath → IO IO.Pro
   -- which to try
   let chosen : Array Nat := if !o.only.isEmpty then o.only.filter (fun k => k ≥ 1 && k ≤ cands.size) |>.map (· - 1)
     else ((List.range cands.size).filter (cands[·]!.mechanical) |>.take o.top).toArray
-  let readRel (f : String) : IO String := IO.FS.readFile f
   let mut results : Array Json := #[]
   let writeOut (results : Array Json) : IO Unit := do
     if let some p := (o.out : FilePath).parent then IO.FS.createDirAll p
@@ -678,6 +706,9 @@ def fixProjectBody (o : Opts) (runSelf : Array String → FilePath → IO IO.Pro
       let logText ← if ← p.pathExists then IO.FS.readFile p else pure ""
       let errs := (logText.splitOn "\n").filter fun l => ((trim l).startsWith "error:") && !((trim l).startsWith "error: build failed")
       unless errs.isEmpty do
+        -- Lake's last lines (which modules built) say less than Lean's errors
+        reasons := reasons.map fun r => if r.startsWith "it does not build" || r.startsWith "a module that imports the change"
+          then (r.splitOn "\n").head! else r
         reasons := reasons ++ ((errs.eraseDups.take 3).toArray.map fun l => s!"Lean: {String.ofList ((trim l).toList.take 300)}")
     IO.println s!"  {verdict}"
     (← IO.getStdout).flush

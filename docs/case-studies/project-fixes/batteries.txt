@@ -1,0 +1,470 @@
+start Wed Oct 28 13:17:41 -03 2026 load { 8.31 10.95 18.45 }
+leanprof fix --elab --project: 51 candidate(s) from .lake/leanprof/fix/project.json
+  ranked by the files the work was seen in, then its exact count. The heartbeats a constant is charged overlap (inclusive costs, and CPU totals of parallel elaboration exceed wall time): they are evidence, not savings.
+
+  1. shortcut-instance  CoeT Bool __do_lift✝ Prop
+     ranked by: 18 files, 82 instance searches
+     observed the search `CoeT Bool __do_lift✝ Prop` ran 82× in 18 files, first at
+                Batteries/Lean/HashSet.lean:16
+     observed the report attributes 1189.51 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 7 of its files also show #7 (shortcut-instance Lean.MonadError Lean.Meta.MetaM): their
+                effects may overlap
+     suggested a shortcut instance `instance : CoeT Bool __do_lift✝ Prop := inferInstance` in a
+                module all 18 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  2. termination  27 recursive declarations
+     ranked by: 15 files, 27 declarations whose measure Lean searched for
+     observed 27 declarations without `termination_by` in 15 files: Lean tries measures until one
+                works, running `decreasing_tactic` for each
+     observed `decreasing_tactic` ran 193× in 25 files in all
+     observed their `decreasing_tactic` calls cost 133555.16 kHB (each declaration's own; these do
+                not overlap one another)
+     observed in Batteries/Data/String/Lemmas.lean:485 Batteries/Data/String/Lemmas.lean
+                splitAux_of_valid, Batteries/Data/String/Lemmas.lean:382
+                Batteries/Data/String/Lemmas.lean firstDiffPos_loop_eq,
+                Batteries/Recycling/RBTree/Lemmas.lean:740 Batteries/Recycling/RBTree/Lemmas.lean
+                zoom_del, Batteries/Recycling/RBTree/Lemmas.lean:702
+                Batteries/Recycling/RBTree/Lemmas.lean zoom_ins,
+                Batteries/Data/BinaryHeap/Lemmas.lean:558 Batteries/Data/BinaryHeap/Lemmas.lean
+                toSortedArray.loop_sorted, ...
+     overlap 2 of its files also show #13 (shortcut-instance Decidable (Lean.Omega.Coeffs.isZero []
+                ∨ Lean.Omeg): their effects may overlap
+     suggested state each measure Lean found (`showInferredTerminationBy`) after its declaration
+                [mechanical]
+
+  3. shortcut-instance  MonadExcept Lean.Macro.Exception Lean.MacroM
+     ranked by: 14 files, 29 instance searches
+     observed the search `MonadExcept Lean.Macro.Exception Lean.MacroM` ran 29× in 14 files, first
+                at Batteries/Data/List/Basic.lean:1001
+     observed the report attributes 510.98 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 9 of its files also show #5 (shortcut-instance MonadExceptOf Lean.Exception
+                Lean.Elab.Tactic.Tact): their effects may overlap
+     suggested a shortcut instance `instance : MonadExcept Lean.Macro.Exception Lean.MacroM :=
+                inferInstance` in a module all 14 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  4. shortcut-instance  CoeT Bool __discr✝.isNone Prop
+     ranked by: 10 files, 41 instance searches
+     observed the search `CoeT Bool __discr✝.isNone Prop` ran 41× in 10 files, first at
+                Batteries/CodeAction/Match.lean:26
+     observed the report attributes 595.63 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 5 of its files also show #3 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : CoeT Bool __discr✝.isNone Prop := inferInstance` in a
+                module all 10 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  5. shortcut-instance  MonadExceptOf Lean.Exception Lean.Elab.Tactic.TacticM
+     ranked by: 10 files, 24 instance searches
+     observed the search `MonadExceptOf Lean.Exception Lean.Elab.Tactic.TacticM` ran 24× in 10
+                files, first at Batteries/Tactic/Case.lean:156
+     observed the report attributes 663.51 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 9 of its files also show #3 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : MonadExceptOf Lean.Exception Lean.Elab.Tactic.TacticM
+                := inferInstance` in a module all 10 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  6. shortcut-instance  CoeT Lean.Name `tactic Lean.SyntaxNodeKinds
+     ranked by: 9 files, 26 instance searches
+     observed the search `CoeT Lean.Name `tactic Lean.SyntaxNodeKinds` ran 26× in 9 files, first at
+                Batteries/Lean/System/IO.lean:21
+     observed the report attributes 373.17 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 9 of its files also show #3 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : CoeT Lean.Name `tactic Lean.SyntaxNodeKinds :=
+                inferInstance` in a module all 9 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  7. shortcut-instance  Lean.MonadError Lean.Meta.MetaM
+     ranked by: 9 files, 23 instance searches
+     observed the search `Lean.MonadError Lean.Meta.MetaM` ran 23× in 9 files, first at
+                Batteries/CodeAction/Misc.lean:310
+     observed the report attributes 744.80 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 7 of its files also show #1 (shortcut-instance CoeT Bool __do_lift✝ Prop): their
+                effects may overlap
+     suggested a shortcut instance `instance : Lean.MonadError Lean.Meta.MetaM := inferInstance` in
+                a module all 9 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  8. shortcut-instance  MonadLiftT (ReaderT Lean.Core.Context (StateRefT' IO.RealWorld Lean.Core.State (EIO Lean.Exception))) (ReaderT Lean.Elab
+     ranked by: 9 files, 15 instance searches
+     observed the search `MonadLiftT (ReaderT Lean.Core.Context (StateRefT' IO.RealWorld
+                Lean.Core.State (EIO Lean.Exception))) (ReaderT Lean.Elab` ran 15× in 9 files, first
+                at Batteries/Lean/Meta/Simp.lean:40
+     observed the report attributes 499.43 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 5 of its files also show #11 (shortcut-instance MonadLiftT (ReaderT Lean.Meta.Context
+                (StateRefT' ): their effects may overlap
+     suggested a shortcut instance `instance : MonadLiftT (ReaderT Lean.Core.Context (StateRefT'
+                IO.RealWorld Lean.Core.State (EIO Lean.Exception))) (ReaderT Lean.Elab :=
+                inferInstance` in a module all 9 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  9. shortcut-instance  CoeT Lean.Name `term Lean.SyntaxNodeKinds
+     ranked by: 7 files, 26 instance searches
+     observed the search `CoeT Lean.Name `term Lean.SyntaxNodeKinds` ran 26× in 7 files, first at
+                Batteries/Data/List/Basic.lean:1001
+     observed the report attributes 371.96 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 5 of its files also show #3 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : CoeT Lean.Name `term Lean.SyntaxNodeKinds :=
+                inferInstance` in a module all 7 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  10. shortcut-instance  Lean.MonadError Lean.Elab.Tactic.TacticM
+     ranked by: 7 files, 11 instance searches
+     observed the search `Lean.MonadError Lean.Elab.Tactic.TacticM` ran 11× in 7 files, first at
+                Batteries/Lean/Meta/Simp.lean:40
+     observed the report attributes 745.05 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 6 of its files also show #3 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : Lean.MonadError Lean.Elab.Tactic.TacticM :=
+                inferInstance` in a module all 7 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  11. shortcut-instance  MonadLiftT (ReaderT Lean.Meta.Context (StateRefT' IO.RealWorld Lean.Meta.State Lean.Core.CoreM)) (ReaderT Lean.Elab.Term
+     ranked by: 7 files, 11 instance searches
+     observed the search `MonadLiftT (ReaderT Lean.Meta.Context (StateRefT' IO.RealWorld
+                Lean.Meta.State Lean.Core.CoreM)) (ReaderT Lean.Elab.Term` ran 11× in 7 files, first
+                at Batteries/Lean/Expr.lean:22
+     observed the report attributes 167.35 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 5 of its files also show #8 (shortcut-instance MonadLiftT (ReaderT Lean.Core.Context
+                (StateRefT' ): their effects may overlap
+     suggested a shortcut instance `instance : MonadLiftT (ReaderT Lean.Meta.Context (StateRefT'
+                IO.RealWorld Lean.Meta.State Lean.Core.CoreM)) (ReaderT Lean.Elab.Term :=
+                inferInstance` in a module all 7 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  12. shortcut-instance  Lean.MonadRef Lean.Elab.Tactic.TacticM
+     ranked by: 6 files, 17 instance searches
+     observed the search `Lean.MonadRef Lean.Elab.Tactic.TacticM` ran 17× in 6 files, first at
+                Batteries/Tactic/Case.lean:117
+     observed the report attributes 2743.96 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 6 of its files also show #3 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : Lean.MonadRef Lean.Elab.Tactic.TacticM :=
+                inferInstance` in a module all 6 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  13. shortcut-instance  Decidable (Lean.Omega.Coeffs.isZero [] ∨ Lean.Omega.Coeffs.isZero [0, 0, 1])
+     ranked by: 5 files, 18 instance searches
+     observed the search `Decidable (Lean.Omega.Coeffs.isZero [] ∨ Lean.Omega.Coeffs.isZero [0, 0,
+                1])` ran 18× in 5 files, first at Batteries/Data/BinaryHeap/Basic.lean:67
+     observed the report attributes 489.59 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 3 of its files also show #21 (shortcut-instance Std.ReflCmp Ord.compare): their effects
+                may overlap
+     suggested a shortcut instance `instance : Decidable (Lean.Omega.Coeffs.isZero [] ∨
+                Lean.Omega.Coeffs.isZero [0, 0, 1]) := inferInstance` in a module all 5 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  14. shortcut-instance  MonadLiftT (ReaderT Lean.Meta.Context (StateRefT' IO.RealWorld Lean.Meta.State Lean.Core.CoreM)) (ReaderT Lean.Elab.Tact
+     ranked by: 5 files, 13 instance searches
+     observed the search `MonadLiftT (ReaderT Lean.Meta.Context (StateRefT' IO.RealWorld
+                Lean.Meta.State Lean.Core.CoreM)) (ReaderT Lean.Elab.Tact` ran 13× in 5 files, first
+                at Batteries/Lean/Meta/Simp.lean:40
+     observed the report attributes 383.22 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 4 of its files also show #3 (shortcut-instance MonadExcept Lean.Macro.Exception
+                Lean.MacroM): their effects may overlap
+     suggested a shortcut instance `instance : MonadLiftT (ReaderT Lean.Meta.Context (StateRefT'
+                IO.RealWorld Lean.Meta.State Lean.Core.CoreM)) (ReaderT Lean.Elab.Tact :=
+                inferInstance` in a module all 5 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  15. irreducible  SatisfiesM  (Batteries/Recycling/MonadSatisfying/Basic.lean:43)
+     ranked by: 4 files, 701 unfoldings (elaborator and kernel)
+     observed the elaborator unfolded it 635× and the kernel 66× (`diagnostics`, exact), from 48
+                sites in 4 files
+     observed in Batteries/Recycling/MonadSatisfying/Array.lean:66 SatisfiesM_anyM,
+                Batteries/Recycling/MonadSatisfying/Array.lean:132 SatisfiesM_mapFinIdxM,
+                Batteries/Recycling/MonadSatisfying/Array.lean:23 SatisfiesM_foldlM,
+                Batteries/Recycling/MonadSatisfying/Array.lean:116 SatisfiesM_foldrM,
+                Batteries/Recycling/MonadSatisfying/Array.lean:37 SatisfiesM_mapM, ...
+     overlap 2 of its files also show #42 (simp-attr SatisfiesM_Except_eq): their effects may
+                overlap
+     suggested `attribute [irreducible] SatisfiesM` at the end of
+                Batteries/Recycling/MonadSatisfying/Basic.lean: the modules importing it no longer
+                unfold it while unifying (its own file is unchanged); proofs that need its
+                definition then say so (`unfold SatisfiesM`, `simp [SatisfiesM]`). Lean's
+                `SatisfiesM.eq_def` is the unfold lemma [mechanical]
+
+  16. irreducible  MLList  (Batteries/Data/MLList/Basic.lean:75)
+     ranked by: 4 files, 311 unfoldings (elaborator and kernel)
+     observed the elaborator unfolded it 311× and the kernel 0× (`diagnostics`, exact), from 19
+                sites in 4 files
+     observed in Batteries/Control/Nondet/Basic.lean:74 bind, Batteries/Control/Nondet/Basic.lean:97
+                instance : AlternativeMonad (Nondet m) w #1,
+                Batteries/Data/MLList/Heartbeats.lean:20 MLList.whileAtLeastHeartbeatsPercent,
+                Batteries/Data/MLList/IO.lean:18 ofTaskList, Batteries/Control/Nondet/Basic.lean:107
+                ofListM, ...
+     suggested `attribute [irreducible] MLList` at the end of Batteries/Data/MLList/Basic.lean: the
+                modules importing it no longer unfold it while unifying (its own file is unchanged);
+                proofs that need its definition then say so (`unfold MLList`, `simp [MLList]`).
+                Lean's `MLList.eq_def` is the unfold lemma [mechanical]
+
+  17. irreducible  Ordering.byKey  (Batteries/Classes/Order.lean:16)
+     ranked by: 4 files, 115 unfoldings (elaborator and kernel)
+     observed the elaborator unfolded it 97× and the kernel 18× (`diagnostics`, exact), from 15
+                sites in 4 files
+     observed in Batteries/Recycling/RBTree/Alter.lean:363 alter,
+                Batteries/Recycling/RBTree/WF.lean:583 instance (cmp : α → α → Ordering) (f : α #1,
+                Batteries/Recycling/RBTree/Alter.lean:343 modify,
+                Batteries/Recycling/RBTree/Lemmas.lean:1217 mem_toList_insert,
+                Batteries/Recycling/RBTree/Lemmas.lean:1175 mem_toList_unique, ...
+     overlap 3 of its files also show #28 (shortcut-instance Std.OrientedCmp cmp): their effects may
+                overlap
+     suggested `attribute [irreducible] Ordering.byKey` at the end of Batteries/Classes/Order.lean:
+                the modules importing it no longer unfold it while unifying (its own file is
+                unchanged); proofs that need its definition then say so (`unfold Ordering.byKey`,
+                `simp [Ordering.byKey]`). Lean's `Ordering.byKey.eq_def` is the unfold lemma
+                [mechanical]
+
+  18. shortcut-instance  Std.IsPreorder Bool
+     ranked by: 4 files, 22 instance searches
+     observed the search `Std.IsPreorder Bool` ran 22× in 4 files, first at
+                Batteries/Data/BinaryHeap/Lemmas.lean:31
+     observed the report attributes 388.00 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 4 of its files also show #19 (shortcut-instance Std.LawfulOrderLT Bool): their effects
+                may overlap
+     suggested a shortcut instance `instance : Std.IsPreorder Bool := inferInstance` in a module all
+                4 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  19. shortcut-instance  Std.LawfulOrderLT Bool
+     ranked by: 4 files, 22 instance searches
+     observed the search `Std.LawfulOrderLT Bool` ran 22× in 4 files, first at
+                Batteries/Data/BinaryHeap/Lemmas.lean:31
+     observed the report attributes 368.58 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 4 of its files also show #18 (shortcut-instance Std.IsPreorder Bool): their effects may
+                overlap
+     suggested a shortcut instance `instance : Std.LawfulOrderLT Bool := inferInstance` in a module
+                all 4 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  20. irreducible  Nat.ofBits  (Batteries/Data/Nat/Basic.lean:92)
+     ranked by: 4 files, 10 unfoldings (elaborator and kernel)
+     observed the elaborator unfolded it 5× and the kernel 5× (`diagnostics`, exact), from 8 sites
+                in 4 files
+     observed in Batteries/Data/Int.lean:46 testBit_ofBits_ge, Batteries/Data/BitVec/Lemmas.lean:24
+                toNat_ofFnLEAux, Batteries/Data/Nat/Lemmas.lean:180 testBit_ofBits_lt,
+                Batteries/Data/Int.lean:38 testBit_ofBits_lt, Batteries/Data/Nat/Lemmas.lean:167
+                ofBits_succ, ...
+     overlap 1 of its files also show #13 (shortcut-instance Decidable (Lean.Omega.Coeffs.isZero []
+                ∨ Lean.Omeg): their effects may overlap
+     suggested `attribute [irreducible] Nat.ofBits` at the end of Batteries/Data/Nat/Basic.lean: the
+                modules importing it no longer unfold it while unifying (its own file is unchanged);
+                proofs that need its definition then say so (`unfold Nat.ofBits`, `simp
+                [Nat.ofBits]`). Lean's `Nat.ofBits.eq_def` is the unfold lemma [mechanical]
+
+  21. shortcut-instance  Std.ReflCmp Ord.compare
+     ranked by: 3 files, 52 instance searches
+     observed the search `Std.ReflCmp Ord.compare` ran 52× in 3 files, first at
+                Batteries/Data/BinaryHeap/Basic.lean:34
+     observed the report attributes 1717.04 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 3 of its files also show #13 (shortcut-instance Decidable (Lean.Omega.Coeffs.isZero []
+                ∨ Lean.Omeg): their effects may overlap
+     suggested a shortcut instance `instance : Std.ReflCmp Ord.compare := inferInstance` in a module
+                all 3 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  22. shortcut-instance  ReflBEq α
+     ranked by: 3 files, 40 instance searches
+     observed the search `ReflBEq α` ran 40× in 3 files, first at
+                Batteries/Data/AssocList/Lemmas.lean:139
+     observed the report attributes 458.93 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 1 of its files also show #34 (irreducible List.diff): their effects may overlap
+     suggested a shortcut instance `instance : ReflBEq α := inferInstance` in a module all 3 files
+                import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  23. irreducible  Std.LawfulOrd  (Batteries/Classes/Order.lean:119)
+     ranked by: 3 files, 39 unfoldings (elaborator and kernel)
+     observed the elaborator unfolded it 33× and the kernel 6× (`diagnostics`, exact), from 10 sites
+                in 3 files
+     observed in Batteries/Classes/Order.lean:288 instance : LawfulOrd (Fin n) where eq_sw #1,
+                Batteries/Data/Char/Basic.lean:17 instance : Std.LawfulOrd Char := .compar #1,
+                Batteries/Data/UInt.lean:23 instance : Std.LawfulOrd UInt8 := Std.La #1,
+                Batteries/Data/UInt.lean:152 instance : Std.LawfulOrd UInt64 := Std.L #1,
+                Batteries/Data/UInt.lean:66 instance : Std.LawfulOrd UInt16 := Std.L #1, ...
+     overlap 1 of its files also show #13 (shortcut-instance Decidable (Lean.Omega.Coeffs.isZero []
+                ∨ Lean.Omeg): their effects may overlap
+     suggested `attribute [irreducible] Std.LawfulOrd` at the end of Batteries/Classes/Order.lean:
+                the modules importing it no longer unfold it while unifying (its own file is
+                unchanged); proofs that need its definition then say so (`unfold Std.LawfulOrd`,
+                `simp [Std.LawfulOrd]`). Lean's `Std.LawfulOrd.eq_def` is the unfold lemma
+                [mechanical]
+
+  24. shortcut-instance  Std.LawfulEqCmp Ord.compare
+     ranked by: 3 files, 32 instance searches
+     observed the search `Std.LawfulEqCmp Ord.compare` ran 32× in 3 files, first at
+                Batteries/Data/BinaryHeap/Lemmas.lean:31
+     observed the report attributes 536.61 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 2 of its files also show #13 (shortcut-instance Decidable (Lean.Omega.Coeffs.isZero []
+                ∨ Lean.Omeg): their effects may overlap
+     suggested a shortcut instance `instance : Std.LawfulEqCmp Ord.compare := inferInstance` in a
+                module all 3 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  25. shortcut-instance  GetElem (Vector α sz) (Fin sz) α fun xs i => ↑i < sz
+     ranked by: 3 files, 30 instance searches
+     observed the search `GetElem (Vector α sz) (Fin sz) α fun xs i => ↑i < sz` ran 30× in 3 files,
+                first at Batteries/Data/BinaryHeap/Basic.lean:39
+     observed the report attributes 342.12 kHB to these searches (inclusive and overlapping: it
+                contains the work under it, which other constants are charged too; not what the
+                change would save)
+     overlap 3 of its files also show #13 (shortcut-instance Decidable (Lean.Omega.Coeffs.isZero []
+                ∨ Lean.Omeg): their effects may overlap
+     suggested a shortcut instance `instance : GetElem (Vector α sz) (Fin sz) α fun xs i => ↑i < sz
+                := inferInstance` in a module all 3 files import
+     not tried where to declare it is a choice, and it changes the elaborated statements that use
+                it, which the proof-preservation guard cannot accept as a speedup
+
+  ... 26 more in .lake/leanprof/fix/project-fixes-run.json
+
+leanprof fix --elab --project: trying 6 candidate(s) with `leanprof experiment` (fix-project-1301128570), each against 66e469188fe0
+
+#2 termination 27 recursive declarations
+  heartbeats 751102.55 kHB -> 655223.03 kHB (-12.77%) in 61 module(s): 11 cheaper, 0 dearer; declarations: 24 cheaper, 0 dearer
+    cheaper Batteries/Data/String/Lemmas.lean firstDiffPos_loop_eq: 17423.59 kHB -> 6155.43 kHB
+    cheaper Batteries/Data/String/Lemmas.lean splitAux_of_valid: 16273.76 kHB -> 5953.81 kHB
+    cheaper Batteries/Recycling/RBTree/Lemmas.lean zoom_del: 15838.88 kHB -> 5864.49 kHB
+  plain lake build of 61 module(s): median 9.48 s -> 8.04 s (3 runs each, better; load 15.83 12.96 17.26 / 23.40 16.51 16.17)
+  KEEP
+  - compile heartbeats: 751102.55 kHB -> 655223.03 kHB
+  committed 3309608823b3 on branch leanprof-fix/project-termination-2
+
+#15 irreducible SatisfiesM
+  DISCARD
+  - it does not build:
+ ✔ [198/222] Built Batteries.Data.Fin.Coding (985ms)
+ ✔ [199/222] Built
+    Batteries.Data.Fin (292ms)
+ ✔ [200/222] Built runLinter (1.3s)
+ ✔ [203/222] Built
+    Batteries.Data.BinaryHeap.WF (2.1s)
+ ✔ [204/222] Built Batteries.Data.String.Lemmas (1.7s)
+ ✔
+    [206/222] Built Batteries.Data.List.Lemmas (2.0s)
+ ✔ [211/222] Built Batteries.Data.Array.Scan
+    (685ms)
+ ✔ [212/222] Built Batteries.Data.Array (267ms)
+ ✔ [213/222] Built
+    Batteries.Data.Vector.Lemmas (626ms)
+ ✔ [214/222] Built Batteries.Data.Vector (251ms)
+ ✔
+    [215/222] Built Batteries.Recycling.RBTre
+  - Lean: error: Batteries/Recycling/MonadSatisfying/List.lean:27:8: Invalid `⟨...⟩` notation: The
+    expected type `SatisfiesM motive (f b hd)` is not an inductive type
+  - Lean: error: Batteries/Recycling/MonadSatisfying/List.lean:28:4: No goals to be solved
+  - Lean: error: Batteries/Recycling/MonadSatisfying/List.lean:39:8: Invalid `⟨...⟩` notation: The
+    expected type
+
+#16 irreducible MLList
+  heartbeats 13271.54 kHB -> 13269.37 kHB (-0.02%) in 11 module(s): 0 cheaper, 0 dearer; declarations: 0 cheaper, 0 dearer
+  plain lake build of 11 module(s): median 2.12 s -> 2.21 s (3 runs each, within noise; load 63.17 32.85 22.58 / 39.87 33.06 23.65)
+  DISCARD
+  - compile heartbeats did not go down by more than 1% and 1,000
+
+#17 irreducible Ordering.byKey
+  DISCARD
+  - it does not build:
+ error: Batteries/Recycling/RBTree/WF.lean:589:6: Type mismatch
+
+    Std.TransCmp.isLE_trans
+ has type
+ (byKey.{(max u_3 u_1) + 1, u_1 + 1} Prod.fst cmp (a₁, f a₁
+    b₁) (a₂, f a₂ b₂)).isLE = true →
+ (byKey Prod.fst cmp (a₂, f a₂ b₂) (a₃, f a₃ b₃)).isLE = true
+    →
+ (byKey Prod.fst cmp (a₁, f a₁ b₁) (a₃, f a₃ b₃)).isLE = true
+ but is expected to have type
+
+    (byKey.{(max u_2 u_1) + 1, u_1 + 1} Prod.fst cmp (a₁, b₁) (a₂, b₂)).isLE = true →
+ (byKey
+    Prod.fst cmp (a₂, b₂) (a₃, b₃)).isLE = true → (byKey Prod.fst cmp (a₁, b₁) (a₃, b₃)).isLE = tru
+  - Lean: error: Batteries/Recycling/RBTree/WF.lean:587:6: Type mismatch
+  - Lean: error: Batteries/Recycling/RBTree/WF.lean:589:6: Type mismatch
+
+#23 irreducible Std.LawfulOrd
+  DISCARD
+  - it does not build:
+ ✖ [182/222] Building Batteries.Classes.Order (369ms)
+ trace: .>
+    LEAN_PATH=/Users/unbalancedparen/projects/leanprof-wt/project-fixes/batteries/.lake/leanprof/experiments/fix-project-1301128570/candidate/.lake/build/lib/lean
+    /Users/unbalancedparen/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lean
+    /Users/unbalancedparen/projects/leanprof-wt/project-fixes/batteries/.lake/leanprof/experiments/fix-project-1301128570/candidate/Batteries/Classes/Order.lean
+    -o
+    /Users/unbalancedparen/projects/leanprof-wt/project-fixes/batteries/.lake/leanprof/experiments/fix-project-1301128
+  - Lean: error: Batteries/Classes/Order.lean:295:11: failed to set `[irreducible]`, `Std.LawfulOrd`
+    is not currently `[semireducible]`, `[implicit_reducible]` nor `[instance_reducible]`, but
+    `[reducible]`
+
+#42 simp-attr SatisfiesM_Except_eq
+  heartbeats 38144.45 kHB -> 38107.95 kHB (-0.10%) in 20 module(s): 0 cheaper, 0 dearer; declarations: 0 cheaper, 0 dearer
+  plain lake build of 20 module(s): median 2.53 s -> 2.52 s (3 runs each, within noise; load 12.71 24.15 21.67 / 13.64 23.81 21.60)
+  DISCARD
+  - compile heartbeats did not go down by more than 1% and 1,000
+
+leanprof fix --elab --project: 1 of 6 kept; your checkout is unchanged.
+  #2 termination 27 recursive declarations: KEEP (leanprof-fix/project-termination-2)
+  #15 irreducible SatisfiesM: DISCARD
+  #16 irreducible MLList: DISCARD
+  #17 irreducible Ordering.byKey: DISCARD
+  #23 irreducible Std.LawfulOrd: DISCARD
+  #42 simp-attr SatisfiesM_Except_eq: DISCARD
+  evidence: .lake/leanprof/fix/project-fixes-run.json; log: .lake/leanprof/fix/project-log.txt
+exit 0 end Wed Oct 28 13:50:11 -03 2026 load { 13.64 23.81 21.60 }

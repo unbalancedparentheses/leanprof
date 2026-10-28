@@ -83,14 +83,19 @@ def cases : List (String × Bool × String) :=
      ProjectFix.declares ls 1 "foo" && ProjectFix.declares ls 1 "Ns.foo" && !ProjectFix.declares ls 1 "run" &&
        !ProjectFix.declares ls 1 "xfoo" && ProjectFix.declares ils 1 "Inst.foo" &&
        ProjectFix.declares #["instance : Inhabited Nat := ⟨0⟩"] 1 "instInhabitedNat", ""),
-   ("project fix: a constant located by the end of its name only is no candidate",
-     !((ProjectFix.hypotheses (report.setObjVal! "constants" (Json.arr #[Json.mkObj [("name", "double"), ("kind", "unfold"),
-       ("where", "A.lean:1"), ("files", toJson (3 : Nat)), ("unfolds", toJson (300 : Nat)), ("located_by_suffix", Json.bool true)]]))
-       inProject).any (·.target == "double")), ""),
+   ("project fix: a name located by its end is edited by the name it was found as",
+     (ProjectFix.hypotheses (report.setObjVal! "constants" (Json.arr #[Json.mkObj [("name", "double"), ("kind", "unfold"),
+       ("where", "A.lean:1"), ("files", toJson (3 : Nat)), ("unfolds", toJson (300 : Nat)), ("located_by_suffix", Json.bool true),
+       ("declared_as", "Ns.double")]])) inProject).any fun c => c.target == "Ns.double" && c.kind == "irreducible", ""),
+   ("project fix: a protected declaration is not what a one-part name names",
+     !ProjectFix.declares #["protected theorem pure : True := trivial"] 1 "pure" &&
+       ProjectFix.declares #["protected theorem pure : True := trivial"] 1 "SatisfiesM.pure", ""),
    ("project fix: no declaration starts on a `public section` line",
      ProjectFix.declKeyword #["public section", "", "namespace Foo", "def drop := 1"] 1 == none, ""),
    ("project fix: the time the lock wrapper measured", ProjectFix.lockedElapsed "x\nleanprof-elapsed 12.500000\n" == some 12.5 &&
      ProjectFix.lockedElapsed "no time" == none, ""),
+   ("project fix: `variable (x) in` is part of the declaration",
+     ProjectFix.declKeyword #["variable (W') in", "/-- doc -/", "abbrev CoordinateRing : Type := Nat"] 1 == some ("abbrev", 3), ""),
    ("project fix: a line appended", ProjectFix.appendLine "a\nb" "c" == "a\nb\nc\n" && ProjectFix.appendLine "a\n" "c" == "a\nc\n", ""),
    ("project fix: build times: worse only when every candidate run is slower",
      ProjectFix.buildTimeVerdict #[10, 10.2, 10.1] #[11, 11.2, 11.1] == "worse" &&

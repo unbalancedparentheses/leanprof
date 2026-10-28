@@ -1110,6 +1110,8 @@ structure Loc where
   /-- found only as the one declaration of the profiled files whose name ends so (a name
   printed relative to an open namespace): a guess, which may be another constant -/
   bySuffix : Bool := false
+  /-- the qualified name of that declaration, when found by the end of its name -/
+  declaredAs : String := ""
 
 /-- `Foo.bar`, `«a b».c`, `_private.M.0.f` as a `Name`. -/
 def parseName (s : String) : Name := Id.run do
@@ -1527,7 +1529,7 @@ def main (argv : List String) : IO UInt32 := do
         -- printed relative to an open namespace (`grind`'s counters): the one declaration
         -- of the profiled files whose name ends so
         match localDecls.toList.filter (·.1.endsWith ("." ++ userName s)) with
-        | [(_, (k, u))] => some { pos := k, unfoldable := u, bySuffix := true }
+        | [(full, (k, u))] => some { pos := k, unfoldable := u, bySuffix := true, declaredAs := full }
         | _ => none
   -- `whnf` reduces applications of anything (structures, variables): keep only
   -- constants that unfold
@@ -1622,7 +1624,8 @@ def main (argv : List String) : IO UInt32 := do
     [("name", Json.str (userName s)), ("kind", Json.str kind), ("amount", toJson amount), ("count", toJson count),
      ("sites", toJson (sites s)), ("where", Json.str ((l.map (·.pos)).getD "")),
      ("path", Json.str ((l.map (·.path)).getD ""))] ++
-    (if (l.map (·.bySuffix)).getD false then [("located_by_suffix", Json.bool true)] else [])
+    (if (l.map (·.bySuffix)).getD false then
+      [("located_by_suffix", Json.bool true), ("declared_as", Json.str ((l.map (·.declaredAs)).getD ""))] else [])
   -- commands that declare nothing (`variable (x) in`, `open ... in`, `attribute ...`): the
   -- file, the command's text and which of the commands with that text it is, in line order,
   -- so that `compare` matches them when lines move
