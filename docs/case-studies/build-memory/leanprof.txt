@@ -1,0 +1,58 @@
+Build completed successfully (46 jobs).
+leanprof build-memory: 15 modules compiled by `lake build`, at most 8 at a time (macOS, 18 CPUs)
+
+  peak memory of each module's `lean` process:
+    peak RSS  footprint    imports        own     wall  module
+    1.31 GiB    259 MiB   1.22 GiB     88 MiB    3.5 s  LeanprofElabDriver
+     833 MiB    347 MiB    534 MiB    299 MiB    3.0 s  LeanprofCli
+     746 MiB    282 MiB    518 MiB    228 MiB    2.9 s  LeanprofElab
+     613 MiB    160 MiB    521 MiB     92 MiB    0.9 s  Leanprof.BuildMem
+     597 MiB    217 MiB    426 MiB    171 MiB    2.5 s  Leanprof.Explain
+     592 MiB    209 MiB    430 MiB    162 MiB    2.3 s  Leanprof.Experiment
+     558 MiB    184 MiB    427 MiB    132 MiB    1.6 s  LeanprofLive
+     540 MiB    161 MiB    428 MiB    112 MiB    1.3 s  Leanprof.Fix
+     504 MiB    132 MiB    426 MiB     78 MiB    0.7 s  LeanprofHtml
+     496 MiB    126 MiB    427 MiB     69 MiB    0.8 s  Leanprof.Judge
+     496 MiB    126 MiB    426 MiB     69 MiB    0.8 s  Leanprof.Regress
+     429 MiB    103 MiB    380 MiB     49 MiB    0.5 s  LeanprofElabRange
+     429 MiB    105 MiB    379 MiB     50 MiB    0.5 s  Leanprof.Workload
+     403 MiB     90 MiB    379 MiB     24 MiB    0.4 s  LeanprofHtml.Assets
+     256 MiB     92 MiB    231 MiB     25 MiB    0.4 s  Leanprof.Core
+  peak RSS: resident set, with the pages of mapped .olean files, which processes share
+  footprint: what macOS charges the process (its private memory), without the mapped files
+  imports: the peak of `lean` on the module's header alone (the environment after its imports)
+  own: the rest of the peak, approximately the module's own elaboration
+
+  modules running at the same time: their peaks add up to at most 3.58 GiB
+    (Leanprof.Explain, LeanprofLive, Leanprof.Judge, Leanprof.Regress, LeanprofElabRange, Leanprof.Workload, and 2 more)
+  sampled every 0.2 s while the build ran (62 samples):
+    resident sets added up: 2.51 GiB at most
+    private memory added up, plus the largest shared part once: 1.28 GiB at most
+    (LeanprofElabDriver)
+
+  memory limit 4.00 GiB:
+    no module's peak is above 75% of it
+    jobs: at most 4 at once is safe: the 4 largest resident peaks add up to 3.45 GiB
+    with the shared .olean pages counted once (the 15 largest private peaks plus the largest shared part, 1.05 GiB): any number of jobs, 3.59 GiB; an estimate, not a bound
+    Lake runs as many jobs as it has Lean threads: `LEAN_NUM_THREADS=4 lake build` (each `lean` then has 4 threads too); `leanprof build-memory --clean --jobs 4` runs the build that way, with each `lean` at its usual threads, and measures it
+
+  memory per command, in a serial elaboration (one command at a time, no parallel proofs; approximate):
+
+  LeanprofElabDriver (LeanprofElabDriver.lean), elaborated serially:
+    after the imports: 1.22 GiB resident; peak of the run: 1.27 GiB
+    the peak was reached during line 523 (main)
+    commands during which the process's peak rose (when memory was reached, not who owns it):
+     peak rise resident after   heartbeats  line  command
+         8 MiB       1.23 GiB          84k    43  syntax "#lean_since " num ppLine command* "#lean_else" ppLine command* "#lean_end" : command
+         6 MiB       1.26 GiB        2292k   324  run
+         6 MiB       1.24 GiB         853k   109  withSource
+         4 MiB       1.25 GiB          59k   209  Ctx
+         4 MiB       1.23 GiB         272k    45  macro_rules
+         4 MiB       1.24 GiB        1118k   139  wrapTactic
+         2 MiB       1.24 GiB         382k   153  instrument
+         2 MiB       1.25 GiB        1291k   234  render
+         2 MiB       1.26 GiB        2231k   405  memoryRun
+         2 MiB       1.25 GiB         779k   217  excerpt
+
+  report: dog-cli.json
+rc=0

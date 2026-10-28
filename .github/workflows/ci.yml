@@ -376,6 +376,8 @@ jobs:
           NODE_PATH="$RUNNER_TEMP/jsdom/node_modules" node scripts/check-html-view.js proj-cmp.html --compare --module Leanprof/Editor.lean
           # identical terms and tactics, and the same ones in other declarations, compared one to one
           NODE_PATH="$RUNNER_TEMP/jsdom/node_modules" python3 scripts/check-html-ranges.py .lake/build/bin/leanprof
+      - name: Memory of compilation (leanprof build-memory)
+        run: sh scripts/build-memory-check.sh
       - name: Sampling (macOS)
         if: runner.os == 'macOS'
         run: |

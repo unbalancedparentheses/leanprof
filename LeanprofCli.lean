@@ -13,6 +13,7 @@ import Leanprof.FixElab
 import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
+import Leanprof.BuildMem
 
 /-!
 # `lake exe leanprof`
@@ -88,6 +89,16 @@ def commands : List (String × String × String) := [
     "--since-last (one file) writes the report under .lake/leanprof/onsave/, compares it with the previous\n" ++
     "--since-last profile of the file and writes the difference per declaration, with what changed inside\n" ++
     "each, next to it (FILE.delta.json); --keep-base keeps comparing with that same base."),
+  ("build-memory", "[--mem-limit SIZE] [--max-memory SIZE] [--jobs N] [--clean] [--no-imports] [--decls N] [--top N] [--out FILE] [--no-sample] [--log FILE] [FILE.lean...] [-- LAKE-TARGETS...]",
+    "Run `lake build` with every `lean` process wrapped and report each module's peak memory\n" ++
+    "(resident set; on macOS also the footprint), split into its imports (lean on the module's header\n" ++
+    "alone) and its own elaboration, which modules ran at the same time and the largest sum of their\n" ++
+    "peaks. --mem-limit SIZE (8G, 512M) flags modules near it and gives the most jobs whose heaviest\n" ++
+    "modules fit under it; --jobs N runs Lake with N jobs (LEAN_NUM_THREADS for Lake only).\n" ++
+    "--max-memory SIZE exits 1 when a module's peak is above it (a CI budget). Only modules Lake\n" ++
+    "compiles are measured: --clean removes .lake/build first. --decls N (or FILE.lean...) elaborates\n" ++
+    "the N heaviest modules serially and shows the commands during which memory peaked (approximate).\n" ++
+    "Writes .lake/leanprof/build-memory.json (--out FILE)."),
   ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] [--json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
@@ -220,6 +231,7 @@ def summary : String → String
   | "stat" => "one-screen summary: time, peak memory, allocations, copies, frees, tasks, top scopes"
   | "sample" => "sample a program with samply: CPU per Lean declaration, no probes"
   | "elab" => "compile cost per line and declaration, repeated work, exact heartbeats"
+  | "build-memory" => "peak memory of each module in a real lake build, and how many jobs fit a memory limit"
   | "compare" => "compare two reports, exit 1 on regressions (for CI)"
   | "measure" => "run a program several times into one summary (for judge / autoresearch)"
   | "measure-pair" => "interleave two prebuilt binaries for paired timing and correctness checks"
@@ -3208,6 +3220,7 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
   | "report-md" :: rest => reportMd rest
   | "sample" :: rest => sample rest
   | "elab" :: rest => elabCmd rest
+  | "build-memory" :: rest => Leanprof.BuildMem.main rest
   | "explain" :: rest =>
     if let some rc ← explainElabReport rest then return rc
     if rest.contains "--static" then Leanprof.StaticCopies.explainStatic rest else

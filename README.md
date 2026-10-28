@@ -137,6 +137,11 @@ All profiled from outside, without changing the projects:
   three of them (`Formula.lean` 8.2 s → 2.6 s, `FourierTransform.lean`
   about 10 s → 3.5 s, `LpSpace.lean` 3.6 s → 2.1 s), producing the same
   terms. The patches are [ready](docs/upstream/mathlib/), not sent.
+- **[Memory of compilation](docs/case-studies/build-memory.md)**: `import
+  Mathlib` alone is 5.44 GiB resident but 853 MiB private (the rest is
+  shared `.olean` pages); a copy of Mathlib's `MayerVietoris` needs 714 MiB
+  of its own. Under an 8 GiB limit, 2 jobs are safe for that project, and
+  a build at 2 jobs stayed at 7.20 GiB.
 - **[Lake and the language server](docs/case-studies/lake-and-server.md)**:
   seven candidate Lean patches; four of them make a no-op `lake build` of a
   Mathlib project 19% faster (1.58 s → 1.29 s), another cuts the server's
@@ -356,6 +361,21 @@ and keeps it, so a loop of verdicts pays only the candidate's incremental
 build. `judge` refuses time measured with the load above the CPU count
 unless told otherwise ([CI and regressions](docs/guide/ci-and-regressions.md#measure-and-judge)).
 
+### Memory of compilation: `build-memory`
+
+`leanprof build-memory` runs a real `lake build` with every `lean` process
+wrapped and reports each module's peak memory (resident set, and the
+private memory that is not shared `.olean` pages), split into its imports
+and its own elaboration; which modules ran together at the build's peak;
+the most jobs that keep the build under `--mem-limit`; and `--max-memory`, a
+per-module budget that fails CI. `--decls N` elaborates the heaviest
+modules serially and names the commands during which memory peaked, labeled
+approximate: when memory was reached, not who owns it. On Batteries and a
+project using Mathlib the numbers agree with `/usr/bin/time -l` within 1%
+(resident set) and 3% (footprint)
+([memory of compilation](docs/guide/compile-time.md#memory-of-compilation),
+[case study](docs/case-studies/build-memory.md)).
+
 ### CI: the GitHub Action
 
 The [Action](docs/guide/ci-and-regressions.md#github-action) profiles a pull
@@ -372,7 +392,7 @@ attributed, never estimated
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
 `doctor` (what the project has and which modes work), `run`, `sample`,
-`stat`, `elab`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
+`stat`, `elab`, `build_memory`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
 `static_copies`,
 `findings` and `finding` (a ranked page of findings with stable ids, then
 one in full with its source, cause and before/after), `hot`, `report`, the
@@ -420,6 +440,7 @@ probes: on the `tiny` benchmark 0.3–1.1 points off instead of 8.2–9.6, and
 | Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
 | Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
 | What an edit did to a file's compile cost: each declaration whose heartbeats changed since the last run, with the unfold, instance or simp lemma behind it | `leanprof elab --heartbeats --since-last FILE` |
+| Peak memory of each module in a real `lake build`, imports apart; the most jobs under a memory limit; a memory budget for CI | `leanprof build-memory [--mem-limit 8G] [--max-memory 6G]` |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |

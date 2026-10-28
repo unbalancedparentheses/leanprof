@@ -1,0 +1,47 @@
+Build completed successfully (9051 jobs).
+leanprof build-memory: 4 modules compiled by `lake build`, at most 4 at a time (macOS, 18 CPUs)
+
+  peak memory of each module's `lean` process:
+    peak RSS  footprint    imports        own     wall  module
+    5.44 GiB    853 MiB   5.43 GiB     13 MiB   23.6 s  Mlp.All
+    1.76 GiB    948 MiB   1.06 GiB    714 MiB   33.5 s  Mlp.MayerVietoris
+    1.57 GiB    625 MiB   1.25 GiB    333 MiB   21.4 s  Mlp.Tilde
+    1.29 GiB    424 MiB   1.18 GiB    113 MiB   16.7 s  Mlp.FourierTransform
+  peak RSS: resident set, with the pages of mapped .olean files, which processes share
+  footprint: what macOS charges the process (its private memory), without the mapped files
+  imports: the peak of `lean` on the module's header alone (the environment after its imports)
+  own: the rest of the peak, approximately the module's own elaboration
+
+  modules running at the same time: their peaks add up to at most 10.07 GiB
+    (Mlp.All, Mlp.MayerVietoris, Mlp.Tilde, Mlp.FourierTransform)
+  sampled every 0.2 s while the build ran (175 samples):
+    resident sets added up: 7.98 GiB at most
+    private memory added up, plus the largest shared part once: 6.06 GiB at most
+    (Mlp.Tilde, Mlp.MayerVietoris, Mlp.All)
+
+  memory limit 8.00 GiB:
+    no module's peak is above 75% of it
+    jobs: at most 2 at once is safe: the 2 largest resident peaks add up to 7.20 GiB
+    with the shared .olean pages counted once (the 4 largest private peaks plus the largest shared part, 4.61 GiB): any number of jobs, 7.39 GiB; an estimate, not a bound
+    Lake runs as many jobs as it has Lean threads: `LEAN_NUM_THREADS=2 lake build` (each `lean` then has 2 threads too); `leanprof build-memory --clean --jobs 2` runs the build that way, with each `lean` at its usual threads, and measures it
+
+  memory per command, in a serial elaboration (one command at a time, no parallel proofs; approximate):
+
+  Mlp.Tilde (Mlp/Tilde.lean), elaborated serially:
+    after the imports: 1.24 GiB resident; peak of the run: 1.50 GiB
+    the peak was reached during line 885 (tildeEquiv)
+    commands during which the process's peak rose (when memory was reached, not who owns it):
+     peak rise resident after   heartbeats  line  command
+       178 MiB       1.49 GiB       61836k   253  Scheme.Modules.fromTildeΓ
+        28 MiB       1.30 GiB        8212k   128  restrictAppIso_smul_Spec
+        20 MiB       1.26 GiB        2912k    43  modulesSpecToSheaf
+        11 MiB       1.31 GiB         752k   231  functor
+         6 MiB       1.50 GiB       46282k   656  Aux.of_eq_iSup_basicOpen
+         6 MiB       1.27 GiB       29531k    56  SpecModulesToSheafFullyFaithful
+         4 MiB       1.30 GiB        9131k   160  modulesSpecToSheafIso
+         3 MiB       1.24 GiB          38k    37  variable {R : CommRingCat.{u}} (M : ModuleCat.{u} R)
+         2 MiB       1.49 GiB        1480k   629  Aux
+         2 MiB       1.30 GiB        5201k   176  toOpen_res
+
+  report: mlp2.json
+rc=0
