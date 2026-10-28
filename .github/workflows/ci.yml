@@ -234,6 +234,8 @@ jobs:
         run: sh scripts/experiment-check.sh
       - name: leanprof build end to end (critical path, validated rebuilds, a verified import, an ordinary build left)
         run: sh scripts/build-check.sh
+      - name: JSON contract (every command's output against schemas/)
+        run: python3 scripts/contract-check.py .lake/build/bin/leanprof
       - name: The Action's comment step finds its comment by tag (tags are data)
         run: sh scripts/comment-check.sh
       - name: Interleaved measurement and paired verdicts

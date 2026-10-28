@@ -74,8 +74,12 @@ structure Job where
   source : String := ""
   /-- Link and archive jobs: their arguments (response files expanded). -/
   inputs : Array String := #[]
-  /-- Module jobs: every module imported, transitively (the setup's `importArts`). -/
+  /-- Module jobs: the modules imported, transitively, that have a job in the
+  same build (`analyze` keeps only those: with Mathlib cached they are a
+  few among thousands). -/
   imports : Array String := #[]
+  /-- Module jobs: every module imported, transitively (the setup's `importArts`). -/
+  allImports : Array String := #[]
   deps : Array Nat := #[]
   lane : Nat := 0
   slack : Float := 0
@@ -181,7 +185,7 @@ def classify (r : Json) (t0 : Nat) : IO (Option Job) := do
     let (name, pkg, imports) := setup.getD ((moduleOfOlean out).getD (baseName src), packageOf src, #[])
     return some { base with
       kind := "lean", name, pkg := if pkg == "" then packageOf src else pkg,
-      output := out, source := src, imports }
+      output := out, source := src, imports, allImports := imports }
   if tool == "leanir" || tool == "leanir.exe" then
     let setupFile : String := args[0]?.getD ""
     let some (name, pkg, _) ← readSetup ⟨setupFile⟩ | return none
@@ -712,6 +716,8 @@ structure Analysis where
   last : Float
 
 def analyze (jobs : Array Job) (workers : Nat) : Analysis := Id.run do
+  let measured : Std.HashSet String := jobs.foldl (init := {}) fun s j => if j.kind == "lean" then s.insert j.name else s
+  let jobs := jobs.map fun j => { j with imports := j.allImports.filter measured.contains }
   let jobs := assignLanes (linkDeps jobs)
   let (slack, cpmLen) := cpm jobs
   let jobs := jobs.map fun j => { j with slack := slack[j.id]! }

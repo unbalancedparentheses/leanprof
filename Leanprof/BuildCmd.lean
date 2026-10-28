@@ -1,5 +1,6 @@
 import Leanprof.Build
 import Leanprof.BuildShim
+import Leanprof.Contract
 
 /-!
 # `leanprof build`: the command
@@ -211,8 +212,8 @@ def candidates (a : Analysis) (noop : Float) (direct : Std.HashMap String (Array
       for d in rest do
         reach := reach.insert d
         if let some jd := leanJob.get? d then
-          for x in jd.imports do reach := reach.insert x
-      let extra := used.filter fun u => u != m && jm0.imports.contains u && !reach.contains u
+          for x in jd.allImports do reach := reach.insert x
+      let extra := used.filter fun u => u != m && jm0.allImports.contains u && !reach.contains u
       let jobs' := withImports a direct m (rest ++ extra)
       let some jm := jobs'.find? fun j => j.kind == "lean" && j.name == m | continue
       -- still imported through another import: nothing changes
@@ -371,8 +372,11 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
     let names := (a.jobs.filter fun j => j.start < e && j.stop > s).map fun j => s!"{j.kind} {j.name}"
     Json.mkObj [("start_s", toJson (r3 s)), ("end_s", toJson (r3 e)), ("running", toJson names)]
   let at_ := timeAt prof run.elapsed
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload "lake build" o.targets)
+    (Json.mkObj [("mode", Json.str "build"), ("clean", Json.bool o.clean), ("targets", toJson o.targets)])
   let mut report : List (String × Json) := [
-    ("version", toJson (1 : Nat)), ("leanprof", Json.str "build"), ("command", Json.str cmd),
+    ("schema", Leanprof.Contract.schema "build"), ("version", toJson (1 : Nat)), ("leanprof", Json.str "build"),
+    ("provenance", prov), ("command", Json.str cmd),
     ("targets", toJson o.targets), ("lean", Json.str lean), ("clean", Json.bool o.clean),
     ("exit_code", toJson run.exitCode.toNat), ("elapsed_s", toJson (r3 run.elapsed)),
     ("hardware_threads", toJson hw), ("workers", toJson workers),

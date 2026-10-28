@@ -85,6 +85,7 @@ check("Leaf's import of Heavy narrowed to Base", t["module"] == "Demo.Leaf" and 
       and t["verdict"] == "builds" and t["replaced_by"] == ["Demo.Base"], t)
 check("its rebuild measured before and after", t["before_modules"] > t["after_modules"], t)
 EOF
+python3 "$root/scripts/contract-check.py" --validate build out.json || fail "out.json does not follow schemas/build.schema.json"
 grep -q "Build timeline" out.html || fail "no HTML timeline"
 rm out.html out.json report.txt
 test -z "$(git status --porcelain)" || { git status --porcelain; fail "the checkout changed"; }

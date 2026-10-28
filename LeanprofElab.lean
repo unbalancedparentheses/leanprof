@@ -4,6 +4,8 @@ import Lean.DeclarationRange
 import Lean.Elab.ParseImportsFast
 import Lean.Util.Path
 import LeanprofElabRange
+import Leanprof.ElabWhy
+import Leanprof.Contract
 
 /-!
 # `leanprof elab`: compile cost per line, declaration, file and definition
@@ -76,6 +78,8 @@ structure TNode where
   child's `next`, up to this. -/
   next : Nat := 0
   parent : Option Nat := none
+  /-- It ended in failure or an error (its mark is ❌️ or 💥️). -/
+  failed : Bool := false
   deriving Inhabited
 
 /-- Untimed messages that name a constant: `isDefEq` unfolding it, or simp
@@ -88,7 +92,7 @@ def leafClass (cls : String) : Bool :=
 
 /-- `[Class] [amount] ...` (or an untimed `[Class] ...` of `leafClass`) at the
 start of a trace line, with its indentation. -/
-def traceLine (line : String) : Option (Nat × String × Option Float × String) := do
+def traceLine (line : String) : Option (Nat × String × Option Float × String × Bool) := do
   let cs := line.toList
   let indent := (cs.takeWhile (· == ' ')).length
   let cs := cs.drop indent
@@ -98,24 +102,24 @@ def traceLine (line : String) : Option (Nat × String × Option Float × String)
   let clsS := String.ofList cls
   if rest.head? != some '[' then
     guard (leafClass clsS)
-    return (indent, clsS, none, String.ofList rest)
+    return (indent, clsS, none, String.ofList rest, false)
   let amt := (rest.drop 1).takeWhile (· != ']')
   let ip := amt.takeWhile (· != '.')
   let fp := (amt.dropWhile (· != '.')).drop 1
   match (String.ofList ip).toNat? with
   | none =>
     guard (leafClass clsS)
-    return (indent, clsS, none, String.ofList rest)
+    return (indent, clsS, none, String.ofList rest, false)
   | some i =>
     let f := (String.ofList fp).toNat?.getD 0
     let text := ((rest.drop 1).drop (amt.length + 1)).dropWhile (· == ' ')
     -- the status mark (✅️, ❌️, 💥️: a symbol and a variation selector) that every timed
     -- operation has; without it, this is a continuation that happens to look like one
     -- (a description containing `[x] [6]`)
-    let text ← match text with
-      | _ :: '️' :: ' ' :: t => some t
+    let (failed, text) ← match text with
+      | m :: '️' :: ' ' :: t => some (m == '❌' || m == '💥', t)
       | _ => none
-    return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat), String.ofList text)
+    return (indent, clsS, some (i.toFloat + f.toFloat / (10 : Float) ^ fp.length.toFloat), String.ofList text, failed)
 
 /-- How `pp.oneline` (see `traceArgs`) ends a description it cut. -/
 def elided : String := " [...]"
@@ -147,7 +151,7 @@ def TraceBuilder.addLine (b : TraceBuilder) (line : String) : TraceBuilder := Id
   let mut stack := stack
   let mut classes := classes
   match traceLine line with
-  | some (indent, cls, amount, text) =>
+  | some (indent, cls, amount, text, failed) =>
     -- an untimed message before any timed root is not part of a tree
     if nodes.isEmpty && amount.isNone then return ⟨nodes, stack, classes⟩
     let i := nodes.size
@@ -160,7 +164,7 @@ def TraceBuilder.addLine (b : TraceBuilder) (line : String) : TraceBuilder := Id
       | none => do classes := classes.insert cls cls; pure cls
     let text := if i == 0 || keepsText cls then text else ""
     let x := amount.getD 0
-    nodes := nodes.push { cls, amount := x, timed := amount.isSome, text, depth := indent, parent }
+    nodes := nodes.push { cls, amount := x, timed := amount.isSome, text, depth := indent, parent, failed }
     if let some p := parent then
       nodes := nodes.modify p fun n => { n with childSum := n.childSum + x }
     stack := stack.push i
@@ -345,6 +349,9 @@ def hasArrow (line : String) : Bool := (line.splitOn " ↦ ").length > 1
 def isDiagMessage (data : String) : Bool :=
   diagHeader data && hasArrow data
 
+/-- How Lean starts the message that names the termination measure it inferred. -/
+def measureHeader : String := "Inferred termination measure:"
+
 /-- One message's `data`, read a line at a time: as a trace, and when it
 starts like `diagnostics` output, as that too. -/
 structure MsgData where
@@ -355,13 +362,23 @@ structure MsgData where
   diag : Array (String × String × Nat) × String := (#[], "")
   /-- The first line, up to 300 characters (an error's message). -/
   head : String := ""
+  /-- The whole text, up to 20,000 characters, of a message that suggests an
+  edit (`Try this: simp only [...]`, with `tactic.simp.trace`). -/
+  full : String := ""
+
+/-- Does a message starting with this line suggest an edit (Lean's `TryThis`, or the
+termination measure it inferred, with `showInferredTerminationBy`)? -/
+def suggestionHeader (line : String) : Bool :=
+  line.startsWith "Try this:" || line.startsWith measureHeader
 
 def MsgData.addLine (d : MsgData) (line : String) : MsgData :=
-  let ⟨trace, lines, diagHead, diagArrow, diag, head⟩ := d
+  let ⟨trace, lines, diagHead, diagArrow, diag, head, full⟩ := d
   let diagHead := if lines == 0 then diagHeader line else diagHead
   let (diagArrow, diag) := if diagHead then (diagArrow || hasArrow line, diagLine diag line) else (diagArrow, diag)
   let head := if lines == 0 then String.ofList (line.toList.take 300) else head
-  ⟨trace.addLine line, lines + 1, diagHead, diagArrow, diag, head⟩
+  let full := if suggestionHeader head && full.length < 20000 then
+      (if lines == 0 then line else full ++ "\n" ++ line) else full
+  ⟨trace.addLine line, lines + 1, diagHead, diagArrow, diag, head, full⟩
 
 /-- A message's `data` as read: `diagnostics` counters, or a trace's nodes. -/
 inductive Parsed where
@@ -392,6 +409,9 @@ structure LineCost where
   ops : Std.HashMap (String × String) (Nat × Float) := {}
   /-- `diagnostics` counters of this line's commands (`--counts`): (constant, counter) ↦ count. -/
   diag : Std.HashMap (String × String) Nat := {}
+  /-- Instance searches that failed (the outermost of a nest): the class
+  problem ↦ (times, total cost). -/
+  failedInst : Std.HashMap String (Nat × Float) := {}
   deriving Inhabited
 
 structure OpCost where
@@ -450,6 +470,19 @@ structure Acc where
   ranges : Std.HashMap String RangeCost := {}
   /-- The range of the outermost tactic on each `file:line` of `tactics`. -/
   tacticRanges : Std.HashMap String String := {}
+  /-- Lean's `Try this` suggestions (`--why`: `simp only [...]` for each `simp`):
+  file, line, column (from 0) and the message. -/
+  suggestions : Array (String × Nat × Nat × String) := #[]
+  /-- The whole source range of each `simp`, `simp_all`, `simpa` and `dsimp` the
+  driver elaborated (`--why`): (file, line, column) of its start ↦ (end line, end
+  column, syntax kind). A suggestion's message covers only the tactic's first word. -/
+  tacRanges : Std.HashMap (String × Nat × Nat) (Nat × Nat × String) := {}
+  /-- The termination measures Lean inferred (`--why`): file, line, column of the
+  function's name, and the `termination_by` clause. -/
+  measures : Array (String × Nat × Nat × String) := #[]
+  /-- Where each command starts and ends, when Lean says (`--why`): (file, line) ↦
+  (column, end line, end column). -/
+  cmdEnds : Std.HashMap (String × Nat) (Nat × Nat × Nat) := {}
 
 /-- `s` without whitespace. -/
 def squash (s : String) : String := String.ofList (s.toList.filter fun c => !c.isWhitespace)
@@ -613,6 +646,11 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
   if root.cls == "Elab.command" then
     let s := posOf "pos"
     let e := if (m.getObjVal? "endPos").toOption.isSome then posOf "endPos" else s
+    if e != s then
+      -- the outermost command at a position ends last
+      let (_, el, ec) := a.cmdEnds.getD (file, s.1) (s.2, 0, 0)
+      if e.1 > el || (e.1 == el && e.2 > ec) then
+        a := { a with cmdEnds := a.cmdEnds.insert (file, s.1) (s.2, e.1, e.2) }
     let le (x y : Nat × Nat) : Bool := x.1 < y.1 || (x.1 == y.1 && x.2 ≤ y.2)
     let within := fun ((s', e', _) : (Nat × Nat) × (Nat × Nat) × Float) => le s s' && le e' e
     let inner : Float := (a.commands.filter within).foldl (fun x c => x + c.2.2) 0
@@ -651,7 +689,11 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
       -- commands sharing a line (`variable (x) in` puts its inner `variable` at the position of
       -- the declaration it wraps): the line is named after the one that declares something
       if c.name.isEmpty || ((declName c.name).isNone && (declName name).isSome) then
-        c := { c with name, declared := (declName (text.replace "\n" " ")).getD "" }
+        -- the name declared, from the source when there is one: a description is cut at 200
+        -- characters, which a doc comment and `set_option ... in` before a long name can reach
+        -- (six `def UniversalCo…` of Mathlib were one declaration to `compare`)
+        let fromSrc := if a.src.isEmpty then none else declName ((clean (sourceLine a.src ln)).replace "\n" " ")
+        c := { c with name, declared := (fromSrc <|> declName (text.replace "\n" " ")).getD "" }
   if !a.files.isEmpty then a := { a with files := a.files.modify (a.files.size - 1) fun (k, _) => (k, f) }
   -- tactic steps, by the line each is on: found in the source after the command's start,
   -- in the order Lean ran them; a step nested in one on the same line is not counted again
@@ -700,6 +742,10 @@ def Acc.addParsed (a : Acc) (file : String) (scale : Float) (m : Json) (p : Pars
         return found
       -- a description `pp.oneline` cut (`term do [...]`) names many different
       -- terms: not evidence of the same work done again
+      if n.cls == "Meta.synthInstance" && n.failed && !nested then
+        let k := normalizeOp ((n.text.splitOn " ↦ ").head!)
+        let (fc, ft) := c.failedInst.getD k (0, 0)
+        c := { c with failedInst := c.failedInst.insert k (fc + 1, ft + n.amount * scale) }
       unless nested || n.text.endsWith elided do
         let k := (n.cls, normalizeOp n.text)
         let o := a.ops.getD k {}
@@ -752,6 +798,9 @@ def Acc.merge (a b : Acc) : Acc := Id.run do
     r := { r with ranges := r.ranges.insert k (if r.ranges.contains k then { p with total := p.total + c.total, count := p.count + c.count } else c) }
   for (k, v) in b.tacticRanges do
     unless r.tacticRanges.contains k do r := { r with tacticRanges := r.tacticRanges.insert k v }
+  r := { r with suggestions := r.suggestions ++ b.suggestions,
+                tacRanges := b.tacRanges.fold (·.insert · ·) r.tacRanges,
+                measures := r.measures ++ b.measures, cmdEnds := b.cmdEnds.fold (·.insert · ·) r.cmdEnds }
   for (k, c) in b.lines do
     -- lines are per file: no two files share a key
     r := { r with lines := r.lines.insert k c }
@@ -815,6 +864,12 @@ structure Opts where
   /-- `--compact`: only commands, terms and tactics are timed, not the operations inside them
   (needs the driver): close to plain `lean` in cost. -/
   compact : Bool := false
+  /-- `--why`: explain the costliest declarations, with Lean's `simp only` list for each `simp`
+  (`tactic.simp.trace`). -/
+  why : Bool := false
+  /-- `--max-heartbeats N`: list every declaration above N (in `maxHeartbeats`' unit, 1,000
+  heartbeats) and exit 1 if there is one. -/
+  maxHeartbeats : Option Nat := none
 
 def Opts.thresholdValue (o : Opts) : Nat :=
   o.threshold.getD (if o.heartbeats then 10000 else 1)
@@ -833,6 +888,9 @@ def traceArgs (o : Opts) : Array String := Id.run do
       "-Dweak.trace.Meta.isDefEq.delta.unfoldRight=true", "-Dweak.trace.Meta.isDefEq.delta.unfoldLeftRight=true",
       "-Dweak.trace.Meta.Tactic.simp.rewrite=true", "-Dpp.fullNames=true"]
     if o.diagnostics then args := args ++ #["-Ddiagnostics=true", "-Ddiagnostics.threshold=0"]
+  -- (no `tactic.simp.trace` here: set for the whole file it stops Lean at a `simp` with an
+  -- antiquotation; the driver sets it per call)
+  if o.why then args := args.push "-DshowInferredTerminationBy=true"
   return args
 
 /-- The driver's arguments for `o` (it takes the same options as `lean`, as flags). -/
@@ -843,13 +901,14 @@ def driverArgs (o : Opts) : Array String := Id.run do
   else if o.defs then
     args := args.push "--defs"
     if o.diagnostics then args := args.push "--counts"
+  if o.why then args := args.push "--why"
   return args
 
 /-- A message read by `readMessages`: the JSON with only the first line of its
 `data` text, and `data` as read. None when it is not JSON. -/
 def finishMessage (rest : ByteArray) (d : MsgData) : Option (Json × Parsed) := do
   let m ← (String.fromUTF8? rest).bind (Json.parse · |>.toOption)
-  return (m.setObjVal! "data" d.head, d.finish)
+  return (m.setObjVal! "data" (if d.full.isEmpty then d.head else d.full), d.finish)
 
 /-- Read Lean's `--json` messages (one per line) from `h` to its end, calling
 `f` with each one. A message's `data` text is decoded and parsed a line at a
@@ -963,6 +1022,21 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
     stdout := .piped, stderr := .null, stdin := .null }
   let acc ← IO.mkRef ({ files := #[(file, ({ module } : FileCost))], src, srcSq := (codeOnly src).map squash, exact } : Acc)
   readMessages (IO.FS.Stream.ofHandle child.stdout) fun m p => do
+    if str m "severity" == "information" then
+      let d := str m "data"
+      let at_ (k : String) : Nat × Nat :=
+        (((m.getObjVal? k >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0,
+         ((m.getObjVal? k >>= (·.getObjVal? "column")) >>= Json.getNat?).toOption.getD 0)
+      if d.startsWith measureHeader then
+        let (l, c) := at_ "pos"
+        acc.modify fun a => { a with measures := a.measures.push (file, l, c, (d.drop measureHeader.length).toString) }
+      else if suggestionHeader d then
+        let (l, c) := at_ "pos"
+        acc.modify fun a => { a with suggestions := a.suggestions.push (file, l, c, d) }
+      else if d.startsWith "leanprof-range " then
+        let (l, c) := at_ "pos"
+        let (el, ec) := at_ "endPos"
+        acc.modify fun a => { a with tacRanges := a.tacRanges.insert (file, l, c) (el, ec, (d.drop 15).toString) }
     if str m "severity" == "error" then
       let ln := ((m.getObjVal? "pos" >>= (·.getObjVal? "line")) >>= Json.getNat?).toOption.getD 0
       acc.modify fun a => { a with files := a.files.modify 0 fun (k, f) =>
@@ -1209,6 +1283,11 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--threshold" :: v :: rest => parseOpts { o with threshold := some v.toNat! } rest
   | "--no-driver" :: rest => parseOpts { o with driver := false } rest
   | "--compact" :: rest => parseOpts { o with compact := true } rest
+  | "--why" :: rest => parseOpts { o with why := true } rest
+  | "--max-heartbeats" :: v :: rest =>
+    match v.toNat? with
+    | some n => parseOpts { o with heartbeats := true, maxHeartbeats := some n } rest
+    | none => .error s!"--max-heartbeats needs a number (in maxHeartbeats' unit, 1,000 heartbeats), not {v}"
   | f :: rest =>
     if f.startsWith "--" then .error s!"unknown option {f}" else parseOpts { o with files := o.files.push f } rest
 
@@ -1259,6 +1338,96 @@ def kindLabel : String → String
   | "simp" => "simp lemma"
   | k => k
 
+/-- The source between (line, column) and (end line, end column): lines from 1, columns
+from 0 in characters, as Lean's messages give them. -/
+def sliceSource (lines : Array String) (l c el ec : Nat) : String :=
+  let at_ (i : Nat) : List Char := (lines[i - 1]?.getD "").toList
+  if l == el then String.ofList (((at_ l).drop c).take (ec - c))
+  else
+    let mid := ((List.range (el - l - 1)).map fun k => String.ofList (at_ (l + 1 + k)))
+    "\n".intercalate ([String.ofList ((at_ l).drop c)] ++ mid ++ [String.ofList ((at_ el).take ec)])
+
+/-- Lean's `simp only` suggestions (`--why`), one per `simp` call: where, the call as written,
+Lean's replacement for it, the lemmas it keeps, what the call cost, and why it cannot be
+applied mechanically, when it cannot. -/
+def suggestionsJson (acc : Acc) : IO (Array Json) := do
+  let mut groups : Std.HashMap (String × Nat × Nat) (Array String) := {}
+  let mut order : Array (String × Nat × Nat) := #[]
+  for (f, l, c, msg) in acc.suggestions do
+    let k := (f, l, c)
+    unless groups.contains k do order := order.push k
+    groups := groups.insert k ((groups.getD k #[]).push (ElabWhy.suggestionText msg))
+  let mut srcs : Std.HashMap String (Array String) := {}
+  let mut out := #[]
+  for k@(f, l, c) in order do
+    let texts := groups.getD k #[]
+    let variants := texts.toList.eraseDups
+    let sugg := variants.head!
+    -- a `simp` a macro runs (`decreasing_tactic`'s `simp_wf`): its suggestion names the
+    -- macro's hygienic options (`+zetaDelta✝`) and there is no call in the source to replace
+    if !acc.tacRanges.contains k && variants.any (·.contains '✝') then continue
+    unless srcs.contains f do
+      srcs := srcs.insert f (((← try IO.FS.readFile f catch _ => pure "").splitOn "\n").toArray)
+    let lines := srcs.getD f #[]
+    -- the whole tactic: the driver's range (the message covers only the first word)
+    let (range, original, amount, count, reason) := match acc.tacRanges.get? k with
+      | some (el, ec, _) =>
+        let range := s!"{f}:{l}:{c + 1}-{el}:{ec + 1}"
+        let rc := (acc.ranges.get? range).getD {}
+        let original := sliceSource lines l c el ec
+        (range, original, rc.total, max rc.count texts.size,
+          match ElabWhy.simpEdit? original sugg variants.length with
+          | .ok _ => ""
+          | .error e => e)
+      | none =>
+        (s!"{f}:{l}:{c + 1}", "", 0, texts.size,
+          "the call's whole source range is unknown (generated syntax, or elaborated without leanprof-elab-driver): apply by hand")
+    out := out.push (Json.mkObj [("pos", Json.str s!"{f}:{l}"), ("range", Json.str range),
+      ("original", Json.str original), ("suggestion", Json.str sugg),
+      ("lemmas", toJson (ElabWhy.onlyLemmas sugg).size), ("amount", toJson amount), ("count", toJson count),
+      ("variants", toJson variants.length), ("not_applicable", Json.str reason)])
+  return out
+
+/-- The termination measures Lean inferred (`--why`), one per recursive declaration: where
+the declaration is and ends, the `termination_by` clause to add after it, what Lean's search
+for it cost (`decreasing_tactic`, run for each measure it tried), and why it cannot be added
+mechanically, when it cannot. -/
+def measuresJson (acc : Acc) : IO (Array Json) := do
+  let mut srcs : Std.HashMap String (Array String) := {}
+  let mut out := #[]
+  for (f, l, c, text) in acc.measures do
+    unless srcs.contains f do
+      srcs := srcs.insert f (((← try IO.FS.readFile f catch _ => pure "").splitOn "\n").toArray)
+    let lines := srcs.getD f #[]
+    let measure := ElabWhy.collapse text
+    -- the command it is in: the one that starts closest above it and ends after it
+    let mut best : Option (Nat × Nat × Nat × Nat) := none
+    for ((f', sl), (sc, el, ec)) in acc.cmdEnds do
+      if f' == f && sl ≤ l && (el > l || (el == l && ec ≥ c)) then
+        if best.all (·.1 < sl) then best := some (sl, sc, el, ec)
+    let some (sl, sc, el, ec) := best
+      | out := out.push (Json.mkObj [("pos", Json.str s!"{f}:{l}"), ("at", Json.str s!"{f}:{l}:{c + 1}"),
+          ("measure", Json.str measure), ("amount", toJson (0 : Float)),
+          ("not_applicable", Json.str "where the declaration ends is unknown (elaborated without leanprof-elab-driver): apply by hand")])
+        continue
+    let text := sliceSource lines sl sc el ec
+    let words := ((text.replace "\n" " ").splitOn " ").filter (· != "")
+    let others := acc.measures.filter fun (f', l', _, _) => f' == f && sl ≤ l' && l' ≤ el
+    -- what the search cost: `decreasing_tactic`, once per measure tried and call
+    let cost : Float := ((acc.lines.get? s!"{f}:{sl}").map fun lc => lc.ops.fold (fun (x : Float) (_, op) (_, t) =>
+      if (op.splitOn "decreasing_tactic").length > 1 then x + t else x) (0 : Float)).getD 0
+    let reason :=
+      if others.size > 1 then "the declaration has several recursive functions (`mutual`, `where`): apply by hand"
+      else if ["termination_by", "decreasing_by", "termination_by?", "partial_fixpoint"].any words.contains then
+        "the declaration already has a termination clause"
+      else if measure.contains '✝' then "the measure names an inaccessible variable: name it first"
+      else if !measure.startsWith "termination_by" then "Lean's message is not a `termination_by` clause"
+      else ""
+    out := out.push (Json.mkObj [("pos", Json.str s!"{f}:{sl}"), ("at", Json.str s!"{f}:{l}:{c + 1}"),
+      ("measure", Json.str measure), ("insert", Json.str s!"{f}:{el}:{ec + 1}"), ("indent", toJson sc),
+      ("amount", toJson cost), ("not_applicable", Json.str reason)])
+  return out
+
 /-! ## The command -/
 
 /-- Hardware threads, or 0 (`System.Platform.Internal.getHardwareConcurrency`, which
@@ -1269,7 +1438,7 @@ opaque hardwareConcurrency : Unit → UInt32
 def main (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
   if o.files.isEmpty && !o.project then
-    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--compact] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]"
+    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--compact] [--why] [--max-heartbeats N] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]"
   let tStart ← IO.monoNanosNow
   -- the modules must be built: their imports are read from `.olean` files
   if o.project && o.build then
@@ -1483,7 +1652,11 @@ def main (argv : List String) : IO UInt32 := do
       (((c.diag.toArray.filter (·.1.2 == ctr)).qsort fun a b => a.2 > b.2 || (a.2 == b.2 && a.1.1 < b.1.1)).toList.take
         (causeLimit / 2)).toArray).map
       fun ((s, ctr), n) => Json.mkObj [("name", Json.str (userName s)), ("counter", Json.str ctr), ("count", toJson n),
-        ("where", Json.str (((locOf s).map (·.pos)).getD ""))]))]
+        ("where", Json.str (((locOf s).map (·.pos)).getD ""))])),
+    -- instance searches that failed, for `--why`
+    ("instances_failed", Json.arr (((c.failedInst.toArray.qsort fun a b => a.2.2 > b.2.2 || (a.2.2 == b.2.2 && a.1 < b.1)).toList.take
+        (causeLimit / 2)).toArray.map fun (p, (n, x)) =>
+      Json.mkObj [("problem", Json.str p), ("count", toJson n), ("amount", toJson x)]))]
   let repeated := reps.map fun ((cls, op), oc) => Json.mkObj [("class", Json.str cls), ("op", Json.str op),
     ("count", toJson oc.count), ("total", toJson oc.total), ("first_at", Json.str oc.firstAt),
     ("files", toJson oc.files.size)]
@@ -1520,9 +1693,16 @@ def main (argv : List String) : IO UInt32 := do
     ("unfolded", topOf (((fileConsts.getD f {}).toArray.filter (·.2.2.1 > 0)).map fun (s, (kind, x, t, n)) =>
       (x, Json.mkObj (constJson s kind x t |>.map fun (k, v) => if k == "sites" then (k, toJson n) else (k, v)))))]
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
+  let suggestions ← if o.why then suggestionsJson acc else pure #[]
+  let measures ← if o.why then measuresJson acc else pure #[]
   let tEnd ← IO.monoNanosNow
-  IO.FS.writeFile o.out
-    (Json.mkObj [("version", toJson (3 : Nat)), ("elab", Json.bool true), ("project", Json.bool o.project),
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload "" (if o.project then #[] else o.files))
+    (Json.mkObj [("mode", Json.str "elab"), ("heartbeats", Json.bool o.heartbeats), ("project", Json.bool o.project),
+      ("globs", toJson o.globs), ("counts", Json.bool o.diagnostics), ("defs", Json.bool o.defs),
+      ("threshold", toJson o.thresholdValue), ("driver", Json.bool !le.driver.isEmpty), ("compact", Json.bool o.compact)])
+  let report :=
+    (Json.mkObj [("version", toJson (3 : Nat)), ("schema", Leanprof.Contract.schema "elab"), ("provenance", prov),
+      ("elab", Json.bool true), ("project", Json.bool o.project),
       ("unit", Json.str (if hb then "heartbeats" else "ns")), ("wall_ns", toJson grand),
       ("scopes", Json.arr scopes), ("repeated", Json.arr repeated), ("constants", Json.arr constants),
       ("files", Json.arr fileJson), ("copies", Json.arr #[]),
@@ -1538,8 +1718,27 @@ def main (argv : List String) : IO UInt32 := do
           ("kind", Json.str (if c.tactic then "tactic" else "term")), ("syntax", Json.str c.src.kind),
           ("text", Json.str c.src.text), ("amount", toJson c.total), ("count", toJson c.count)])),
       ("threshold", toJson o.thresholdValue), ("counts", Json.bool (o.defs && o.diagnostics)),
+      -- `--why`: Lean's `simp only` list for each `simp` call
+      -- every file elaborated to its end: costs of a file with an error stop at it, so an
+      -- incomplete profile must never count as fewer heartbeats
+      ("complete", Json.bool failed.isEmpty),
+      ("why", Json.bool o.why), ("simp_suggestions", Json.arr suggestions),
+      ("termination_suggestions", Json.arr measures),
       ("timing", Json.mkObj [("build_ns", toJson (tBuilt - tStart)), ("profile_ns", toJson (tProfiled - tBuilt)),
-        ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])]).compress
+        ("report_ns", toJson (tEnd - tProfiled)), ("jobs", toJson (min jobs files.size))])])
+  -- `--max-heartbeats N`: every declaration above the budget, also in the report
+  let over := match o.maxHeartbeats with
+    | some n => ElabWhy.overBudget report n
+    | none => #[]
+  let report := match o.maxHeartbeats with
+    | some n => report.setObjVal! "budget" (Json.mkObj [("max_heartbeats", toJson n),
+        ("over", Json.arr (over.map fun sc => Json.mkObj [("pos", sc.getObjValD "pos"), ("name", sc.getObjValD "name"),
+          ("key", sc.getObjValD "key"), ("total", sc.getObjValD "total_ns"), ("elab", sc.getObjValD "elab_ns"),
+          ("kernel", sc.getObjValD "kernel_ns")]))])
+    | none => report
+  IO.FS.writeFile o.out report.compress
+  if o.why then
+    IO.print (ElabWhy.text report (min o.top 10))
   if !failed.isEmpty then
     IO.eprintln s!"\nleanprof: {failed.size} {if failed.size == 1 then "file" else "files"} had errors (costs stop at the error); the first of each:"
     for (f, c) in failed.toList.take 10 do
@@ -1549,6 +1748,11 @@ def main (argv : List String) : IO UInt32 := do
   if files.size > 1 then
     IO.println s!"\n{files.size} files in {fmt2 ((tProfiled - tBuilt).toFloat / 1e9)} s ({min jobs files.size} at a time){if o.project && o.build then s!", lake build {fmt2 ((tBuilt - tStart).toFloat / 1e9)} s" else ""}, report {fmt2 ((tEnd - tProfiled).toFloat / 1e9)} s"
   IO.println s!"written to {o.out}; `#leanprof` shows it next to the code"
+  if let some n := o.maxHeartbeats then
+    IO.print (ElabWhy.budgetText report n)
+    if !failed.isEmpty then
+      IO.println "  (files with errors: their costs stop at the error, so a declaration after it is not counted)"
+    if !over.isEmpty then return 1
   return 0
 
 end Leanprof.Elab

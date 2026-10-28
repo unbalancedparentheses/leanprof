@@ -114,7 +114,12 @@ else
     i=$((i + 2))
   done
   echo "::endgroup::"
-  "$lp" report-md --fail-on "$LP_FAIL_ON" --title "$title" ${why[@]+"${why[@]}"} "${pairs[@]}" > "$report"
+  budget=()
+  if [ -n "${LP_MAX_HB:-}" ]; then
+    [ -n "$LP_ELAB_FILES" ] || fail "max-heartbeats needs elab-files"
+    budget=(--max-heartbeats "$LP_MAX_HB")
+  fi
+  "$lp" report-md --fail-on "$LP_FAIL_ON" --title "$title" ${why[@]+"${why[@]}"} ${budget[@]+"${budget[@]}"} "${pairs[@]}" > "$report"
   case $? in
     0) ;;
     1) regressed=true ;;

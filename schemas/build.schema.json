@@ -1,0 +1,593 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/build.schema.json",
+  "title": "leanprof build report",
+  "description": "A measured `lake build` (`leanprof build`): every process Lake ran, the critical path, parallelism, rebuild estimates, and optionally their validation and verified import changes.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.build"
+        }
+      }
+    },
+    "version": {
+      "const": 1
+    },
+    "leanprof": {
+      "const": "build"
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    },
+    "command": {
+      "type": "string"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "lean": {
+      "type": "string"
+    },
+    "clean": {
+      "type": "boolean"
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "elapsed_s": {
+      "type": "number"
+    },
+    "hardware_threads": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "workers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "load": {
+      "type": "object",
+      "properties": {
+        "before": {
+          "type": "number"
+        },
+        "after": {
+          "type": "number"
+        }
+      }
+    },
+    "measurement": {
+      "type": "string"
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "enum": [
+              "lean",
+              "leanir",
+              "cc",
+              "link",
+              "ar"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "start_s": {
+            "type": "number"
+          },
+          "end_s": {
+            "type": "number"
+          },
+          "duration_s": {
+            "type": "number"
+          },
+          "lane": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_rss_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "peak resident memory of the process (getrusage after it ended)"
+          },
+          "user_s": {
+            "type": "number"
+          },
+          "sys_s": {
+            "type": "number"
+          },
+          "slack_s": {
+            "type": "number"
+          },
+          "critical": {
+            "type": "boolean"
+          },
+          "deps": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "output": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "start_s",
+          "end_s",
+          "duration_s",
+          "max_rss_bytes",
+          "deps",
+          "critical",
+          "slack_s"
+        ],
+        "description": "one process Lake ran; times in seconds since `lake build` started"
+      }
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "built",
+              "up-to-date",
+              "cache",
+              "failed"
+            ]
+          },
+          "imports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "job": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "duration_s": {
+            "type": "number"
+          },
+          "max_rss_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          },
+          "rebuild": {
+            "type": "object",
+            "properties": {
+              "jobs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "task_s": {
+                "type": "number"
+              },
+              "estimate_s": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "jobs",
+              "task_s",
+              "estimate_s"
+            ],
+            "description": "estimated rebuild after touching the module: a no-op build plus the simulated jobs"
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "imports"
+        ]
+      }
+    },
+    "other_modules": {
+      "type": "object",
+      "description": "modules of other packages, counted by state"
+    },
+    "critical_path": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "job": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "wait_s": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "job",
+              "wait_s"
+            ]
+          }
+        },
+        "startup_s": {
+          "type": "number"
+        },
+        "tail_s": {
+          "type": "number"
+        },
+        "unlimited_workers_s": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "steps",
+        "startup_s",
+        "tail_s",
+        "unlimited_workers_s"
+      ]
+    },
+    "parallelism": {
+      "type": "object",
+      "properties": {
+        "average": {
+          "type": "number"
+        },
+        "peak": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "time_at": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "running": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "seconds": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "serialized_min_s": {
+          "type": "number"
+        },
+        "serialized": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start_s": {
+                "type": "number"
+              },
+              "end_s": {
+                "type": "number"
+              },
+              "running": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "profile": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "required": [
+        "average",
+        "peak",
+        "time_at",
+        "serialized",
+        "profile"
+      ]
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "workers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latency_s": {
+          "type": "number"
+        },
+        "simulated_span_s": {
+          "type": "number"
+        },
+        "measured_span_s": {
+          "type": "number"
+        },
+        "noop_s": {
+          "type": "number"
+        },
+        "noop_measured": {
+          "type": "boolean"
+        },
+        "noop_jobs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workers",
+        "latency_s",
+        "simulated_span_s",
+        "measured_span_s",
+        "noop_s"
+      ]
+    },
+    "validation": {
+      "type": "object",
+      "properties": {
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "estimate_s": {
+                "type": "number"
+              },
+              "measured_s": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "error_pct": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "predicted_modules": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rebuilt_modules": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "same_modules": {
+                "type": "boolean"
+              },
+              "module_difference": {
+                "type": "string"
+              },
+              "exit_codes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "module",
+              "estimate_s"
+            ]
+          }
+        },
+        "mean_abs_error_pct": {
+          "type": "number"
+        },
+        "max_abs_error_pct": {
+          "type": "number"
+        },
+        "load": {
+          "type": "object",
+          "properties": {
+            "before": {
+              "type": "number"
+            },
+            "after": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "required": [
+        "samples",
+        "mean_abs_error_pct",
+        "max_abs_error_pct"
+      ]
+    },
+    "imports": {
+      "type": "object",
+      "properties": {
+        "considered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "needed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "redundant": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reexport": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_ilean": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "import": {
+                "type": "string"
+              },
+              "replace_with": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "modules_freed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "critical_path_gain_s": {
+                "type": "number"
+              },
+              "clean_gain_s": {
+                "type": "number"
+              },
+              "rebuild_gain_s": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "module",
+              "import",
+              "replace_with"
+            ]
+          }
+        },
+        "tried": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "import": {
+                "type": "string"
+              },
+              "verdict": {
+                "enum": [
+                  "builds",
+                  "does not build",
+                  "builds with more sorry",
+                  "import not found in the header"
+                ]
+              },
+              "replaced_by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reason": {
+                "type": "string"
+              },
+              "samples": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "before_s": {
+                "type": "number"
+              },
+              "after_s": {
+                "type": "number"
+              },
+              "rebuild_gain_s": {
+                "type": "number"
+              },
+              "before_modules": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "after_modules": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "clean_gain_s": {
+                "type": "number"
+              },
+              "clean_gain_is": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "module",
+              "import",
+              "verdict"
+            ]
+          }
+        }
+      },
+      "required": [
+        "considered",
+        "candidates",
+        "tried"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "leanprof",
+    "provenance",
+    "command",
+    "exit_code",
+    "elapsed_s",
+    "workers",
+    "jobs",
+    "modules",
+    "critical_path",
+    "parallelism",
+    "model"
+  ]
+}

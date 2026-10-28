@@ -1,5 +1,9 @@
 # Static retained-array copy prototype
 
+> Superseded by `leanprof explain --static` ([guide](../guide/static-copies.md)),
+> which reads the emitted C instead of an IR export and finds all 8 copying
+> examples. The prototype's scripts were removed; this note records it.
+
 This experiment reads Lean's saved **post-reference-counting compiler IR** and
 flags `Array.push` calls whose receiver appears to retain another reference.
 It needs compiled modules, but no executable or workload run. It is a standalone

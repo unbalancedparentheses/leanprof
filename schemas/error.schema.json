@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/error.schema.json",
+  "title": "leanprof error",
+  "description": "What a failed command recorded in the file named by LEANPROF_ERROR_JSON. The MCP server sets it for the commands it runs, and returns the same object (without `schema`) as `error` in a tool's structured result.",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/error"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.error"
+        }
+      }
+    }
+  },
+  "required": [
+    "schema"
+  ]
+}

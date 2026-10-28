@@ -25,48 +25,93 @@ many, how many bytes, how much time, why the value was shared, and the fix.
 
 ## Why leanprof, and not the alternatives
 
-- **It sees the costs that are specific to Lean.** Copies of shared values,
-  allocations, failed reuse and closure calls, counted exactly per function,
-  with the cause read from the compiler's IR and the fix written with your
-  own names; `leanprof fix` applies the mechanical ones and keeps an edit
-  only when the output, the tests and the measurements agree. samply, perf,
-  [LeanProfiler](https://github.com/lean-dojo/LeanProfiler),
-  [LeanBench](https://github.com/alok/LeanBench) and
-  [lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
-  report time only.
-- **It says why a pull request got slower.** Copies, allocations and calls
-  are exact counts, so CI can fail on "+1 copy" without noise; the comment
-  names the declaration that got more expensive and the unfold, instance
-  search, `simp` lemma or `grind` theorem behind it. Against LeanBench it
-  caught a 2.4% slowdown 4 times in 5 (LeanBench at its 5% threshold: 0 in
-  5), with no false verdict in 20 unchanged runs
-  ([case study](docs/case-studies/leanbench.md)).
-- **It checks a change before you keep it.** `leanprof experiment` builds a
-  candidate, refuses one that weakens a proof or a test, compares its
-  behaviour on every input you give, and judges exact counts before time.
-- **Its probes cost nanoseconds, not microseconds.** About 5–8 ns per scope
-  on the Mac and 23 ns on Linux, measured at startup and subtracted;
+samply, perf, [LeanProfiler](https://github.com/lean-dojo/LeanProfiler),
+[LeanBench](https://github.com/alok/LeanBench) and
+[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)
+report time. leanprof also reports what makes Lean code slow, and carries a
+finding through to a checked change.
+
+**The costs specific to Lean, which no other profiler sees**
+
+- **Copies of shared values.** `Array`, `ByteArray`, `FloatArray` and
+  `String` updates that copy because something else still refers to the
+  value: counted per function, with the line, bytes, time and why the value
+  was shared (`shared`, `multi-threaded`, `persistent`).
+- **Why, and the fix.** `explain` reads the compiler's IR to name where the
+  second reference comes from ("`acc` is stored in `history` at line 20"),
+  `--why` confirms it at run time, and the fix is written as code with your
+  own names (`Array.modify`, swapping an element out, `alter` on a map).
+- **Copies without running anything.** `explain --static` flags likely copies
+  across a whole package, libraries included: all 16 copying examples and
+  none of 18 alternatives; on lean-compiler-backend, 97% of the copies were
+  in flagged functions. A run report then marks which flags it confirmed.
+- **Allocations, failed in-place reuse, closure calls, freeing pauses, peak
+  memory** per function and call site; `--core` counts them inside Lean's
+  own libraries too.
+
+**Time, measured cheaply**
+
+- **Probes cost nanoseconds, not microseconds:** about 5–8 ns per scope on
+  the Mac and 23 ns on Linux, measured at startup and subtracted;
   LeanProfiler's span costs 4.6 µs at first and 88.5 µs once its events
   accumulate. With scopes placed where LeanProfiler's spans are, leanprof is
   within 0.5 points of it or better on every benchmark workload
   ([results](bench/RESULTS.md)).
-- **Nothing to change in your project.** It profiles any Lake project from
-  outside: every function with `--auto`, dependencies included, and puts
-  your normal build back afterwards. LeanProfiler and LeanBench need code in
-  your project.
-- **Sampling that knows Lean.** It runs samply and adds Lean names,
-  file:line, the runtime's share (allocation, freeing, copying) and which of
-  your functions library code ran under. On Linux it rebuilds the stacks
-  perf cuts short: deep recursion 1.2 points off its true share, against
-  samply's 14.8.
-- **Run time and compile time in one tool.** Compile cost per declaration,
-  term and tactic by exact source range on every supported Lean, in
-  heartbeats, the definitions unfolded behind it, repeated work, and a
+- **Sampling that knows Lean:** samply underneath, plus Lean names,
+  file:line, specializations under the declaration that caused them, and the
+  runtime's share (allocation, freeing, copying). On Linux it rebuilds the
+  stacks perf cuts short: deep recursion 1.2 points off its true share,
+  against samply's 14.8.
+- **Nothing to change in your project:** any Lake project, from outside,
+  every function with `--auto`, dependencies included, and your normal
+  build put back afterwards. LeanProfiler and LeanBench need code in your
+  project.
+
+**Compile time, with causes**
+
+- Cost per declaration, term and tactic by exact source range on every
+  supported Lean, in heartbeats (nearly the same on every run, so a
+  regression on a shared machine is real), with the definitions unfolded,
+  instances tried and `simp` lemmas used behind it, each with file:line.
+- Whole projects in parallel (all of Batteries in 17 s, against 103–152 s
+  for lean-source-profiler one file at a time) and a
   [viewer](docs/profiles/README.md) from project to tactic; full profiles
   cost 1.3–1.9 times less per file than lean-source-profiler's detailed
   mode.
-- **Built for agents.** An MCP server, ranked findings as JSON, paired
-  verdicts, experiments with evidence files, and an
+
+**From a finding to a checked change, which no other tool does**
+
+- **`leanprof fix`** applies a mechanical fix only where the code shows it
+  computes the same values, in an isolated worktree: build, tests, output
+  compared, both versions measured, and a commit with the evidence only on
+  KEEP. Your checkout is never touched.
+- **`leanprof experiment`** judges any candidate change against a baseline:
+  it must build, pass the proof-preservation audit (a `sorry`, a new axiom,
+  a removed theorem or a changed test is refused), pass the tests, and
+  behave identically on every input you give; then exact counts first,
+  heartbeats for proof-only changes, paired timing last. In Lean the
+  cheapest fake speedup is deleting a proof obligation; this refuses it.
+- **Paired time verdicts:** `measure-pair` interleaves the two versions and
+  stops as soon as the verdict is settled (each claim wrong at most 2.5% of
+  the time if the pairs are independent).
+
+**CI that says why**
+
+- Copies, allocations and calls are exact counts, so CI can fail on "+1
+  copy" without noise. The pull request comment names the declaration that
+  got more expensive and the unfold, instance search, `simp` lemma or
+  `grind` theorem behind it, and explain's cause for each copy site that
+  copies more. Against LeanBench it caught a 2.4% slowdown 4 times in 5
+  (LeanBench at its 5% threshold: 0 in 5), with no false verdict in 20
+  unchanged runs ([case study](docs/case-studies/leanbench.md)).
+
+**Built for agents**
+
+- An MCP server with run, sample, explain, static copies, elab, measure,
+  paired timing, judge, fix and the experiment tools, restricted to Lake
+  projects ([security review](docs/reviews/security-review.md)); structured
+  results and typed errors, versioned JSON with schemas, ranked findings
+  with stable ids, and provenance on every report; and an
   [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
   that made a compiler written in Lean 22% faster, merged after review.
 
@@ -169,6 +214,36 @@ exact `run`, `explain` and `fix` commands that go deeper. On a Mac, a new
 `lake new` project got its first report in 8.6 s, after a 4.8 s install
 with samply ([getting started](docs/guide/getting-started.md)).
 
+### Compile time: `elab`, `--why` and `fix --elab`
+
+Most Lean code is proofs, and what its authors wait on is elaboration.
+`leanprof elab` gives the compile cost of each declaration, term and tactic
+by exact source range, split into elaboration, kernel, compiler and
+linters, in time or (`--heartbeats`) in heartbeats, which do not depend on
+the machine. It names the definitions unfolded, instances tried and simp
+lemmas behind the work, finds repeated work, and runs whole projects in
+parallel (`--project`). On a project whose Lean is not leanprof's, the first
+run builds leanprof's elaboration driver for that Lean (2 to 7 s on an M5
+Max) and caches it, so ranges are exact on every supported Lean.
+
+`elab --why` says why the costliest declarations are slow, keeping what the
+profile shows apart from what to try: a costly `simp` with Lean's own
+`simp only [...]` list for it, a termination measure Lean searched for with
+the one it found, definitions unfolded, instance searches that fail,
+`decide` and the kernel, repeated work. `leanprof fix --elab` applies the
+edits Lean computed and keeps them only if an experiment says KEEP: the
+proofs still check, the proof-preservation guard passes and the heartbeats
+went down. On Batteries, stating Lean's inferred `termination_by` cut two
+lemmas from 17.4 and 16.2 M heartbeats to 6.2 and 5.9 M
+([case study](docs/case-studies/compile-time-fixes.md)).
+`elab --max-heartbeats N` fails CI on any declaration above a budget.
+
+`leanprof html` turns a report into one self-contained page that drills
+from project to folder, module, declaration and tactic, each compared with
+a base report when given one; the published
+[Batteries and Mathlib profiles](docs/profiles/README.md) are such pages
+([compile time](docs/guide/compile-time.md)).
+
 ### Copies, allocations and counters: `run` and `explain`
 
 ```
@@ -215,6 +290,18 @@ second reference (about 7% more wall time on lean-compiler-backend).
 exact for compiled code outside Lean's precompiled libraries (`--core`
 reaches into those). Tests can assert them with `expectNoCopies` and
 `expectAllocsAtMost` ([copies and allocations](docs/guide/copies-and-allocations.md)).
+
+### Copies without running: `explain --static`
+
+`leanprof explain --static` reads the C the compiler emitted for every
+function of the package, libraries included, and flags each update likely
+to copy, with file:line, the value, why another reference is alive there
+(in the function, in a caller, or in a global) and `explain`'s fix. Nothing
+runs. Given a run report it marks which flags the run confirmed and which
+flagged functions never ran. On the repository's examples it flags all 16
+functions that copy and none of the 18 that do not; on lean-compiler-backend
+compiling zlib, 97% of the copies are in flagged functions
+([guide](docs/guide/static-copies.md)).
 
 ### Applying the fix: `leanprof fix`
 
@@ -266,22 +353,6 @@ and keeps it, so a loop of verdicts pays only the candidate's incremental
 build. `judge` refuses time measured with the load above the CPU count
 unless told otherwise ([CI and regressions](docs/guide/ci-and-regressions.md#measure-and-judge)).
 
-### Compile time: `elab` and the viewer
-
-`leanprof elab` gives the compile cost of each declaration, term and tactic
-by exact source range, split into elaboration, kernel, compiler and
-linters, in time or (`--heartbeats`) in heartbeats, which do not depend on
-the machine. It names the definitions unfolded, instances tried and simp
-lemmas behind the work, finds repeated work, and runs whole projects in
-parallel (`--project`). On a project whose Lean is not leanprof's, the first
-run builds leanprof's elaboration driver for that Lean (2 to 7 s on an M5
-Max) and caches it, so ranges are exact on every supported Lean.
-`leanprof html` turns a report into one self-contained page that drills
-from project to folder, module, declaration and tactic, each compared with
-a base report when given one; the published
-[Batteries and Mathlib profiles](docs/profiles/README.md) are such pages
-([compile time](docs/guide/compile-time.md)).
-
 ### CI: the GitHub Action
 
 The [Action](docs/guide/ci-and-regressions.md#github-action) profiles a pull
@@ -297,11 +368,19 @@ attributed, never estimated
 ### Agents: the MCP server
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
-`run`, `sample`, `stat`, `elab`, `measure`, `measure_pair`, `judge`,
-`compare`, `explain`, `hot`, `report`, the four `experiment_*` operations,
-and `live` and `dump` for a running program. Paths it writes must be inside
-the project, and the binaries it runs must be Lake-built
-([MCP server](docs/guide/live.md#mcp-server)).
+`doctor` (what the project has and which modes work), `run`, `sample`,
+`stat`, `elab`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
+`static_copies`,
+`findings` and `finding` (a ranked page of findings with stable ids, then
+one in full with its source, cause and before/after), `hot`, `report`, the
+four `experiment_*` operations, and `live` and `dump` for a running
+program. Every result has `structuredContent` matching the tool's
+`outputSchema`; failures carry an error code, whether a retry may help,
+and a hint. Paths it writes must be inside the project, and the binaries
+it runs must be Lake-built ([MCP server](docs/guide/live.md#mcp-server)).
+Every JSON file the commands write names its schema in
+[`schemas/`](schemas/) and records its provenance
+([machine-readable output](docs/guide/reference.md#machine-readable-output)).
 
 ### Tiny functions
 
@@ -330,8 +409,11 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | Allocations per function; failed in-place reuse; closure calls | `leanprof run --allocs --counters myapp` |
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
+| Live objects per allocation site at the peak and at exit, what holds them (a global `IO.Ref`, a closure, a thunk, a local), sites that keep growing | [`leanprof run --retained myapp`](docs/guide/memory.md#retained-memory-what-holds-it) |
 | A running program, live; the last seconds as a timeline | `leanprof top myapp`, `leanprof dump PID` |
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
+| Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
+| Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
@@ -453,6 +535,7 @@ reproduction.
 | Copies, allocations, failed reuse, closures | ✅ exact counts | – | – | – | – |
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time; `leanprof fix` applies three kinds | – | – | – | – |
 | Peak memory per scope, freeing pauses | ✅ | – | – | – | – |
+| What holds memory: live objects per site, the chain of holders to a global or a local | ✅ `run --retained` | – | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads | – |
 | Compile time | per file, declaration, term and tactic (exact ranges on every supported Lean: on another Lean than leanprof's, a driver is built for it once, in seconds); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published, timelines ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
 | Exact regression checks, PR comments | ✅, with the cause of each ([example](docs/guide/ci-and-regressions.md#worked-example-batteries)) | thresholded time | – | – | mean against a saved baseline, fixed threshold |

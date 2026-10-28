@@ -18,6 +18,10 @@
 #                                              base's, the measure is heartbeats
 #     nothing changed                       -> DISCARD
 #     finish                                -> the held-out input differs (exit 1)
+#   fix --elab on Tests/FixElab (compile time, through an experiment)
+#     --dry-run                             -> Lean's simp only lists, nothing changed
+#     the costliest simp calls              -> KEEP: simp only, on a new branch, with
+#                                              the evidence in the commit message
 #
 # After each step the checkout must be clean (the checks run in git worktrees
 # under .lake/leanprof/experiments). Exits 1 on any unexpected result. CI runs
@@ -62,7 +66,11 @@ expect() {
   cat "$out/try.txt"
   [ "$code" = "$want" ] || fail "try $*: exit code $code, expected $want"
   path=$(sed -n 's/^  evidence: \([^ ]*\) .*/\1/p' "$out/try.txt")
-  if [ -n "$path" ] && [ -f "$path" ]; then cp "$path" "$out/evidence.json"; else echo '{}' > "$out/evidence.json"; fi
+  if [ -n "$path" ] && [ -f "$path" ]; then
+    cp "$path" "$out/evidence.json"
+    python3 "$root/scripts/contract-check.py" --validate experiment-try "$out/evidence.json" > "$out/contract.txt" ||
+      { cat "$out/contract.txt"; fail "try $*: the evidence does not follow schemas/experiment-try.schema.json"; }
+  else echo '{}' > "$out/evidence.json"; fi
   clean "try $*"
 }
 field() { python3 -c "import json,sys; d=json.load(open(sys.argv[2])); print(eval(sys.argv[1]))" "$1" "$out/evidence.json"; }
@@ -80,12 +88,14 @@ echo "== library experiment: compile heartbeats"
 "$lp" experiment start --id lib --no-test || fail "library start"
 expect 1 lib-slow
 grep -q "compile heartbeats" "$out/try.txt" || fail "lib-slow: not judged by heartbeats"
+[ "$(field 'd["outcome"]')" = regression ] || fail "lib-slow: outcome $(field 'd["outcome"]'), not regression"
 expect 0 lib-fast
 grep -q "compile heartbeats: .* -> " "$out/try.txt" || fail "lib-fast: no heartbeat reason"
 git notes --ref=leanprof-experiments show lib-fast | grep -q "KEEP" || fail "lib-fast: no note with the evidence"
 expect 1 lib-sorry
 [ "$(field 'd["guard"]["status"]')" = FAIL ] || fail "lib-sorry: the guard did not fail"
 grep -q "sorry_dependency" "$out/try.txt" || fail "lib-sorry: no sorry finding"
+[ "$(field 'd["outcome"]')" = correctness_failure ] || fail "lib-sorry: outcome is not correctness_failure"
 "$lp" experiment finish --id lib || fail "library finish"
 
 echo
@@ -102,6 +112,7 @@ echo "-- the working tree: Array.modify, and a value that moves only beyond the 
 perl -0pi -e "$modify" Exp/Buckets.lean
 perl -0pi -e 's/let i := bucketOf v k/let i := if v == 200000 then 1 else bucketOf v k/' Exp/Buckets.lean
 "$lp" experiment try --working-tree --message "Array.modify in buckets" > "$out/try.txt" 2>&1 || fail "working tree: not KEEP (exit $?)"
+grep -q "measured on case 0 only" "$out/try.txt" || fail "working tree: the verdict does not say which case was timed"
 cat "$out/try.txt"
 clean "working tree"
 git log -1 --format=%B > "$out/message.txt"
@@ -123,6 +134,7 @@ expect 1 behaviour
 grep -q "DIFFER on 1 of 3 cases" "$out/try.txt" || fail "behaviour: not caught on exactly one case"
 grep -q "inputs/large.txt" "$out/try.txt" || fail "behaviour: the case is not named"
 [ "$(field 'd.get("exact")')" = None ] || fail "behaviour: measured after the outputs differed"
+[ "$(field 'd["outcome"]')" = correctness_failure ] || fail "behaviour: outcome is not correctness_failure"
 
 echo
 echo "-- sorry"
@@ -133,6 +145,7 @@ echo
 echo "-- a weaker statement"
 expect 3 weaker
 grep -q "signature_changed bucketOf_lt" "$out/try.txt" || fail "weaker: no signature finding"
+[ "$(field 'd["outcome"]')" = insufficient_evidence ] || fail "weaker: outcome is not insufficient_evidence"
 
 echo
 echo "-- a loosened test"
@@ -150,6 +163,7 @@ echo
 echo "-- nothing changed"
 expect 1 proof
 grep -q "changes nothing" "$out/try.txt" || fail "no change: reason"
+[ "$(field 'd["outcome"]')" = no_improvement ] || fail "no change: outcome is not no_improvement"
 
 echo
 echo "== finish: the held-out input"
@@ -161,6 +175,35 @@ grep -q "held out: DIFFER on 1 of 1" "$out/finish.txt" || fail "finish: no held-
 [ ! -e .lake/leanprof/experiments/current ] || fail "finish: the experiment is still current"
 [ "$(git worktree list | wc -l)" -eq 1 ] || fail "finish: worktrees left: $(git worktree list)"
 clean "finish"
+
+echo
+echo "== fix --elab: simp only, checked by an experiment"
+fe=$(mktemp -d "${TMPDIR:-/tmp}/leanprof-fixelab.XXXXXX")
+cp -R "$root/Tests/FixElab/." "$fe/"
+rm -rf "$fe/.lake"
+cd "$fe"
+git init -q -b main
+printf '.lake\n' > .gitignore
+git add -A
+git commit -q -m "fixture"
+lake build >/dev/null 2>&1 || fail "fix --elab: the fixture does not build"
+code=0
+"$lp" fix --elab --dry-run FixElab.lean > "$out/fixelab.txt" 2>&1 || code=$?
+cat "$out/fixelab.txt"
+[ "$code" = 0 ] || fail "fix --elab --dry-run: exit code $code"
+grep -q "+  simpa only using Nat.max_eq_right h" "$out/fixelab.txt" || fail "fix --elab --dry-run: no simpa only edit"
+clean "fix --elab --dry-run"
+code=0
+"$lp" fix --elab --no-test FixElab.lean > "$out/fixelab.txt" 2>&1 || code=$?
+cat "$out/fixelab.txt"
+[ "$code" = 0 ] || fail "fix --elab: exit code $code, expected 0 (KEEP)"
+grep -q "guard      PASS" "$(ls .lake/leanprof/fix/message.txt)" || fail "fix --elab: no guard evidence in the message"
+git show leanprof-fix/elab-FixElab > "$out/fixelab-commit.txt" 2>&1 || fail "fix --elab: no branch"
+grep -q "^+  simpa only using Nat.max_eq_right h" "$out/fixelab-commit.txt" || fail "fix --elab: the commit lacks the simpa only edit"
+grep -q "KEEP against" "$out/fixelab-commit.txt" || fail "fix --elab: no evidence in the commit message"
+[ "$(git rev-parse HEAD)" = "$(git rev-parse main)" ] || fail "fix --elab: the checkout moved"
+[ "$(git worktree list | wc -l)" -eq 1 ] || fail "fix --elab: worktrees left: $(git worktree list)"
+clean "fix --elab"
 
 [ $failed = 0 ] && echo "experiment-check: all passed"
 exit $failed
