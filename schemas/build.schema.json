@@ -402,6 +402,15 @@
                 "type": "integer",
                 "minimum": 0
               },
+              "replay_estimate_s": {
+                "type": "number"
+              },
+              "replay_error_pct": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
               "rebuilt_modules": {
                 "type": "integer",
                 "minimum": 0
@@ -445,6 +454,12 @@
               "type": "number"
             }
           }
+        },
+        "replay_mean_abs_error_pct": {
+          "type": "number"
+        },
+        "replay_max_abs_error_pct": {
+          "type": "number"
         }
       },
       "required": [

@@ -129,11 +129,19 @@ users than the rest of v0.2.0, and take priority over its long tail.
     ([case study](docs/case-studies/compile-time-fixes.md): on Batteries,
     kept edits cut three lemmas from 25.2, 17.4 and 16.3 M heartbeats to
     8.3, 6.2 and 6.0 M).
-  - [ ] *(in progress)* **Whole-project build time.** Real `lake build`
-    task timings (not inferred from the import graph): the critical path,
-    each module's slack, parallelism over time, the measured rebuild cost
-    of touching each module, and import removals accepted only after a
-    build proves them.
+  - [x] **Whole-project build time.** `leanprof build`: real `lake build`
+    process timings through a toolchain shim (not inferred from the import
+    graph), the critical path, each job's slack, parallelism over time,
+    peak memory per process, rebuild estimates checked against real
+    rebuilds (`--validate`), and import changes accepted only after a build
+    proves them (`--imports`) ([build time](docs/guide/build-time.md),
+    [case study](docs/case-studies/build-time.md)).
+  - [ ] Build time, next: a critical-path-first job order for Lake (on
+    Batteries the critical path waited for a free worker; a simulation can
+    say how much an order would save before proposing it upstream); rebuild
+    estimates for edits that keep a module's interface (Lake then skips the
+    importers); import changes across packages, checked against downstream
+    users.
   - [ ] *(in progress)* **Project-wide compile-time fixes.** Cross-file
     candidates (make a definition irreducible, an instance's priority, a
     `@[simp]` lemma tried often and rarely used), each verified by

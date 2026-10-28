@@ -93,7 +93,10 @@ def validate (o : Opts) (a : Analysis) (noop : Float) (projAbs : String) (work e
   let loadBefore ← loadNow
   let mut samples := #[]
   let mut errs : Array Float := #[]
+  let mut errsReplay : Array Float := #[]
   for (m, (_, _, e)) in picks do
+    -- the same jobs with their wall times as measured in this build (what the model would be without times alone)
+    let replay := noop + simulate (simOf a.jobs (rebuildSet a.jobs m)) a.workers a.latency
     let some j := a.jobs.find? fun j => j.kind == "lean" && j.name == m | continue
     let file := sourceIn projAbs work j
     say o s!"validate: touching {m} (estimated {fmtS e})"
@@ -103,11 +106,15 @@ def validate (o : Opts) (a : Analysis) (noop : Float) (projAbs : String) (work e
       let (r1, r2) ← touchAndBuild o work exp file (samples.size + 1)
       let ms := #[r1.elapsed, r2.elapsed]
       let ep := ms.map fun x => (e - x) / x * 100
-      errs := errs ++ ep.map Float.abs
+      let epr := ms.map fun x => (replay - x) / x * 100
+      if r1.exitCode == 0 && r2.exitCode == 0 then
+        errs := errs ++ ep.map Float.abs
+        errsReplay := errsReplay ++ epr.map Float.abs
       let actual := r1.built
       let same := pred.all actual.contains && actual.all pred.contains
       samples := samples.push <| Json.mkObj [("module", Json.str m), ("estimate_s", toJson (r3 e)),
         ("measured_s", toJson (ms.map r3)), ("error_pct", toJson (ep.map fun x => (x * 10).round / 10)),
+        ("replay_estimate_s", toJson (r3 replay)), ("replay_error_pct", toJson (epr.map fun x => (x * 10).round / 10)),
         ("predicted_modules", toJson pred.size), ("rebuilt_modules", toJson actual.size),
         ("same_modules", Json.bool same), ("module_difference", Json.str (setDifference pred actual)),
         ("exit_codes", toJson #[r1.exitCode.toNat, r2.exitCode.toNat]),
@@ -117,6 +124,8 @@ def validate (o : Opts) (a : Analysis) (noop : Float) (projAbs : String) (work e
   let maxE := errs.foldl max 0
   return Json.mkObj [("samples", Json.arr samples), ("mean_abs_error_pct", toJson ((mean errs * 10).round / 10)),
     ("max_abs_error_pct", toJson ((maxE * 10).round / 10)),
+    ("replay_mean_abs_error_pct", toJson ((mean errsReplay * 10).round / 10)),
+    ("replay_max_abs_error_pct", toJson ((errsReplay.foldl max 0 * 10).round / 10)),
     ("load", Json.mkObj [("before", toJson loadBefore), ("after", toJson (← loadNow))])]
 
 /-! ## Imports -/

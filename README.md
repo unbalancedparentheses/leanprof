@@ -244,6 +244,24 @@ a base report when given one; the published
 [Batteries and Mathlib profiles](docs/profiles/README.md) are such pages
 ([compile time](docs/guide/compile-time.md)).
 
+### Build time: `leanprof build`
+
+`leanprof build` measures a real `lake build`: every process Lake runs
+(each module's `lean`, each C compile and link), when it started and ended,
+its peak memory and CPU time, recorded through a copy of the toolchain
+whose programs run through a small shim; the build itself is an ordinary
+one that Lake reuses afterwards. It reports the critical path as it
+happened, each job's slack, how many jobs ran over time and where the build
+was serialized, and an estimate of the rebuild after touching each module
+(a scheduling simulation of the measured jobs). `--validate K` checks those
+estimates against real rebuilds in a git worktree, and `--imports K` tries
+removing imports there, keeping a change only if the package still builds
+with its proofs. On Batteries, eight touched modules rebuilt in a mean 8.9%
+from the estimate (largest 39%), and one import change, measured, cut the
+rebuild after touching `Batteries.Tactic.Basic` from 3.57 s to 0.84 s
+([build time](docs/guide/build-time.md), [case study](docs/case-studies/build-time.md)).
+`--html` draws the build as a timeline with the critical path.
+
 ### Copies, allocations and counters: `run` and `explain`
 
 ```
@@ -413,6 +431,7 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | A running program, live; the last seconds as a timeline | `leanprof top myapp`, `leanprof dump PID` |
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
 | Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
+| A real `lake build`: critical path, slack, jobs running over time, peak memory per process, rebuild cost per module (validated), imports whose removal a build proves | [`leanprof build [--clean] [--validate K] [--imports K] [--html F]`](docs/guide/build-time.md) |
 | Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
@@ -635,7 +654,7 @@ and [CONTRIBUTING.md](CONTRIBUTING.md) for the policy.
 - [Applying a fix with `leanprof fix`](docs/guide/fix.md)
 - [Experiments with `leanprof experiment`](docs/guide/experiment.md) and the [proof-preservation audit](docs/guide/proof-audit.md)
 - [Memory, frees and `leanprof stat`](docs/guide/memory.md)
-- [Compile time](docs/guide/compile-time.md)
+- [Compile time](docs/guide/compile-time.md) and [build time](docs/guide/build-time.md)
 - [In the editor](docs/guide/editor.md), [VS Code](docs/guide/vscode.md) and [HTML report](docs/guide/html-report.md)
 - [CI, regressions and autoresearch](docs/guide/ci-and-regressions.md)
 - [Live view, flight recorder and MCP server](docs/guide/live.md)

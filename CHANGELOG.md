@@ -6,6 +6,41 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Build time
+
+- `leanprof build [TARGETS]` measures a real `lake build`: every process
+  Lake runs (module elaboration, C compile, link, archive) with its start,
+  end, peak resident memory and CPU time, its dependencies (from Lake's
+  module setup files and the links' inputs) and each module's state from
+  `lake build -v` (built, up to date, from a cache). Lake takes the
+  toolchain from `LEAN_SYSROOT` (with `LAKE_OVERRIDE_LEAN`): a copy of the
+  toolchain's directory whose programs run through `leanprof-build-shim`,
+  which records each one and adds about 6 ms per process. The build is an
+  ordinary one: a plain `lake build` after it rebuilds nothing. Works on
+  Lean 4.27 to 4.35.
+- The report: the critical path as it happened, with the waits before each
+  job; each job's slack; how many jobs ran over time and the stretches where
+  at most one ran; peak memory per process; and the rebuild after touching
+  each module, estimated by a scheduling simulation of the jobs it reruns
+  (each job's time alone, the machine's cores shared) plus a measured no-op
+  build. `--clean` rebuilds the whole package first.
+- `--validate K` touches K modules in a git worktree and rebuilds, twice
+  each, to compare with the estimates and with the predicted set of
+  rebuilt modules. On Batteries: a mean error of 8.9% over 8 modules
+  (largest 39%), every rebuilt set as predicted.
+- `--imports K` ranks imports by the estimated gain from removing them (the
+  module's `.ilean` says which declarations it names, so needed imports are
+  left out and a heavy import is replaced by the modules of what it uses),
+  tries the best K in the worktree, and accepts one only if the package
+  builds with no more `sorry` warnings; the rebuild after touching the
+  removed import is then measured before and after. On Batteries one
+  change built, and cut that rebuild from 3.57 s to 0.84 s.
+- JSON in `.lake/leanprof/build.json` (`schemas/build.schema.json`), an
+  HTML timeline with the critical path (`--html`), `--from FILE` for a
+  saved report, and the MCP tool `build`.
+- `scripts/build-check.sh` runs it end to end on `Tests/Build`, in CI and on
+  every Lean version the Lean-versions workflow tests.
+
 ### Retained memory
 
 - `leanprof run --retained` follows every object compiled Lean code

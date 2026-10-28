@@ -45,12 +45,29 @@ dependencies' builds (Mathlib from its cache, for instance) stay.
 - **Rebuild after touching each module, estimated.** Touching a module
   (changing what it exports) reruns its own job, the job of every module
   that imports it, its C compile, and the links that use its object. A list
-  scheduler replays those measured durations with the same number of
-  workers (`--jobs N`, default the hardware threads, which is what Lake's
-  thread pool uses), adds the measured time between a job's last
-  dependency ending and the job starting, and adds a measured no-op build
-  (Lake loading the workspace and checking traces). The same model replayed
-  over the whole build is printed next to the measured build, as a check.
+  scheduler runs those jobs with the same number of workers (`--jobs N`,
+  default the hardware threads, which is what Lake's thread pool uses),
+  each starting a short measured time after its last dependency ends (a
+  quarter of the build's waits were shorter: Lake's own work when a worker
+  is free), and adds a measured no-op build (Lake loading the workspace and
+  checking traces).
+
+  The jobs' wall times in a clean build are not what they take in a
+  rebuild: a clean build keeps every core busy with many jobs, so each one
+  waits for a core. On Batteries the median `lean` process got half a
+  core's worth of CPU time per second of wall time. So each job is given
+  its time alone: its CPU time when that is less than its wall time (it
+  waited), else its wall time (it used several threads, and keeps that
+  many cores busy). When the running jobs want more cores than the machine
+  has, they all slow down by the same factor. Replaying the wall times as
+  measured gave rebuild estimates up to 2.5 times the real rebuilds on
+  Batteries; the time-alone model brought the mean error to 8.9%
+  ([case study](../case-studies/build-time.md)).
+
+  Both models are also run over the whole build and printed next to it:
+  the replay checks the dependencies and the scheduling (it should come
+  close to the measured build), and the time-alone model shows how much of
+  the build was lost to contention.
 
 ## How the processes are seen
 
@@ -64,7 +81,10 @@ of links to the real toolchain, whose `bin/` programs are small scripts
 calling `leanprof-build-shim`: the shim runs the real program with the same
 arguments and streams, waits for it, writes one record (start, end, exit
 code, peak memory and CPU time of the process) and exits with its exit
-code. The shim imports only `Init` and adds about 10 ms per process.
+code. The shim imports only `Init`; it adds about 6 ms to each process
+it runs (median of 300 runs of `/usr/bin/true` with and without it, on a
+loaded M5 Max: [shim-overhead.json](../case-studies/build-time/shim-overhead.json),
+`scripts/shim-overhead.py`), small next to a module's elaboration.
 
 This was chosen over the alternatives because it is the one that gives
 start times, the schedule and memory on every Lean from 4.27 to 4.35:

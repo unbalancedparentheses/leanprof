@@ -868,6 +868,8 @@ def render (r : Json) (top : Nat) : String := Id.run do
       out := out.push s!"  {jstr s "module"}: estimated {fmtS (jfloat s "estimate_s")}, measured {", ".intercalate (ms.toList.map fmtS)} (error {", ".intercalate (errs.toList.map fun e => s!"{if e > 0 then "+" else ""}{Judge.fmt2 e}%")}); rebuilt modules {if (s.getObjValAs? Bool "same_modules").toOption.getD false then "as predicted" else s!"differ: {jstr s "module_difference"}"}"
       unless (jstr s "error").isEmpty do out := out.push s!"    {jstr s "error"}"
     out := out.push s!"  mean absolute error {Judge.fmt2 (jfloat v "mean_abs_error_pct")}%, largest {Judge.fmt2 (jfloat v "max_abs_error_pct")}%"
+    unless (v.getObjVal? "replay_mean_abs_error_pct").toOption.isNone do
+      out := out.push s!"  (replaying the clean build's wall times instead: mean absolute error {Judge.fmt2 (jfloat v "replay_mean_abs_error_pct")}%, largest {Judge.fmt2 (jfloat v "replay_max_abs_error_pct")}%)"
   -- imports
   let im := jobj r "imports"
   unless im.isNull do
