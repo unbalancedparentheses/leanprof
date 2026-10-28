@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import LeanprofElab
+import Leanprof.Contract
 
 /-!
 # `leanprof build-memory`: the memory of compiling a Lake project
@@ -656,6 +657,7 @@ def report (o : Opts) (r : Result) (ncpu : Nat) : String × Json × Bool := Id.r
     out := out.push "\n  memory per command, in a serial elaboration (one command at a time, no parallel proofs; approximate):"
     for s in r.serial do out := out ++ serialText s 10
   let j := Json.mkObj [("kind", Json.str "build-memory"), ("version", toJson (1 : Nat)),
+    ("schema", Leanprof.Contract.schema "build-memory"),
     ("platform", Json.str platformName), ("cpus", toJson ncpu), ("jobs", match r.jobs with | some j => toJson j | none => Json.null),
     ("build_exit", toJson r.buildExit.toNat), ("max_concurrent", toJson most),
     ("concurrent_peak", Json.mkObj [("sum_of_peaks", toJson concPeak),
@@ -715,7 +717,9 @@ def wrappedBuild (le : Leanprof.Elab.LeanEnv) (work : FilePath) (targets : Array
 def main (argv : List String) : IO UInt32 := do
   let o ← match parseOpts {} argv with
     | .ok o => pure o
-    | .error e => IO.eprintln s!"leanprof build-memory: {e}"; return 2
+    | .error e =>
+      Leanprof.Contract.reportError "bad_argument" e
+      IO.eprintln s!"leanprof build-memory: {e}"; return 2
   let ncpu ← ncpus
   let le ← Leanprof.Elab.leanEnv
   let work : FilePath := ".lake" / "leanprof" / "build-memory"
@@ -757,6 +761,12 @@ def main (argv : List String) : IO UInt32 := do
   let (text, j, failed) := report o r ncpu
   IO.println text
   if let some dir := (o.out : FilePath).parent then IO.FS.createDirAll dir
+  let prov ← Leanprof.Contract.provenance (← Leanprof.Contract.workload "" o.files)
+    (Json.mkObj [("mode", Json.str "build-memory"), ("targets", toJson o.targets), ("clean", Json.bool o.clean),
+      ("jobs", match o.jobs with | some n => toJson n | none => Json.null), ("imports", Json.bool o.imports)])
+  let j := j.setObjVal! "provenance" prov
+  if r.buildExit != 0 then
+    Leanprof.Contract.reportError "build_failed" s!"`lake build` exited with code {r.buildExit}"
   IO.FS.writeFile o.out (j.pretty ++ "\n")
   IO.println s!"\n  report: {o.out}"
   return if failed then 1 else if r.buildExit != 0 then r.buildExit else 0

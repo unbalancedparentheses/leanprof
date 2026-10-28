@@ -81,4 +81,7 @@ python3 -c 'import json,sys; d=json.load(open("j1.json")); sys.exit(0 if d["max_
 # the HTML report
 "$lp" html -o bm.html bm.json > /dev/null
 python3 "$root/scripts/check-html.py" bm.html --expect '"kind":"build-memory"' --expect '"peak_rise"'
+# the reports follow schemas/build-memory.schema.json
+python3 "$root/scripts/contract-check.py" --validate build-memory bm.json budget.json j1.json > contract.txt ||
+  { cat contract.txt; fail "a report does not follow its schema"; }
 echo "build-memory-check: all checks passed"

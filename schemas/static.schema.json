@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/static.schema.json",
+  "title": "leanprof static copies",
+  "description": "Likely copies of shared arrays and strings found in the compiler's IR without running anything (`leanprof explain --static --json`, .lake/leanprof/static.json); with a run report, what the run said about each (`runtime.status`).",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.static"
+        }
+      }
+    },
+    "static": {
+      "const": true
+    },
+    "modules": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "functions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "updates": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "where": {
+            "type": "string"
+          },
+          "declaration": {
+            "type": "string"
+          },
+          "function": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "cause": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "fix_code": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "strength": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "via": {
+            "type": "string"
+          },
+          "loop": {
+            "type": "boolean"
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "copies": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "where",
+          "declaration",
+          "kind",
+          "operation",
+          "value",
+          "cause",
+          "why",
+          "confidence",
+          "runtime"
+        ]
+      }
+    },
+    "hidden_string_flags": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "suppressed_empty": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "report": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "confirmed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stale_sources": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "static",
+    "modules",
+    "functions",
+    "updates",
+    "flags",
+    "hidden_string_flags",
+    "report",
+    "confirmed"
+  ]
+}

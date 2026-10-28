@@ -197,7 +197,12 @@ def inventory(project, timeout):
     for name in sorted(set(names) - {""}):
         path = project / name
         if path.is_symlink():
-            raise ValueError(f"Symlink source is unsupported: {name}")
+            # A link is recorded by its target, never followed: a changed target changes the
+            # inventory. A Lean source behind a link could change without its link changing.
+            if name.endswith(".lean"):
+                raise ValueError(f"Symlink Lean source is unsupported: {name}")
+            files[name] = "symlink:" + hashlib.sha256(os.readlink(path).encode()).hexdigest()
+            continue
         if path.is_file():
             files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
         elif path.exists():

@@ -232,6 +232,8 @@ jobs:
         run: python3 -B Tests/ProofAudit/check.py
       - name: leanprof experiment end to end (KEEP, DISCARD, guard refusals, heartbeats, held-out inputs)
         run: sh scripts/experiment-check.sh
+      - name: JSON contract (every command's output against schemas/)
+        run: python3 scripts/contract-check.py .lake/build/bin/leanprof
       - name: The Action's comment step finds its comment by tag (tags are data)
         run: sh scripts/comment-check.sh
       - name: Interleaved measurement and paired verdicts

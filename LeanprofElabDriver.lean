@@ -136,7 +136,32 @@ node around it. -/
     modifyTraces (old ++ ·)
   MonadExcept.ofExcept res
 
-def wrapTactic (t : Tactic.Tactic) : Tactic.Tactic := fun stx => withSource tacticCls stx (t stx)
+/-- The tactics whose `Try this: … only […]` suggestion (`tactic.simp.trace`) `leanprof elab
+--why` reads: their whole source range is recorded, since the suggestion's message
+covers only the first word. -/
+def simpKinds : List Name :=
+  [`Lean.Parser.Tactic.simp, `Lean.Parser.Tactic.simpAll, `Lean.Parser.Tactic.simpa, `Lean.Parser.Tactic.dsimp]
+
+/-- Set (with `--why`) where the source ranges of `simpKinds` tactics are recorded. -/
+def whyOpt : Name := `leanprof.why
+
+/-- The source ranges recorded for `--why`: start and end byte, syntax kind. -/
+abbrev Ranges := IO.Ref (Array (Nat × Nat × Name))
+
+/-- Whether `stx` contains an antiquotation (`$h`, as in Mathlib's `congr($h + 1)`). -/
+partial def hasAntiquot (stx : Syntax) : Bool :=
+  stx.isAntiquot || stx.getArgs.any hasAntiquot
+
+def wrapTactic (ranges : Ranges) (t : Tactic.Tactic) : Tactic.Tactic := fun stx => do
+  if simpKinds.contains stx.getKind && (← getOptions).getBool whyOpt then
+    if let (some s, some e) := (stx.getPos? (canonicalOnly := true), stx.getTailPos? (canonicalOnly := true)) then
+      ranges.modify (·.push (s.byteIdx, e.byteIdx, stx.getKind))
+    -- `tactic.simp.trace` per call, not for the whole file: on a call with an antiquotation
+    -- (`simpa using congr($h + 1)`) Lean 4.35 fails with "Unknown constant
+    -- `term.pseudo.antiquot`", which would stop the profile there
+    return ← withOptions (·.setBool `tactic.simp.trace (!hasAntiquot stx)) <|
+      withSource tacticCls stx (t stx)
+  withSource tacticCls stx (t stx)
 
 def wrapTerm (t : Term.TermElab) : Term.TermElab := fun stx ty => withSource termCls stx (t stx ty)
 
@@ -151,9 +176,9 @@ def wrapMacro (mac : Macro) : Macro := fun stx => do
   | _, _ => return out
 
 /-- The environment with every term and tactic elaborator and every macro wrapped. -/
-def instrument (env : Environment) : Environment :=
+def instrument (ranges : Ranges) (env : Environment) : Environment :=
   let env := Tactic.tacticElabAttribute.ext.modifyState env fun s =>
-    { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTactic e.value }) }
+    { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTactic ranges e.value }) }
   let env := Term.termElabAttribute.ext.modifyState env fun s =>
     { s with table := s.table.fold (init := {}) fun t k es => t.insert k (es.map fun e => { e with value := wrapTerm e.value }) }
   macroAttribute.ext.modifyState env fun s =>
@@ -213,6 +238,8 @@ structure Ctx where
   fullNames : Bool
   /-- Describe only commands and source nodes: a compact profile reads nothing else. -/
   compact : Bool
+  /-- `--why`: commands' end positions too. -/
+  why : Bool := false
 
 /-- The source between two byte positions on one line, at most 100 characters. -/
 def excerpt (src : String) (s e : Nat) : String :=
@@ -273,11 +300,14 @@ partial def render (c : Ctx) (root : Option String) (depth : Nat) (wrap : Messag
   | _ => return out
 
 /-- Print `lines` as a `lean --json` message at `pos`. -/
-def emit (c : Ctx) (pos : String.Pos.Raw) (lines : Array String) : IO Unit := do
+def emit (c : Ctx) (pos : String.Pos.Raw) (lines : Array String) (endPos : Option String.Pos.Raw := none) :
+    IO Unit := do
   let p := c.fm.toPosition pos
-  IO.println (Json.mkObj [("severity", "information"),
-    ("pos", Json.mkObj [("line", p.line), ("column", p.column)]),
-    ("data", Json.str ("\n".intercalate lines.toList))]).compress
+  let q := endPos.map c.fm.toPosition
+  IO.println (Json.mkObj (([("severity", Json.str "information"),
+    ("pos", Json.mkObj [("line", p.line), ("column", p.column)])] : List (String × Json)) ++
+    (match q with | some q => [("endPos", Json.mkObj [("line", q.line), ("column", q.column)])] | none => []) ++ [
+    ("data", Json.str ("\n".intercalate lines.toList))])).compress
 
 /-- Print one retained trace as a `lean --json` message at `pos`. -/
 def emitTrace (c : Ctx) (pos : String.Pos.Raw) (t : TraceElem) : IO Unit := do
@@ -289,7 +319,9 @@ def emitTrace (c : Ctx) (pos : String.Pos.Raw) (t : TraceElem) : IO Unit := do
     | .withContext _ (.trace d _ _) | .trace d _ _ => d.cls == `Elab.command
     | _ => false
   let lines ← render c (if isCommand then root else none) 0 id #[] t.msg
-  unless lines.isEmpty do emit c pos lines
+  -- with `--why`, where the command ends (`lean --json` gives it too): `elab --why` inserts
+  -- a `termination_by` after it
+  unless lines.isEmpty do emit c pos lines (if isCommand && c.why then t.ref.getTailPos? else none)
 
 /-! ## Running the frontend -/
 
@@ -299,6 +331,7 @@ structure Args where
   threshold : Nat := 1
   defs : Bool := false
   counts : Bool := false
+  why : Bool := false
   setup : Option String := none
   file : String := ""
 
@@ -308,6 +341,7 @@ partial def parseArgs (a : Args) : List String → Except String Args
   | "--heartbeats" :: r => parseArgs { a with heartbeats := true } r
   | "--defs" :: r => parseArgs { a with defs := true } r
   | "--counts" :: r => parseArgs { a with counts := true } r
+  | "--why" :: r => parseArgs { a with why := true } r
   | "--threshold" :: v :: r => parseArgs { a with threshold := v.toNat! } r
   | "--setup" :: f :: r => parseArgs { a with setup := some f } r
   | f :: r => if f.startsWith "--" then .error s!"unknown option {f}" else parseArgs { a with file := f } r
@@ -342,6 +376,10 @@ def run (a : Args) : IO UInt32 := do
               `Meta.isDefEq.delta.unfoldLeftRight, `Meta.Tactic.simp.rewrite] do
       opts := opts.setBool (`trace ++ c) true
     if a.counts then opts := opts.setBool `diagnostics true |>.set `diagnostics.threshold (0 : Nat)
+  -- `--why`: every recursive definition whose termination measure Lean had to search for
+  -- says which it found; every `simp` says which lemmas it used (`tactic.simp.trace`, set
+  -- per call by `wrapTactic`)
+  if a.why then opts := opts.setBool `showInferredTerminationBy true
   if let some s := setup? then opts := opts.mergeBy (fun _ _ v => v) s.options.toOptions
   opts := Elab.async.setIfNotSet opts true
   opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
@@ -355,10 +393,13 @@ def run (a : Args) : IO UInt32 := do
   let mut opts' ← Language.Lean.reparseOptions opts
   -- not a registered option: set after Lean checks them
   if a.compact then opts' := opts'.setBool compactOpt true
-  let cmdState := Command.mkState (instrument env) {} opts'
+  if a.why then opts' := opts'.setBool whyOpt true
+  let ranges : Ranges ← IO.mkRef #[]
+  let cmdState := Command.mkState (instrument ranges env) {} opts'
   let cmdState := { cmdState with infoState.enabled := true }
   let first ← Language.Lean.processCommands inputCtx parserState cmdState
-  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact }
+  let c : Ctx := { fm := inputCtx.fileMap, src := input, hb := a.heartbeats, fullNames := a.defs, compact := a.compact,
+                   why := a.why }
   -- messages and traces of each snapshot as it completes, in order
   let lastPos ← IO.mkRef (0 : String.Pos.Raw)
   let errors ← IO.mkRef false
@@ -372,6 +413,14 @@ def run (a : Args) : IO UInt32 := do
       emitTrace c pos t
   -- the kernel's work on the last declarations
   let _ ← IO.wait (lastCmd first.get).elabSnap.resultSnap.get.cmdState.env.checked
+  -- `--why`: the whole range of each `simp` (its suggestion's message covers its first word)
+  for (s, e, kind) in ← ranges.get do
+    let p := c.fm.toPosition ⟨s⟩
+    let q := c.fm.toPosition ⟨e⟩
+    IO.println (Json.mkObj [("severity", "information"),
+      ("pos", Json.mkObj [("line", p.line), ("column", p.column)]),
+      ("endPos", Json.mkObj [("line", q.line), ("column", q.column)]),
+      ("data", Json.str s!"leanprof-range {kind}")]).compress
   return if ← errors.get then 1 else 0
 
 /-! ## Memory per command (`--memory`)
@@ -532,6 +581,6 @@ def main (args : List String) : IO UInt32 := do
     | .error e => IO.eprintln s!"leanprof-elab-driver: {e}"; return 2
   match Leanprof.ElabDriver.parseArgs {} args with
   | .error e =>
-    IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--threshold N] [--setup FILE] FILE.lean"
+    IO.eprintln s!"leanprof-elab-driver: {e}\nusage: leanprof-elab-driver [--compact] [--heartbeats] [--defs] [--counts] [--why] [--threshold N] [--setup FILE] FILE.lean"
     return 2
   | .ok a => Leanprof.ElabDriver.run a

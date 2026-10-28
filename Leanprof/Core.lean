@@ -185,4 +185,17 @@ bytes. Takes a sample, so it also updates the timeline's memory track. -/
 @[extern "leanprof_peak_memory"]
 opaque peakMemory : BaseIO Nat
 
+/-- With retained memory on (`leanprof run --retained`): walk the heap now
+and keep the result for the report, as the walks at the peak and at exit
+are (the first 8 are kept). A server can call it at a moment worth seeing,
+a test at a moment it knows. Does nothing when retained memory is off. -/
+@[extern "leanprof_retained_snapshot"]
+opaque retainedSnapshot : BaseIO Unit
+
+/-- With retained memory on: bytes of the objects compiled code allocated
+that are alive now (as far as leanprof has seen them freed); `none` when
+retained memory is off. -/
+@[extern "leanprof_retained_live"]
+opaque retainedLive : BaseIO (Option Nat)
+
 end Leanprof
