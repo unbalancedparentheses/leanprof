@@ -2,7 +2,7 @@
 
 ```
 leanprof elab [--heartbeats] [--compact] [--top N] [--out FILE] FILE.lean...
-leanprof elab --project [--module-glob GLOB] [--jobs N] [--heartbeats] [--compact]
+leanprof elab --project [--module-glob GLOB] [--jobs N] [--cache DIR] [--heartbeats] [--compact]
 leanprof elab --heartbeats --why FILE.lean...       # why the costliest declarations are slow
 leanprof elab --max-heartbeats N FILE.lean...       # every declaration above a budget (for CI)
 leanprof fix --elab FILE.lean...                    # apply Lean's own fixes, checked
@@ -314,6 +314,18 @@ or, for modules fetched from a cache that were never compiled locally
 (comma-separated, `*` and `?`) profiles only the matching modules.
 Batteries' 195 modules take 17 s on 18 cores (15 s with `--compact`),
 against 13 s for a clean `lake build` ([case study](../case-studies/batteries.md)).
+
+For a project that takes hours, `--cache DIR` keeps each module's result
+in `DIR` as soon as it is profiled (one JSON file per module) and a later
+run with the same options reads it instead of elaborating the module again:
+the run can be stopped and resumed, or split into several runs with
+`--module-glob` and finished by a run over everything, which then only
+merges. A cached result is used only when the module's source, leanprof,
+the Lean and its search path and the options that change what is recorded
+(`--heartbeats`, `--threshold`, `--counts`, `--compact`, `--why`, the
+driver) are all the same; the report is then the one a single run would
+write, to the bit. All of Mathlib was profiled this way
+([published profiles](../profiles/README.md)).
 
 Lean processes running side by side slow each other down: on Batteries the
 times add up to 118 s with 9 at a time and 77 s one at a time. Heartbeats

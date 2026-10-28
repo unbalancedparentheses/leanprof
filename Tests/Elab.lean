@@ -116,6 +116,18 @@ def run (check : String → Bool → String → StateT Nat IO Unit) : StateT Nat
   let a := a.addMessage "F.lean" 1 (msg "[Elab.command] [7] ✅️ def c := 1" 30)
   check "elab: a command and the command it expands into are not counted twice"
     (near a.grand 111 && near ((a.lines.get? "F.lean:3").map (·.total) |>.getD 0) 111) s!"grand={a.grand}"
+  -- `--cache`: a file's result written and read back is the same result, to the bit
+  let b := a.addMessage "F.lean" 1e9 (msg sample 40)
+  let fc : FileCost := { module := "F", total := 0.1, wallNs := 7, errors := 1, firstError := "3: x" }
+  let sr : SrcRange := { range := "3:0-3:9", line := 3, kind := "k", text := "simp" }
+  let rc : RangeCost := { total := 1 / 3, count := 2, tactic := true, src := sr }
+  let b := { b with files := #[("F.lean", fc)], ranges := b.ranges.insert "F.lean:3:0-3:9" rc }
+  let back := (Lean.Json.parse (Ser.enc b).compress >>= Ser.dec (α := Acc))
+  check "elab: a file's result is the same after the cache"
+    (match back with
+     | .ok c => summary c == summary b && c.grand.toBits == b.grand.toBits && c.files.size == 1 &&
+         (c.files[0]?.map (·.2.firstError)) == some "3: x" && ((c.ranges.get? "F.lean:3:0-3:9").map (·.total.toBits)) == some (1 / 3 : Float).toBits
+     | .error _ => false) (match back with | .ok _ => "" | .error e => e)
   -- exact source ranges: the driver's source nodes (a tactic sequence, a tactic whose
   -- macro expansion has its range, a term nested on the same line)
   check "elab: a source node's description"

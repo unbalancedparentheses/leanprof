@@ -901,6 +901,9 @@ structure Opts where
   /-- `--max-heartbeats N`: list every declaration above N (in `maxHeartbeats`' unit, 1,000
   heartbeats) and exit 1 if there is one. -/
   maxHeartbeats : Option Nat := none
+  /-- `--cache DIR`: each file's result is kept in DIR and reused by a later run with the
+  same options (`cacheLoad`): a long run can be stopped, resumed and split. -/
+  cache : String := ""
 
 def Opts.thresholdValue (o : Opts) : Nat :=
   o.threshold.getD (if o.heartbeats then 10000 else 1)
@@ -1124,6 +1127,125 @@ partial def profileFile (le : LeanEnv) (o : Opts) (file module : String) : IO Ac
       return b
   return a
 
+/-! ## Per-file results on disk (`--cache DIR`)
+
+A whole-project run over thousands of modules takes hours: with `--cache DIR` each file's
+result is written to `DIR` as soon as it is profiled, and a later run with the same options
+reads it instead of elaborating the file again. Runs can then be stopped and resumed, or
+split by `--module-glob` and merged by a last run over everything. Floats are kept as their
+bits, so a merge from the cache gives exactly the numbers of a merge in memory. -/
+
+/-- A value as JSON and back, for the cache. -/
+class Ser (α : Type) where
+  enc : α → Json
+  dec : Json → Except String α
+
+instance : Ser Nat := ⟨toJson, fromJson?⟩
+instance : Ser String := ⟨toJson, fromJson?⟩
+instance : Ser Bool := ⟨toJson, fromJson?⟩
+instance : Ser Float := ⟨fun x => toJson x.toBits.toNat, fun j => do return Float.ofBits (← fromJson? (α := Nat) j).toUInt64⟩
+instance [Ser α] [Ser β] : Ser (α × β) where
+  enc p := Json.arr #[Ser.enc p.1, Ser.enc p.2]
+  dec j := do
+    let a ← j.getArr?
+    match a[0]?, a[1]? with
+    | some x, some y => return (← Ser.dec x, ← Ser.dec y)
+    | _, _ => throw "pair expected"
+instance [Ser α] : Ser (Array α) where
+  enc xs := Json.arr (xs.map Ser.enc)
+  dec j := do (← j.getArr?).mapM Ser.dec
+instance [BEq α] [Hashable α] [Ser α] [Ser β] : Ser (Std.HashMap α β) where
+  enc m := Ser.enc m.toArray
+  dec j := do return Std.HashMap.ofList (← Ser.dec (α := Array (α × β)) j).toList
+instance [BEq α] [Hashable α] [Ser α] : Ser (Std.HashSet α) where
+  enc s := Ser.enc s.toArray
+  dec j := do return Std.HashSet.ofList (← Ser.dec (α := Array α) j).toList
+
+/-- `j[i]`, decoded. -/
+def Ser.at [Ser α] (j : Array Json) (i : Nat) : Except String α :=
+  match j[i]? with
+  | some x => Ser.dec x
+  | none => throw s!"field {i} missing"
+
+instance : Ser LineCost where
+  enc c := Json.arr #[Ser.enc c.total, Ser.enc c.elaboration, Ser.enc c.kernel, Ser.enc c.compile, Ser.enc c.lint,
+    Ser.enc c.name, Ser.enc c.declared, Ser.enc c.top, Ser.enc c.consts, Ser.enc c.ops, Ser.enc c.diag, Ser.enc c.failedInst]
+  dec j := do
+    let a ← j.getArr?
+    return { total := ← Ser.at a 0, elaboration := ← Ser.at a 1, kernel := ← Ser.at a 2, compile := ← Ser.at a 3,
+             lint := ← Ser.at a 4, name := ← Ser.at a 5, declared := ← Ser.at a 6, top := ← Ser.at a 7,
+             consts := ← Ser.at a 8, ops := ← Ser.at a 9, diag := ← Ser.at a 10, failedInst := ← Ser.at a 11 }
+
+instance : Ser OpCost where
+  enc c := Json.arr #[Ser.enc c.count, Ser.enc c.total, Ser.enc c.maxOne, Ser.enc c.firstAt, Ser.enc c.files]
+  dec j := do
+    let a ← j.getArr?
+    return { count := ← Ser.at a 0, total := ← Ser.at a 1, maxOne := ← Ser.at a 2, firstAt := ← Ser.at a 3, files := ← Ser.at a 4 }
+
+instance : Ser ConstCost where
+  enc c := Json.arr #[Ser.enc c.kind, Ser.enc c.cost, Ser.enc c.count, Ser.enc c.sites, Ser.enc c.diag]
+  dec j := do
+    let a ← j.getArr?
+    return { kind := ← Ser.at a 0, cost := ← Ser.at a 1, count := ← Ser.at a 2, sites := ← Ser.at a 3, diag := ← Ser.at a 4 }
+
+instance : Ser FileCost where
+  enc c := Json.arr #[Ser.enc c.module, Ser.enc c.total, Ser.enc c.elaboration, Ser.enc c.kernel, Ser.enc c.compile,
+    Ser.enc c.lint, Ser.enc c.wallNs, Ser.enc c.errors, Ser.enc c.firstError]
+  dec j := do
+    let a ← j.getArr?
+    return { module := ← Ser.at a 0, total := ← Ser.at a 1, elaboration := ← Ser.at a 2, kernel := ← Ser.at a 3,
+             compile := ← Ser.at a 4, lint := ← Ser.at a 5, wallNs := ← Ser.at a 6, errors := ← Ser.at a 7,
+             firstError := ← Ser.at a 8 }
+
+instance : Ser RangeCost where
+  enc c := Json.arr #[Ser.enc c.total, Ser.enc c.count, Ser.enc c.tactic, Ser.enc c.src.range, Ser.enc c.src.line,
+    Ser.enc c.src.kind, Ser.enc c.src.text]
+  dec j := do
+    let a ← j.getArr?
+    return { total := ← Ser.at a 0, count := ← Ser.at a 1, tactic := ← Ser.at a 2,
+             src := { range := ← Ser.at a 3, line := ← Ser.at a 4, kind := ← Ser.at a 5, text := ← Ser.at a 6 } }
+
+/-- What a file's result keeps once profiled (the fields `Acc.merge` reads). -/
+instance : Ser Acc where
+  enc a := Json.mkObj [("lines", Ser.enc a.lines), ("by_class", Ser.enc a.byClass), ("ops", Ser.enc a.ops),
+    ("consts", Ser.enc a.consts), ("files", Ser.enc a.files), ("grand", Ser.enc a.grand), ("tactics", Ser.enc a.tactics),
+    ("exact", Ser.enc a.exact), ("ranges", Ser.enc a.ranges), ("tactic_ranges", Ser.enc a.tacticRanges),
+    ("suggestions", Ser.enc a.suggestions), ("tac_ranges", Ser.enc a.tacRanges), ("measures", Ser.enc a.measures),
+    ("cmd_ends", Ser.enc a.cmdEnds)]
+  dec j := do
+    let f {α} [Ser α] (k : String) : Except String α := do Ser.dec (← j.getObjVal? k)
+    return { lines := ← f "lines", byClass := ← f "by_class", ops := ← f "ops", consts := ← f "consts",
+             files := ← f "files", grand := ← f "grand", tactics := ← f "tactics", exact := ← f "exact",
+             ranges := ← f "ranges", tacticRanges := ← f "tactic_ranges", suggestions := ← f "suggestions",
+             tacRanges := ← f "tac_ranges", measures := ← f "measures", cmdEnds := ← f "cmd_ends" }
+
+/-- What decides a file's result besides its source: the options that change what is
+recorded, which Lean elaborates it with which search path, and leanprof itself. -/
+def cacheKey (le : LeanEnv) (o : Opts) (source : String) : String :=
+  s!"v1 {Lean.githash} {le.lean} {hash le.path} {o.heartbeats} {o.thresholdValue} {o.diagnostics} {o.defs} {o.compact} {o.why} {o.driver && !le.driver.isEmpty} {o.setup} {hash source}"
+
+def cacheFile (o : Opts) (module : String) : FilePath := (o.cache : FilePath) / s!"{module}.json"
+
+/-- The file's result from the cache, if it was profiled with the same key. -/
+def cacheLoad (le : LeanEnv) (o : Opts) (file module : String) : IO (Option Acc) := do
+  if o.cache.isEmpty then return none
+  let some text ← (try some <$> IO.FS.readFile (cacheFile o module) catch _ => pure none) | return none
+  let key := cacheKey le o (← try IO.FS.readFile file catch _ => pure "")
+  let some j := (Json.parse text).toOption | return none
+  if (j.getObjValAs? String "key").toOption != some key then return none
+  return (j.getObjVal? "acc" >>= Ser.dec).toOption
+
+/-- Keep the file's result in the cache (written whole, then renamed into place, so a run
+stopped while writing leaves no partial result). -/
+def cacheSave (le : LeanEnv) (o : Opts) (file module : String) (a : Acc) : IO Unit := do
+  if o.cache.isEmpty then return
+  IO.FS.createDirAll o.cache
+  let key := cacheKey le o (← try IO.FS.readFile file catch _ => pure "")
+  let dst := cacheFile o module
+  let tmp : FilePath := dst.toString ++ ".tmp"
+  IO.FS.writeFile tmp (Json.mkObj [("key", Json.str key), ("file", Json.str file), ("acc", Ser.enc a)]).compress
+  IO.FS.rename tmp dst
+
 /-- Profile `files` with `jobs` Lean processes at a time; results in the order of `files`. -/
 def profileAll (le : LeanEnv) (o : Opts) (files : Array (String × String)) (jobs : Nat) : IO (Array Acc) := do
   let next ← IO.mkRef 0
@@ -1134,12 +1256,18 @@ def profileAll (le : LeanEnv) (o : Opts) (files : Array (String × String)) (job
       let i ← next.modifyGet fun i => (i, i + 1)
       if h : i < files.size then
         let (file, module) := files[i]
-        let a ← profileFile le o file module
+        let cached ← cacheLoad le o file module
+        let a ← match cached with
+          | some a => pure a
+          | none => do
+            let a ← profileFile le o file module
+            cacheSave le o file module a
+            pure a
         results.modify (·.set! i a)
         let d ← done.modifyGet fun d => (d + 1, d + 1)
         if files.size > 1 then
           let f := (a.files[0]?.map (·.2)).getD {}
-          IO.eprintln s!"[{d}/{files.size}] {file} ({fmt2 (f.wallNs.toFloat / 1e9)} s{if f.errors > 0 then s!", {f.errors} errors" else ""})"
+          IO.eprintln s!"[{d}/{files.size}] {file} ({fmt2 (f.wallNs.toFloat / 1e9)} s{if f.errors > 0 then s!", {f.errors} errors" else ""}{if cached.isSome then ", cached" else ""})"
       else break
   let tasks ← (List.range (max 1 (min jobs files.size))).mapM fun _ => IO.asTask worker (prio := .dedicated)
   for t in tasks do
@@ -1336,6 +1464,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--no-defs" :: rest => parseOpts { o with defs := false } rest
   | "--counts" :: rest => parseOpts { o with diagnostics := true } rest
   | "--no-build" :: rest => parseOpts { o with build := false } rest
+  | "--cache" :: d :: rest => parseOpts { o with cache := d } rest
   | "--threshold" :: v :: rest => parseOpts { o with threshold := some v.toNat! } rest
   | "--no-driver" :: rest => parseOpts { o with driver := false } rest
   | "--compact" :: rest => parseOpts { o with compact := true } rest
@@ -1494,7 +1623,7 @@ opaque hardwareConcurrency : Unit → UInt32
 def main (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
   if o.files.isEmpty && !o.project then
-    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--compact] [--why] [--max-heartbeats N] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]"
+    throw <| IO.userError "usage: leanprof elab [--heartbeats] [--project | --module-glob GLOB] [--jobs N] [--counts] [--compact] [--why] [--max-heartbeats N] [--threshold N] [--no-defs] [--no-driver] [--cache DIR] [--top N] [--out FILE] [FILE.lean...]"
   let tStart ← IO.monoNanosNow
   -- the modules must be built: their imports are read from `.olean` files
   if o.project && o.build then

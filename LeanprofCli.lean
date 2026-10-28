@@ -68,11 +68,12 @@ def commands : List (String × String × String) := [
     "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
     "Needs samply: the one on PATH, else the one `install.sh --samply` put in leanprof's home\n" ++
     "(`leanprof doctor` says how to get it)."),
-  ("elab", "[--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [--since-last [--keep-base]] [FILE.lean...]",
+  ("elab", "[--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project | --module-glob GLOB] [--jobs N] [--cache DIR] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [--since-last [--keep-base]] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
-    "the package in parallel (--module-glob: those matching, e.g. 'Foo.Data.*'). --counts adds Lean's exact\n" ++
+    "the package in parallel (--module-glob: those matching, e.g. 'Foo.Data.*'); --cache DIR keeps each file's\n" ++
+    "result in DIR and reuses it in a later run with the same options (stop, resume, split). --counts adds Lean's exact\n" ++
     "unfold counts (slower). --heartbeats counts\n" ++
     "heartbeats, which are nearly the same on every run. Terms and tactics are timed by exact source range\n" ++
     "(line:column); --compact times only those (close to plain lean). On another Lean than leanprof's,\n" ++
