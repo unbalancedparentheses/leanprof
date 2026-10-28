@@ -135,6 +135,11 @@ All profiled from outside, without changing the projects:
   three of them (`Formula.lean` 8.2 s → 2.6 s, `FourierTransform.lean`
   about 10 s → 3.5 s, `LpSpace.lean` 3.6 s → 2.1 s), producing the same
   terms. The patches are [ready](docs/upstream/mathlib/), not sent.
+- **[Memory of compilation](docs/case-studies/build-memory.md)**: `import
+  Mathlib` alone is 5.44 GiB resident but 853 MiB private (the rest is
+  shared `.olean` pages); a copy of Mathlib's `MayerVietoris` needs 714 MiB
+  of its own. Under an 8 GiB limit, 2 jobs are safe for that project, and
+  a build at 2 jobs stayed at 7.20 GiB.
 - **[Lake and the language server](docs/case-studies/lake-and-server.md)**:
   seven candidate Lean patches; four of them make a no-op `lake build` of a
   Mathlib project 19% faster (1.58 s → 1.29 s), another cuts the server's
@@ -362,8 +367,9 @@ and its own elaboration; which modules ran together at the build's peak;
 the most jobs that keep the build under `--mem-limit`; and `--max-memory`, a
 per-module budget that fails CI. `--decls N` elaborates the heaviest
 modules serially and names the commands during which memory peaked, labeled
-approximate: when memory was reached, not who owns it. On Batteries the
-numbers agree with `/usr/bin/time -l` to about 1%
+approximate: when memory was reached, not who owns it. On Batteries and a
+project using Mathlib the numbers agree with `/usr/bin/time -l` within 1%
+(resident set) and 3% (footprint)
 ([memory of compilation](docs/guide/compile-time.md#memory-of-compilation),
 [case study](docs/case-studies/build-memory.md)).
 

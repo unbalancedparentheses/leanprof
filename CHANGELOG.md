@@ -29,8 +29,9 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 - `build-memory.json` (`schemas/build-memory.schema.json`), a Build memory tab in `leanprof html`, and the MCP
   tool `build_memory`. `scripts/build-memory-check.sh` runs it on a real
   build in CI, on every supported Lean.
-- Measured on Batteries, leanprof and a project using Mathlib: within about
-  1% of `/usr/bin/time -l` ([case study](docs/case-studies/build-memory.md)).
+- Measured on Batteries, leanprof and a project using Mathlib: within 1%
+  (resident set) and 3% (footprint) of `/usr/bin/time -l`
+  ([case study](docs/case-studies/build-memory.md)).
 
 ### Retained memory
 

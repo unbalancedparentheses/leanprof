@@ -1,0 +1,27 @@
+Build completed successfully (9051 jobs).
+leanprof build-memory: 4 modules compiled by `lake build`, at most 2 at a time (macOS, 18 CPUs, --jobs 2)
+
+  peak memory of each module's `lean` process:
+    peak RSS  footprint    imports        own     wall  module
+    5.44 GiB    858 MiB          -          -   31.1 s  Mlp.All
+    1.76 GiB    947 MiB          -          -   59.7 s  Mlp.MayerVietoris
+    1.57 GiB    611 MiB          -          -   36.9 s  Mlp.Tilde
+    1.29 GiB    416 MiB          -          -   33.2 s  Mlp.FourierTransform
+  peak RSS: resident set, with the pages of mapped .olean files, which processes share
+  footprint: what macOS charges the process (its private memory), without the mapped files
+
+  modules running at the same time: their peaks add up to at most 7.20 GiB
+    (Mlp.All, Mlp.MayerVietoris)
+  sampled every 0.2 s while the build ran (498 samples):
+    resident sets added up: 5.44 GiB at most
+    private memory added up, plus the largest shared part once: 5.44 GiB at most
+    (Mlp.All)
+
+  memory limit 8.00 GiB:
+    no module's peak is above 75% of it
+    jobs: at most 2 at once is safe: the 2 largest resident peaks add up to 7.20 GiB
+    with the shared .olean pages counted once (the 4 largest private peaks plus the largest shared part, 4.61 GiB): any number of jobs, 7.37 GiB; an estimate, not a bound
+    Lake runs as many jobs as it has Lean threads: `LEAN_NUM_THREADS=2 lake build` (each `lean` then has 2 threads too); `leanprof build-memory --clean --jobs 2` runs the build that way, with each `lean` at its usual threads, and measures it
+
+  report: mlp-j2.json
+rc=0

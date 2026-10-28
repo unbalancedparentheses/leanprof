@@ -10,3 +10,9 @@ load after: 14:13  up 14 days,  2:21, 31 users, load averages: 14.88 16.36 30.27
 == dog-cli
 load before: 14:28  up 14 days,  2:36, 32 users, load averages: 7.94 10.77 18.09
 load after: 14:28  up 14 days,  2:36, 32 users, load averages: 7.90 10.57 17.85
+== mlp2
+load before: 12:24  up 15 days, 32 mins, 31 users, load averages: 16.85 13.11 11.31
+load after: 12:25  up 15 days, 34 mins, 31 users, load averages: 21.10 15.41 12.34
+== mlp-j2
+load before: 12:34  up 15 days, 42 mins, 31 users, load averages: 158.27 80.76 43.55
+load after: 12:36  up 15 days, 44 mins, 31 users, load averages: 105.86 89.18 51.54

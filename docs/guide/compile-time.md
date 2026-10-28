@@ -482,9 +482,12 @@ that moment, so leanprof does not report it per command.
 `build-memory` writes `.lake/leanprof/build-memory.json` (`--out FILE`),
 which `leanprof html` shows as a Build memory tab, and the MCP server has a
 `build_memory` tool. The numbers agree with `/usr/bin/time -l` on the same
-`lean` command lines to about 1%; the wrapper uses 1.4 MiB per running
-`lean` and leanprof 45 MiB, and the import measurement adds a `lean` run per
-module after the build (on Batteries 12 to 19 s on top of a 15 s build).
+`lean` command lines within 1% for the resident set and 3% for the
+footprint, on Batteries and on a project using Mathlib (where `import
+Mathlib` alone is 5.44 GiB resident, 853 MiB private); the wrapper uses
+1.4 MiB per running `lean` and leanprof 45 MiB, and the import measurement
+adds a `lean` run per module after the build (on Batteries 12 to 18 s on top
+of a 15 s build).
 The numbers are in the [case study](../case-studies/build-memory.md).
 
 ## In the editor
