@@ -124,8 +124,11 @@ users than the rest of v0.2.0, and take priority over its long tail.
   Speedups are easy to verify: the proofs still check and heartbeat counts
   repeat nearly exactly. Results stay local branches until the maintainer
   decides to propose them upstream.
-  - [ ] *(in progress)* Causes and fixes per declaration: `elab --why`,
-    `fix --elab` checked by `experiment`, a heartbeat budget for CI.
+  - [x] Causes and fixes per declaration: `elab --why`,
+    `fix --elab` checked by `experiment`, a heartbeat budget for CI
+    ([case study](docs/case-studies/compile-time-fixes.md): on Batteries,
+    kept edits cut three lemmas from 25.2, 17.4 and 16.3 M heartbeats to
+    8.3, 6.2 and 6.0 M).
   - [ ] *(in progress)* **Whole-project build time.** Real `lake build`
     task timings (not inferred from the import graph): the critical path,
     each module's slack, parallelism over time, the measured rebuild cost
@@ -263,12 +266,16 @@ Ranked; the open ones are planned after v0.2.0.
   --heartbeats --counts` at base and head, and explain's cause for each
   copy site that copies more (`compare`, `report-md`, `Tests/Regress`;
   [guide](docs/guide/ci-and-regressions.md#why-it-got-worse)).
-- [ ] *(in progress)* **Retained memory.** Which allocation site holds the
-  memory at peak, and what keeps it alive; sites with sustained growth worth
-  investigating (not necessarily leaks: caches grow too). Heap walks only
-  while no other thread can change the heap.
-- [ ] *(in progress)* **A heartbeat budget.** `elab --max-heartbeats N` in
-  CI flags any declaration above N, so slow lemmas do not accumulate.
+- [x] **Retained memory.** Which allocation site holds the memory at peak,
+  and what keeps it alive; sites with sustained growth worth investigating
+  (not necessarily leaks: caches grow too). Heap walks only while no other
+  thread can change the heap (`run --retained`: live objects per site at
+  the peak and at exit, the chain of holders down to a global or a local,
+  growing sites in the report and in `top`;
+  [memory guide](docs/guide/memory.md#retained-memory-what-holds-it)).
+- [x] **A heartbeat budget.** `elab --max-heartbeats N` in
+  CI flags any declaration above N, so slow lemmas do not accumulate
+  (`report-md --max-heartbeats`, the Action's `max-heartbeats`).
 - [ ] *(in progress)* **Compile time against the previous run.** `elab
   --heartbeats --since-last FILE`: the declarations that changed and why
   (the unfolds, instances and `simp` lemmas whose counts moved), for
@@ -322,7 +329,7 @@ Already on `main` (and so in v0.1.0), delivered ahead of this release:
 
 Still to do:
 
-- [ ] **Verdicts that fail closed.** *(in progress)* Missing metrics, a
+- [x] **Verdicts that fail closed.** Missing metrics, a
   self-check warning, a measurement mode that did not count, or copy counts
   that vary between runs give INCONCLUSIVE, never KEEP; summaries are
   validated strictly when read; copy counts that vary are judged by their
@@ -351,7 +358,11 @@ Still to do:
 - [ ] `leanprof autoresearch`: sets the project up (workload, tests, output
   check) and starts the loop in Claude Code, or prints the next steps. The
   loop ships as a Claude Code command.
-- [ ] *(in progress)* **Stable machine-readable contracts.** Version CLI JSON and MCP
+- [x] **Stable machine-readable contracts.** Done: a `schema` field and
+  `schemas/*.schema.json` for every JSON document, a contract check in CI,
+  `judge`/`compare`/`fix --json`, verdict outcomes, MCP structured results
+  with output schemas and typed errors. Left: the typed report module of
+  the consolidation below. Was: Version CLI JSON and MCP
   structured results with shared schemas and contract tests, built on the
   typed report module from the consolidation below. Return typed findings,
   metric units, measurement mode, coverage, uncertainty, artifact IDs and
@@ -363,7 +374,11 @@ Still to do:
   module (the JSON helpers are repeated per module today), `c/` split behind
   `c/internal.h`, CI checks as local scripts, formatters and linters,
   `research/` renamed `autoresearch/`.
-- [ ] *(in progress)* **Provenance and freshness.** Attach source revision and dirty-tree
+- [x] **Provenance and freshness.** Done: provenance in every report,
+  summary and experiment evidence; `judge` refuses and `compare` warns on
+  another Lean or platform; `explain`, `fix` and MCP `finding` warn about
+  sources changed since the report. Left: linking source ranges to the
+  exact snapshot measured. Was: Attach source revision and dirty-tree
   fingerprints, executable hashes (`measure-pair` already records them),
   Lean/tool versions, build flags, platform, workload/input hashes and
   measurement settings to every summary and experiment, with content hashes
@@ -433,7 +448,9 @@ Still to do:
 - [ ] **Broaden memory coverage.** Identify core-library and precompiled code
   coverage; add RC-operation costs, retained-memory attribution and object
   lifetime analysis beyond allocation counts and peak-live metrics. Report
-  unobserved activity as such, never as a measured zero.
+  unobserved activity as such, never as a measured zero. Retained-memory
+  attribution is done (`run --retained`, which counts the frees it did not
+  see); left: RC-operation costs and object lifetimes.
 - [x] **Navigate large projects.** `leanprof html` drills from project to
   folder, module, declaration, term and tactic, and compares each level with
   a base report ([compile time](docs/guide/compile-time.md#a-whole-project-in-the-browser)).
@@ -474,7 +491,8 @@ conclusion.
 
 ### Agents
 
-- [ ] *(in progress)* **Discovery without guesswork.** Machine-readable project and capability
+- [x] **Discovery without guesswork.** Done: `leanprof doctor --json` and
+  the MCP `doctor` tool. Was: Machine-readable project and capability
   discovery (`doctor --json` or an MCP tool): Lean version, targets and modes,
   instrumentation coverage, required dependencies, actionable setup failures.
 - [ ] **Bounded, recoverable jobs.** Job IDs for long builds and profiles,
@@ -482,7 +500,10 @@ conclusion.
   artifact retrieval. Literal argument arrays in explicit working directories;
   documented trust boundaries; explicit authorization for destructive or
   external actions. Cleanup tested after failure and cancellation.
-- [ ] *(in progress)* **Compact, queryable evidence.** A small ranked summary first, then
+- [x] **Compact, queryable evidence.** Done: findings with stable ids,
+  the MCP `findings` (filter, page) and `finding` (source, cause,
+  confidence, before/after) tools, truncation always reported. Left:
+  filtering by operation in compile-time reports. Was: A small ranked summary first, then
   filter/page by module, declaration, operation or finding ID; one finding's
   source, causal evidence, confidence and before/after deltas without
   re-reading the whole trace. Full raw artifacts kept; truncation and missing

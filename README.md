@@ -109,7 +109,9 @@ finding through to a checked change.
 
 - An MCP server with run, sample, explain, static copies, elab, measure,
   paired timing, judge, fix and the experiment tools, restricted to Lake
-  projects ([security review](docs/reviews/security-review.md)), and an
+  projects ([security review](docs/reviews/security-review.md)); structured
+  results and typed errors, versioned JSON with schemas, ranked findings
+  with stable ids, and provenance on every report; and an
   [autoresearch loop](docs/case-studies/autoresearch-lean-compiler-backend.md)
   that made a compiler written in Lean 22% faster, merged after review.
 
@@ -211,6 +213,36 @@ chooses none. It samples with samply when it can (no rebuild), else runs
 exact `run`, `explain` and `fix` commands that go deeper. On a Mac, a new
 `lake new` project got its first report in 8.6 s, after a 4.8 s install
 with samply ([getting started](docs/guide/getting-started.md)).
+
+### Compile time: `elab`, `--why` and `fix --elab`
+
+Most Lean code is proofs, and what its authors wait on is elaboration.
+`leanprof elab` gives the compile cost of each declaration, term and tactic
+by exact source range, split into elaboration, kernel, compiler and
+linters, in time or (`--heartbeats`) in heartbeats, which do not depend on
+the machine. It names the definitions unfolded, instances tried and simp
+lemmas behind the work, finds repeated work, and runs whole projects in
+parallel (`--project`). On a project whose Lean is not leanprof's, the first
+run builds leanprof's elaboration driver for that Lean (2 to 7 s on an M5
+Max) and caches it, so ranges are exact on every supported Lean.
+
+`elab --why` says why the costliest declarations are slow, keeping what the
+profile shows apart from what to try: a costly `simp` with Lean's own
+`simp only [...]` list for it, a termination measure Lean searched for with
+the one it found, definitions unfolded, instance searches that fail,
+`decide` and the kernel, repeated work. `leanprof fix --elab` applies the
+edits Lean computed and keeps them only if an experiment says KEEP: the
+proofs still check, the proof-preservation guard passes and the heartbeats
+went down. On Batteries, stating Lean's inferred `termination_by` cut two
+lemmas from 17.4 and 16.2 M heartbeats to 6.2 and 5.9 M
+([case study](docs/case-studies/compile-time-fixes.md)).
+`elab --max-heartbeats N` fails CI on any declaration above a budget.
+
+`leanprof html` turns a report into one self-contained page that drills
+from project to folder, module, declaration and tactic, each compared with
+a base report when given one; the published
+[Batteries and Mathlib profiles](docs/profiles/README.md) are such pages
+([compile time](docs/guide/compile-time.md)).
 
 ### Copies, allocations and counters: `run` and `explain`
 
@@ -322,22 +354,6 @@ and keeps it, so a loop of verdicts pays only the candidate's incremental
 build. `judge` refuses time measured with the load above the CPU count
 unless told otherwise ([CI and regressions](docs/guide/ci-and-regressions.md#measure-and-judge)).
 
-### Compile time: `elab` and the viewer
-
-`leanprof elab` gives the compile cost of each declaration, term and tactic
-by exact source range, split into elaboration, kernel, compiler and
-linters, in time or (`--heartbeats`) in heartbeats, which do not depend on
-the machine. It names the definitions unfolded, instances tried and simp
-lemmas behind the work, finds repeated work, and runs whole projects in
-parallel (`--project`). On a project whose Lean is not leanprof's, the first
-run builds leanprof's elaboration driver for that Lean (2 to 7 s on an M5
-Max) and caches it, so ranges are exact on every supported Lean.
-`leanprof html` turns a report into one self-contained page that drills
-from project to folder, module, declaration and tactic, each compared with
-a base report when given one; the published
-[Batteries and Mathlib profiles](docs/profiles/README.md) are such pages
-([compile time](docs/guide/compile-time.md)).
-
 ### CI: the GitHub Action
 
 The [Action](docs/guide/ci-and-regressions.md#github-action) profiles a pull
@@ -353,11 +369,19 @@ attributed, never estimated
 ### Agents: the MCP server
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
-`run`, `sample`, `stat`, `elab`, `measure`, `measure_pair`, `judge`, `static_copies`,
-`compare`, `explain`, `hot`, `report`, the four `experiment_*` operations,
-and `live` and `dump` for a running program. Paths it writes must be inside
-the project, and the binaries it runs must be Lake-built
-([MCP server](docs/guide/live.md#mcp-server)).
+`doctor` (what the project has and which modes work), `run`, `sample`,
+`stat`, `elab`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
+`static_copies`,
+`findings` and `finding` (a ranked page of findings with stable ids, then
+one in full with its source, cause and before/after), `hot`, `report`, the
+four `experiment_*` operations, and `live` and `dump` for a running
+program. Every result has `structuredContent` matching the tool's
+`outputSchema`; failures carry an error code, whether a retry may help,
+and a hint. Paths it writes must be inside the project, and the binaries
+it runs must be Lake-built ([MCP server](docs/guide/live.md#mcp-server)).
+Every JSON file the commands write names its schema in
+[`schemas/`](schemas/) and records its provenance
+([machine-readable output](docs/guide/reference.md#machine-readable-output)).
 
 ### Tiny functions
 
@@ -386,8 +410,11 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | Allocations per function; failed in-place reuse; closure calls | `leanprof run --allocs --counters myapp` |
 | Tasks: run time, queue wait, blocking waits; Perfetto timeline | `leanprof run --trace out.json myapp` |
 | Peak memory per scope, freeing pauses; one-screen summary | `leanprof stat myapp` |
+| Live objects per allocation site at the peak and at exit, what holds them (a global `IO.Ref`, a closure, a thunk, a local), sites that keep growing | [`leanprof run --retained myapp`](docs/guide/memory.md#retained-memory-what-holds-it) |
 | A running program, live; the last seconds as a timeline | `leanprof top myapp`, `leanprof dump PID` |
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
+| Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
+| Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
@@ -509,6 +536,7 @@ reproduction.
 | Copies, allocations, failed reuse, closures | ✅ exact counts | – | – | – | – |
 | Why a copy happened, with a fix | ✅ from the compiler's IR, confirmed at run time; `leanprof fix` applies three kinds | – | – | – | – |
 | Peak memory per scope, freeing pauses | ✅ | – | – | – | – |
+| What holds memory: live objects per site, the chain of holders to a global or a local | ✅ `run --retained` | – | – | – | – |
 | Tasks | ✅ queue wait, blocking waits | parent links | – | threads | – |
 | Compile time | per file, declaration, term and tactic (exact ranges on every supported Lean: on another Lean than leanprof's, a driver is built for it once, in seconds); the definitions unfolded behind it; repeated work; whole projects; a project-to-tactic HTML view compared with a base; published Batteries and Mathlib (40 modules) profiles | – | exact term ranges, all of Mathlib published, timelines ([comparison](docs/case-studies/compile-time-vs-lean-source-profiler.md)) | – | LeanObserve (not evaluated) |
 | Exact regression checks, PR comments | ✅, with the cause of each ([example](docs/guide/ci-and-regressions.md#worked-example-batteries)) | thresholded time | – | – | mean against a saved baseline, fixed threshold |

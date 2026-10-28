@@ -196,6 +196,7 @@ job fails when a metric named in `fail-on` regresses (after commenting):
 | `allocs` | `false` | `leanprof run --allocs` |
 | `elab-files` | | files for `leanprof elab --heartbeats` (globs allowed) |
 | `fail-on` | `copies` | comma-separated from `copies`, `allocs`, `calls`, `heartbeats`; or `none` |
+| `max-heartbeats` | | a budget per declaration of `elab-files`, in `maxHeartbeats`' unit (1,000 heartbeats): the job fails on any declaration of the head above it ([below](#a-heartbeat-budget)) |
 | `explain` | `true` | say why: `elab --counts` (elaboration up to twice as slow) and `leanprof explain` on each commit |
 | `working-directory` | `.` | the Lake project, relative to the repository root |
 | `setup` | | command run in each checkout first, e.g. `lake exe cache get` for Mathlib projects |
@@ -247,6 +248,19 @@ comment, without posting it.
 This repository's own pull requests run the action on `copybug`
 ([`.github/workflows/action-demo.yml`](../../.github/workflows/action-demo.yml)).
 
+### A heartbeat budget
+
+A regression check compares the head with its base, so a lemma that was
+already slow, or got slow over many small steps, never fails it. A budget
+does: with `max-heartbeats: 20000` (or `report-md --max-heartbeats 20000`
+on two elab reports), every declaration of the head above 20,000 thousand
+heartbeats is listed in the comment, those that were not above it on the
+base marked `new above the budget`, and the job fails. Locally,
+`leanprof elab --max-heartbeats 20000 FILE.lean...` lists them and exits 1.
+Profiling costs heartbeats too (a full profile counts more than the build
+does), so set the budget from a profile, not from `maxHeartbeats`
+([compile time](compile-time.md#a-heartbeat-budget---max-heartbeats)).
+
 ## Measure and judge
 
 For deciding whether one change is an improvement:
@@ -277,8 +291,10 @@ summary with one measured without it.
   compile heartbeats grew by more than 1% and 1,000, or every new run was
   slower than every base run;
 - **KEEP** if nothing got worse and copies went down, allocations went down
-  by at least 1% and 100, heartbeats went down by more than 1% and 1,000,
-  or every new run was faster than every base run.
+  by at least 1% and 100, heartbeats went down by more than 1% and 1,000
+  (in total, or per declaration: some down by that much, none up by that
+  much, the same declarations, the total down by more than 1,000), or every
+  new run was faster than every base run.
 
 Allocations matter because a change can trade one cost for another: the
 first fix of `CFG.build` in lean-compiler-backend removed its copies but

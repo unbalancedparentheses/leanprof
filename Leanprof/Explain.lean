@@ -1,4 +1,6 @@
 import Lean.Data.Json
+import Leanprof.Retained
+import Leanprof.Contract
 
 /-!
 # `leanprof explain`: why a value was shared when it was copied
@@ -1340,6 +1342,7 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--out" :: f :: rest => parseOpts { o with out := f } rest
   | "--all" :: rest => parseOpts { o with all := true } rest
   | "--json" :: rest => parseOpts { o with json := true } rest
+  | "--elab" :: rest => parseOpts { o with report := ".lake/leanprof/elab.json" } rest
   | "--why" :: exe :: rest => parseOpts { o with run := some exe } rest
   | "--" :: rest => .ok { o with args := o.args ++ rest.toArray }
   | a :: _ => .error s!"unknown argument {a}"
@@ -1572,10 +1575,18 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
       "run `leanprof run EXE` again, or pass --report FILE with a report of `leanprof run`")
   let shares ← if o.run.isSome || (← (o.why : FilePath).pathExists) then loadWhy o.why else pure #[]
   let (sites, tiny) := rankedSites j o.all
+  -- retained memory (`run --retained`): what keeps memory alive, after the copies
+  let retained := Retained.findings j "" o.top
+  let printRetained : IO Unit := do
+    unless o.json || retained.isEmpty do
+      IO.println "\nleanprof explain: what keeps memory alive (run --retained)\n"
+      for l in retained do IO.println l
   if sites.isEmpty then
-    if o.json then IO.println (Json.mkObj [("report", o.report), ("sites", 0), ("findings", Json.arr #[])]).pretty
+    if o.json then IO.println (Json.mkObj [("schema", Contract.schema "explain"), ("report", o.report), ("sites", 0), ("findings", Json.arr #[]), ("tiny_sites", toJson tiny),
+        ("retained", Retained.findingsJson j o.top)]).pretty
     else IO.println ("leanprof explain: the report has no copies of shared values" ++
       (if tiny > 0 then s!" other than {tiny} site(s) of empty or tiny values (--all explains them)" else ""))
+    printRetained
     return 0
   let runNs := if jnum j "run_ns" > 0 then jnum j "run_ns" else jnum j "wall_ns"
   let cache ← IO.mkRef ({} : CCache)
@@ -1590,10 +1601,25 @@ def explainCmd (argv : List String) (runLeanprof : Array String → Array (Strin
     let (text, js) ← explainSite cache c shares runNs
     unless o.json do IO.println text
     if let .arr a := js then entries := entries ++ a.map (·.setObjVal! "rank" (rank : Json))
+  -- source lines are matched against the files as they are now: a file that
+  -- changed since the report may no longer have them where they were
+  let mut stale : Array (String × String) := #[]
+  for f in (entries.map (jstr · "file")).toList.eraseDups do
+    if f.isEmpty then continue
+    if let some why ← Contract.staleSource o.report j f then stale := stale.push (f, why)
+  entries := entries.map fun e => e.setObjVal! "stale" (Json.bool (stale.any (·.1 == jstr e "file")))
+  unless o.json do
+    for (f, why) in stale do
+      IO.println s!"warning: {f} {why}: the lines above may not be the ones measured (profile again)"
   IO.FS.createDirAll ((o.out : FilePath).parent.getD ".")
   IO.FS.writeFile o.out ((Json.arr entries).compress ++ "\n")
   if o.json then
-    IO.println (Json.mkObj [("report", o.report), ("sites", sites.size), ("findings", Json.arr entries)]).pretty
+    IO.println (Json.mkObj [("schema", Contract.schema "explain"), ("report", o.report), ("sites", sites.size),
+      ("shown", toJson (min o.top sites.size)), ("tiny_sites", toJson tiny), ("findings", Json.arr entries),
+      ("stale_sources", Json.arr (stale.map fun (f, w) => Json.mkObj [("file", Json.str f), ("reason", Json.str w)])),
+      ("provenance", (j.getObjVal? "provenance").toOption.getD Json.null),
+      ("retained", Retained.findingsJson j o.top)]).pretty
+  printRetained
   return 0
 
 end Leanprof.Explain

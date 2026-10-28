@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/common.schema.json",
+  "title": "leanprof: shared definitions",
+  "description": "Definitions shared by leanprof's JSON schemas.",
+  "$defs": {
+    "schema_tag": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^leanprof\\.[a-z-]+$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "description": "Which schema a document follows. The version goes up only when a field is removed or changes meaning; new fields keep it."
+    },
+    "outcome": {
+      "enum": [
+        "improved",
+        "regression",
+        "no_improvement",
+        "insufficient_evidence",
+        "correctness_failure",
+        "incompatible",
+        "measurement_failed"
+      ],
+      "description": "What a verdict means: improved (KEEP); regression, no_improvement and correctness_failure (a valid DISCARD); insufficient_evidence (measure again or longer); incompatible and measurement_failed (no verdict on the change)."
+    },
+    "verdict_fields": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "measurement_valid": {
+          "type": "boolean"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "outcome",
+        "measurement_valid",
+        "retryable"
+      ]
+    },
+    "too_small": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "time fields too small to measure (written as 0, never a measured zero)"
+    },
+    "keyed_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ]
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Where a document came from: leanprof's version, the project's Lean, the platform, the source revision with a fingerprint of uncommitted changes, the build flags and the workload. Absent from documents made before leanprof recorded it, and from reports a program writes by itself (LEANPROF_JSON).",
+      "properties": {
+        "leanprof_version": {
+          "type": "string"
+        },
+        "lean": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "string"
+            }
+          }
+        },
+        "platform": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string"
+            },
+            "os": {
+              "enum": [
+                "macos",
+                "linux",
+                "windows"
+              ]
+            }
+          },
+          "required": [
+            "target",
+            "os"
+          ]
+        },
+        "git": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "null outside a git repository",
+          "properties": {
+            "rev": {
+              "type": "string"
+            },
+            "dirty": {
+              "type": "boolean"
+            },
+            "dirty_fingerprint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "rev",
+            "dirty",
+            "dirty_fingerprint"
+          ]
+        },
+        "build": {
+          "type": "object",
+          "description": "the mode and the flags that change what is measured",
+          "properties": {
+            "mode": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "workload": {
+          "type": "object",
+          "properties": {
+            "executable": {
+              "type": "string"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "args_hash": {
+              "type": "string"
+            },
+            "binary_hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "hash"
+                ]
+              }
+            }
+          },
+          "required": [
+            "executable",
+            "args",
+            "args_hash",
+            "inputs"
+          ]
+        },
+        "created": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "leanprof_version",
+        "lean",
+        "platform",
+        "git",
+        "build",
+        "workload"
+      ]
+    },
+    "provenance_check": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Whether two documents can be compared: refusals (another Lean version or platform; judge then says incompatible), warnings (another leanprof, other build flags or workload). `compatible` is null when either has no provenance.",
+      "properties": {
+        "compatible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "same_revision": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        },
+        "base": {
+          "type": "object"
+        },
+        "new": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "compatible",
+        "refusals",
+        "warnings"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "not_lake_project",
+            "build_failed",
+            "lean_not_found",
+            "samply_missing",
+            "overloaded",
+            "bad_argument",
+            "not_found",
+            "incompatible",
+            "stale_source",
+            "timeout",
+            "cancelled",
+            "failed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "hint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "hint"
+      ],
+      "description": "A failure an agent can act on: its kind, whether trying again unchanged may succeed, and what to do."
+    }
+  }
+}

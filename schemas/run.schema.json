@@ -1,0 +1,454 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/run.schema.json",
+  "title": "leanprof run report",
+  "description": "The report of a program run with leanprof's probes (`leanprof run --json`, LEANPROF_JSON) or sampled (`leanprof sample`, with `sampled: true`). Times are nanoseconds.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.run"
+        }
+      }
+    },
+    "version": {
+      "const": 3
+    },
+    "sampled": {
+      "type": "boolean"
+    },
+    "wall_ns": {
+      "type": "number"
+    },
+    "probe_ns": {
+      "type": "number"
+    },
+    "overhead_ns": {
+      "type": "number"
+    },
+    "run_ns": {
+      "type": "number"
+    },
+    "resolution_ns": {
+      "type": "number"
+    },
+    "alloc_ns": {
+      "type": "number"
+    },
+    "dropped": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exe": {
+      "type": "string"
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "self_check": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "lean": {
+          "type": "string"
+        },
+        "checked": {
+          "type": "string"
+        },
+        "warning": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "warning"
+      ]
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "string"
+          },
+          "auto": {
+            "type": "boolean"
+          },
+          "calls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_ns": {
+            "type": "number"
+          },
+          "self_ns": {
+            "type": "number"
+          },
+          "min_ns": {
+            "type": "number"
+          },
+          "max_ns": {
+            "type": "number"
+          },
+          "mean_ns": {
+            "type": "number"
+          },
+          "p50_ns": {
+            "type": "number"
+          },
+          "p99_ns": {
+            "type": "number"
+          },
+          "allocs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "alloc_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "too_small": {
+            "$ref": "common.schema.json#/$defs/too_small"
+          }
+        },
+        "required": [
+          "name",
+          "pos",
+          "calls",
+          "total_ns",
+          "self_ns"
+        ]
+      }
+    },
+    "copies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "function": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "where": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "copies": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "copy_ns": {
+            "type": "number"
+          },
+          "shared": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "multi_threaded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "persistent": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pct_run": {
+            "type": "number"
+          },
+          "tiny": {
+            "type": "boolean"
+          },
+          "too_small": {
+            "$ref": "common.schema.json#/$defs/too_small"
+          }
+        },
+        "required": [
+          "function",
+          "scope",
+          "where",
+          "kind",
+          "copies",
+          "bytes",
+          "copy_ns",
+          "shared",
+          "multi_threaded"
+        ]
+      }
+    },
+    "allocations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "function": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "where": {
+            "type": "string"
+          },
+          "allocs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "est_ns": {
+            "type": "number"
+          },
+          "pct_run": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "function",
+          "scope",
+          "allocs",
+          "bytes"
+        ]
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "spawned_by": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "run_total_ns": {
+            "type": "number"
+          },
+          "run_sum_ns": {
+            "type": "number"
+          },
+          "wait_ns": {
+            "type": "number"
+          },
+          "wait_max_ns": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "spawned_by",
+          "tasks"
+        ]
+      }
+    },
+    "waits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "function": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "where": {
+            "type": "string"
+          },
+          "waits": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "blocked_ns": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "function",
+          "waits",
+          "blocked_ns"
+        ]
+      }
+    },
+    "reuse": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "function": {
+            "type": "string"
+          },
+          "where": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failures": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "function",
+          "checks",
+          "failures"
+        ]
+      }
+    },
+    "closures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "function": {
+            "type": "string"
+          },
+          "where": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "applications": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "function",
+          "target",
+          "applications"
+        ]
+      }
+    },
+    "memory": {
+      "type": "object",
+      "properties": {
+        "peak_rss": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peak_commit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    "untimed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    },
+    "compiled_out": {
+      "description": "`run --retime`: the `profile!` scopes compiled out of the second run, with the first run's calls (exact) and estimated times",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timed_calls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_ns": {
+            "type": "number"
+          },
+          "self_ns": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "pos",
+          "calls"
+        ]
+      }
+    },
+    "retime": {
+      "description": "`run --retime`: where the first run's report is, the scopes not compiled out (not pure terms), and scopes whose calls differ between the runs",
+      "type": "object",
+      "properties": {
+        "first_run": {
+          "type": "string"
+        },
+        "not_compiled_out": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calls_differ": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "version",
+    "wall_ns",
+    "scopes",
+    "copies"
+  ]
+}
