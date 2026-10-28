@@ -1,0 +1,7 @@
+CPU(s):                                  32
+Model name:                              AMD Ryzen 9 9950X3D 16-Core Processor
+CPU(s) scaling MHz:                      45%
+6.8.0-147-generic
+amd-pstate-epp
+powersave
+gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0

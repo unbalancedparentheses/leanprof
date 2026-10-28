@@ -1,0 +1,22 @@
+rdtsc 6.89  rdtscp 13.05  clock_gettime 16.14  body4+2rdtsc net 10.88 ns
+gcc                r1 timed  pair net, body 0/1/4/16: 17.41 24.11 15.93 7.31 ns; calibrated pair 17.52 ns
+gcc-nocet          r1 timed  pair net, body 0/1/4/16: 17.04 17.15 14.94 6.78 ns; calibrated pair 17.61 ns
+gcc-ie             r1 timed  pair net, body 0/1/4/16: 17.97 17.58 15.85 7.08 ns; calibrated pair 17.88 ns
+clang              r1 timed  pair net, body 0/1/4/16: 16.50 16.85 14.73 6.06 ns; calibrated pair 17.93 ns
+gcc-fakeclock      r1 timed  pair net, body 0/1/4/16: 10.07 8.67 6.64 0.70 ns; calibrated pair 15.41 ns
+gcc                r2 timed  pair net, body 0/1/4/16: 17.39 17.61 15.92 7.29 ns; calibrated pair 17.61 ns
+gcc-nocet          r2 timed  pair net, body 0/1/4/16: 17.11 17.19 14.92 6.76 ns; calibrated pair 17.64 ns
+gcc-ie             r2 timed  pair net, body 0/1/4/16: 17.32 16.88 15.06 6.96 ns; calibrated pair 17.88 ns
+clang              r2 timed  pair net, body 0/1/4/16: 16.44 16.80 14.73 6.06 ns; calibrated pair 17.95 ns
+gcc-fakeclock      r2 timed  pair net, body 0/1/4/16: 10.09 8.65 6.62 0.70 ns; calibrated pair 15.41 ns
+gcc                r3 timed  pair net, body 0/1/4/16: 17.25 17.62 15.90 7.29 ns; calibrated pair 17.60 ns
+gcc-nocet          r3 timed  pair net, body 0/1/4/16: 17.02 17.09 14.95 6.72 ns; calibrated pair 17.61 ns
+gcc-ie             r3 timed  pair net, body 0/1/4/16: 17.97 17.56 15.86 7.24 ns; calibrated pair 17.91 ns
+clang              r3 timed  pair net, body 0/1/4/16: 16.44 16.79 14.71 6.05 ns; calibrated pair 17.93 ns
+gcc-fakeclock      r3 timed  pair net, body 0/1/4/16: 10.11 8.68 6.64 0.70 ns; calibrated pair 15.43 ns
+gcc                light  pair net, body 0/1/4/16: 4.78 4.74 2.86 0.33 ns; calibrated pair 17.50 ns
+gcc-nocet          light  pair net, body 0/1/4/16: 4.95 4.86 3.00 0.32 ns; calibrated pair 17.97 ns
+gcc-ie             light  pair net, body 0/1/4/16: 4.98 4.61 2.72 0.32 ns; calibrated pair 17.86 ns
+clang              light  pair net, body 0/1/4/16: 5.05 4.91 3.10 0.33 ns; calibrated pair 17.92 ns
+gcc-fakeclock      light  pair net, body 0/1/4/16: 5.51 5.16 3.17 0.52 ns; calibrated pair 557.27 ns
+name=micro-variants-1 start_time=2026-10-28T15:41:55+00:00 end_time=2026-10-28T15:43:00+00:00 load_start=1.69 load_max=1.69 load_end=1.30 verdict=ok rc=0
