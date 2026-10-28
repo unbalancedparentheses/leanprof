@@ -92,7 +92,7 @@ output_schemas.update({t["name"]: t.get("outputSchema", {}) for t in listed})
 check("every tool has an outputSchema (an object with ok, tool and error)",
       all(t.get("outputSchema", {}).get("type") == "object" and {"ok", "tool"} <= set(t["outputSchema"].get("required", []))
           and "error" in t["outputSchema"].get("properties", {}) for t in listed), [t["name"] for t in listed])
-want = {"doctor", "findings", "finding", "run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "static_copies", "compare", "judge",
+want = {"doctor", "findings", "finding", "run", "sample", "stat", "elab", "build_memory", "measure", "measure_pair", "report", "hot", "explain", "static_copies", "compare", "judge",
         "live", "dump",
         "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
@@ -303,6 +303,14 @@ check("run refuses a report path through a symbolic link out of the project",
 text, err = tool("measure", executable="copybug", args=["10"], runs=1, out=".lake/leanprof/mcp-link.json")
 check("measure refuses a summary path that is a symbolic link",
       err and "inside the project" in text and not os.path.exists(os.path.join(outside_dir, "link-target.json")), text)
+# build_memory: an option cannot pass as a target or a size
+text, err = tool("build_memory", targets=["--out=/tmp/x"])
+check("build_memory refuses an option as a target", err and "not a Lake target" in text, text)
+text, err = tool("build_memory", max_memory="--clean")
+check("build_memory refuses an option as a size", err and "not a size" in text, text)
+text, err = tool("build_memory", out=os.path.join(outside_dir, "bm.json"))
+check("build_memory refuses an output file outside the project", err and "inside the project" in text, text)
+
 # options among elab's files (`--out FILE` would write anywhere)
 text, err = tool("elab", files=["--out", os.path.join(outside_dir, "elab.json"), "Examples/CopyBug.lean"])
 check("elab refuses an option among its files",
@@ -322,7 +330,12 @@ for pid in ["-1", "0", "../../etc/x"]:
 # a running program: live snapshot and flight-recorder dump
 env = dict(os.environ, LEANPROF_LIVE="1", LEANPROF_FLIGHT=".lake/leanprof", LEANPROF_QUIET="1")
 server = subprocess.Popen([".lake/build/bin/server", "0", "20"], env=env, stdout=subprocess.DEVNULL)
-time.sleep(1.5)
+# its first snapshot: 1.5 s on a quiet machine, more on a loaded one
+for _ in range(20):
+    time.sleep(0.5)
+    if os.path.exists(os.path.join(tempfile.gettempdir(), f"leanprof-{server.pid}.live.json")):
+        break
+time.sleep(1)
 text, err = tool("live", pid=str(server.pid), seconds=1)
 check("live", not err and "handle" in text and "calls/s" in text and "now  thread" in text, text)
 text, err = tool("dump", pid=str(server.pid))

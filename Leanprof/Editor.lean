@@ -102,7 +102,7 @@ whose probes change its code by more than any subtraction can undo. -/
 def holdsTinyNote (names : List String) : String :=
   s!"calls scopes too small to time ({", ".intercalate names}): the calls around them change this code, " ++
     "so its time is off whatever leanprof subtracts, and so is a sample of this build; remove those " ++
-    "profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`"
+    "profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`, or run `leanprof run --retime`, which compiles them out in a second run"
 
 /-- How a time too small to measure is shown, never as 0: what is left of a
 scope after subtracting the probes' cost, or a copy shorter than one clock

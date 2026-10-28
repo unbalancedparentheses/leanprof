@@ -208,9 +208,21 @@ clock, boost off; see [bench/README.md](../../bench/README.md)):
   in the other, so no subtraction is right for both (one phase comes out
   at 0.80–0.93 of its time, the other at 0.52–0.63), and a sample of the same
   build is just as far off (34–40% for a phase whose true share is 24.5%).
-  For such a row's time, remove those `profile!` (or `set_option
-  leanprof.enabled false` in their file) and use `leanprof sample`; keep
-  them for the exact counts.
+  For such a row's time, run `leanprof run --retime` (below), or remove
+  those `profile!` (or `set_option leanprof.enabled false` in their file)
+  and use `leanprof sample`.
+- **`leanprof run --retime`** does that removal for you. It runs once;
+  if `profile!` scopes on pure terms went light, it builds again with those
+  scopes compiled out of the C code (the compiler wrapper turns their two
+  calls into nothing, `scripts/leanprof-untimed.awk`) and runs again. The
+  second report is the result: their callers are timed as if the scopes
+  were not there, and the scopes themselves are listed under
+  `compiled_out` with the first run's exact calls and estimated times. A
+  scope whose calls differ between the two runs is named (a program that
+  does not do the same work each time). On the `tiny` benchmark the share
+  error went from 8.2–9.6 to 0.3–1.1 points and the slowdown from 4.3–4.5× to
+  1.14–1.19× in three interleaved suites ([bench/retime](../../bench/retime/README.md)). Monadic scopes are not
+  compiled out (they are named as still timed).
 - **`leanprof sample`** slows programs down 1.0–1.3× and is within 0.1–1.9
   percentage points of each function's true share of time, like samply.
 

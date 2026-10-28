@@ -276,6 +276,17 @@ Ranked; the open ones are planned after v0.2.0.
 - [x] **A heartbeat budget.** `elab --max-heartbeats N` in
   CI flags any declaration above N, so slow lemmas do not accumulate
   (`report-md --max-heartbeats`, the Action's `max-heartbeats`).
+- [x] **Memory of compilation.** `build-memory`: the peak memory of each
+  module's `lean` in a real `lake build`, imports apart, the modules running
+  together at the peak, the most jobs under a limit, a per-module budget for
+  CI, and the commands during which a serial run's peak rose
+  ([guide](docs/guide/compile-time.md#memory-of-compilation)). Still open:
+  - [ ] A jobs estimate from the dependency graph and measured durations
+    (which modules can run together), instead of any `j` heaviest at once.
+  - [ ] An exact private-memory peak on Linux (now `RssAnon` read every
+    20 ms), and the page cache a cgroup charges for the `.olean` files.
+  - [ ] Memory per command in the build itself: only a serial run is
+    attributed now, since parallel proofs share the process.
 - [x] **Compile time against the previous run.** `elab
   --heartbeats --since-last FILE`: the declarations that changed and why
   (the unfolds, instances and `simp` lemmas whose counts moved), for
@@ -392,6 +403,9 @@ Still to do:
   seeded 1%, 2% and 5% changes, inconclusive outcomes and total experiment cost
   on quiet and loaded hosts, with fixed protocols (not reruns until KEEP).
   Then Linux instruction counts.
+  - [x] On the shared Mac, quiet and loaded: [bench/verdicts](bench/verdicts/RESULTS.md)
+    (`run.py`, a fixed protocol of 150 trials per condition).
+  - [ ] On the dedicated Linux host; then instruction counts.
 - [ ] **Evidence that stands on its own.** The benchmark suite rerun on CI's
   fixed runners (Linux and macOS, on a schedule) with the results published,
   next to a run on an idle machine (dedicated Linux results are in
@@ -445,6 +459,9 @@ Still to do:
   flags. Separate CPU time, elapsed time, waiting and probe overhead, with
   explicit uncertainty and aggregation rules so concurrent work is not
   double-counted.
+  - [x] Tiny `profile!` scopes: `run --retime` compiles them out of a second
+    run, so their callers are timed without their probes (`tiny`: 8.2–9.6 →
+    0.3–1.1 points off, [bench/retime](bench/retime/README.md)).
 - [ ] **Broaden memory coverage.** Identify core-library and precompiled code
   coverage; add RC-operation costs, retained-memory attribution and object
   lifetime analysis beyond allocation counts and peak-live metrics. Report

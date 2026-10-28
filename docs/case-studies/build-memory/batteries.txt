@@ -1,0 +1,80 @@
+Build completed successfully (222 jobs).
+leanprof build-memory: 196 modules compiled by `lake build`, at most 18 at a time (macOS, 18 CPUs)
+
+  peak memory of each module's `lean` process:
+    peak RSS  footprint    imports        own     wall  module
+    1.36 GiB    255 MiB   1.30 GiB     65 MiB    1.7 s  runLinter
+     586 MiB    300 MiB    362 MiB    224 MiB    3.6 s  Batteries.Data.List.Lemmas
+     545 MiB    258 MiB    370 MiB    175 MiB    1.6 s  Batteries.Recycling.RBTree.WF
+     535 MiB    252 MiB    373 MiB    162 MiB    1.9 s  Batteries.Recycling.RBTree.Lemmas
+     513 MiB    221 MiB    373 MiB    140 MiB    2.5 s  Batteries.Data.String.Lemmas
+     486 MiB    200 MiB    370 MiB    115 MiB    1.6 s  Batteries.Data.BinaryHeap.Lemmas
+     474 MiB    194 MiB    369 MiB    106 MiB    2.7 s  Batteries.Data.BinomialHeap.Basic
+     465 MiB    183 MiB    369 MiB     97 MiB    1.9 s  Batteries.Recycling.RBTree.Basic
+     461 MiB    185 MiB    370 MiB     90 MiB    1.0 s  Batteries.Recycling.RBTree.Alter
+     459 MiB    176 MiB    361 MiB     98 MiB    3.3 s  Batteries.Util.ProofWanted
+     456 MiB    172 MiB    370 MiB     86 MiB    1.8 s  Batteries.Data.Array.Basic
+     455 MiB    175 MiB    370 MiB     86 MiB    1.4 s  Batteries.Data.Fin.Coding
+     444 MiB    170 MiB    363 MiB     81 MiB    0.8 s  Batteries.Data.Array.Scan
+     443 MiB    153 MiB    387 MiB     56 MiB    2.5 s  Batteries.Tactic.SqueezeScope
+     437 MiB    139 MiB    431 MiB      6 MiB    0.4 s  Batteries
+     435 MiB    157 MiB    361 MiB     74 MiB    2.3 s  Batteries.Tactic.Alias
+     434 MiB    163 MiB    347 MiB     87 MiB    2.6 s  Batteries.Tactic.GeneralizeProofs
+     432 MiB    156 MiB    369 MiB     63 MiB    1.1 s  Batteries.Data.PairingHeap
+     430 MiB    153 MiB    368 MiB     63 MiB    1.2 s  Batteries.Data.Vector.Basic
+     429 MiB    152 MiB    364 MiB     65 MiB    2.7 s  Batteries.CodeAction.Misc
+  ... 176 more in the JSON report
+  peak RSS: resident set, with the pages of mapped .olean files, which processes share
+  footprint: what macOS charges the process (its private memory), without the mapped files
+  imports: the peak of `lean` on the module's header alone (the environment after its imports)
+  own: the rest of the peak, approximately the module's own elaboration
+
+  modules running at the same time: their peaks add up to at most 6.37 GiB
+    (Batteries.Tactic.SqueezeScope, Batteries.Tactic.Alias, Batteries.CodeAction.Misc, Batteries.Tactic.Lint.Frontend, Batteries.Tactic.HelpCmd, Batteries.Tactic.Trans, and 12 more)
+  sampled every 0.2 s while the build ran (92 samples):
+    resident sets added up: 4.36 GiB at most
+    private memory added up, plus the largest shared part once: 1.69 GiB at most
+    (runLinter, Batteries.Recycling.RBTree.Depth, Batteries.Data.RBMap.WF, Batteries.Data.Array, Batteries.Data.RBMap.Alter, Batteries.Data.Vector.Lemmas, and 1 more)
+
+  memory limit 2.00 GiB:
+    no module's peak is above 75% of it
+    jobs: at most 2 at once is safe: the 2 largest resident peaks add up to 1.94 GiB
+    with the shared .olean pages counted once (the 3 largest private peaks plus the largest shared part, 1.12 GiB): 3 jobs, 1.91 GiB; an estimate, not a bound
+    Lake runs as many jobs as it has Lean threads: `LEAN_NUM_THREADS=2 lake build` (each `lean` then has 2 threads too); `leanprof build-memory --clean --jobs 2` runs the build that way, with each `lean` at its usual threads, and measures it
+
+  memory per command, in a serial elaboration (one command at a time, no parallel proofs; approximate):
+
+  runLinter (scripts/runLinter.lean), elaborated serially:
+    after the imports: 1.30 GiB resident; peak of the run: 1.34 GiB
+    the peak was reached during line 216 (main)
+    commands during which the process's peak rose (when memory was reached, not who owns it):
+     peak rise resident after   heartbeats  line  command
+        16 MiB       1.34 GiB        5066k   107  runLinterOnModule
+         9 MiB       1.32 GiB         991k    22  resolveDefaultRootModules
+         6 MiB       1.31 GiB         126k    11  readJsonFile
+         4 MiB       1.32 GiB          65k    40  LinterConfig
+         4 MiB       1.30 GiB          10k     8  NoLints
+         2 MiB       1.32 GiB         461k    59  parseLinterArgs
+         1 MiB       1.30 GiB           4k     5  open Lean Core Elab Command Batteries.Tactic.Lint
+       624 KiB       1.31 GiB          33k    16  writeJsonFile
+       448 KiB       1.32 GiB         185k    91  determineModulesToLint
+       240 KiB       1.32 GiB          78k    54  Except.consError
+
+  Batteries.Data.List.Lemmas (Batteries/Data/List/Lemmas.lean), elaborated serially:
+    after the imports: 358 MiB resident; peak of the run: 425 MiB
+    the peak was reached during line 1422 (swap_swap)
+    commands during which the process's peak rose (when memory was reached, not who owns it):
+     peak rise resident after   heartbeats  line  command
+        11 MiB        375 MiB         541k    22  count_getElem_take_succ
+         7 MiB        404 MiB        1880k   472  mem_findIdxs_iff_getElem_sub_pos
+         6 MiB        386 MiB         447k    91  extractP_eq_find?_eraseP
+         6 MiB        411 MiB        3936k   534  getElem_filter_eq_getElem_getElem_findIdxs_sub
+         5 MiB        364 MiB          22k    17  instNeZeroNatLengthCons
+         4 MiB        415 MiB        3075k   588  findIdxNth_cons
+         3 MiB        397 MiB        1236k   396  isChain_iff_getElem
+         3 MiB        424 MiB        6846k  1115  dropInfix?_go_eq_some_iff
+         3 MiB        393 MiB           3k   359  alias IsChain.rel := rel_of_isChain_cons_cons
+         2 MiB        379 MiB         136k    53  set_eq_modify
+
+  report: bat-full.json
+rc=0

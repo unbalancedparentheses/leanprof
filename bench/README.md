@@ -170,6 +170,16 @@ LeanProfiler's 1.0–1.05×: leanprof calibrates its probes for 10–15 ms
 at the first scope, inside the first phase, which these 40–120 ms
 workloads see.
 
+### Tiny `profile!` scopes: `run --retime` (Apple M5 Max, 2026-10-27)
+
+The section below ends with the callers of tiny scopes marked, and still
+off. Since then `leanprof run --retime` compiles those scopes out of a
+second build and run, so their callers are timed as in the plain program:
+`tiny` went from 8.2–9.6 points off in share to 0.3–1.1, and from 4.3–4.5×
+to 1.14–1.19× slower, in three interleaved suites (configuration `retime`
+in `run.py`). Details, the runs and what did not work (cheaper inlined
+probes included): [retime/README.md](retime/README.md).
+
 ### Tiny `profile!` scopes: what is left, and what was tried (Apple M5 Max, 2026-10-26)
 
 The last inaccurate case: `tiny` under `profile!`, 7.6–9.0 points off in

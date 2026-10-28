@@ -6,6 +6,67 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Tiny `profile!` scopes timed without their probes: `run --retime`
+
+- `leanprof run --retime` runs the program; if `profile!` scopes on pure
+  terms were too small to time, it builds again with them compiled out
+  (`LEANPROF_UNTIMED`, `scripts/leanprof-untimed.awk` in the compiler
+  wrapper: the two calls fold away) and runs again. The second report times
+  their callers without their probes and lists the scopes under
+  `compiled_out` with the first run's exact calls and estimated times;
+  calls that differ between the runs are reported. On the `tiny` benchmark:
+  8.2–9.6 → 0.3–1.1 points off in share, 4.3–4.5× → 1.14–1.19× slower
+  ([bench/retime](bench/retime/README.md)). The `holds_tiny` notes point to
+  it. `bench/run.py` has a `retime` configuration; `scripts/retime-check.sh`
+  tests it in CI.
+
+### Time verdicts: repetitions and a calibration
+
+- `measure-pair --scope NAME --repeat N` (opt-in) runs the region N times
+  in each run (`LEANPROF_BENCH_REPEAT`, honoured by `Leanprof.bench`) and
+  takes the fastest repetition, or with `--repeat-stat median` the median;
+  the session (`repeat`, `repeat_statistic`, each run's `reps_ns`) and the
+  verdict say which. The region must be repeatable (no state carried from
+  one repetition to the next). The help, `Judge` and the guide state the
+  independence assumptions behind "each claim wrong at most 2.5%".
+- [bench/verdicts](bench/verdicts/RESULTS.md): a fixed protocol (150 trials
+  per condition, quiet and with 12 `yes` processes) of false positives on
+  identical code, detection of seeded 1%, 2% and 5% slowdowns, inconclusive
+  sessions and seconds per verdict, for `measure-pair --scope`, with
+  `--repeat 5`, and LeanBench. No false verdict in 120 sessions on
+  identical code (LeanBench at 5%: 21); +2% caught 30/30 quiet, 13/30
+  loaded by default and 30/30 with `--repeat 5`; median 1.42 / 2.10 s per
+  verdict quiet / loaded (LeanBench 2.82 / 3.27 s, both rebuilding after
+  each edit). The seeded variants are `pct1`, `pct2`, `pct5` in the
+  LeanBench project's Work.lean.
+
+### Memory of compilation
+
+- `leanprof build-memory`: runs a real `lake build` in which every `lean`
+  process is started by a small C wrapper (`c/leanwrap.c`, reached through
+  `LEAN_SYSROOT` and `LAKE_OVERRIDE_LEAN`), and reports each module's peak
+  resident set and private memory (macOS: the physical footprint's peak;
+  Linux: `RssAnon`, read every 20 ms), CPU and wall time. The imports are
+  measured apart (`lean` on the module's header alone); the rest of the
+  peak is shown as the module's own, approximately. It names the modules
+  running together when their peaks added up to the most, and adds up the
+  running processes' memory every 0.2 s during the build.
+- `--mem-limit SIZE`: modules above 75% of it, and the most jobs whose
+  largest peaks add up to at most the limit (a bound), with an estimate that
+  counts shared `.olean` pages once. `--jobs N` runs Lake with N jobs
+  (`LEAN_NUM_THREADS` for Lake only) to check a number.
+- `--max-memory SIZE`: exit 1 when a module's peak is above it, for CI.
+- `--decls N` (or files): the heaviest modules elaborated serially in
+  `leanprof-elab-driver --memory` (`Elab.async` off), with the process's
+  memory and heartbeats around each command; the report names the commands
+  during which the peak rose, labeled approximate.
+- `build-memory.json` (`schemas/build-memory.schema.json`), a Build memory tab in `leanprof html`, and the MCP
+  tool `build_memory`. `scripts/build-memory-check.sh` runs it on a real
+  build in CI, on every supported Lean.
+- Measured on Batteries, leanprof and a project using Mathlib: within 1%
+  (resident set) and 3% (footprint) of `/usr/bin/time -l`
+  ([case study](docs/case-studies/build-memory.md)).
+
 ### Retained memory
 
 - `leanprof run --retained` follows every object compiled Lean code

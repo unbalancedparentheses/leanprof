@@ -197,6 +197,7 @@
   "where: Examples/CopyBug.lean lines 21, 22"
  ],
  "help.commands": [
+  "build-memory",
   "compare",
   "doctor",
   "dump",
