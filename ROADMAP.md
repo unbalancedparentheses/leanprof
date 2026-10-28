@@ -500,6 +500,24 @@ Still to do:
   separate what changed: elaboration, kernel, compiler, generated code, and
   the profiler's own trace format. After provenance is solid.
 
+- [ ] **What `--retime` leaves.** Monadic `profile!` scopes are not
+  compiled out yet (the report names them as still timed), and the
+  deep-recursion benchmark (`rec`) is as far off as before, since its
+  recursive scopes never count as too small ([bench/retime](bench/retime/)).
+- [ ] **`sample` on tiny functions.** It was 4.6 to 5.1 points off on the
+  `tiny` benchmark in two of three suites of the `--retime` runs (0.6 in
+  the published run); find out why before claiming it as the tool for tiny
+  functions.
+- [ ] **One process wrapper for Lake builds.** `build-memory`
+  (`c/leanwrap.c`) and the whole-project build timing each wrap Lake's
+  `lean` processes; keep one, which records time and memory for both.
+- [ ] **Claims, swept once more.** Both reviews of 2026-10-27 flagged
+  wording that goes past the evidence: "counts are exact in every mode"
+  (tiny functions left untimed, precompiled code, events dropped when a
+  table is full), heartbeats called "exact" (they repeat nearly exactly),
+  and the headline's "names the line" and "prints the fix" (where source
+  matching and the fixes cover it). Qualify them next to the claim.
+
 Deferred: per-commit profile history (incomparable numbers without fixed
 workloads; CI artifacts and provenance cover most of it), per-function
 hardware counters on Linux, and the Linux probe cost (23 ns against 5–8 ns
@@ -534,6 +552,13 @@ conclusion.
   hypotheses; improvements verified by measurement, not predicted.
 
 ### Evidence
+
+- [ ] **A long-term benchmark machine.** concrete-ci-3, where the Linux
+  results were measured, is concrete's again; fede-256gb is used for now
+  (Mathlib-wide profiles, Linux numbers) but is the shared host, so timing
+  there needs quiet windows and the results say the machine was shared. A
+  dedicated, idle Linux machine with a fixed CPU frequency, and the
+  benchmark suite run on it on a schedule with the results published.
 
 - [ ] **Outside confirmation and end-to-end value** (posting and upstream
   patches are the maintainer's decision): others reproducing the measurements
