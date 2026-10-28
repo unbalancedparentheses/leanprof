@@ -390,6 +390,13 @@ was stopped, it contains `μ` with probability at least `1 - alpha`, and with
 * "faster" (upper end below `-m`) when `μ ≥ -m`: at most 2.5%;
 * "no change beyond ±m" (interval inside `[-m, m]`) when `|μ| > m`: at most 2.5%.
 
+These bounds assume what any sign test assumes: the pairs are independent
+(each pair two fresh processes, run back to back, alternating AB and BA)
+and each pair's change has the same median. Drift that is common to both
+sides of a pair cancels; a disturbance that changes from pair to pair in a
+way tied to the order of the sides, or a session rerun until it says KEEP,
+is not covered.
+
 A single look (`SeqDesign.fixed`, `measure-pair --fixed` and version-1
 sessions) is the classic distribution-free interval: the largest `k` with
 `P(Binomial(n, ½) ≤ k) ≤ 0.025`. Tests/Main.lean checks the spent error
@@ -557,7 +564,12 @@ def judgePaired (j : Json) (minChange : Float := 1) (allowOverloaded : Bool := f
     | throw "not enough pairs for a 95% median interval"
   let sorted := changes.qsort (· < ·)
   let med := if runs % 2 == 1 then sorted[runs / 2]! else (sorted[runs / 2 - 1]! + sorted[runs / 2]!) / 2
+  -- repetitions the program ran per run (`Leanprof.bench` under `--repeat`)
+  -- repetitions the program ran per run (`--repeat`), and which one counts
+  let nrep := samples.foldl (fun m r => Nat.max m ((r.getObjValAs? (Array Nat) "reps_ns").toOption.map (·.size) |>.getD 1)) 1
+  let stat := if str j "repeat_statistic" == "median" then "median" else "fastest"
   let what := if scope.isEmpty then "paired time" else s!"paired time of scope {scope}"
+  let what := if nrep > 1 then what ++ s!" ({stat} of {nrep} repetitions per run)" else what
   let how := if design.first == design.max then s!"{runs} pairs"
     else s!"{runs} pairs, sequential: stopped at {runs} of at most {design.max}"
   let description := s!"{what}: median change {fmt2 med}%, 95% median interval [{fmt2 lo}%, {fmt2 hi}%] ({how})"

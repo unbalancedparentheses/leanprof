@@ -80,7 +80,7 @@ const hints = new Map(); // "file:line" -> [{label, tip, cls}]
 const NEAR_PROBE = "near the probe cost: use `leanprof sample` for this function's time";
 // a row that calls scopes too small to time (`holds_tiny`): their probes change its code
 const holdsTiny = (s) => Array.isArray(s.holds_tiny) && s.holds_tiny.length
-  ? "calls scopes too small to time (" + s.holds_tiny.join(", ") + "): the calls around them change this code, so its time is off whatever leanprof subtracts, and so is a sample of this build; remove those profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`"
+  ? "calls scopes too small to time (" + s.holds_tiny.join(", ") + "): the calls around them change this code, so its time is off whatever leanprof subtracts, and so is a sample of this build; remove those profile! (or `set_option leanprof.enabled false`) and use `leanprof sample`, or run `leanprof run --retime`, which compiles them out in a second run"
   : "";
 function addHint(pos, label, tip, cls) {
   if (!isPos(pos)) return;

@@ -55,15 +55,20 @@ CONFIGS = {
     "allocs": ("`leanprof run --allocs` (profile!)", "wlp", ["--allocs"]),
     "counters": ("`leanprof run --counters` (profile!)", "wlp", ["--counters"]),
     "frees": ("`leanprof run --frees` (profile!)", "wlp", ["--frees"]),
+    "retime": ("`leanprof run --retime` (profile!; scopes too small to time compiled out, a second build)", "wlp",
+               ["--retime"]),
     "sample": ("`leanprof sample` (samply, 4 kHz)", "wl", "sample"),
     "samply": ("`samply record` directly (1 kHz default)", "wl", "samply"),
     "phases": ("`profile!` only where LeanProfiler has spans (phases and tasks)", "wlh", None),
     "leanprofiler": ("LeanProfiler spans (phases and tasks only)", "wls", "leanprofiler"),
 }
-LEANPROF_EXACT = ["profile", "run", "auto", "allocs", "counters", "frees"]
+LEANPROF_EXACT = ["profile", "run", "auto", "allocs", "counters", "frees", "retime"]
 LABEL_ONLY = {"taskStep"}
 SPANS_ONLY = {"phases", "leanprofiler"}  # scopes around phases and tasks only
-SHIMS = ["run", "auto", "allocs", "counters", "frees"]  # builds with copy shims
+SHIMS = ["run", "auto", "allocs", "counters", "frees", "retime"]  # builds with copy shims
+# `run --retime` is built from a run of every workload (WlPlain's `all`), so
+# that the scopes too small to time of each are found and compiled out
+SMOKE = {"retime": ("all", "2")}
 
 # Tolerance for --check: the sum of leanprof's reported times for a workload's
 # components (after it subtracts its own overhead) over the plain program's
@@ -138,9 +143,15 @@ def build(configs, project=BENCH, exes=("wl", "wlp", "wls", "wlh"), bins=BINS, s
             exe = exes[0]
         log(f"  building {cfg}: leanprof run --keep {' '.join(how)} {exe}")
         t0 = time.time()
-        sh([LP, "run", "--keep", *how, exe, "--", *smoke], cwd=project,
-           env={"LEANPROF_QUIET": "1", "LEANPROF_JSON": os.path.join(OUT, "smoke.json")})
+        smoke_json = os.path.join(OUT, f"smoke-{cfg}.json")
+        sh([LP, "run", "--keep", *how, "--json", smoke_json, exe, "--", *SMOKE.get(cfg, smoke)], cwd=project,
+           env={"LEANPROF_QUIET": "1"})
         shutil.copy2(os.path.join(project, ".lake", "build", "bin", exe), os.path.join(bins, cfg, exe))
+        if cfg == "retime":
+            # what the second build compiled out: no row, no count in its reports
+            out = [s["name"] for s in json.load(open(smoke_json)).get("compiled_out", [])]
+            json.dump(out, open(os.path.join(bins, cfg, "compiled_out.json"), "w"))
+            log(f"    compiled out: {', '.join(out) or 'nothing'}")
         log(f"    {time.time() - t0:.1f} s")
     # back to the normal build, which `leanprof sample` uses
     remove_objects(project)
@@ -209,6 +220,12 @@ def leanprof_report(path):
     return {"times": times, "calls": calls, "allocs": allocs, "copies": copies, "near": near, "probes": probes,
             "holds": holds,
             "untimed": untimed, "overhead_ns": d.get("overhead_ns"), "dropped": d.get("dropped", 0)}
+
+
+def compiled_out():
+    """The scopes `run --retime` compiled out of its build (bins/retime)."""
+    p = os.path.join(BINS, "retime", "compiled_out.json")
+    return {short(n) for n in json.load(open(p))} if os.path.exists(p) else set()
 
 
 def sample_report(path):
@@ -431,7 +448,7 @@ def analyse(runs, configs):
                                 continue  # only phases and tasks are spans
                             if cfg == "auto" and name in LABEL_ONLY:
                                 continue  # a `profile!` label inside a function, not a function
-                            if name in rep.get("untimed", ()):
+                            if name in rep.get("untimed", ()) or (cfg == "retime" and name in compiled_out()):
                                 untimed.add(name)
                                 continue  # left untimed as too small to time (`--time-tiny` counts it)
                             checked += 1
@@ -691,7 +708,7 @@ def write_md(path, meta, res, configs, skipped, lcb, before):
     open(path, "w").write("\n".join(L) + "\n")
 
 
-HEAD_TOOLS = [("profile", "leanprof `profile!`"), ("auto", "leanprof `run --auto`"),
+HEAD_TOOLS = [("profile", "leanprof `profile!`"), ("retime", "leanprof `run --retime`"), ("auto", "leanprof `run --auto`"),
               ("sample", "leanprof `sample`"), ("samply", "samply"),
               ("phases", "leanprof `profile!` at LeanProfiler's spans"), ("leanprofiler", "LeanProfiler")]
 
@@ -734,7 +751,7 @@ def headline(L, res, configs):
         ref = (wr["configs"].get("samply") or {}).get("share_mae_pp")
         if ref is None:
             continue
-        for c in ("profile", "auto", "sample"):
+        for c in ("profile", "retime", "auto", "sample"):
             v = (wr["configs"].get(c) or {}).get("share_mae_pp")
             if v is not None and v > ref + 0.5:
                 worse.append(f"`{w}`: {dict(HEAD_TOOLS)[c]} {v:.1f} pp against samply's {ref:.1f} pp")

@@ -238,6 +238,8 @@ jobs:
         run: sh scripts/comment-check.sh
       - name: Interleaved measurement and paired verdicts
         run: python3 scripts/check-pair.py .lake/build/bin/leanprof
+      - name: run --retime compiles out scopes too small to time
+        run: sh scripts/retime-check.sh
       - name: Inlay hints through the language server
         run: |
           LEANPROF_QUIET=1 lake exe leanprof run copybug -- 2000

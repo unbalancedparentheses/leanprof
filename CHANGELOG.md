@@ -6,6 +6,40 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### Tiny `profile!` scopes timed without their probes: `run --retime`
+
+- `leanprof run --retime` runs the program; if `profile!` scopes on pure
+  terms were too small to time, it builds again with them compiled out
+  (`LEANPROF_UNTIMED`, `scripts/leanprof-untimed.awk` in the compiler
+  wrapper: the two calls fold away) and runs again. The second report times
+  their callers without their probes and lists the scopes under
+  `compiled_out` with the first run's exact calls and estimated times;
+  calls that differ between the runs are reported. On the `tiny` benchmark:
+  8.2–9.6 → 0.3–1.1 points off in share, 4.3–4.5× → 1.14–1.19× slower
+  ([bench/retime](bench/retime/README.md)). The `holds_tiny` notes point to
+  it. `bench/run.py` has a `retime` configuration; `scripts/retime-check.sh`
+  tests it in CI.
+
+### Time verdicts: repetitions and a calibration
+
+- `measure-pair --scope NAME --repeat N` (opt-in) runs the region N times
+  in each run (`LEANPROF_BENCH_REPEAT`, honoured by `Leanprof.bench`) and
+  takes the fastest repetition, or with `--repeat-stat median` the median;
+  the session (`repeat`, `repeat_statistic`, each run's `reps_ns`) and the
+  verdict say which. The region must be repeatable (no state carried from
+  one repetition to the next). The help, `Judge` and the guide state the
+  independence assumptions behind "each claim wrong at most 2.5%".
+- [bench/verdicts](bench/verdicts/RESULTS.md): a fixed protocol (150 trials
+  per condition, quiet and with 12 `yes` processes) of false positives on
+  identical code, detection of seeded 1%, 2% and 5% slowdowns, inconclusive
+  sessions and seconds per verdict, for `measure-pair --scope`, with
+  `--repeat 5`, and LeanBench. No false verdict in 120 sessions on
+  identical code (LeanBench at 5%: 21); +2% caught 30/30 quiet, 13/30
+  loaded by default and 30/30 with `--repeat 5`; median 1.42 / 2.10 s per
+  verdict quiet / loaded (LeanBench 2.82 / 3.27 s, both rebuilding after
+  each edit). The seeded variants are `pct1`, `pct2`, `pct5` in the
+  LeanBench project's Work.lean.
+
 ### Memory of compilation
 
 - `leanprof build-memory`: runs a real `lake build` in which every `lean`
