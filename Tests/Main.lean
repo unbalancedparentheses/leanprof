@@ -1,4 +1,4 @@
-import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.ElabWhy
+import Leanprof import Leanprof.Explain import Leanprof.Judge import Leanprof.Fix import Leanprof.Experiment import Leanprof.Workload import Tests.Elab import Tests.ExplainFixes import Tests.Regress import Tests.ElabWhy import Tests.StaticCopies
 
 /-! Tests run in-process: the test executable is built with `copyFlags`. -/
 
@@ -480,6 +480,8 @@ def tests : StateT Nat IO Unit := do
   check "explain: a sampled report is refused with a pointer to `leanprof run`"
     (match r with | .error e => (toString e).contains "leanprof sample" | .ok _ => false) ""
   -- END leanprof explain
+  -- leanprof explain --static: flags exactly the functions that copy (Tests/StaticCopies.lean)
+  Tests.StaticCopies.run fun n ok d => check n ok d
   -- leanprof explain: the fixes it prints remove the copies (Tests/ExplainFixes.lean)
   Tests.ExplainFixes.run fun n ok d => check n ok d
   -- leanprof fix: edits and their diff (Leanprof/Fix.lean)

@@ -6,8 +6,6 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
-Compile time first: most Lean users wait on elaboration, not on programs.
-
 ### Added
 
 - `leanprof elab --why`: for the costliest declarations, the causes the
@@ -38,6 +36,16 @@ Compile time first: most Lean users wait on elaboration, not on programs.
   touched. `scripts/experiment-check.sh` runs it on `Tests/FixElab`.
 - [Case study](docs/case-studies/compile-time-fixes.md): Batteries and
   Mathlib, heartbeats before and after.
+- `leanprof explain --static [MODULE...]`: likely copies of shared arrays and
+  strings across a whole package, libraries included, without running
+  anything, from the C Lake keeps in `.lake/build/ir`. Each flag gives
+  file:line, the value, why another reference is alive (in the function, in
+  a caller up to four calls away, or in a global made by `initialize`) and
+  `explain`'s fix. With a run report it marks the flags the run confirmed
+  (copies, bytes) and, for `run --auto`, the flagged functions that never
+  ran. `--json`, `--all`, `--deps`, `--no-build`. Shown by `#leanprof` as
+  hints and by the MCP tool `static_copies`. It replaces the prototype
+  scripts in `scripts/static-copies` ([guide](docs/guide/static-copies.md)).
 
 ### Changed
 
@@ -69,6 +77,9 @@ Compile time first: most Lean users wait on elaboration, not on programs.
   200-character description, and six of Mathlib's `def
   UniversalCoprimeFactorizationRing.…` were one key (`UniversalCo`) to
   `compare` and `experiment`.
+- `explain` read the last parameter of a C function wrongly on Lean before
+  4.30 (`x_5)`), which hid causes found through parameters.
+
 
 ## [0.1.0] - 2026-10-26
 
