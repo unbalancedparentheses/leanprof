@@ -1118,13 +1118,36 @@ __attribute__((no_instrument_function)) LEAN_EXPORT void __cyg_profile_func_exit
  * times too slow. What remains unmeasured depends on the program: boxing a
  * closure's result or captured scalars (a `UInt64` is allocated when it
  * crosses the closure), and the extra work around a hook call in an
- * instrumented function. */
+ * instrumented function.
+ *
+ * On x86-64 each calibration pair holds a little work, and the same work
+ * timed alone is taken off. RDTSC is microcode there (about 38 cycles a read
+ * on a Ryzen 9 9950X3D): back to back, the reads of empty pairs queue behind
+ * each other, while in a program they overlap with the work around them.
+ * On that CPU an empty pair measured 17.4 ns, a pair around 3 ns of work
+ * 15.9 ns more than the work alone (bench/linux/probe/RESULTS.md), and
+ * subtracting the empty figure left `rec` at 0.66 of its time. On arm64 the
+ * counter is one instruction and the pairs stay empty. */
+#if defined(__x86_64__)
+#define LP_CAL_WORK 4
+#else
+#define LP_CAL_WORK 0
+#endif
 
 static char lpf_calibration_key[1 + LP_PATHS];
+
+static uint64_t lpf_cal_v;
+/* a dependent multiply chain, about 3 ns on a 9950X3D */
+static __attribute__((noinline)) void lpf_cal_work(void) {
+    uint64_t x = lpf_cal_v;
+    for (int i = 0; i < LP_CAL_WORK; i++) x = x * 0x9E3779B97F4A7C15ull + (x >> 17);
+    lpf_cal_v = x;
+}
 
 static lean_obj_res lpf_cal_noop(lean_obj_arg fixed, lean_obj_arg unit) {
     (void)fixed;
     (void)unit;
+    if (LP_CAL_WORK) lpf_cal_work();
     return lean_box(0);
 }
 static __attribute__((noinline)) lean_obj_res lpf_cal_scope(b_lean_obj_arg key, lean_obj_arg f) {
@@ -1159,20 +1182,26 @@ static __attribute__((noinline)) uint64_t lpf_cal_exit_pure(uint64_t tok, uint64
     return v;
 }
 
-/* `n` empty scopes entered the way `path` enters them. */
+/* `n` scopes entered the way `path` enters them, around LP_CAL_WORK (none:
+ * empty scopes); path -1: the work alone. */
 static char lpf_calibration_light_key[LP_PATHS]; /* light scopes, one per path */
 
 static __attribute__((noinline)) void lpf_cal_batch(int path, int n, void *k) {
     switch (path) {
+    case -1:
+        for (int i = 0; i < n; i++) lpf_cal_work();
+        break;
     case LP_PATH_DIRECT:
         for (int i = 0; i < n; i++) {
             lpf_enter(k, LP_INTERNAL, LP_PATH_DIRECT);
+            if (LP_CAL_WORK) lpf_cal_work();
             lpf_exit();
         }
         break;
     case LP_PATH_HOOK:
         for (int i = 0; i < n; i++) {
             lpf_cal_hook_enter(k, NULL);
+            if (LP_CAL_WORK) lpf_cal_work();
             lpf_cal_hook_exit(k, NULL);
         }
         break;
@@ -1185,11 +1214,19 @@ static __attribute__((noinline)) void lpf_cal_batch(int path, int n, void *k) {
         }
         break;
     case LP_PATH_ENTER:
-        for (int i = 0; i < n; i++) lpf_cal_exit(lpf_cal_enter((lean_object *)k));
+        for (int i = 0; i < n; i++) {
+            lean_object *u = lpf_cal_enter((lean_object *)k);
+            if (LP_CAL_WORK) lpf_cal_work();
+            lpf_cal_exit(u);
+        }
         break;
     case LP_PATH_PURE: {
         uint64_t v = 0;
-        for (int i = 0; i < n; i++) v = lpf_cal_exit_pure(lpf_cal_enter_pure(lean_box(0), (lean_object *)k), v);
+        for (int i = 0; i < n; i++) {
+            uint64_t tok = lpf_cal_enter_pure(lean_box(0), (lean_object *)k);
+            if (LP_CAL_WORK) lpf_cal_work();
+            v = lpf_cal_exit_pure(tok, v);
+        }
         break;
     }
     }
@@ -1234,28 +1271,48 @@ static void lpf_calibrate(void) {
             lpf_cal_batch(p, 64, &lpf_calibration_key[1 + p]);
             lpf_cal_batch(p, 64, &lpf_calibration_light_key[p]);
         }
+    /* the work inside each pair (LP_CAL_WORK), timed alone in batches
+     * between the pairs' and taken off them: the fastest of each */
+    uint64_t best_work = LP_CAL_WORK ? UINT64_MAX : 0;
+#define LP_CAL_WORK_BATCH()                                                \
+    if (LP_CAL_WORK) {                                                     \
+        uint64_t w0 = lpf_now();                                           \
+        lpf_cal_batch(-1, BATCH, NULL);                                    \
+        uint64_t w = ((lpf_now() - w0) << 10) / BATCH;                     \
+        if (w < best_work) best_work = w;                                  \
+    }
+    uint64_t raw_pair[LP_PATHS], raw_inner[LP_PATHS], raw_light[LP_PATHS];
     for (int p = 0; p < LP_PATHS; p++) {
         lpf_scope *inner = lpf_scope_get(t, &lpf_calibration_key[1 + p], LP_INTERNAL, (uint8_t)p);
-        best_pair[p] = UINT64_MAX;
-        best_inner[p] = 0;
+        raw_pair[p] = UINT64_MAX;
+        raw_inner[p] = 0;
         for (int b = 0; b < BATCHES; b++) {
+            LP_CAL_WORK_BATCH()
             uint64_t sum0 = inner ? inner->sum : 0;
             uint64_t t0 = lpf_now();
             lpf_cal_batch(p, BATCH, &lpf_calibration_key[1 + p]);
             uint64_t pair = ((lpf_now() - t0) << 10) / BATCH;
-            if (pair < best_pair[p]) {
-                best_pair[p] = pair;
-                best_inner[p] = inner ? ((inner->sum - sum0) << 10) / BATCH : 0;
+            if (pair < raw_pair[p]) {
+                raw_pair[p] = pair;
+                raw_inner[p] = inner ? ((inner->sum - sum0) << 10) / BATCH : 0;
             }
         }
-        if (best_inner[p] > best_pair[p]) best_inner[p] = best_pair[p];
-        best_light[p] = UINT64_MAX;
+        raw_light[p] = UINT64_MAX;
         for (int b = 0; b < BATCHES / 4; b++) { /* cheap pairs: fewer batches keep startup short */
+            LP_CAL_WORK_BATCH()
             uint64_t t0 = lpf_now();
             lpf_cal_batch(p, BATCH, &lpf_calibration_light_key[p]);
             uint64_t pair = ((lpf_now() - t0) << 10) / BATCH;
-            if (pair < best_light[p]) best_light[p] = pair;
+            if (pair < raw_light[p]) raw_light[p] = pair;
         }
+    }
+#undef LP_CAL_WORK_BATCH
+    for (int p = 0; p < LP_PATHS; p++) {
+        /* (best_work is 0 without LP_CAL_WORK: the raw figures) */
+        best_pair[p] = raw_pair[p] > best_work ? raw_pair[p] - best_work : LP_CAL_WORK ? 1 : raw_pair[p];
+        best_inner[p] = lpf_sub(raw_inner[p], best_work);
+        if (best_inner[p] > best_pair[p]) best_inner[p] = best_pair[p];
+        best_light[p] = lpf_sub(raw_light[p], best_work);
         if (best_light[p] > best_pair[p]) best_light[p] = best_pair[p];
     }
     lpf_exit();
