@@ -434,6 +434,7 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
 | Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
 | Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
+| What an edit did to a file's compile cost: each declaration whose heartbeats changed since the last run, with the unfold, instance or simp lemma behind it | `leanprof elab --heartbeats --since-last FILE` |
 | Peak memory of each module in a real `lake build`, imports apart; the most jobs under a memory limit; a memory budget for CI | `leanprof build-memory [--mem-limit 8G] [--max-memory 6G]` |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |

@@ -287,7 +287,7 @@ Ranked; the open ones are planned after v0.2.0.
     20 ms), and the page cache a cgroup charges for the `.olean` files.
   - [ ] Memory per command in the build itself: only a serial run is
     attributed now, since parallel proofs share the process.
-- [ ] *(in progress)* **Compile time against the previous run.** `elab
+- [x] **Compile time against the previous run.** `elab
   --heartbeats --since-last FILE`: the declarations that changed and why
   (the unfolds, instances and `simp` lemmas whose counts moved), for
   agents and scripts.

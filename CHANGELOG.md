@@ -163,6 +163,23 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   ran. `--json`, `--all`, `--deps`, `--no-build`. Shown by `#leanprof` as
   hints and by the MCP tool `static_copies`. It replaces the prototype
   scripts in `scripts/static-copies` ([guide](docs/guide/static-copies.md)).
+- `leanprof elab --heartbeats --since-last FILE` compares the file's
+  compile cost with the previous `--since-last` run on it (kept under
+  `.lake/leanprof/onsave/`), prints the declarations whose heartbeats moved
+  by more than 1,000 with what changed inside each (the unfolds, instances
+  and simp lemmas `compare` explains a regression with), and writes the
+  difference as JSON next to the report
+  ([format](docs/guide/reference.md#difference-file)). `--keep-base`
+  compares with a fixed base. For a person or an agent checking what an
+  edit did to compile time.
+- `elab --since-last` reuses `lake env`'s paths and the setup of a module
+  that is not built while the package's configuration, manifest, toolchain
+  and the file's imports are unchanged: 0.2–0.45 s less a run on the files
+  measured ([compile time](docs/guide/compile-time.md#what-an-edit-changed)),
+  about 0.7 s for a file outside the package's libraries.
+- `elab` no longer tries to import a module of the package that is not
+  built when it locates definitions (it printed an error; those
+  definitions are found in the profiled file).
 
 ### Changed
 

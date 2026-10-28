@@ -490,6 +490,46 @@ adds a `lean` run per module after the build (on Batteries 12 to 18 s on top
 of a 15 s build).
 The numbers are in the [case study](../case-studies/build-memory.md).
 
+## What an edit changed
+
+`--since-last` compares a file's compile cost with the previous
+`--since-last` run on the same file, for a person or an agent checking what
+an edit did:
+
+```
+$ leanprof elab --heartbeats --since-last Foo/Bar.lean
+...
+since the last profile (.lake/leanprof/onsave/Foo/Bar.lean.delta.json):
+  1 declaration changed; file 94.28 kHB -> 120.30 kHB (+26.02 kHB)
+    +25.00 kHB  Foo/Bar.lean t2 (Foo/Bar.lean:5); whnf reduces Foo.f (Foo/Bar.lean:1) +20.00 kHB
+```
+
+It lists the declarations whose heartbeats moved by more than 1,000, each
+with what changed inside it, as `compare` explains a regression: the
+definitions unfolded, the instances tried and the simp lemmas that rewrote,
+before and after. The difference is also written as JSON next to the report
+([difference file](reference.md#difference-file)). The first run has
+nothing to compare with and says so. Each run becomes the base of the next;
+`--keep-base` keeps comparing with the first. A file with errors is
+compared up to its first error and does not replace the base.
+
+`--since-last` reuses `lake env`'s paths and the module's setup while the
+package's configuration and the file's imports are unchanged. On the files
+below (median of 3, Apple M5 Max shared with other work, so a few tenths
+of a second either way), a run takes about as long as plain `lake env lean`
+on the file:
+
+| file | lines | heartbeats | `lake env lean` | `elab --heartbeats` | `elab --heartbeats --since-last` |
+|---|---|---|---|---|---|
+| leanprof `Examples/CopyBug.lean` | 37 | 0.7 M | 0.47 s | 0.63 s | 0.43 s |
+| leanprof `Leanprof/Regress.lean` | 430 | 15 M | 0.67 s | 0.94 s | 0.65 s |
+| leanprof `LeanprofElab.lean` | 1,610 | 95 M | 2.12 s | 2.95 s | 2.60 s |
+| a Mathlib project, `Coin.lean` | 85 | 5 M | 1.66 s | 2.47 s | 2.02 s |
+| a Mathlib project, `Kelly.lean` | 109 | 25 M | 1.79 s | 2.69 s | 2.59 s |
+
+Each run elaborates the whole file and loads its imports (most of the time
+with Mathlib).
+
 ## In the editor
 
 The report goes to `.lake/leanprof/elab.json`; `#leanprof` shows it as
