@@ -6,7 +6,7 @@ copybug server`:
     python3 scripts/mcp-check.py .lake/build/bin/leanprof
 
 It runs copybug twice through the `run` tool and checks the answers of
-initialize, tools/list, run, report, hot, explain, compare, judge, live,
+initialize, tools/list, run, report, hot, explain, static_copies, compare, judge, live,
 the experiment tools (on a copy of Tests/Experiment),
 dump, ping, an unknown tool, an unknown method and a malformed line.
 Every tool result must carry `structuredContent` that follows the tool's
@@ -92,7 +92,7 @@ output_schemas.update({t["name"]: t.get("outputSchema", {}) for t in listed})
 check("every tool has an outputSchema (an object with ok, tool and error)",
       all(t.get("outputSchema", {}).get("type") == "object" and {"ok", "tool"} <= set(t["outputSchema"].get("required", []))
           and "error" in t["outputSchema"].get("properties", {}) for t in listed), [t["name"] for t in listed])
-want = {"doctor", "findings", "finding", "run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "compare", "judge",
+want = {"doctor", "findings", "finding", "run", "sample", "stat", "elab", "measure", "measure_pair", "report", "hot", "explain", "static_copies", "compare", "judge",
         "live", "dump",
         "experiment_start", "experiment_try", "experiment_finish", "experiment_status"}
 check("tools/list", want <= names, names)
@@ -190,6 +190,10 @@ text, err = tool("explain", path=".lake/leanprof/mcp-large.json", name="buildWit
 # the command's IR-based diagnosis, as `leanprof explain` gives it
 check("explain", not err and "COPY" in text and "stored in `history` at line 21" in text and "fix:" in text
       and "confidence: high" in text and "SCOPE buildWithHistory" in text, text)
+# likely copies without running: copybug's module, checked against the run's report
+text, err = tool("static_copies", modules=["Examples.CopyBug"], no_build=True, report=".lake/leanprof/mcp-large.json")
+check("static_copies", not err and "FLAG  Examples/CopyBug.lean:22" in text and "stored in `history` at line 21" in text
+      and "confirmed by the report: 1,999 copies" in text and "fix:" in text, text)
 with open(".lake/leanprof/mcp-sampled.json", "w") as f:
     json.dump({"version": 3, "sampled": True, "wall_ns": 1e6, "copies": [],
                "scopes": [{"name": "f", "pos": "F.lean:1", "total_ns": 1e6, "self_ns": 1e6, "calls": 0}]}, f)

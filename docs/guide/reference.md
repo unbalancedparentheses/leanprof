@@ -107,6 +107,7 @@ describes it:
 | `measure-pair` | `measure-pair` (`paired.json`) |
 | `judge` | `judge --json` |
 | `explain` | `explain --json` |
+| `static` | `explain --static --json` (`.lake/leanprof/static.json`) |
 | `compare` | `compare --json` |
 | `experiment-try`, `experiment-finish`, `experiment-status` | `experiment try --json` (`tries/N/evidence.json`), `experiment finish --json` (`finish.json`), `experiment status --json` (`experiment.json`) |
 | `fix` | `fix --json` (`.lake/leanprof/fix/result.json`) |

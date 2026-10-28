@@ -310,6 +310,13 @@ def full(lp):
         e = check_file(f"the error of `leanprof {' '.join(args)}`", "error", ef)
         check(f"`leanprof {' '.join(args)}`: {want}", e.get("code") == want, e)
 
+    # static copies, from the IR (nothing run), checked against the last run report
+    j = check_doc("explain --static --json", "static",
+                  stdout_json("explain --static", run([lp, "explain", "--static", "--json", "--no-build",
+                                                       "--report", f"{d}/run2.json", "Examples.CopyBug"], ok_codes=(0, 1))))
+    check("explain --static: a flag in CopyBug", any(f.get("file") == "Examples/CopyBug.lean" for f in j.get("flags", [])),
+          j.get("flags"))
+
     # a live snapshot
     snap = f"{d}/live.json"
     subprocess.run([".lake/build/bin/server", "5", "5"], env=dict(os.environ, LEANPROF_LIVE=snap, LEANPROF_QUIET="1"),

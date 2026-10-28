@@ -178,6 +178,15 @@ in the compiler's repository at `854fcc2`; `lcb --target aarch64-macos
 The case study's "160 input/target/option combinations" identity check was
 not recorded and has no script; `lcb-autoresearch` runs the 540-case one.
 
+### `static-copies`: [static copies](guide/static-copies.md)
+
+`python3 reproduce/static-copies.py` (about 5 min once built). Scans
+lean-compiler-backend at a623acc and 8a0d286 (`CFG.build` flagged for its
+nested arrays before the fix, not after) and at a25c541, then runs the zlib
+workload of `lcb-fixes` under `run --auto`: 63 flags, 36 flagged functions
+ran, 20 of them copied shared values; 17 of the 26 functions that copied
+were flagged (116,465 of 119,516 copies). All exact; Lean 4.34.1.
+
 ### `lcb-autoresearch`: [case study](case-studies/autoresearch-lean-compiler-backend.md), [qualification](../research/lcb/results/README.md)
 
 `scripts/reproduce.sh lcb-autoresearch` (about 2 min once built; most of it
