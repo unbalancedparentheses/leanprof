@@ -276,7 +276,7 @@ Ranked; the open ones are planned after v0.2.0.
 - [x] **A heartbeat budget.** `elab --max-heartbeats N` in
   CI flags any declaration above N, so slow lemmas do not accumulate
   (`report-md --max-heartbeats`, the Action's `max-heartbeats`).
-- [ ] *(in progress)* **Compile time against the previous run.** `elab
+- [x] **Compile time against the previous run.** `elab
   --heartbeats --since-last FILE`: the declarations that changed and why
   (the unfolds, instances and `simp` lemmas whose counts moved), for
   agents and scripts.

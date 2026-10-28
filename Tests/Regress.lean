@@ -1,4 +1,5 @@
 import Leanprof.Regress
+import Leanprof.Delta
 
 /-! Tests of `Leanprof.Regress` (why a declaration or copy site got worse), run
 by `Tests/Main.lean`. The end-to-end check, from real Lean files through
@@ -93,5 +94,49 @@ def run (check' : String → Bool → String → StateT Nat IO Unit) : StateT Na
     (!has p "<img" && !has p "@user" && !has p "#12" && !has p "[l]" && !has p "*b*" && has p "`x\\|y`") p
   let c := htmlCode "a<b>&\"c"
   check' "regress: htmlCode escapes HTML" (c == "<code>a&lt;b&gt;&amp;&quot;c</code>") c
+  -- the difference per declaration and call site (`compare --json`, `--since-last`)
+  let d := Leanprof.Delta.compute (report #[cause "g" "whnf" 10 1] #[] #[])
+    (report #[cause "f" "whnf" 5000 30, cause "g" "whnf" 10 1] #[] #[] (total := 7000))
+  let decls := jarr d "decls"
+  check' "delta: a declaration that costs more is listed at its line, with the change"
+    (decls.size == 1 && jstr decls[0]! "pos" == "F.lean:1" && jnum decls[0]! "change" == 6000 &&
+      (decls[0]!.getObjValAs? Bool "regression").toOption == some true) d.compress
+  let why := (decls[0]!.getObjVal? "why").toOption.getD Json.null
+  check' "delta: what changed inside it, from compare's explanation"
+    ((jarr why "rows").any (fun r => jstr r "name" == "f" && jstr r "change" == "+5.00 kHB") &&
+      (jstr why "headline").startsWith "whnf reduces f") why.compress
+  check "delta: a change within 1,000 heartbeats is not listed"
+    (jarr (Leanprof.Delta.compute (report #[] #[] #[]) (report #[] #[] #[] (total := 1900))) "decls").isEmpty
+  let down := Leanprof.Delta.compute (report #[cause "f" "whnf" 9000 3] #[] #[] (total := 20000))
+    (report #[cause "f" "whnf" 100 3] #[] #[] (total := 2000))
+  let w := ((jarr down "decls")[0]!.getObjVal? "why").toOption.getD Json.null
+  check' "delta: a cheaper declaration names what fell, without the notes for increases"
+    ((jstr w "headline").startsWith "whnf reduces f" && (jarr w "notes").isEmpty) w.compress
+  let withFile (j : Json) (errors : Nat) : Json :=
+    j.setObjVal! "files" (Json.arr #[Json.mkObj [("file", "F.lean"), ("errors", toJson errors)]])
+  let other := Json.mkObj [("key", "F.lean e"), ("pos", "F.lean:9"), ("name", "theorem e"), ("total_ns", toJson (50000 : Nat))]
+  let twoDecls := (report #[] #[] #[]).setObjVal! "scopes" (Json.arr ((jarr (report #[] #[] #[]) "scopes").push other))
+  check "delta: a declaration after an error is not reported gone"
+    (jarr (Leanprof.Delta.compute (withFile twoDecls 0) (withFile (report #[] #[] #[]) 1)) "decls").isEmpty
+  check "delta: a declaration removed from a file without errors is reported gone"
+    ((jarr (Leanprof.Delta.compute (withFile twoDecls 0) (withFile (report #[] #[] #[]) 0)) "decls").any
+      (jstr · "status" == "gone"))
+  -- a project report: an error in another file does not hide what was removed from this one
+  let twoFiles (errors : Nat) : Json := (withFile (report #[] #[] #[]) 0).setObjVal! "files" (Json.arr #[
+    Json.mkObj [("file", "F.lean"), ("errors", toJson (0 : Nat))], Json.mkObj [("file", "G.lean"), ("errors", toJson errors)]])
+  check "delta: an error in another file does not keep this file's removed declarations"
+    ((jarr (Leanprof.Delta.compute (withFile twoDecls 0) (twoFiles 1)) "decls").any (jstr · "status" == "gone"))
+  let d := Leanprof.Delta.compute (report #[] #[] #[]) (report #[cause "f" "whnf" 5000 30] #[] #[] (total := 7000))
+  check' "delta: the summary names the declaration and its top change"
+    ((Leanprof.Delta.summary d).any (has · "+6.00 kHB  F.lean d (F.lean:1); whnf reduces f"))
+    (toString (Leanprof.Delta.summary d))
+  check "delta: a run report is not compared"
+    (((Leanprof.Delta.compute (Json.mkObj [("scopes", Json.arr #[])]) (report #[] #[] #[])).getObjValAs? Bool "comparable").toOption == some false)
+  -- time moved by 20% and 5 ms: changed at compare's defaults, not with --threshold 50
+  let timed (ns : Nat) : Json := (report #[] #[] #[] (total := ns)).setObjVal! "unit" "ns"
+  check "delta: a time change counts above compare's default thresholds"
+    ((jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000)) "decls").size == 1)
+  check "delta: the time thresholds can be raised"
+    (jarr (Leanprof.Delta.compute (timed 25000000) (timed 30000000) { pct := 50 }) "decls").isEmpty
 
 end Tests.Regress

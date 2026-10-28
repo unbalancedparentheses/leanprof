@@ -419,6 +419,7 @@ probes: on the `tiny` benchmark 0.3–1.1 points off instead of 8.2–9.6, and
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
 | Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
 | Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
+| What an edit did to a file's compile cost: each declaration whose heartbeats changed since the last run, with the unfold, instance or simp lemma behind it | `leanprof elab --heartbeats --since-last FILE` |
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
