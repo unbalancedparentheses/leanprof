@@ -220,8 +220,8 @@ clock, boost off; see [bench/README.md](../../bench/README.md)):
   `compiled_out` with the first run's exact calls and estimated times. A
   scope whose calls differ between the two runs is named (a program that
   does not do the same work each time). On the `tiny` benchmark the share
-  error went from 11.2 to 1.0 points and the slowdown from 5.4× to 1.26× in
-  a full run of the suite ([bench/retime](../../bench/retime/full-suite.md), on a busy machine). Monadic scopes are not
+  error went from 8.2–9.6 to 0.3–1.1 points and the slowdown from 4.3–4.5× to
+  1.14–1.19× in three interleaved suites ([bench/retime](../../bench/retime/README.md)). Monadic scopes are not
   compiled out (they are named as still timed).
 - **`leanprof sample`** slows programs down 1.0–1.3× and is within 0.1–1.9
   percentage points of each function's true share of time, like samply.
