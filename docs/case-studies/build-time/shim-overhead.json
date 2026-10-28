@@ -1,0 +1,10 @@
+{
+ "runs": 300,
+ "records_written": 300,
+ "direct_median_ms": 3.652,
+ "shim_median_ms": 9.619,
+ "added_ms": 5.967,
+ "load_before": 105.86,
+ "load_after": 100.03,
+ "platform": "darwin"
+}

@@ -486,7 +486,14 @@ def cpm (jobs : Array Job) : Array Float × Float := Id.run do
 /-! ## Scheduling simulation -/
 
 structure SimJob where
+  /-- The job's measured wall time. -/
   dur : Float
+  /-- Its time alone on the machine: its CPU time when that is less than its
+  wall time (it waited for a core), else its wall time (it used several
+  threads). -/
+  iso : Float := 0
+  /-- How many cores it keeps busy alone: CPU time over `iso`, at least 1. -/
+  par : Float := 1
   /-- Indices into the same array. -/
   deps : Array Nat
   /-- Ties among ready jobs: the earlier measured start first. -/
@@ -494,10 +501,17 @@ structure SimJob where
   deriving Inhabited
 
 /-- The time from the first job's start to the last job's end when `workers`
-jobs can run at once, each starting `latency` seconds after its last
-dependency ends (Lake's own work between jobs), ready jobs first come first
-served. -/
-def simulate (js : Array SimJob) (workers : Nat) (latency : Float) : Float := Id.run do
+jobs can run at once (Lake's thread pool), each starting `latency` seconds
+after its last dependency ends (Lake's own work between jobs), ready jobs
+first come first served.
+
+With `cores = 0` each job takes its measured wall time: the build replayed
+as it ran, contention included. With `cores > 0` each job needs its time
+alone (`iso`) and keeps `par` cores busy; when the running jobs want more
+cores than there are, all of them slow down by the same factor (processor
+sharing). That is the model for a rebuild, where far fewer jobs run than in
+a clean build. -/
+def simulate (js : Array SimJob) (workers : Nat) (latency : Float) (cores : Nat := 0) : Float := Id.run do
   let n := js.size
   if n == 0 then return 0
   let workers := max workers 1
@@ -509,9 +523,9 @@ def simulate (js : Array SimJob) (workers : Nat) (latency : Float) : Float := Id
   let mut ready : Array (Float × Nat) := #[]
   for i in [0:n] do
     if js[i]!.deps.isEmpty then ready := ready.push (0, i)
+  -- running jobs: the work left, in seconds of running alone (or of the replay)
   let mut running : Array (Float × Nat) := #[]
   let mut time : Float := 0
-  let mut endT : Float := 0
   let mut guard := 0
   while (!ready.isEmpty || !running.isEmpty) && guard < 4 * n + 4 do
     guard := guard + 1
@@ -531,28 +545,33 @@ def simulate (js : Array SimJob) (workers : Nat) (latency : Float) : Float := Id
       if let some k := best then
         let (_, i) := ready[k]!
         ready := ready.eraseIdx! k
-        running := running.push (time + js[i]!.dur, i)
+        running := running.push (if cores == 0 then js[i]!.dur else js[i]!.iso, i)
         progress := true
-    -- the next event
-    let nextEnd := running.foldl (fun m r => min m r.1) (1e300 : Float)
+    -- how fast the running jobs progress, then the next event
+    let demand := running.foldl (fun s r => s + js[r.2]!.par) 0
+    let rate : Float := if cores == 0 || demand <= cores.toFloat then 1 else cores.toFloat / demand
+    let nextEnd := running.foldl (fun m r => min m (time + r.1 / rate)) (1e300 : Float)
     let nextReady := if running.size < workers then ready.foldl (fun m r => min m r.1) (1e300 : Float) else 1e300
     let t := min nextEnd nextReady
     if t >= 1e300 then break
-    time := max time t
-    -- finish what ended
-    let (done, still) := running.partition (·.1 <= time)
+    let t := max time t
+    let dt := t - time
+    time := t
+    -- finish what ended (within a nanosecond, for rounding)
+    let advanced := running.map fun (w, i) => (w - dt * rate, i)
+    let (done, still) := advanced.partition (·.1 <= 1e-9)
     running := still
-    for (f, i) in done do
-      endT := max endT f
+    for (_, i) in done do
       for d in dependents[i]! do
         remaining := remaining.set! d (remaining[d]! - 1)
-        if remaining[d]! == 0 then ready := ready.push (f + latency, d)
-  return endT
+        if remaining[d]! == 0 then ready := ready.push (time + latency, d)
+  return time
 
-/-- The median of the waits between a job's last dependency ending and the
-job starting, over jobs with dependencies: Lake's own time between jobs
-when a worker is free. -/
-def medianLatency (jobs : Array Job) : Float := Id.run do
+/-- A quantile (0 to 1) of the waits between a job's last dependency ending
+and the job starting, over jobs with dependencies. The median is what the
+build had, waits for a free worker included; a low quantile is Lake's own
+time between jobs when a worker was free. -/
+def latencyQuantile (jobs : Array Job) (q : Float) : Float := Id.run do
   let mut gaps : Array Float := #[]
   for j in jobs do
     unless j.deps.isEmpty do
@@ -560,7 +579,7 @@ def medianLatency (jobs : Array Job) : Float := Id.run do
       gaps := gaps.push (max 0 (j.start - last))
   if gaps.isEmpty then return 0
   let s := gaps.qsort (· < ·)
-  return s[s.size / 2]!
+  return s[min (s.size - 1) (q * s.size.toFloat).toUInt64.toNat]!
 
 /-- The jobs of a subset as a simulation. A job outside the subset is not
 rerun, but Lake still waits for its inputs before checking it, so a job of
@@ -583,7 +602,10 @@ def simOf (jobs : Array Job) (ids : Array Nat) : Array SimJob := Id.run do
     eff := eff.set! j.id acc
   return ids.map fun i =>
     let j := jobs[i]!
-    { dur := j.dur, deps := eff[i]!, order := j.start }
+    let cpu := j.user + j.sys
+    -- no CPU time recorded: the wall time, one core
+    let iso := if cpu <= 0 then j.dur else min j.dur cpu
+    { dur := j.dur, iso, par := if iso > 0 then max 1 (cpu / iso) else 1, deps := eff[i]!, order := j.start }
 
 /-- The modules that import `m`, directly or not, among those with a job. -/
 def dependentsOf (jobs : Array Job) (m : String) : Array Nat :=
@@ -710,12 +732,20 @@ structure Analysis where
   cpmLen : Float
   prof : Array (Float × Nat)
   workers : Nat
+  /-- The cores of the machine, for the rebuild model. -/
+  cores : Nat := 1
+  /-- The median wait before a job (the replay of the build). -/
   latency : Float
+  /-- A low quantile of the waits: Lake's own time when a worker is free (the rebuild model). -/
+  latencyFree : Float := 0
+  /-- The build replayed with its measured wall times. -/
   simulated : Float
+  /-- The build in the rebuild model (times alone, cores shared). -/
+  simulatedShared : Float := 0
   first : Float
   last : Float
 
-def analyze (jobs : Array Job) (workers : Nat) : Analysis := Id.run do
+def analyze (jobs : Array Job) (workers : Nat) (cores : Nat := workers) : Analysis := Id.run do
   let measured : Std.HashSet String := jobs.foldl (init := {}) fun s j => if j.kind == "lean" then s.insert j.name else s
   let jobs := jobs.map fun j => { j with imports := j.allImports.filter measured.contains }
   let jobs := assignLanes (linkDeps jobs)
@@ -723,15 +753,23 @@ def analyze (jobs : Array Job) (workers : Nat) : Analysis := Id.run do
   let jobs := jobs.map fun j => { j with slack := slack[j.id]! }
   let first := jobs.foldl (fun m j => min m j.start) (if jobs.isEmpty then 0 else jobs[0]!.start)
   let last := jobs.foldl (fun m j => max m j.stop) 0
-  let latency := medianLatency jobs
-  let simulated := simulate (simOf jobs ((List.range jobs.size).toArray)) workers latency
-  return { jobs, path := observedPath jobs, cpmLen, prof := profile jobs, workers, latency, simulated, first, last }
+  let latency := latencyQuantile jobs 0.5
+  let latencyFree := latencyQuantile jobs 0.25
+  let all := simOf jobs ((List.range jobs.size).toArray)
+  let simulated := simulate all workers latency
+  let simulatedShared := simulate all workers latencyFree (max cores 1)
+  return {
+    jobs, path := observedPath jobs, cpmLen, prof := profile jobs, workers, cores := max cores 1, latency,
+    latencyFree, simulated, simulatedShared, first, last }
 
-/-- A module's estimated rebuild after touching it: (jobs, task seconds, elapsed seconds). -/
+/-- A module's estimated rebuild after touching it: (jobs, task seconds, elapsed
+seconds). The jobs' times alone, sharing the machine's cores (a clean build
+runs every core with many jobs at once, so its wall times are longer than
+the same jobs take in a rebuild), plus a no-op build. -/
 def rebuildEstimate (a : Analysis) (noop : Float) (m : String) : Nat × Float × Float :=
   let ids := rebuildSet a.jobs m
   let task := ids.foldl (fun s i => s + a.jobs[i]!.dur) 0
-  (ids.size, task, noop + simulate (simOf a.jobs ids) a.workers a.latency)
+  (ids.size, task, noop + simulate (simOf a.jobs ids) a.workers a.latencyFree a.cores)
 
 /-! ## Rendering (from the report's JSON, so `--from` shows a saved one) -/
 
@@ -805,13 +843,16 @@ def render (r : Json) (top : Nat) : String := Id.run do
   -- model
   let model := jobj r "model"
   out := out.push ""
-  out := out.push s!"Model: replaying these durations with {jnatv model "workers"} workers and {fmtS (jfloat model "latency_s")} between dependent jobs gives {fmtS (jfloat model "simulated_span_s")} from the first job's start to the last one's end; measured {fmtS (jfloat model "measured_span_s")} ({pct (jfloat model "simulated_span_s" - jfloat model "measured_span_s") (jfloat model "measured_span_s")} off)."
+  let span := jfloat model "measured_span_s"
+  out := out.push s!"Model: from the first job's start to the last one's end the build took {fmtS span}. Replaying the measured wall times with {jnatv model "workers"} workers and the median wait between dependent jobs ({fmtS (jfloat model "latency_s")}) gives {fmtS (jfloat model "simulated_span_s")} ({pct (jfloat model "simulated_span_s" - span) span} off)."
+  unless (model.getObjVal? "simulated_alone_span_s").toOption.isNone do
+    out := out.push s!"  With each job's time alone (its CPU time when it waited for a core) sharing {jnatv model "cores"} cores, and {fmtS (jfloat model "latency_free_s")} between jobs (a quarter of the waits were shorter), the rebuild model gives {fmtS (jfloat model "simulated_alone_span_s")}: the difference is time lost to contention, from this build's own jobs and from other load."
   -- rebuild
   let rb := (mods.filter fun m => !(jobj m "rebuild").isNull).qsort fun a b =>
     jfloat (jobj a "rebuild") "estimate_s" > jfloat (jobj b "rebuild") "estimate_s"
   unless rb.isEmpty do
     out := out.push ""
-    out := out.push s!"Rebuild after touching a module (estimated: a no-op build, {fmtS (jfloat model "noop_s")}, plus the simulated jobs):"
+    out := out.push s!"Rebuild after touching a module (estimated: a no-op build, {fmtS (jfloat model "noop_s")}, plus the jobs it reruns in the rebuild model):"
     out := out.push s!"  {lpad "elapsed" 9} {lpad "jobs" 5} {lpad "job time" 9}  module"
     for m in rb.extract 0 top do
       let x := jobj m "rebuild"

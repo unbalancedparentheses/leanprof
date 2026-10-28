@@ -350,7 +350,7 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
   say o s!"running `{cmd}` with every toolchain program recorded"
   let run ← runLake proj work o.targets (!o.quiet)
   let loadAfter ← loadNow
-  let a := analyze run.jobs workers
+  let a := analyze run.jobs workers hw
   -- a build with nothing to do: Lake's own time around any rebuild
   let noop ← if run.exitCode == 0 then do
       say o "timing a build with nothing to do"
@@ -398,6 +398,8 @@ def buildCmd (usage : String) (argv : List String) : IO UInt32 := do
       ("profile", Json.arr (prof.map fun (t, n) => Json.arr #[toJson (r3 t), toJson n]))]),
     ("model", Json.mkObj [("workers", toJson workers), ("latency_s", toJson (r3 a.latency)),
       ("simulated_span_s", toJson (r3 a.simulated)), ("measured_span_s", toJson (r3 span)),
+      ("cores", toJson a.cores), ("latency_free_s", toJson (r3 a.latencyFree)),
+      ("simulated_alone_span_s", toJson (r3 a.simulatedShared)),
       ("noop_s", toJson (r3 noopS)), ("noop_measured", Json.bool noop.isSome),
       ("noop_jobs", toJson ((noop.map (·.jobs.size)).getD 0))])]
   -- experiments in a worktree

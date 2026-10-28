@@ -346,6 +346,16 @@
         "noop_s": {
           "type": "number"
         },
+        "cores": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latency_free_s": {
+          "type": "number"
+        },
+        "simulated_alone_span_s": {
+          "type": "number"
+        },
         "noop_measured": {
           "type": "boolean"
         },

@@ -993,6 +993,14 @@ def buildTests : StateT Nat IO Unit := do
     (Build.simulate sim 8 0 == 4 && Build.simulate sim 8 0.5 == 5) s!"{Build.simulate sim 8 0.5}"
   check "build: one worker runs everything in a row"
     (Build.simulate sim 1 0 == 6) s!"{Build.simulate sim 1 0}"
+  -- the rebuild model: two independent jobs of 2 s alone, one core each
+  let two : Array Build.SimJob := #[{ dur := 5, iso := 2, deps := #[], order := 0 }, { dur := 5, iso := 2, deps := #[], order := 1 }]
+  check "build: jobs alone share the cores"
+    (Build.simulate two 8 0 2 == 2 && Build.simulate two 8 0 1 == 4 && Build.simulate two 8 0 == 5)
+    s!"{Build.simulate two 8 0 2} {Build.simulate two 8 0 1} {Build.simulate two 8 0}"
+  check "build: a job's time alone is its CPU time when it waited for a core, else its wall time"
+    ((Build.simOf #[{ mk 0 0 3 #[] with user := 1, sys := 0.5 }, { mk 1 0 1 #[] with user := 3 }] #[0, 1]).map
+      (fun s => (s.iso, s.par)) == #[(1.5, 1), (1, 3)]) ""
   check "build: a job outside the subset passes its dependencies on"
     ((Build.simOf jobs #[0, 3]).map (·.deps) == #[#[], #[0]]) ""
   let prof := Build.profile jobs
