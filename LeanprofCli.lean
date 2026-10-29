@@ -146,7 +146,7 @@ def commands : List (String × String × String) := [
     "`compare`). At most N characters (default 60000, under GitHub's comment limit).\n" ++
     "--max-heartbeats N lists every declaration of the head above N thousand heartbeats (maxHeartbeats' unit).\n" ++
     "Exit 1 if a metric named by --fail-on (default: copies) regressed, or a declaration is above --max-heartbeats."),
-  ("explain", "[--report FILE | --elab] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]] | --static [MODULE...] [--deps] [--no-build] [--all] [--report FILE | --no-report] [--out FILE] [--json]",
+  ("explain", "[--report FILE | --elab] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]] | --static [MODULE...] [--deps] [--no-build] [--ir-dir DIR [--src-dir DIR]] [--all] [--report FILE | --no-report] [--out FILE] [--json]",
     "For each copy of a shared value in the last report, say where the second reference comes from,\n" ++
     "read from the compiler's IR (.lake/build/ir/*.c), with source lines and, when the cause is\n" ++
     "recognised, the fix as Lean code with the program's own names. --json prints the ranked findings\n" ++
@@ -157,7 +157,9 @@ def commands : List (String × String × String) := [
     "--static flags likely copies across the whole package (libraries too) without running anything: every\n" ++
     "update whose value the IR shows still referenced (in the function, a caller or an `initialize` global),\n" ++
     "with file:line and the fix; with a run report, which flags it confirmed and which never ran. Runs\n" ++
-    "`lake build` first (--no-build skips it); writes .lake/leanprof/static.json (or --out FILE)."),
+    "`lake build` first (--no-build skips it); writes .lake/leanprof/static.json (or --out FILE).\n" ++
+    "--ir-dir DIR scans the C of another build (Lean's own: build/release/stage1/lib/temp), with its\n" ++
+    "sources in --src-dir DIR."),
   ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] [--json] | --elab [FILE.lean...] [--report FILE] [--top N] [--rounds N] [--test CMD | --no-test] [--dry-run] [--branch NAME]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++

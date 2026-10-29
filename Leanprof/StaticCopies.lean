@@ -620,10 +620,15 @@ structure Opts where
   out : String := ".lake/leanprof/static.json"
   json : Bool := false
   all : Bool := false
+  /-- Scan the C under this directory instead of `.lake/build/ir` (implies
+  `--no-build`): another build's IR, such as Lean's own (`stage1/lib/temp`). -/
+  irDir : Option String := none
+  /-- The sources the modules of `irDir` were compiled from. -/
+  srcDir : Option String := none
   deriving Inhabited
 
 def usage : String :=
-  "explain --static [MODULE...] [--deps] [--no-build] [--all] [--report FILE | --no-report] [--out FILE] [--json]"
+  "explain --static [MODULE...] [--deps] [--no-build] [--ir-dir DIR [--src-dir DIR]] [--all] [--report FILE | --no-report] [--out FILE] [--json]"
 
 partial def parseOpts (o : Opts) : List String → Except String Opts
   | [] => .ok o
@@ -635,6 +640,8 @@ partial def parseOpts (o : Opts) : List String → Except String Opts
   | "--out" :: f :: rest => parseOpts { o with out := f } rest
   | "--json" :: rest => parseOpts { o with json := true } rest
   | "--all" :: rest => parseOpts { o with all := true } rest
+  | "--ir-dir" :: d :: rest => parseOpts { o with irDir := some d, build := false } rest
+  | "--src-dir" :: d :: rest => parseOpts { o with srcDir := some d } rest
   | a :: rest =>
     if a.startsWith "-" then .error s!"unknown argument {a}; usage: leanprof {usage}"
     else parseOpts { o with modules := o.modules.push a } rest
@@ -752,7 +759,16 @@ def Flag.shown (fl : Flag) (all : Bool) : Bool := all || fl.kind != "String" || 
 
 def explainStatic (argv : List String) : IO UInt32 := do
   let o ← IO.ofExcept (parseOpts {} argv)
-  let root : FilePath := "."
+  let root : FilePath := o.srcDir.getD "."
+  if o.srcDir.isSome && o.irDir.isNone then
+    throw <| IO.userError s!"--src-dir needs --ir-dir; usage: leanprof {usage}"
+  let irRoot : FilePath := o.irDir.getD (root / ".lake" / "build" / "ir").toString
+  -- `.ilean` files (declaration lines): Lake's `lib/lean` beside the IR
+  -- directory (`.lake/build/ir`), or one level up (Lean's `lib/temp`)
+  let ileanRoot ← do
+    let up := irRoot.parent.getD "."
+    if o.irDir.isNone then pure (up / "lib" / "lean")
+    else if ← (up / "lib" / "lean").isDir then pure (up / "lib" / "lean") else pure (up / "lean")
   if o.build then
     let args := #["build"] ++ o.modules
     let r ← IO.Process.output { cmd := "lake", args }
@@ -760,14 +776,14 @@ def explainStatic (argv : List String) : IO UInt32 := do
       IO.eprintln (r.stdout ++ r.stderr)
       Contract.reportError "build_failed" s!"`lake build` failed (exit code {r.exitCode}) before the static scan"
       throw <| IO.userError s!"`lake {" ".intercalate args.toList}` failed; fix the build, or pass --no-build to scan what was built"
-  let mut files := (← cFilesIn root (root / ".lake" / "build" / "ir")).filter fun (_, _, m) => selected o.modules m
+  let mut files := (← cFilesIn root irRoot).filter fun (_, _, m) => selected o.modules m
   if o.deps then
     let pkgs := root / ".lake" / "packages"
     if ← pkgs.isDir then
       for e in ← pkgs.readDir do
         files := files ++ (← cFilesIn e.path (e.path / ".lake" / "build" / "ir"))
   if files.isEmpty then
-    throw <| IO.userError ("no emitted C in .lake/build/ir" ++
+    throw <| IO.userError (s!"no emitted C in {irRoot}" ++
       (if o.modules.isEmpty then "" else s!" for {", ".intercalate o.modules.toList}") ++
       ": build the package with `lake build` first")
   -- every function, and where it came from
@@ -807,7 +823,8 @@ def explainStatic (argv : List String) : IO UInt32 := do
     let src ← match rel? with
       | some r => do pure ((← IO.FS.readFile (pkg / r)).splitOn "\n").toArray
       | none => pure #[]
-    let decls ← readDecls (pkg / ".lake" / "build" / "lib" / "lean" / (String.intercalate "/" (m.splitOn ".") ++ ".ilean"))
+    let lib := if pkg == root then ileanRoot else pkg / ".lake" / "build" / "lib" / "lean"
+    let decls ← readDecls (lib / (String.intercalate "/" (m.splitOn ".") ++ ".ilean"))
     let s : Source := { file, src, decls }
     cache.modify (·.insert s!"{pkg}|{m}" s)
     return s

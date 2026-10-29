@@ -6,6 +6,14 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
 
 ## [Unreleased]
 
+### `explain --static --ir-dir DIR --src-dir DIR`: another build's C
+
+- `explain --static` scans the C under `--ir-dir DIR` instead of
+  `.lake/build/ir`, with the sources under `--src-dir DIR`, without running
+  `lake build`. That covers Lean's own modules from a build of Lean from
+  source (`stage1/lib/temp`); the flags for Lean 4.35.0 are in
+  [docs/research/lean-core-static-copies.md](docs/research/lean-core-static-copies.md).
+
 ### Tiny `profile!` scopes timed without their probes: `run --retime`
 
 - `leanprof run --retime` runs the program; if `profile!` scopes on pure
