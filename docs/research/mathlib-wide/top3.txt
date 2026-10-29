@@ -1,0 +1,38 @@
+BY KIND (share of all heartbeats)
+  22.8%     59.63 GHB  Meta.synthInstance
+  20.4%     53.34 GHB  Meta.isDefEq
+  17.0%     44.44 GHB  Elab.step
+  11.4%     29.79 GHB  Elab.lint
+   4.6%     11.91 GHB  Elab.app.args
+   4.2%     11.06 GHB  Kernel
+   2.5%      6.62 GHB  Elab.command
+   2.5%      6.46 GHB  Elab.app.finalize
+   2.0%      5.34 GHB  Meta.isDefEq.delta
+   2.0%      5.34 GHB  aesop
+   2.0%      5.25 GHB  Compiler
+   1.3%      3.32 GHB  Meta.check
+   1.1%      2.98 GHB  Meta.Tactic.simp.discharge
+   0.9%      2.37 GHB  Elab.attribute
+
+TOP 15 DECLARATIONS
+   0.20 GHB  lint  0.00  kernel  0.00  Mathlib/AlgebraicGeometry/Modules/Sheaf.lean attribute [local simp] pseudofunctor_ass #1  attribute [local simp] pseudofunctor_associativity pseudofun
+   0.16 GHB  lint  0.00  kernel  0.00  Mathlib/LinearAlgebra/ExteriorAlgebra/BaseChange.lean baseChangeι_mul_add_swap  lemma baseChangeι_mul_add_swap (x y : S ⊗[R] M) : baseChange
+   0.15 GHB  lint  0.00  kernel  0.00  Mathlib/AlgebraicGeometry/EllipticCurve/Projective/Formula.lean negDblY  noncomputable def negDblY (P : Fin 3 → R) : R := -P y ^ 4
+   0.15 GHB  lint  0.00  kernel  0.00  Mathlib/AlgebraicGeometry/Group/Abelian.lean isCommMonObj_of_isProper_of_isIntegral_tensorObj_of_isAlgClosed  theorem isCommMonObj_of_isProper_of_isIntegral_tensorObj_of_
+   0.15 GHB  lint  0.00  kernel  0.00  Mathlib/CategoryTheory/Sites/Descent/DescentDataAsCoalgebra.lean @[simps! functor_obj_A functor_obj_a fun #1  @[simps! functor_obj_A functor_obj_a functor_map_f inverse_o
+   0.14 GHB  lint  0.00  kernel  0.00  Mathlib/AlgebraicGeometry/Group/Affine.lean instance [Bialgebra R T] : IsMonHom <| ( #1  instance [Bialgebra R T] : IsMonHom <| (pullbackSymmetry .. 
+   0.13 GHB  lint  0.00  kernel  0.00  Mathlib/Analysis/SpecialFunctions/ContinuousFunctionalCalculus/Rpow/RingInverseOrder.lean convexOn_ringInverse  public lemma convexOn_ringInverse : ConvexOn ℝ {a : A | IsSt
+   0.13 GHB  lint  0.00  kernel  0.13  Mathlib/CategoryTheory/Abelian/Indization.lean instance {X Y : Ind C} (f : X ⟶ Y) : IsI #2  instance {X Y : Ind C} (f : X ⟶ Y) : IsIso (Abelian.coimageI
+   0.13 GHB  lint  0.00  kernel  0.00  Mathlib/Analysis/SpecialFunctions/ContinuousFunctionalCalculus/Rpow/IntegralRepresentation.lean concaveOn_cfc_rpowIntegrand₀₁  lemma concaveOn_cfc_rpowIntegrand₀₁ {p t : ℝ} (hp : p ∈ Ioo 
+   0.13 GHB  lint  0.00  kernel  0.00  Mathlib/Geometry/Convex/ConvexSpace/Module.lean IsStarConvexSet.add  lemma IsStarConvexSet.add (hs : IsStarConvexSet R x s) (ht :
+   0.13 GHB  lint  0.00  kernel  0.00  Mathlib/Topology/ContinuousMap/Periodic.lean periodic_tsum_comp_add_zsmul  theorem periodic_tsum_comp_add_zsmul [AddCommGroup X] [Conti
+   0.12 GHB  lint  0.00  kernel  0.00  Mathlib/MeasureTheory/Measure/HasOuterApproxClosedProd.lean ext_of_lintegral_prod_mul_prod_boundedContinuousFunction  lemma ext_of_lintegral_prod_mul_prod_boundedContinuousFuncti
+   0.12 GHB  lint  0.00  kernel  0.12  Mathlib/AlgebraicGeometry/ProjectiveSpectrum/Functor.lean awayι_comp_map  @[reassoc] theorem awayι_comp_map {i : ℕ} (hi : 0 < i) (s : 
+   0.12 GHB  lint  0.00  kernel  0.00  Mathlib/RingTheory/ZariskisMainTheorem.lean isIntegral_of_isIntegralElem_of_monic_of_natDegree_lt  lemma isIntegral_of_isIntegralElem_o
+   0.11 GHB  lint  0.00  kernel  0.00  Mathlib/RingTheory/Spectrum/Prime/ChevalleyComplexity.lean chevalley_mvPolynomial_mvPolynomial  lemma chevalley_mvPolynomial_mvPolynomial {m n : ℕ} (f : MvP
+
+lint total 29.90 GHB (11.4%), kernel total 10.92 GHB (4.2%)
+
+TOP LINTERS (from per-declaration top ops)
+
+sample top entry: {"amount": 70981127, "op": "[Elab.step] cat_disch"}

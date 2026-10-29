@@ -1,0 +1,53 @@
+scope keys: ['causes', 'compile_ns', 'counts', 'elab_ns', 'instances_failed', 'kernel_ns', 'key', 'lint_ns', 'name', 'pos', 'repeated', 'top', 'total_ns', 'unfolded']
+
+TOP 15 DECLARATIONS
+    0.00 GHB  attribute [local simp] pseudofunctor_associativity pseudofun  
+    0.00 GHB  lemma baseChangeι_mul_add_swap (x y : S ⊗[R] M) : baseChange  
+    0.00 GHB  noncomputable def negDblY (P : Fin 3 → R) : R := -P y ^ 4  
+    0.00 GHB  theorem isCommMonObj_of_isProper_of_isIntegral_tensorObj_of_  
+    0.00 GHB  @[simps! functor_obj_A functor_obj_a functor_map_f inverse_o  
+    0.00 GHB  instance [Bialgebra R T] : IsMonHom <| (pullbackSymmetry ..   
+    0.00 GHB  public lemma convexOn_ringInverse : ConvexOn ℝ {a : A | IsSt  
+    0.00 GHB  instance {X Y : Ind C} (f : X ⟶ Y) : IsIso (Abelian.coimageI  
+    0.00 GHB  lemma concaveOn_cfc_rpowIntegrand₀₁ {p t : ℝ} (hp : p ∈ Ioo   
+    0.00 GHB  lemma IsStarConvexSet.add (hs : IsStarConvexSet R x s) (ht :  
+    0.00 GHB  theorem periodic_tsum_comp_add_zsmul [AddCommGroup X] [Conti  
+    0.00 GHB  lemma ext_of_lintegral_prod_mul_prod_boundedContinuousFuncti  
+    0.00 GHB  @[reassoc] theorem awayι_comp_map {i : ℕ} (hi : 0 < i) (s :   
+    0.00 GHB  lemma isIntegral_of_isIntegralElem_o  
+    0.00 GHB  lemma chevalley_mvPolynomial_mvPolynomial {m n : ℕ} (f : MvP  
+
+TOP 15 UNFOLDED CONSTANTS (Mathlib-wide)
+    6.42 GHB     979111 x   51881 sites  unfold   DFunLike.coe
+    5.99 GHB    2034376 x   58746 sites  unfold   Membership.mem
+    4.55 GHB     863794 x   38277 sites  unfold   Ring.toSemiring
+    3.89 GHB    1460107 x   52500 sites  unfold   CommSemiring.toSemiring
+    3.80 GHB    1121951 x   38192 sites  unfold   Set.Mem
+    3.48 GHB    1124607 x   21470 sites  unfold   CategoryTheory.Functor.obj
+    3.37 GHB     561727 x   29787 sites  unfold   Set.ofPred
+    3.10 GHB     255877 x   16945 sites  unfold   AddHom.toFun
+    3.10 GHB     500016 x   50184 sites  unfold   LE.le
+    3.05 GHB    1529391 x   58783 sites  unfold   AddCommMonoid.toAddMonoid
+    3.02 GHB    1124998 x   48437 sites  unfold   Semiring.toAddCommMonoid
+    2.80 GHB     174068 x   22613 sites  instance Module.toDistribMulAction
+    2.57 GHB      20310 x    1173 sites  unfold   SubsemiringClass.toSemiring
+    2.39 GHB    1455248 x   45006 sites  unfold   SubNegMonoid.toAddMonoid
+    2.37 GHB     849445 x   37717 sites  unfold   Quiver.Hom
+
+TOP 12 REPEATED OPERATIONS
+    5.58 GHB  x1408    824 files  Elab.step    failed to pretty print term (use 'set_option pp.rawOnError true' for raw represe
+    4.99 GHB  x8524    863 files  Elab.step    cat_disch
+    1.79 GHB  x61470  3239 files  Meta.isDefEq ?m.n =?= ⋯
+    1.72 GHB  x33662  1548 files  Meta.isDefEq ?m.n =?= DistribMulAction.toDistribSMul
+    1.71 GHB  x22808  1976 files  Meta.isDefEq.delta instHSMul =?= instHSMul
+    1.23 GHB  x6667   2155 files  Elab.step    simp
+    1.02 GHB  x17579   538 files  Meta.synthInstance AddCommMonoid E
+    0.80 GHB  x19659   424 files  Meta.synthInstance AddCommMonoid M
+    0.76 GHB  x2266    551 files  Meta.synthInstance Nonempty ι
+    0.66 GHB  x11002   322 files  Meta.synthInstance AddCommMonoid F
+    0.64 GHB  x726     338 files  Elab.step    aesop
+    0.62 GHB  x2514    547 files  Meta.synthInstance Nonempty α
+
+termination suggestions: 0  simp suggestions: 0
+
+kinds: [{"class": "Meta.synthInstance", "total": 59633021745}, {"class": "Meta.isDefEq", "total": 53339027472}, {"class": "Elab.step", "total": 44435938692}, {"class": "Elab.lint", "total": 29788286157}, {"class": "Elab.app.args", "total": 11911225718}, {"class": "Kernel", "total": 11063936576}, {"class": "Elab.command", "total": 6620244155}, {"class": "Elab.app.finalize", "total": 6457792076}, {"class": "Meta.isDefEq.delta", "total": 5344627331}, {"class": "aesop", "total": 5343051423}, {"class": "Compiler", "total": 5250136392}, {"class": "Meta.check", "total": 3324611868}, {"class": "Meta.Tactic.s

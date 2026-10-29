@@ -1,0 +1,8 @@
+modules 8643
+with errors 2
+heartbeats 261619724274
+declarations and commands with cost 533460
+ranges 20000
+repeated operations 398347
+definitions 47848
+sum of per-module wall time 32835 s
