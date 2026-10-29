@@ -126,6 +126,29 @@ versioning](https://semver.org); a release is a `vX.Y.Z` tag (see
   touched. `scripts/experiment-check.sh` runs it on `Tests/FixElab`.
 - [Case study](docs/case-studies/compile-time-fixes.md): Batteries and
   Mathlib, heartbeats before and after.
+- `leanprof fix --elab --project`: project-wide compile-time hypotheses from
+  `elab --project --heartbeats --counts --why`, each with its evidence: a
+  definition unfolded in many files made irreducible (or reducible, when
+  failed instance searches name it), an instance tried often and used
+  rarely at a lower priority, `@[simp]` removed from a lemma tried often and
+  used rarely, every inferred termination measure stated, repeated instance
+  problems (listed, not tried). Ranked by the files the work was seen in and
+  exact counts, never by the overlapping attributed heartbeats. Each is
+  checked by `experiment try --keep-base` against the same base on the
+  changed module and every module importing it (build, guard, tests,
+  heartbeats per declaration and module, dearer ones listed), and the plain
+  `lake build` of those modules is timed in both worktrees (`--build-runs`,
+  `--lock`). Evidence in `.lake/leanprof/fix/project-fixes.json`
+  (`schemas/fix-project.schema.json`, `--json`); MCP tool `project_fixes`.
+  On Batteries, stating 27 inferred measures was kept (−12.8% heartbeats in
+  61 modules, none dearer); four irreducible candidates and one `@[simp]`
+  removal were discarded, as were five on Mathlib's elliptic curves
+  ([case study](docs/case-studies/project-compile-fixes.md)).
+- `experiment try --keep-base`: a KEEP leaves the base where it was.
+- `elab.json`: per constant the files and lines it was reached from
+  (`site_files`, `site_keys`, `files`), per repeated operation its files
+  (`by_file`), and for a name located by its end only `located_by_suffix`
+  and `declared_as`.
 - `leanprof explain --static [MODULE...]`: likely copies of shared arrays and
   strings across a whole package, libraries included, without running
   anything, from the C Lake keeps in `.lake/build/ir`. Each flag gives

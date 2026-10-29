@@ -134,12 +134,15 @@ users than the rest of v0.2.0, and take priority over its long tail.
     each module's slack, parallelism over time, the measured rebuild cost
     of touching each module, and import removals accepted only after a
     build proves them.
-  - [ ] *(in progress)* **Project-wide compile-time fixes.** Cross-file
-    candidates (make a definition irreducible, an instance's priority, a
-    `@[simp]` lemma tried often and rarely used), each verified by
-    `experiment` on every affected module, with declarations that got worse
-    reported. Attributed costs overlap: "accounts for N heartbeats" is never
-    presented as "saves N".
+  - [x] **Project-wide compile-time fixes.** `fix --elab --project`
+    ([case study](docs/case-studies/project-compile-fixes.md): on Batteries
+    the 27 inferred termination measures were kept, −12.8% heartbeats in 61
+    modules; irreducible and `@[simp]` candidates were discarded on Batteries
+    and Mathlib). Left: unfold lemmas, shortcut instances and rewritten
+    `decreasing_by` proofs, which need a person. Each candidate is verified
+    by `experiment` on every affected module, with declarations that got
+    worse reported; attributed costs overlap, so "accounts for N
+    heartbeats" is never presented as "saves N".
   - [ ] *(in progress)* **Compilation memory.** Peak memory per module in a
     real build, imports separated from the module's own work, the largest
     `-j` under a memory limit, a `--max-memory` budget for CI; per

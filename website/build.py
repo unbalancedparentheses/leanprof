@@ -61,6 +61,7 @@ NAV = [
         "docs/case-studies/concrete.md",
         "docs/case-studies/batteries.md",
         "docs/case-studies/mathlib.md",
+        "docs/case-studies/project-compile-fixes.md",
         "docs/case-studies/compile-time-vs-lean-source-profiler.md",
         "docs/case-studies/leanbench.md",
         "docs/profiles/README.md",
@@ -71,6 +72,7 @@ NAV = [
     ]),
 ]
 NAV_TITLES = {  # shorter names for the sidebar where the H1 is long
+    "docs/case-studies/project-compile-fixes.md": "Project-wide compile fixes",
     "docs/case-studies/compile-time-vs-lean-source-profiler.md": "vs lean-source-profiler",
     "bench/README.md": "Benchmarks and LeanProfiler",
     "docs/profiles/README.md": "Published profiles",

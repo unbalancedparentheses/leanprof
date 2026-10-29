@@ -229,7 +229,10 @@ load 13 to 23). The four `irreducible` candidates were discarded: two broke
 proofs in other modules, one changed nothing measurable, and one was an
 `abbrev`, which Lean refused (leanprof now leaves those out). Removing
 `@[simp]` from `SatisfiesM_Except_eq` (tried 19 times, never used) changed
-the heartbeats by 0.1%: discarded.
+the heartbeats by 0.1%: discarded. On Mathlib's elliptic curve modules (from
+the Mathlib cache), the heaviest hypotheses are `abbrev`s, and the five
+candidates checked (four `irreducible`, one `@[simp]` removal) all built and
+moved the heartbeats of the modules affected by at most 0.09%: discarded.
 
 ## The definitions behind the work
 
