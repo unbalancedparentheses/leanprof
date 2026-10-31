@@ -1,0 +1,181 @@
+{
+ "project": "batteries",
+ "runs": 3,
+ "load_before": [
+  18.806640625,
+  16.400390625,
+  32.34765625
+ ],
+ "load_after": [
+  20.91259765625,
+  17.07861328125,
+  31.94384765625
+ ],
+ "date": "2026-10-27 14:11",
+ "modules": [
+  {
+   "module": "Batteries.Data.List.Lemmas",
+   "build": {
+    "peak_rss": 614383616,
+    "private_peak": 314803632
+   },
+   "usr_bin_time": [
+    {
+     "maxrss": 620085248,
+     "footprint_peak": 318850744,
+     "exit": 0
+    },
+    {
+     "maxrss": 612401152,
+     "footprint_peak": 310953368,
+     "exit": 0
+    },
+    {
+     "maxrss": 614170624,
+     "footprint_peak": 312640728,
+     "exit": 0
+    }
+   ],
+   "wrapper_alone": [
+    {
+     "maxrss": 615923712,
+     "private_peak": 314574304,
+     "exit": 0
+    },
+    {
+     "maxrss": 608288768,
+     "private_peak": 309249408,
+     "exit": 0
+    },
+    {
+     "maxrss": 615071744,
+     "private_peak": 313607744,
+     "exit": 0
+    }
+   ]
+  },
+  {
+   "module": "runLinter",
+   "build": {
+    "peak_rss": 1464778752,
+    "private_peak": 267539816
+   },
+   "usr_bin_time": [
+    {
+     "maxrss": 1463812096,
+     "footprint_peak": 266425536,
+     "exit": 0
+    },
+    {
+     "maxrss": 1461878784,
+     "footprint_peak": 265393272,
+     "exit": 0
+    },
+    {
+     "maxrss": 1462697984,
+     "footprint_peak": 266491120,
+     "exit": 0
+    }
+   ],
+   "wrapper_alone": [
+    {
+     "maxrss": 1463418880,
+     "private_peak": 265917656,
+     "exit": 0
+    },
+    {
+     "maxrss": 1462714368,
+     "private_peak": 266572920,
+     "exit": 0
+    },
+    {
+     "maxrss": 1462403072,
+     "private_peak": 266081400,
+     "exit": 0
+    }
+   ]
+  },
+  {
+   "module": "Batteries.Data.String.Lemmas",
+   "build": {
+    "peak_rss": 537575424,
+    "private_peak": 232147192
+   },
+   "usr_bin_time": [
+    {
+     "maxrss": 533954560,
+     "footprint_peak": 229656944,
+     "exit": 0
+    },
+    {
+     "maxrss": 536625152,
+     "footprint_peak": 229542016,
+     "exit": 0
+    },
+    {
+     "maxrss": 537411584,
+     "footprint_peak": 232065056,
+     "exit": 0
+    }
+   ],
+   "wrapper_alone": [
+    {
+     "maxrss": 538083328,
+     "private_peak": 232802600,
+     "exit": 0
+    },
+    {
+     "maxrss": 538886144,
+     "private_peak": 231950512,
+     "exit": 0
+    },
+    {
+     "maxrss": 537182208,
+     "private_peak": 230475808,
+     "exit": 0
+    }
+   ]
+  },
+  {
+   "module": "Batteries.Data.Char",
+   "build": {
+    "peak_rss": 394723328,
+    "private_peak": 127173848
+   },
+   "usr_bin_time": [
+    {
+     "maxrss": 395313152,
+     "footprint_peak": 127812896,
+     "exit": 0
+    },
+    {
+     "maxrss": 396066816,
+     "footprint_peak": 128599376,
+     "exit": 0
+    },
+    {
+     "maxrss": 394395648,
+     "footprint_peak": 127059184,
+     "exit": 0
+    }
+   ],
+   "wrapper_alone": [
+    {
+     "maxrss": 395116544,
+     "private_peak": 129647928,
+     "exit": 0
+    },
+    {
+     "maxrss": 394805248,
+     "private_peak": 127337736,
+     "exit": 0
+    },
+    {
+     "maxrss": 395132928,
+     "private_peak": 127665392,
+     "exit": 0
+    }
+   ]
+  }
+ ]
+}

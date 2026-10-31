@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unbalancedparentheses.github.io/leanprof/schemas/build-memory.schema.json",
+  "title": "leanprof build-memory report",
+  "description": "The peak memory of each module's `lean` process in a real `lake build` (`leanprof build-memory`); docs/guide/reference.md#build-memory-report.",
+  "type": "object",
+  "required": [
+    "schema",
+    "kind",
+    "version",
+    "platform",
+    "cpus",
+    "build_exit",
+    "max_concurrent",
+    "concurrent_peak",
+    "modules",
+    "declarations"
+  ],
+  "properties": {
+    "schema": {
+      "$ref": "common.schema.json#/$defs/schema_tag",
+      "properties": {
+        "name": {
+          "const": "leanprof.build-memory"
+        }
+      }
+    },
+    "kind": {
+      "const": "build-memory"
+    },
+    "version": {
+      "const": 1
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    },
+    "platform": {
+      "type": "string"
+    },
+    "cpus": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "jobs": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "build_exit": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_concurrent": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "concurrent_peak": {
+      "type": "object",
+      "required": [
+        "sum_of_peaks",
+        "modules"
+      ],
+      "properties": {
+        "sum_of_peaks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sampled": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "rss_sum",
+            "private_sum_plus_shared",
+            "samples"
+          ],
+          "properties": {
+            "rss_sum": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "private_sum_plus_shared": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "samples": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rss_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "private_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "mem_limit": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "limit",
+            "safe_jobs",
+            "largest_rss_sum",
+            "near"
+          ],
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "safe_jobs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "largest_rss_sum": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "estimated_jobs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "estimated_sum": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "largest_shared": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "near": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "budget": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "limit",
+            "over"
+          ],
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "over": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "module",
+                  "peak_rss"
+                ],
+                "properties": {
+                  "module": {
+                    "type": "string"
+                  },
+                  "peak_rss": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "module",
+          "file",
+          "peak_rss",
+          "private_peak",
+          "imports_rss",
+          "own_rss",
+          "wall_ms",
+          "cpu_ms",
+          "exit",
+          "start_ms",
+          "end_ms"
+        ],
+        "properties": {
+          "module": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "peak_rss": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "peak resident set size of the module's `lean`, bytes"
+          },
+          "private_peak": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "peak private memory, bytes: macOS's physical footprint, Linux's RssAnon read every 20 ms"
+          },
+          "private_sampled": {
+            "type": "boolean"
+          },
+          "imports_rss": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "peak of `lean` on the module's header alone"
+          },
+          "imports_private": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "own_rss": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "own_private": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wall_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cpu_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "exit": {
+            "type": "integer"
+          },
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "declarations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "module",
+          "file",
+          "imports_rss",
+          "peak_rss",
+          "error",
+          "commands"
+        ],
+        "properties": {
+          "module": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "imports_rss": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "imports_private": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "peak_rss": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "private_peak": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": "string"
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "line",
+                "name",
+                "text",
+                "heartbeats",
+                "rss_before",
+                "rss_after",
+                "peak_rise"
+              ],
+              "properties": {
+                "line": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "end_line": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "heartbeats": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rss_before": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rss_after": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "peak_rise": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "peak_after": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "private_before": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "private_after": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "private_peak_rise": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "name": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

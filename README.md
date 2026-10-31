@@ -118,10 +118,12 @@ finding through to a checked change.
 **Where it is behind:** lean-source-profiler publishes compile-time
 profiles of all of Mathlib (8,556 files) and has timelines; leanprof
 publishes Batteries and Mathlib's 40 slowest modules. Tiny `profile!`
-scopes (a few nanoseconds of work) are marked in the report, but their
-time is less precise than a sample's: 6.1 points off in share on the
-`tiny` benchmark, against 0.6 for `leanprof sample`. At high load
-LeanBench reaches a time verdict faster (1.06 s against 1.9–2.3 s). A
+scopes (a few nanoseconds of work) distort the time of the scopes around
+them: 8.2–9.6 points off in share on the `tiny` benchmark under `profile!`,
+0.3–1.1 with `leanprof run --retime`, which compiles them out in a second
+run (their counts and estimates come from the first). On a loaded machine
+the default time verdict often stays inconclusive on unchanged code (33 of
+60); `--repeat 5` settles it (57 of 60) at about 0.4 s more per verdict. A
 scope costs about 23 ns on Linux, against 5–8 ns on the Mac. Details and
 every number in
 [where leanprof wins, and where it does not](#where-leanprof-wins-and-where-it-does-not).
@@ -135,6 +137,11 @@ All profiled from outside, without changing the projects:
   three of them (`Formula.lean` 8.2 s → 2.6 s, `FourierTransform.lean`
   about 10 s → 3.5 s, `LpSpace.lean` 3.6 s → 2.1 s), producing the same
   terms. The patches are [ready](docs/upstream/mathlib/), not sent.
+- **[Memory of compilation](docs/case-studies/build-memory.md)**: `import
+  Mathlib` alone is 5.44 GiB resident but 853 MiB private (the rest is
+  shared `.olean` pages); a copy of Mathlib's `MayerVietoris` needs 714 MiB
+  of its own. Under an 8 GiB limit, 2 jobs are safe for that project, and
+  a build at 2 jobs stayed at 7.20 GiB.
 - **[Lake and the language server](docs/case-studies/lake-and-server.md)**:
   seven candidate Lean patches; four of them make a no-op `lake build` of a
   Mathlib project 19% faster (1.58 s → 1.29 s), another cuts the server's
@@ -351,13 +358,29 @@ lean-regex, candidate builds took 1–2 s because the base's build is kept
 allocations, calls, heartbeats, output hash and time; `judge` says KEEP or
 DISCARD from two summaries, exact counts first. `measure-pair` interleaves
 two plain binaries in AB/BA order and stops once the verdict is settled (a
-group-sequential sign test: each claim wrong at most 2.5% of the time);
+group-sequential sign test: each claim wrong at most 2.5% of the time,
+assuming independent pairs whose changes share one median);
 `judge PAIR.json` gives the paired 95% interval of the median change.
 `--scope NAME` times one `Leanprof.bench` region instead of the whole
 process, and `--base-rev REV --exe NAME` builds the base at a revision once
 and keeps it, so a loop of verdicts pays only the candidate's incremental
 build. `judge` refuses time measured with the load above the CPU count
 unless told otherwise ([CI and regressions](docs/guide/ci-and-regressions.md#measure-and-judge)).
+
+### Memory of compilation: `build-memory`
+
+`leanprof build-memory` runs a real `lake build` with every `lean` process
+wrapped and reports each module's peak memory (resident set, and the
+private memory that is not shared `.olean` pages), split into its imports
+and its own elaboration; which modules ran together at the build's peak;
+the most jobs that keep the build under `--mem-limit`; and `--max-memory`, a
+per-module budget that fails CI. `--decls N` elaborates the heaviest
+modules serially and names the commands during which memory peaked, labeled
+approximate: when memory was reached, not who owns it. On Batteries and a
+project using Mathlib the numbers agree with `/usr/bin/time -l` within 1%
+(resident set) and 3% (footprint)
+([memory of compilation](docs/guide/compile-time.md#memory-of-compilation),
+[case study](docs/case-studies/build-memory.md)).
 
 ### CI: the GitHub Action
 
@@ -375,7 +398,7 @@ attributed, never estimated
 
 `leanprof mcp` serves the profiler over the Model Context Protocol on stdio:
 `doctor` (what the project has and which modes work), `run`, `sample`,
-`stat`, `elab`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
+`stat`, `elab`, `build_memory`, `measure`, `measure_pair`, `judge`, `compare`, `explain`,
 `static_copies`,
 `findings` and `finding` (a ranked page of findings with stable ids, then
 one in full with its source, cause and before/after), `hot`, `report`, the
@@ -398,9 +421,11 @@ Mac's `tiny` benchmark 0.7 points off in share and 0.99× the plain time
 ([results](bench/RESULTS.md)). A `profile!` scope near the probe cost is
 timed on a sample of its calls (counts stay exact), its row is marked `*`,
 and a caller whose time is distorted by such scopes' probes is marked too
-(`holds_tiny`, `†` in the results), with the advice to remove those
-`profile!` and use `leanprof sample` for its time
-([run time](docs/guide/run-time.md)).
+(`holds_tiny`, `†` in the results). `leanprof run --retime` then runs it
+again with those scopes compiled out, so the caller is timed without their
+probes: on the `tiny` benchmark 0.3–1.1 points off instead of 8.2–9.6, and
+1.14–1.19× the plain time instead of 4.3–4.5×
+([bench/retime](bench/retime/README.md), [run time](docs/guide/run-time.md)).
 
 ### All commands
 
@@ -420,7 +445,13 @@ and a caller whose time is distorted by such scopes' probes is marked too
 | Compile cost per line, term and tactic (exact source ranges), repeated work, the definitions behind it, whole projects | `leanprof elab [--project] [--heartbeats] [--counts]` |
 | Why the costliest declarations are slow, observed and suggested apart; a heartbeat budget for CI | `leanprof elab --why`, `leanprof explain --elab`, `leanprof elab --max-heartbeats N` |
 | Apply Lean's own compile-time edits (`simp only` lists, inferred `termination_by`), keep them only on an experiment's KEEP | [`leanprof fix --elab`](docs/guide/fix.md#compile-time-fix---elab) |
+<<<<<<< HEAD
 | Find project-wide compile-time changes (irreducible definitions, instance priorities, `@[simp]` removals) and check each on every module it affects | [`leanprof fix --elab --project`](docs/guide/compile-time.md#project-wide-changes-fix---elab---project) |
+||||||| 72f6886
+=======
+| What an edit did to a file's compile cost: each declaration whose heartbeats changed since the last run, with the unfold, instance or simp lemma behind it | `leanprof elab --heartbeats --since-last FILE` |
+| Peak memory of each module in a real `lake build`, imports apart; the most jobs under a memory limit; a memory budget for CI | `leanprof build-memory [--mem-limit 8G] [--max-memory 6G]` |
+>>>>>>> origin/main
 | Regressions in CI, exact for copies, allocations, calls and heartbeats, with the cause of each | `leanprof compare`, `leanprof report-md`, [GitHub Action](docs/guide/ci-and-regressions.md#github-action) |
 | Keep or discard a change, with exact metrics or interleaved plain-binary timing | `leanprof measure`, `leanprof measure-pair`, `leanprof judge` |
 | Profiling tools for AI agents | `leanprof mcp` |
@@ -484,10 +515,12 @@ Measured, with the method and raw numbers linked; `scripts/reproduce.sh` re-runs
   so on the Mac's `tiny` workload it is 0.7 points off and 0.99× the plain
   time. Under `profile!` tiny scopes are timed on a sample of their calls
   and their callers are marked (`holds_tiny`): the counts stay exact, but
-  the `tiny` workload is still 6.1 points off in share in the published run
-  (7.6–9.0 in three interleaved pairs, [bench/README.md](bench/README.md))
-  and runs 4.3× slower. `leanprof sample` is the tool for those functions
-  (0.6 points).
+  the `tiny` workload is 8.2–9.6 points off in share and 4.3–4.5× slower
+  in three interleaved suites. `leanprof run --retime` compiles those
+  scopes out in a second run: 0.3–1.1 points and 1.14–1.19×
+  ([bench/retime](bench/retime/README.md)); the compiled-out scopes keep the
+  first run's exact counts and estimated times, not a precise time of their
+  own (for that, `leanprof sample` of a build without them).
 - **Sampling** is as accurate as samply (it runs samply underneath; on the
   Mac within 0.1–1.9 points of each function's true share across the six
   workloads, samply 0.1–2.0) and adds Lean names, file:line and the runtime
@@ -499,15 +532,21 @@ Measured, with the method and raw numbers linked; `scripts/reproduce.sh` re-runs
   [bench/README.md](bench/README.md)): use `sample` or `profile!` there. On
   the Mac, `--auto` on the allocation workload is 4.7 points off (samply
   0.1).
-- **Cost per verdict.** On the LeanBench case study's trials (shared Mac,
-  load 4–13), sequential `measure-pair --scope` took 0.89 s per verdict end
-  to end (candidate build included) against LeanBench's 1.09 s, with 0
-  false verdicts in 20 and the 2.4% slowdown caught 4 of 5 (LeanBench at
-  5%: 0 of 5); at load up to 15 it took 1.9–2.3 s against LeanBench's
-  1.06 s. Timing whole 20-action processes takes 5.5 s
-  ([case study](docs/case-studies/leanbench.md#paired-timing-measure-pair-and-measure---scope)).
-  On a machine this loaded, time verdicts are less reliable than on a quiet
-  one; exact counts are not affected.
+- **Calibrated verdicts** ([bench/verdicts](bench/verdicts/RESULTS.md),
+  a fixed protocol of 150 trials per condition on the shared Mac, each
+  verdict end to end after an edit, every tool rebuilding): on identical
+  code `measure-pair --scope` gave no false verdict in 120 sessions (quiet
+  and loaded), LeanBench at its 5% threshold 21. Seeded slowdowns caught,
+  quiet / loaded (load 15–22): +2% 30/30 / 13/30 by default and 30/30 /
+  30/30 with `--repeat 5`; +5% 30/30 / 30/30 (LeanBench 16/30 / 18/30);
+  +1% (the `--min-change`) almost never (0–2 of 30), as designed. Median
+  seconds per verdict, quiet / loaded: 1.42 / 2.10 (default), 1.85 / 2.52
+  (`--repeat 5`), LeanBench 2.82 / 3.27. Behind: on the loaded machine the
+  default left 33 of 60 identical-code sessions inconclusive (`--repeat 5`:
+  3). The earlier case study's figures (0.89 s at load 4–13; 1.9–2.3 s
+  against LeanBench's 1.06 s at load up to 15, LeanBench not rebuilding
+  between its two runs) are in the
+  [case study](docs/case-studies/leanbench.md#paired-timing-measure-pair-and-measure---scope).
 - **[lean-source-profiler](https://github.com/Vilin97/lean-source-profiler)**
   publishes profiles of all of Mathlib (8,556 files); leanprof's
   [published profiles](docs/profiles/README.md) cover all of Batteries and
@@ -550,7 +589,7 @@ reproduction.
 | Live view, flight recorder | ✅ `top`, `dump` | – | – | – | – |
 | In the editor | run time, copies, compile time | – | compile time | – | a visualizer extension (not evaluated) |
 | Seeded slowdowns caught, quiet machine ([case study](docs/case-studies/leanbench.md)) | 2%: 5/5, 5% and up: 5/5; never a false alarm in 20 | – | – | – | at a 5% threshold: 2%: 0/5, 4.8%: 2/5, 10% and up: 5/5; 0 false alarms in 20 |
-| Wall time per verdict | sequential `measure-pair --scope` 0.89 s end to end at load 4–13 (1.9–2.3 s at load up to 15); 5.5 s timing whole 20-action processes; Mac, shared | – | – | – | 1.09 s in the same run (1.06 s with a rebuild at load up to 15; 0.74 s earlier, 0.6 s on Linux) |
+| Wall time per verdict, after an edit ([calibration](bench/verdicts/RESULTS.md)) | `measure-pair --scope`: median 1.42 s quiet, 2.10 s at load 15–22 (`--repeat 5`: 1.85 / 2.52 s); Mac, shared | – | – | – | 2.82 s quiet, 3.27 s loaded in the same trials (its rebuild included) |
 
 ## Reproducing the numbers
 
@@ -583,9 +622,10 @@ dedicated host and are not re-run by the scripts.
   declaration (it then says that no line matched).
 - **Times are estimates.** Probe times are calibrated and subtracted, which
   is accurate for scopes that do real work and not for scopes of a few
-  nanoseconds (marked `*` and `holds_tiny`); `--auto` is less accurate on
-  Linux than on the Mac for allocation-heavy code and deep recursion. Use
-  `leanprof sample` for those.
+  nanoseconds (marked `*` and `holds_tiny`; `run --retime` times their
+  callers again without them); `--auto` is less accurate on Linux than on
+  the Mac for allocation-heavy code and deep recursion. Use `leanprof
+  sample` for those.
 - **Time verdicts need a quiet machine.** On the shared Mac, the LeanBench
   trials' time verdicts were wrong 6 times in 20 on unchanged code
   ([docs/reproduce.md](docs/reproduce.md)); `judge` refuses timing taken

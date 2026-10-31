@@ -387,6 +387,61 @@
     },
     "provenance": {
       "$ref": "common.schema.json#/$defs/provenance"
+    },
+    "compiled_out": {
+      "description": "`run --retime`: the `profile!` scopes compiled out of the second run, with the first run's calls (exact) and estimated times",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "pos": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timed_calls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_ns": {
+            "type": "number"
+          },
+          "self_ns": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "pos",
+          "calls"
+        ]
+      }
+    },
+    "retime": {
+      "description": "`run --retime`: where the first run's report is, the scopes not compiled out (not pure terms), and scopes whose calls differ between the runs",
+      "type": "object",
+      "properties": {
+        "first_run": {
+          "type": "string"
+        },
+        "not_compiled_out": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calls_differ": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "required": [

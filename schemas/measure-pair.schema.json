@@ -33,6 +33,15 @@
       "type": "integer",
       "minimum": 0
     },
+    "repeat": {
+      "description": "--repeat: repetitions of the --scope region in each run (1: none)",
+      "type": "integer",
+      "minimum": 1
+    },
+    "repeat_statistic": {
+      "description": "what a run's time is: its one region (single), or the fastest or median repetition",
+      "enum": ["single", "fastest", "median"]
+    },
     "design": {
       "type": "object",
       "properties": {
@@ -140,6 +149,11 @@
           "process_ns": {
             "type": "integer",
             "minimum": 0
+          },
+          "reps_ns": {
+            "description": "with --repeat: each repetition's time, in order",
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0}
           }
         },
         "required": [

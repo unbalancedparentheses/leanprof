@@ -1,0 +1,9 @@
+# clang -O2 -c k.c && clang -O2 m.c k.o -o m && ./m 20000000
+# Apple M5 Max, 2026-10-28, load 19, under the benchmark lock; ns per iteration, 5 repetitions.
+# A: acc += tinyA(i) (throughput-bound); B: acc += tinyB(acc + i) (a dependency chain).
+# For each: no probe, an empty call pair around the call, an inlined light probe (thread-local counters).
+0.633 1.671 1.878 1.877 1.950 1.826  (A: plain, call pair, inline; B: plain, call pair, inline) acc 2
+0.629 1.794 2.095 2.045 2.115 2.103  (A: plain, call pair, inline; B: plain, call pair, inline) acc 2
+0.590 1.655 1.964 1.927 2.080 1.975  (A: plain, call pair, inline; B: plain, call pair, inline) acc 2
+0.558 1.655 1.962 1.926 2.076 1.972  (A: plain, call pair, inline; B: plain, call pair, inline) acc 2
+0.574 1.647 1.906 1.833 1.992 1.903  (A: plain, call pair, inline; B: plain, call pair, inline) acc 2

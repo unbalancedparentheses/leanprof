@@ -182,7 +182,7 @@ def emit (workload : String) (scale : Nat) (phases : List (Phase × UInt64))
   let ps := phases.map fun (p, _) => s!"\{\"name\":\"{p.name}\",\"wall_ns\":{p.wall},\"cpu_ns\":{p.cpu}}"
   IO.println s!"BENCH_JSON \{\"workload\":\"{workload}\",\"scale\":{scale},\"phases\":[{", ".intercalate ps}],\"calls\":{jsonObj calls},\"allocs\":{jsonObj allocs},\"copies\":{jsonObj copies},\"checksum\":{sum}}"
 
-def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
+partial def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
   -- `* 0` of a clock read: the compiler cannot treat the sizes as constants
   let z := (← IO.monoMsNow) * 0
   let sc (n : Nat) : Nat := n * scale / 100 + z
@@ -234,8 +234,13 @@ def runWorkload (w : String) (scale : Nat) : IO UInt32 := do
     let b ← timeTasks "phTasks4" (W.runTasks "taskWork4" 4 n W.taskWork4)
     let c ← timeTasks "phTasks8" (W.runTasks "taskWork8" 8 n W.taskWork8)
     emit w scale [a, b, c] [("taskWork2", 2), ("taskWork4", 4), ("taskWork8", 8), ("taskStep", 3 * n)]
+  | "all" =>
+    -- every workload in turn (bench/run.py builds `run --retime` from this run)
+    for x in ["tiny", "rec", "mix", "alloc", "copy", "tasks"] do
+      let rc ← runWorkload x scale
+      if rc != 0 then return rc
   | _ =>
-    IO.eprintln s!"unknown workload {w}: tiny, rec, mix, alloc, copy, tasks"
+    IO.eprintln s!"unknown workload {w}: tiny, rec, mix, alloc, copy, tasks, all"
     return 2
   return 0
 

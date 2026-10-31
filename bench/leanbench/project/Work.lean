@@ -7,6 +7,9 @@ selects a seeded change; every variant prints the same result, so
   validation (125 units).
 * `slowP` (`slow2`, `slow5`, `slow10`, `slow30`): `P`% more units of the
   same kind of work, whose result is checked but does not change the output.
+* `pct1`, `pct2`, `pct5`: 1%, 2% and 5% more of the same work (whole
+  passes, and one pass over a copy of a prefix of the array made in
+  `setup`), for `bench/verdicts/`.
 * `fast`: skips the redundant validation (125 -> 100 units, a 20% speedup).
 * `copy`: one hidden copy of a 64-element state array per round (125 per
   action), negligible time.
@@ -19,6 +22,8 @@ structure Cfg where
   units : Nat := 100       -- passes of real work
   check : Nat := 25        -- passes of validation (same result either way)
   extra : Nat := 0         -- seeded extra passes
+  extraPm : Nat := 0       -- seeded extra work, per mille of units + check
+  part : Array UInt64 := #[] -- with extraPm: the prefix for the part of a pass
   copy : Bool := false
   alloc : Bool := false
   deriving Inhabited
@@ -28,6 +33,9 @@ def cfgOf : String → Cfg
   | "slow5"  => { extra := 6 }     -- 4.8%
   | "slow10" => { extra := 13 }    -- 10.4%
   | "slow30" => { extra := 38 }    -- 30.4%
+  | "pct1"   => { extraPm := 10 }
+  | "pct2"   => { extraPm := 20 }
+  | "pct5"   => { extraPm := 50 }
   | "fast"   => { check := 0 }     -- -20%
   | "copy"   => { copy := true }
   | "alloc"  => { alloc := true }
@@ -66,6 +74,11 @@ still alive, so it is copied). -/
     if pass a 7 == 0 then junk := junk + 1
   for _ in [0:cfg.extra] do
     if pass a 11 == 0 then junk := junk + 1
+  if cfg.extraPm > 0 && a.size > 0 then
+    let steps := cfg.extraPm * (cfg.units + cfg.check) * a.size / 1000
+    for _ in [0:steps / a.size] do
+      if pass a 13 == 0 then junk := junk + 1
+    if pass cfg.part 17 == 0 then junk := junk + 1
   -- `junk` keeps the seeded work alive without changing the result
   return acc + st[3]! + (if junk == 0xdeadbeef then 1 else 0)
 
@@ -77,8 +90,12 @@ initialize sink : IO.Ref UInt64 ← IO.mkRef 0
 def setup : IO Unit := do
   let v := (← IO.getEnv "LB_VARIANT").getD "base"
   let n := ((← IO.getEnv "LB_N").bind String.toNat?).getD 40000
-  cfgRef.set (cfgOf v)
-  arrRef.set ((Array.range n).map fun i => (i * 2654435761 % 1000003).toUInt64)
+  let a := (Array.range n).map fun i => (i * 2654435761 % 1000003).toUInt64
+  let cfg := cfgOf v
+  let k := cfg.extraPm * (cfg.units + cfg.check) * n / 1000 % Nat.max n 1
+  -- (no array at all for the other variants: their allocation counts are published)
+  cfgRef.set (if cfg.extraPm > 0 then { cfg with part := a.extract 0 k } else cfg)
+  arrRef.set a
 
 /-- The benchmarked action. -/
 def action : IO Unit := do

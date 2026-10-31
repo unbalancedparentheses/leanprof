@@ -149,11 +149,42 @@ input_file elabDriverSrc where
   path := "LeanprofElabDriver.lean"
   text := true
 
+/-- The driver's memory readings (`--memory`), compiled into the command with
+`include_str` like the driver's source, and linked into the bundled driver. -/
+input_file memstatSrc where
+  path := "c/memstat.c"
+  text := true
+
+/-- `leanprof build-memory`'s stand-in for `lean` in a Lake build, compiled into
+the command with `include_str` and built with `cc` when first needed. -/
+input_file leanwrapSrc where
+  path := "c/leanwrap.c"
+  text := true
+
+/-- `leanprof build-memory`, a library so `needs` rebuilds it when the wrapper changes. -/
+lean_lib LeanprofBuildMem where
+  roots := #[`Leanprof.BuildMem, `Tests.BuildMem]
+  needs := #[leanwrapSrc]
+
 /-- `leanprof elab`, imported by the command, and its tests (run by `tests`), with those of
 why a declaration got more expensive (`Tests/Regress.lean`). -/
 lean_lib LeanprofElab where
+<<<<<<< HEAD
   roots := #[`LeanprofElab, `LeanprofElabRange, `Tests.Elab, `Tests.Regress, `Tests.ElabWhy, `Tests.ProjectFix]
   needs := #[elabDriverSrc]
+||||||| 72f6886
+  roots := #[`LeanprofElab, `LeanprofElabRange, `Tests.Elab, `Tests.Regress, `Tests.ElabWhy]
+  needs := #[elabDriverSrc]
+=======
+  roots := #[`LeanprofElab, `LeanprofElabRange, `Tests.Elab, `Tests.Regress, `Tests.ElabWhy]
+  needs := #[elabDriverSrc, memstatSrc]
+
+/-- The driver's memory readings (`c/memstat.c`, `--memory`). -/
+target memstat_o pkg : FilePath := do
+  let oFile := pkg.buildDir / "c" / "memstat.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "memstat.c"
+  buildO oFile srcJob #["-I", (← getLeanIncludeDir).toString] #["-fPIC", "-O2", "-Wall"] "cc" getLeanTrace
+>>>>>>> origin/main
 
 /-- `leanprof elab`'s in-process Lean frontend: elaborates a file with every term and
 tactic timed against its exact source range (LeanprofElabDriver.lean). It runs the
@@ -161,6 +192,7 @@ elaborators of the modules it imports, so it needs the interpreter. -/
 lean_exe «leanprof-elab-driver» where
   root := `LeanprofElabDriver
   supportInterpreter := true
+  moreLinkObjs := #[memstat_o]
 
 /-- The command's own signal handling (`c/cli.c`): an interrupted run puts
 the project's normal build back before it exits. -/

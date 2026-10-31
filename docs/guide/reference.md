@@ -9,13 +9,14 @@ otherwise install the command (`sh scripts/install.sh`) and use
 | command | does |
 |---|---|
 | (none) `[-- ARGS]`, or `EXE [-- ARGS]` | in a Lake project: pick the workload (the one `lean_exe`; else the test driver when it is an executable; else compile time of the libraries, as `elab --project --compact`; several executables are listed, never chosen between), profile it the cheapest way (`sample` when samply can sample, else `stat`), print the top findings and the `run`/`explain`/`fix` commands that go deeper. `EXE` names one of the project's executables. Exit 2 when it lists executables instead |
-| `run [--auto \| --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR |
+| `run [--auto \| --auto-all] [--time-tiny] [--retime] [--allocs] [--counters] [--frees] [--core] [--all-copies] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | build with probes (dependencies included, unless `--no-deps`; their normal build is put back afterwards), run, report, clean up; `--core` also probes Lean's own libraries; `--all-copies` lists copies of constants and tiny values row by row; `--cwd` runs EXE in DIR; `--retime` runs a second time with the `profile!` scopes the first run found too small to time compiled out (their calls and estimates under `compiled_out`) |
 | `stat [--auto \| --auto-all] [--no-allocs] [--no-frees] [--no-deps] [--trace F] [--json F \| --out F] [--keep] [--cwd DIR] EXE [-- ARGS]` | one-screen summary: time, CPU, peak memory, allocations, copies, frees, tasks, top scopes ([memory](memory.md)) |
 | `sample [--rate HZ] [--top N] [--out F] [--json F] [--cwd DIR] EXE [-- ARGS]` | sample with samply (`--out`: samply's profile), report per Lean declaration (`--json`: a copy of the report); exits with the program's exit code. `EXE` is a target of the project, or a path to any program (`~/.elan/toolchains/…/bin/lean`): Lean code in Lean's shared libraries gets Lean names, and Lean's own declarations positions in the toolchain's sources |
-| `elab [--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)); `--why`: the causes of the costliest declarations and what to try; `--max-heartbeats N`: every declaration above N thousand heartbeats, exit 1 if any |
+| `elab [--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project \| --module-glob G] [--jobs N] [--counts] [--threshold N] [--no-defs] [--top N] [--out F] [--since-last [--keep-base]] [FILE.lean…]` | compile cost per file, declaration, tactic line and operation, and the definitions behind it ([compile time](compile-time.md)); `--why`: the causes of the costliest declarations and what to try; `--max-heartbeats N`: every declaration above N thousand heartbeats, exit 1 if any |
+| `build-memory [--mem-limit SIZE] [--max-memory SIZE] [--jobs N] [--clean] [--no-imports] [--decls N] [--top N] [--out F] [--no-sample] [--log F] [FILE.lean…] [-- TARGETS…]` | peak memory of each module's `lean` in a real `lake build` (resident set, private memory, imports apart), modules running together, the most jobs under a limit, a per-module budget (exit 1 above `--max-memory`), memory per command of a serial run ([memory of compilation](compile-time.md#memory-of-compilation)) |
 | `compare [--threshold PCT] [--min-ms MS] [--explain F] [--json] BASE.json NEW.json` | exit 1 on regressions; `--json` prints the comparison as JSON |
 | `measure [--runs N] [--scope NAME] [--heartbeats-files F…] [--check-output F] [--ignore-lines TEXT…] [--no-allocs] [--core] [--no-deps] [--out F] EXE [-- ARGS]` | repeated runs into one summary (copies, allocations, calls, time of the process or, with `--scope`, of one `profile!` scope, output; `self_check_warning`, empty unless copies may be undercounted) |
-| `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output F] [--ignore-lines TEXT…] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries until the time verdict is settled (at most N pairs, default 30); `--scope` times one `Leanprof.bench` region; `--ignore-lines TEXT` leaves stdout's lines containing TEXT out of the output hash (in `measure` too: a benchmark's own timings); no builds or added probes |
+| `measure-pair --base BIN --candidate BIN [--base-cwd DIR] [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME [--repeat N [--repeat-stat fastest\|median]]] [--warmup N] [--check-output F] [--ignore-lines TEXT…] [--out F] [-- ARGS]` | alternating AB/BA runs of prebuilt binaries until the time verdict is settled (at most N pairs, default 30); `--scope` times one `Leanprof.bench` region; `--repeat N` (opt-in) repeats it N times per run and counts the fastest (`--repeat-stat median`: the median), so the region must be repeatable; `--ignore-lines TEXT` leaves stdout's lines containing TEXT out of the output hash (in `measure` too: a benchmark's own timings); no builds or added probes |
 | `judge [--min-change PCT] [--allow-overloaded] [--json] BASE.json NEW.json` or `judge [--min-change PCT] [--allow-overloaded] [--json] PAIR.json` | KEEP (exit 0) or DISCARD (exit 1); paired sessions use a 95% median interval; `--json` prints the verdict with its [outcome](#verdict-outcomes) |
 | `explain [--report F \| --elab] [--out F] [--top N] [--all] [--json] [--why EXE [-- ARGS]]` | on an `elab` report (`--elab`), why its costliest declarations are slow ([compile time](compile-time.md#why-a-declaration-is-slow---why)); otherwise why each copy of a shared value happened, with the fix as Lean code when the cause is recognised ([copies](copies-and-allocations.md#why-it-was-shared-leanprof-explain)) |
 | `fix [--exe EXE [-- ARGS]] [--test CMD] [--check-output F] [--finding N] [--all] [--dry-run] [--report F] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] [--json]` | apply the fix `explain` prints for the costliest mechanically fixable copy. In a git worktree of HEAD, it builds, tests, compares the output, measures, times the plain binaries in pairs and judges. KEEP commits with the evidence on a new branch (exit 0); DISCARD creates no branch (exit 1). The checkout is never touched, also when interrupted; a tree with uncommitted changes is refused. The result is written to `.lake/leanprof/fix/result.json`; `--json` prints it, with the steps on stderr ([fix](fix.md)) |
@@ -71,6 +72,8 @@ For programs that link leanprof:
 | `LEANPROF_PROJECT=dir` | the project, when the program runs elsewhere (set by `--cwd`): where `.ilean` files and packages are found |
 | `LEANPROF_CORE_DIR=prefix` | a Lean toolchain (`lean --print-prefix`) whose `lib/lean/*.ilean` and `src/lean` give positions of Lean's own functions (set by `run`) |
 | `LEANPROF_BENCH_OUT=file` | `Leanprof.bench "NAME"` appends `NAME<TAB>NANOSECONDS` to this file after each region (set by `measure-pair --scope`; any program may write the same lines without the dependency) |
+| `LEANPROF_BENCH_REPEAT=N` | `Leanprof.bench` runs its region N times, each line ending in `<TAB>K`, its repetition (set by `measure-pair --scope NAME --repeat N`) |
+| `LEANPROF_UNTIMED=file` | the compiler wrapper compiles out the pure `profile!` scopes listed in the file, `name<TAB>position` per line (set by `run --retime`) |
 
 For `leanprof run --core`:
 
@@ -105,6 +108,7 @@ describes it:
 | `run` | `run --json`, `stat --json`, `sample`, `LEANPROF_JSON` (`report.json`) |
 | `live` | `LEANPROF_LIVE` snapshots |
 | `elab` | `elab` (`elab.json`, `--out`) |
+| `build-memory` | `build-memory` (`build-memory.json`, `--out`; checked by `scripts/build-memory-check.sh`) |
 | `measure` | `measure` (`measure.json`) |
 | `measure-pair` | `measure-pair` (`paired.json`) |
 | `judge` | `judge --json` |
@@ -274,6 +278,39 @@ costliest functions: `name`, `ns`). Compile reports from `elab` have
 Compile reports also have `kinds`: self cost per operation kind (`class`,
 `total`), for `leanprof html`.
 
+## Build memory report
+
+`build-memory.json` has `schema` (`leanprof.build-memory`), `provenance`,
+`"kind": "build-memory"`, `version` (1), `platform`,
+`cpus`, `jobs` (`--jobs`, or null), `build_exit` (Lake's exit code),
+`max_concurrent` (the most `lean` processes running together), and:
+
+- `modules`, heaviest first: `module`, `file`, `peak_rss` (bytes),
+  `private_peak` (macOS: the physical footprint's peak; Linux: the largest
+  `RssAnon` read every 20 ms; null when unknown), `private_sampled`,
+  `imports_rss` and `imports_private` (`lean` on the header alone; null with
+  `--no-imports`), `own_rss` and `own_private` (the peak minus the imports'),
+  `wall_ms`, `cpu_ms`, `exit`, `start_ms`, `end_ms` (wall clock);
+- `concurrent_peak`: `sum_of_peaks`, the largest sum of the peaks of the
+  modules running at one moment, and those `modules`;
+- `sampled` (null with `--no-sample`): `rss_sum` and `private_sum_plus_shared`,
+  the largest of the sums taken every 0.2 s, the files running then
+  (`rss_files`, `private_files`), and `samples`;
+- `mem_limit` (with `--mem-limit`): `limit`, `safe_jobs` and
+  `largest_rss_sum` (the bound), `estimated_jobs`, `estimated_sum` and
+  `largest_shared` (the estimate with shared pages counted once), `near`
+  (modules above 75% of the limit);
+- `budget` (with `--max-memory`): `limit`, `over` (`module`, `peak_rss`);
+- `declarations` (with `--decls` or files): per module, `module`, `file`,
+  `imports_rss`, `imports_private`, `peak_rss`, `private_peak`, `error`, and
+  `commands`: `line`, `end_line`, `name`, `text`, `heartbeats`,
+  `rss_before`, `rss_after`, `peak_rise`, `peak_after`, `private_before`,
+  `private_after`, `private_peak_rise`.
+
+The wrapper's own records (one JSON line per `lean` process, see
+`c/leanwrap.c`) are kept in `.lake/leanprof/build-memory/lean.jsonl`;
+`--log FILE` reads such a file again without building.
+
 ## Measure summary
 
 `measure.json` (`"leanprof": "measure"`, version 1), what `judge` reads:
@@ -296,6 +333,36 @@ when the runtime's self-check warned), `allocations` and `heartbeats`
 gives no KEEP when the self-check warned or a metric was counted on one
 side only (outcome `insufficient_evidence`), and reads summaries strictly:
 a missing or mistyped metric is an error naming it.
+
+## Difference file
+
+`elab --since-last FILE.lean` writes its report to
+`.lake/leanprof/onsave/FILE.lean.json` (`--out` names another file),
+compares it with the base kept from the previous `--since-last` profile of
+the file (`FILE.lean.base.json`), writes the difference to
+`FILE.lean.delta.json` and prints a summary. The new report then becomes the
+base, unless `--keep-base` or the file has errors. The format (version 1):
+
+- `kind` (`elab`), `unit` (`heartbeats` or `ns`), `comparable` (false when
+  the two reports were made in different units), `first` (true when there
+  was no base: nothing is compared);
+- `decls`: the declarations whose cost changed by more than 1,000
+  heartbeats (time: by more than 10% and 1 ms, `compare`'s default
+  thresholds), largest change first: `key`, `name`, `pos` (the
+  declaration's first line in the newer report), `status` (`changed`,
+  `new`, `gone`; nothing is `gone` when the file has errors), `base`,
+  `new`, `change`, `regression` (as `compare` counts it) and, for
+  heartbeats, `why`: `headline`, `parts` (elaboration, kernel, compiler,
+  linters that changed), `rows` (credited work and exact counts, each with
+  `label`, `name`, `where`, `base`, `new`, `change` as `compare` prints
+  them), `more` and `notes`;
+- `total` (`base`, `new`), `errors` and `threshold`.
+
+`elab --since-last` also keeps `lake env`'s paths in
+`.lake/leanprof/lake-env.json`, and the setup of a module that is not built
+under `.lake/leanprof/setup/`, while the package's `lakefile`, manifest and
+`lean-toolchain` (and the file's imports) are unchanged: 0.2–0.45 s less a
+run on the files measured ([compile time](compile-time.md#what-an-edit-changed)).
 
 ## Live snapshot
 

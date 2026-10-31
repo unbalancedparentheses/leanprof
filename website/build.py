@@ -61,7 +61,12 @@ NAV = [
         "docs/case-studies/concrete.md",
         "docs/case-studies/batteries.md",
         "docs/case-studies/mathlib.md",
+<<<<<<< HEAD
         "docs/case-studies/project-compile-fixes.md",
+||||||| 72f6886
+=======
+        "docs/case-studies/build-memory.md",
+>>>>>>> origin/main
         "docs/case-studies/compile-time-vs-lean-source-profiler.md",
         "docs/case-studies/leanbench.md",
         "docs/profiles/README.md",
