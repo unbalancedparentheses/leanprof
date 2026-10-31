@@ -3,6 +3,7 @@
 ```
 leanprof elab [--heartbeats] [--compact] [--top N] [--out FILE] FILE.lean...
 leanprof elab --project [--module-glob GLOB] [--jobs N] [--heartbeats] [--compact]
+              [--term-threshold N] [--dataset DIR | --no-dataset] [--chrome-trace FILE]
 ```
 
 elaborates the files with Lean's `trace.profiler` (each module with Lake's
@@ -92,16 +93,15 @@ declaration) and in the editor: hovering a declaration's `⚙` hint lists
 ## Terms and tactics, by exact source range
 
 `trace.profiler` attaches each command's trace to the command; the
-operations inside it keep no position. So when the project's Lean is the
-one leanprof was built with (the usual case: same toolchain), `elab` does
-not run `lean` but `leanprof-elab-driver`, Lean's own frontend run
-in-process: it loads the module as `lake` and `lean` would (its setup
+operations inside it keep no position. So `elab` does not run `lean` but
+`leanprof-elab-driver`, Lean's own frontend run in-process, built with the
+project's Lean (below): it loads the module as `lake` and `lean` would (its setup
 file: options, imports, plugins, shared libraries; `LEAN_PATH`;
 asynchronous elaboration; the kernel), with the same trace options, and
 wraps, in that process only, every term and tactic elaborator and every
-macro. Each elaboration that takes longer than the threshold is recorded
-against the exact range of the syntax it elaborates, which the report
-lists:
+macro. Every elaboration is recorded against the exact range of the syntax
+it elaborates, however short (`--term-threshold N`: only those over N ms, or
+N heartbeats), which the report lists:
 
 ```
 $ leanprof elab Batteries/Recycling/RBTree/WF.lean
@@ -136,14 +136,32 @@ descriptions the report reads, with `pp` limits (a description is cut to
 200 characters anyway), where `lean --json` prints every trace in full
 while elaborating: a full profile costs less than before (below).
 
-**Another Lean.** The driver can only load `.olean` files written by the
-Lean it was built with. When the project's `lean --githash` differs, or the
-driver is not built, or it cannot load a file's imports, `elab` says so and
-runs that project's `lean --json` as before: tactics are then placed on
-lines by finding their text in the source (a tactic Lean prints differently
-from how it is written is left on its declaration's line) and terms are not
-timed. `--no-driver` does that on purpose; `LEANPROF_ELAB_DRIVER=PATH`
-names another driver.
+**Any Lean.** The driver can only load `.olean` files written by the Lean
+it was built with. The one built with leanprof serves projects on
+leanprof's Lean; for any other, `elab` builds the driver with the project's
+own Lean the first time (its source is compiled into the command: `lean -c`,
+then `leanc` linked against that Lean's shared library, as
+lean-source-profiler does; a few seconds) and keeps it in
+`~/.cache/leanprof/driver/COMMIT/` (`LEANPROF_CACHE` or `XDG_CACHE_HOME` to
+move it):
+
+```
+$ leanprof elab Main.lean        # a project on Lean 4.34.1, leanprof built with 4.35.0
+leanprof: building leanprof-elab-driver for the project's Lean (5045d0056413), once; kept in ~/.cache/leanprof/driver/5045d0056413...
+```
+
+Tested with Lean 4.34.1, 4.35.0, 4.36.0-rc1 and the nightly, on Linux and
+macOS (CI builds leanprof with 4.35.0 and profiles a project on each). The
+definitions behind the work are looked up by that driver as well (`--locate`):
+leanprof's own Lean cannot read another Lean's `.olean` files.
+
+When the driver cannot be built (a future Lean whose internals changed), or
+cannot load a file's imports, `elab` says why and runs the project's `lean
+--json` instead: tactics are then placed on lines by finding their text in
+the source (a tactic Lean prints differently from how it is written is left
+on its declaration's line), terms are not timed and there is no timeline.
+`--no-driver` does that on purpose; `LEANPROF_ELAB_DRIVER=PATH` names a
+driver to use as it is.
 
 ## Compact profiles
 
@@ -162,6 +180,18 @@ the work. It costs close to plain `lean` (see the
 [comparison](../case-studies/compile-time-vs-lean-source-profiler.md)), so
 it is the one to leave on, or to run on a large project first. It needs the
 driver (with another Lean, `elab` makes a full profile and says so).
+
+## Timelines and datasets
+
+Every profile made with the driver (in time, not heartbeats) records when
+each command, term, tactic and operation ran and on which thread. `elab`
+writes them, with every term and tactic by range, to a dataset next to the
+report (`.lake/leanprof/elab/`: `index.json`, the report, and
+`modules/MODULE.json`; `--dataset DIR`, `--no-dataset`), in documented,
+versioned formats ([datasets](elab-dataset.md)). `leanprof html` draws them
+in its Timeline tab, `--chrome-trace FILE` writes them for
+[Perfetto](https://ui.perfetto.dev), and `scripts/elab-dataset.sh PROJECT OUT`
+profiles a whole project into a dataset with its provenance.
 
 ## Whole projects
 
@@ -191,8 +221,10 @@ text and which of the commands with that text they are (`variable (W') #3`).
 
 ## Threshold
 
-Operations cheaper than 1 ms (10,000 heartbeats with `--heartbeats`) are
-not recorded on their own: their cost stays in the operation around them,
+Terms and tactics are all recorded (`--term-threshold N` to record only those
+over N ms): on Batteries' heaviest files that costs 0 to 3% more than
+recording those over 1 ms. Other operations cheaper than 1 ms (10,000
+heartbeats with `--heartbeats`) are not recorded on their own: their cost stays in the operation around them,
 so totals hold, but they do not show up in repeated work or the tactic
 lines, and the definitions behind them are counted at no cost. `--threshold
 0` records everything, which is what you want for one small file; on large
