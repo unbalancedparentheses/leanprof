@@ -384,6 +384,152 @@ too (0.3% more heartbeats on `Examples/ElabHeavy.lean` than through `lean`),
 so compare reports made the same way (`exact_ranges` in `elab.json` says
 which).
 
+## Memory of compilation
+
+```
+leanprof build-memory [--mem-limit SIZE] [--max-memory SIZE] [--jobs N] [--clean] [--decls N] [-- TARGETS]
+```
+
+runs a real `lake build` and records what each `lean` process Lake starts
+(one per module) cost in memory. Lake is given a copy of the Lean
+installation (links to it) whose `bin/lean` is a small C wrapper
+(`c/leanwrap.c`); it runs the real `lean` with the same arguments and
+environment, waits for it and records its peak resident set size (`wait4`'s
+`ru_maxrss`), its private memory, CPU and wall time, and when it started and
+ended. The `lean` process itself is not changed, so its numbers are those
+of an ordinary build. Only modules Lake compiles are measured: `--clean`
+removes `.lake/build` first so that every module of the project is compiled
+again (dependencies, such as Mathlib from its cache, are not).
+
+```
+$ leanprof build-memory --clean --mem-limit 2G    # in a checkout of Batteries
+  peak memory of each module's `lean` process:
+    peak RSS  footprint    imports        own     wall  module
+    1.36 GiB    255 MiB   1.30 GiB     65 MiB    1.7 s  runLinter
+     586 MiB    300 MiB    362 MiB    224 MiB    3.6 s  Batteries.Data.List.Lemmas
+  ...
+  modules running at the same time: their peaks add up to at most 6.37 GiB
+  sampled every 0.2 s while the build ran (92 samples):
+    resident sets added up: 4.36 GiB at most
+    private memory added up, plus the largest shared part once: 1.69 GiB at most
+
+  memory limit 2.00 GiB:
+    jobs: at most 2 at once is safe: the 2 largest resident peaks add up to 1.94 GiB
+    with the shared .olean pages counted once (...): 3 jobs, 1.91 GiB; an estimate, not a bound
+```
+
+What the columns mean:
+
+- **peak RSS**: the largest resident set of the process. It includes the
+  pages of the `.olean` files Lean maps, which every `lean` importing the
+  same modules shares with the others (and with the page cache).
+- **footprint** (macOS) or **anonymous** (Linux): private memory, which no
+  other process shares. On macOS it is the physical footprint's lifetime
+  peak, read from the exited process (`proc_pid_rusage`), what the system
+  charges the process; on Linux the largest `RssAnon` the wrapper read in
+  `/proc/PID/status` every 20 ms, so a spike shorter than that can be
+  missed. On Batteries the footprint is about a third of the peak RSS
+  (median); the rest is mapped files.
+- **imports**: the peak of `lean` run on the module's header alone (its
+  `import` lines, with Lake's setup file), after the build: the environment
+  after the imports. On Batteries it is 90% of the module's peak (median).
+- **own**: the peak minus imports, approximately the module's own
+  elaboration. Approximate because elaboration also touches pages of the
+  imported files that loading them did not.
+
+`--mem-limit SIZE` (`8G`, `512M`; binary units) is the memory the build
+may use. Modules whose peak is above 75% of it are listed. For the number
+of jobs, any modules may run together, so the safe number is the largest
+`j` whose `j` largest peaks add up to at most the limit; this counts the
+shared `.olean` pages once per process, so it is an upper bound of what
+the build uses. With private memory measured, the report also gives an
+estimate that counts the shared part once (the `j` largest private peaks
+plus the largest shared part of one module); it is not a bound. Lake runs
+as many jobs as its Lean task manager has threads: `LEAN_NUM_THREADS=J lake
+build` limits it (and each `lean` then also gets J threads, which lowers
+its memory, so the measured peaks are conservative for it).
+`build-memory --jobs J` runs the build with J jobs, each `lean` keeping its
+usual threads, and measures it, to check a number before using it.
+
+**Which modules cause the peak.** From the start and end of every process,
+the report finds the moment when the peaks of the modules running at that
+time added up to the most, and names them. While the build runs it also
+adds up the memory of the running `lean` processes every 0.2 s (each
+wrapper keeps its process's current numbers in a file): their resident
+sets, and their private memory plus the largest shared part once.
+
+**A budget for CI.** `--max-memory SIZE` exits 1 when a module's peak RSS
+is above SIZE and names the modules: a module that crosses it in a pull
+request is caught before the build runs out of memory.
+
+**Memory per command, where it is sound.** `--decls N` (or files given on
+the command line) elaborates the N heaviest modules again, serially, in
+`leanprof-elab-driver --memory`: `Elab.async` off, one command at a time,
+each command's proofs and kernel checks finished before the next starts.
+Between commands it reads the process's resident set, its peak, private
+memory, and Lean's heartbeat counter, and reports the commands during which
+the process's peak rose and by how much. With one command running in the
+process, a rise of the peak happened while that command was elaborated, so
+the report can say where the module reached its peak. It does not say the
+command owns that memory: the peak includes the imported environment and
+everything earlier commands left behind, memory the allocator keeps after a
+free still counts as resident, and a serial run holds less at once than the
+build, which elaborates proofs in parallel (Batteries' `List/Lemmas.lean`:
+586 MiB in the build, 425 MiB serially). Resident memory sampled during a
+command of a parallel build would mix in the other commands running at
+that moment, so leanprof does not report it per command.
+
+`build-memory` writes `.lake/leanprof/build-memory.json` (`--out FILE`),
+which `leanprof html` shows as a Build memory tab, and the MCP server has a
+`build_memory` tool. The numbers agree with `/usr/bin/time -l` on the same
+`lean` command lines within 1% for the resident set and 3% for the
+footprint, on Batteries and on a project using Mathlib (where `import
+Mathlib` alone is 5.44 GiB resident, 853 MiB private); the wrapper uses
+1.4 MiB per running `lean` and leanprof 45 MiB, and the import measurement
+adds a `lean` run per module after the build (on Batteries 12 to 18 s on top
+of a 15 s build).
+The numbers are in the [case study](../case-studies/build-memory.md).
+
+## What an edit changed
+
+`--since-last` compares a file's compile cost with the previous
+`--since-last` run on the same file, for a person or an agent checking what
+an edit did:
+
+```
+$ leanprof elab --heartbeats --since-last Foo/Bar.lean
+...
+since the last profile (.lake/leanprof/onsave/Foo/Bar.lean.delta.json):
+  1 declaration changed; file 94.28 kHB -> 120.30 kHB (+26.02 kHB)
+    +25.00 kHB  Foo/Bar.lean t2 (Foo/Bar.lean:5); whnf reduces Foo.f (Foo/Bar.lean:1) +20.00 kHB
+```
+
+It lists the declarations whose heartbeats moved by more than 1,000, each
+with what changed inside it, as `compare` explains a regression: the
+definitions unfolded, the instances tried and the simp lemmas that rewrote,
+before and after. The difference is also written as JSON next to the report
+([difference file](reference.md#difference-file)). The first run has
+nothing to compare with and says so. Each run becomes the base of the next;
+`--keep-base` keeps comparing with the first. A file with errors is
+compared up to its first error and does not replace the base.
+
+`--since-last` reuses `lake env`'s paths and the module's setup while the
+package's configuration and the file's imports are unchanged. On the files
+below (median of 3, Apple M5 Max shared with other work, so a few tenths
+of a second either way), a run takes about as long as plain `lake env lean`
+on the file:
+
+| file | lines | heartbeats | `lake env lean` | `elab --heartbeats` | `elab --heartbeats --since-last` |
+|---|---|---|---|---|---|
+| leanprof `Examples/CopyBug.lean` | 37 | 0.7 M | 0.47 s | 0.63 s | 0.43 s |
+| leanprof `Leanprof/Regress.lean` | 430 | 15 M | 0.67 s | 0.94 s | 0.65 s |
+| leanprof `LeanprofElab.lean` | 1,610 | 95 M | 2.12 s | 2.95 s | 2.60 s |
+| a Mathlib project, `Coin.lean` | 85 | 5 M | 1.66 s | 2.47 s | 2.02 s |
+| a Mathlib project, `Kelly.lean` | 109 | 25 M | 1.79 s | 2.69 s | 2.59 s |
+
+Each run elaborates the whole file and loads its imports (most of the time
+with Mathlib).
+
 ## In the editor
 
 The report goes to `.lake/leanprof/elab.json`; `#leanprof` shows it as

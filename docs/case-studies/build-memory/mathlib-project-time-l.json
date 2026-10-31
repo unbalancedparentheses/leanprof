@@ -1,0 +1,110 @@
+{
+ "project": "mlp",
+ "runs": 2,
+ "load_before": [
+  20.771484375,
+  15.4375,
+  12.37109375
+ ],
+ "load_after": [
+  73.18408203125,
+  43.12451171875,
+  25.2021484375
+ ],
+ "date": "2026-10-28 12:31",
+ "modules": [
+  {
+   "module": "Mlp.All",
+   "build": {
+    "peak_rss": 5842010112,
+    "private_peak": 894278608
+   },
+   "usr_bin_time": [
+    {
+     "maxrss": 5840650240,
+     "footprint_peak": 894098504,
+     "exit": 0
+    },
+    {
+     "maxrss": 5840093184,
+     "footprint_peak": 892607440,
+     "exit": 0
+    }
+   ],
+   "wrapper_alone": [
+    {
+     "maxrss": 5841944576,
+     "private_peak": 894147584,
+     "exit": 0
+    },
+    {
+     "maxrss": 5843927040,
+     "private_peak": 895114456,
+     "exit": 0
+    }
+   ]
+  },
+  {
+   "module": "Mlp.MayerVietoris",
+   "build": {
+    "peak_rss": 1891794944,
+    "private_peak": 993579944
+   },
+   "usr_bin_time": [
+    {
+     "maxrss": 1891303424,
+     "footprint_peak": 993088640,
+     "exit": 0
+    },
+    {
+     "maxrss": 1888157696,
+     "footprint_peak": 992433160,
+     "exit": 0
+    }
+   ],
+   "wrapper_alone": [
+    {
+     "maxrss": 1885749248,
+     "private_peak": 997594024,
+     "exit": 0
+    },
+    {
+     "maxrss": 1881686016,
+     "private_peak": 995972056,
+     "exit": 0
+    }
+   ]
+  },
+  {
+   "module": "Mlp.Tilde",
+   "build": {
+    "peak_rss": 1687191552,
+    "private_peak": 655415680
+   },
+   "usr_bin_time": [
+    {
+     "maxrss": 1675018240,
+     "footprint_peak": 648075648,
+     "exit": 0
+    },
+    {
+     "maxrss": 1678540800,
+     "footprint_peak": 639048064,
+     "exit": 0
+    }
+   ],
+   "wrapper_alone": [
+    {
+     "maxrss": 1681162240,
+     "private_peak": 643668376,
+     "exit": 0
+    },
+    {
+     "maxrss": 1690484736,
+     "private_peak": 645913032,
+     "exit": 0
+    }
+   ]
+  }
+ ]
+}

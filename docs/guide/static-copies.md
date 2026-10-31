@@ -178,6 +178,10 @@ an `Array.append`, counted only with `--core`).
   matches, the flag points at the declaration's first line.
 - The C must be current: the scan runs `lake build` first (`--no-build`
   skips it) and says when a source file is newer than its C.
+- `--ir-dir` and `--src-dir` scan C that Lake did not put in
+  `.lake/build/ir`, such as Lean's own, from a build of Lean from source:
+  `leanprof explain --static --ir-dir build/release/stage1/lib/temp --src-dir src`
+  in a Lean checkout (`docs/research/lean-core-static-copies.md`).
 - The analysis reads compiler output, which changes between Lean versions.
   It is tested on Lean 4.27.0 through 4.35.0. On Lean before 4.30 the C has
   no source names for variables, so values are named from the source when
@@ -190,6 +194,8 @@ an `Array.append`, counted only with `--core`).
 | `MODULE...` | only these modules and the modules under them (default: every module of the package) |
 | `--deps` | also the C of the package's dependencies in `.lake/packages` |
 | `--no-build` | scan what is built; do not run `lake build` first |
+| `--ir-dir DIR` | scan the C under DIR instead of `.lake/build/ir`, without building; declaration lines come from the `.ilean` files in `lib/lean` beside DIR, or in `lean` beside it |
+| `--src-dir DIR` | with `--ir-dir`: the directory the modules' sources are under (default `.`) |
 | `--all` | also appends to strings outside loops |
 | `--report FILE` | the run report to check the flags against (default `.lake/leanprof/report.json` when it exists) |
 | `--no-report` | do not read a report |

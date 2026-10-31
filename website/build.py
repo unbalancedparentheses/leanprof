@@ -63,6 +63,7 @@ NAV = [
         "docs/case-studies/batteries.md",
         "docs/case-studies/mathlib.md",
         "docs/case-studies/build-time.md",
+        "docs/case-studies/build-memory.md",
         "docs/case-studies/compile-time-vs-lean-source-profiler.md",
         "docs/case-studies/leanbench.md",
         "docs/profiles/README.md",

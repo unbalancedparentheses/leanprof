@@ -287,7 +287,18 @@ Ranked; the open ones are planned after v0.2.0.
 - [x] **A heartbeat budget.** `elab --max-heartbeats N` in
   CI flags any declaration above N, so slow lemmas do not accumulate
   (`report-md --max-heartbeats`, the Action's `max-heartbeats`).
-- [ ] *(in progress)* **Compile time against the previous run.** `elab
+- [x] **Memory of compilation.** `build-memory`: the peak memory of each
+  module's `lean` in a real `lake build`, imports apart, the modules running
+  together at the peak, the most jobs under a limit, a per-module budget for
+  CI, and the commands during which a serial run's peak rose
+  ([guide](docs/guide/compile-time.md#memory-of-compilation)). Still open:
+  - [ ] A jobs estimate from the dependency graph and measured durations
+    (which modules can run together), instead of any `j` heaviest at once.
+  - [ ] An exact private-memory peak on Linux (now `RssAnon` read every
+    20 ms), and the page cache a cgroup charges for the `.olean` files.
+  - [ ] Memory per command in the build itself: only a serial run is
+    attributed now, since parallel proofs share the process.
+- [x] **Compile time against the previous run.** `elab
   --heartbeats --since-last FILE`: the declarations that changed and why
   (the unfolds, instances and `simp` lemmas whose counts moved), for
   agents and scripts.
@@ -403,6 +414,9 @@ Still to do:
   seeded 1%, 2% and 5% changes, inconclusive outcomes and total experiment cost
   on quiet and loaded hosts, with fixed protocols (not reruns until KEEP).
   Then Linux instruction counts.
+  - [x] On the shared Mac, quiet and loaded: [bench/verdicts](bench/verdicts/RESULTS.md)
+    (`run.py`, a fixed protocol of 150 trials per condition).
+  - [ ] On the dedicated Linux host; then instruction counts.
 - [ ] **Evidence that stands on its own.** The benchmark suite rerun on CI's
   fixed runners (Linux and macOS, on a schedule) with the results published,
   next to a run on an idle machine (dedicated Linux results are in
@@ -456,6 +470,9 @@ Still to do:
   flags. Separate CPU time, elapsed time, waiting and probe overhead, with
   explicit uncertainty and aggregation rules so concurrent work is not
   double-counted.
+  - [x] Tiny `profile!` scopes: `run --retime` compiles them out of a second
+    run, so their callers are timed without their probes (`tiny`: 8.2–9.6 →
+    0.3–1.1 points off, [bench/retime](bench/retime/README.md)).
 - [ ] **Broaden memory coverage.** Identify core-library and precompiled code
   coverage; add RC-operation costs, retained-memory attribution and object
   lifetime analysis beyond allocation counts and peak-live metrics. Report
@@ -494,6 +511,24 @@ Still to do:
   separate what changed: elaboration, kernel, compiler, generated code, and
   the profiler's own trace format. After provenance is solid.
 
+- [ ] **What `--retime` leaves.** Monadic `profile!` scopes are not
+  compiled out yet (the report names them as still timed), and the
+  deep-recursion benchmark (`rec`) is as far off as before, since its
+  recursive scopes never count as too small ([bench/retime](bench/retime/)).
+- [ ] **`sample` on tiny functions.** It was 4.6 to 5.1 points off on the
+  `tiny` benchmark in two of three suites of the `--retime` runs (0.6 in
+  the published run); find out why before claiming it as the tool for tiny
+  functions.
+- [ ] **One process wrapper for Lake builds.** `build-memory`
+  (`c/leanwrap.c`) and the whole-project build timing each wrap Lake's
+  `lean` processes; keep one, which records time and memory for both.
+- [ ] **Claims, swept once more.** Both reviews of 2026-10-27 flagged
+  wording that goes past the evidence: "counts are exact in every mode"
+  (tiny functions left untimed, precompiled code, events dropped when a
+  table is full), heartbeats called "exact" (they repeat nearly exactly),
+  and the headline's "names the line" and "prints the fix" (where source
+  matching and the fixes cover it). Qualify them next to the claim.
+
 Deferred: per-commit profile history (incomparable numbers without fixed
 workloads; CI artifacts and provenance cover most of it), per-function
 hardware counters on Linux, and the Linux probe cost (23 ns against 5–8 ns
@@ -528,6 +563,13 @@ conclusion.
   hypotheses; improvements verified by measurement, not predicted.
 
 ### Evidence
+
+- [ ] **A long-term benchmark machine.** concrete-ci-3, where the Linux
+  results were measured, is concrete's again; fede-256gb is used for now
+  (Mathlib-wide profiles, Linux numbers) but is the shared host, so timing
+  there needs quiet windows and the results say the machine was shared. A
+  dedicated, idle Linux machine with a fixed CPU frequency, and the
+  benchmark suite run on it on a schedule with the results published.
 
 - [ ] **Outside confirmation and end-to-end value** (posting and upstream
   patches are the maintainer's decision): others reproducing the measurements

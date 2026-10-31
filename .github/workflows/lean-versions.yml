@@ -112,6 +112,8 @@ jobs:
         run: sh scripts/driver-cache-check.sh .lake/build/bin/leanprof "$TOOLCHAIN"
       - name: leanprof build on a project using this Lean (its Lake, its toolchain programs)
         run: sh scripts/build-check.sh "$TOOLCHAIN"
+      - name: leanprof build-memory on a project using this Lean
+        run: sh scripts/build-memory-check.sh .lake/build/bin/leanprof "$TOOLCHAIN"
       - name: Report
         if: always()
         env:

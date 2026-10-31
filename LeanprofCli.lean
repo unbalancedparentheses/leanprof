@@ -6,6 +6,7 @@ import Leanprof.Fix
 import Leanprof.Experiment
 import Leanprof.Judge
 import Leanprof.Regress
+import Leanprof.Delta
 import Leanprof.Workload
 import Leanprof.ElabWhy
 import Leanprof.FixElab
@@ -13,6 +14,7 @@ import LeanprofHtml
 import LeanprofLive
 import LeanprofElab
 import Leanprof.BuildCmd
+import Leanprof.BuildMem
 
 /-!
 # `lake exe leanprof`
@@ -36,11 +38,11 @@ import Leanprof.BuildCmd
 -/
 
 open Lean System
-open Leanprof.Regress (mdCode mdProse htmlCode)
+open Leanprof.Regress (mdCode mdProse htmlCode whatLabel fmtKHB fmtSigned rowSide rowChange)
 
 /-- One line per command, then its options and what it does. -/
 def commands : List (String × String × String) := [
-  ("run", "[--auto | --auto-all] [--time-tiny] [--allocs] [--counters] [--frees] [--retained] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
+  ("run", "[--auto | --auto-all] [--time-tiny] [--retime] [--allocs] [--counters] [--frees] [--retained] [--core] [--all-copies] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes (copies of shared values, tasks, blocking waits; --auto: every function's\n" ++
     "time, except functions too small to time, which --time-tiny includes; --allocs: allocations; --counters: failed constructor reuse and closure applications;\n" ++
     "--frees: freeing pauses and atomic decrements; --retained: live objects by allocation site at the\n" ++
@@ -55,7 +57,10 @@ def commands : List (String × String × String) := [
     "libraries, by linking against copies rewritten with llvm-objcopy (cached in .lake/leanprof/core).\n" ++
     "--all-copies lists copies of constants and of empty or tiny values row by row (summarized\n" ++
     "by default). --trace FILE also writes a Perfetto timeline; --keep keeps the instrumented build;\n" ++
-    "--cwd DIR runs EXE in DIR (for programs that read the current directory)."),
+    "--cwd DIR runs EXE in DIR (for programs that read the current directory).\n" ++
+    "--retime: when `profile!` scopes on pure terms turned out too small to time (their probes change\n" ++
+    "the code of the scopes that call them), build and run again with those scopes compiled out: the\n" ++
+    "second report times their callers without them; their calls and estimated times are the first run's."),
   ("stat", "[--auto | --auto-all] [--time-tiny] [--no-allocs] [--no-frees] [--no-deps] [--trace FILE] [--json FILE] [--keep] [--cwd DIR] EXE [-- ARGS...]",
     "Build EXE with probes, run it and print a one-screen summary: wall and CPU time, peak memory,\n" ++
     "allocations, copies, frees, tasks and the top 3 scopes. Allocations and frees are counted\n" ++
@@ -68,7 +73,7 @@ def commands : List (String × String × String) := [
     "a toolchain's bin/lean (Lean's own code is named and placed in the toolchain's sources).\n" ++
     "Needs samply: the one on PATH, else the one `install.sh --samply` put in leanprof's home\n" ++
     "(`leanprof doctor` says how to get it)."),
-  ("elab", "[--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [FILE.lean...]",
+  ("elab", "[--heartbeats] [--compact] [--why] [--max-heartbeats N] [--project | --module-glob GLOB] [--jobs N] [--counts] [--threshold N] [--no-defs] [--no-driver] [--top N] [--out FILE] [--since-last [--keep-base]] [FILE.lean...]",
     "Compile cost per line and declaration: elaboration, kernel, compiler, linters, by kind of\n" ++
     "operation, repeated work, and the definitions behind the work (what isDefEq and whnf unfolded,\n" ++
     "instances tried, simp lemmas), each with its own file:line. --project profiles every built module of\n" ++
@@ -94,6 +99,20 @@ def commands : List (String × String × String) := [
     "--imports K tries removing the K most promising imports there; one counts only if the build,\n" ++
     "proofs included, passes. Writes .lake/leanprof/build.json (--json FILE); --html FILE draws the\n" ++
     "timeline with the critical path; --from FILE shows a saved report."),
+    "(maxHeartbeats' unit) and exit 1 if there is one, for CI.\n" ++
+    "--since-last (one file) writes the report under .lake/leanprof/onsave/, compares it with the previous\n" ++
+    "--since-last profile of the file and writes the difference per declaration, with what changed inside\n" ++
+    "each, next to it (FILE.delta.json); --keep-base keeps comparing with that same base."),
+  ("build-memory", "[--mem-limit SIZE] [--max-memory SIZE] [--jobs N] [--clean] [--no-imports] [--decls N] [--top N] [--out FILE] [--no-sample] [--log FILE] [FILE.lean...] [-- LAKE-TARGETS...]",
+    "Run `lake build` with every `lean` process wrapped and report each module's peak memory\n" ++
+    "(resident set; on macOS also the footprint), split into its imports (lean on the module's header\n" ++
+    "alone) and its own elaboration, which modules ran at the same time and the largest sum of their\n" ++
+    "peaks. --mem-limit SIZE (8G, 512M) flags modules near it and gives the most jobs whose heaviest\n" ++
+    "modules fit under it; --jobs N runs Lake with N jobs (LEAN_NUM_THREADS for Lake only).\n" ++
+    "--max-memory SIZE exits 1 when a module's peak is above it (a CI budget). Only modules Lake\n" ++
+    "compiles are measured: --clean removes .lake/build first. --decls N (or FILE.lean...) elaborates\n" ++
+    "the N heaviest modules serially and shows the commands during which memory peaked (approximate).\n" ++
+    "Writes .lake/leanprof/build-memory.json (--out FILE)."),
   ("compare", "[--threshold PCT] [--min-ms MS] [--explain NEW_EXPLAIN.json] [--json] BASE.json NEW.json",
     "Exit 1 on a regression: more copies, more allocations in total (when both reports counted\n" ++
     "them), changed call counts, compile heartbeats up by more than 1% and 1,000, or a scope slower\n" ++
@@ -109,13 +128,17 @@ def commands : List (String × String × String) := [
     "--scope NAME times only the `profile! \"NAME\"` scope (its total per run), not the whole process.\n" ++
     "--ignore-lines TEXT leaves stdout's lines containing TEXT out of its hash (a benchmark's own timings).\n" ++
     "For `judge` and autoresearch loops."),
-  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME] [--warmup N] [--check-output FILE] [--ignore-lines TEXT]... [--out FILE] [-- ARGS...]",
+  ("measure-pair", "(--base BIN --candidate BIN [--base-cwd DIR] | --base-rev REV --exe NAME [--candidate BIN]) [--candidate-cwd DIR] [--runs N] [--fixed] [--min-change PCT] [--scope NAME [--repeat N [--repeat-stat fastest|median]]] [--warmup N] [--check-output FILE] [--ignore-lines TEXT]... [--out FILE] [-- ARGS...]",
     "Measure two prebuilt binaries in alternating AB/BA order (1 warmup pair), stopping as soon as the\n" ++
     "time verdict is settled: slower or faster by more than PCT% (default 1), or within ±PCT%; at most N\n" ++
     "pairs (default 30), looking after 6, 8, 10, ... pairs (a group-sequential sign test: each of these\n" ++
-    "claims is wrong at most 2.5% of the time). --fixed measures exactly N pairs instead.\n" ++
+    "claims is wrong at most 2.5% of the time, if the pairs are independent and each pair's change has the\n" ++
+    "same median). --fixed measures exactly N pairs instead.\n" ++
     "--scope NAME times only the region the program wraps in `Leanprof.bench \"NAME\"` (or reports as\n" ++
     "`NAME<TAB>NANOSECONDS` lines appended to $LEANPROF_BENCH_OUT), not the whole process.\n" ++
+    "--repeat N (opt-in, with --scope): the region runs N times in a row in each run, and the run's time is\n" ++
+    "the fastest repetition (--repeat-stat median: their median). The region must be repeatable: no state\n" ++
+    "carried from one repetition to the next (do the setup outside it), or the repetitions time different work.\n" ++
     "--base-rev REV --exe NAME builds NAME at git revision REV once, kept in .lake/leanprof/base by commit\n" ++
     "and build settings, and builds the candidate with `lake build NAME` in --candidate-cwd (default .).\n" ++
     "No probes are added. Saves every timing, exit status and output hash in one session,\n" ++
@@ -137,7 +160,7 @@ def commands : List (String × String × String) := [
     "`compare`). At most N characters (default 60000, under GitHub's comment limit).\n" ++
     "--max-heartbeats N lists every declaration of the head above N thousand heartbeats (maxHeartbeats' unit).\n" ++
     "Exit 1 if a metric named by --fail-on (default: copies) regressed, or a declaration is above --max-heartbeats."),
-  ("explain", "[--report FILE | --elab] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]] | --static [MODULE...] [--deps] [--no-build] [--all] [--report FILE | --no-report] [--out FILE] [--json]",
+  ("explain", "[--report FILE | --elab] [--out FILE] [--top N] [--all] [--json] [--why EXE [-- ARGS...]] | --static [MODULE...] [--deps] [--no-build] [--ir-dir DIR [--src-dir DIR]] [--all] [--report FILE | --no-report] [--out FILE] [--json]",
     "For each copy of a shared value in the last report, say where the second reference comes from,\n" ++
     "read from the compiler's IR (.lake/build/ir/*.c), with source lines and, when the cause is\n" ++
     "recognised, the fix as Lean code with the program's own names. --json prints the ranked findings\n" ++
@@ -148,7 +171,9 @@ def commands : List (String × String × String) := [
     "--static flags likely copies across the whole package (libraries too) without running anything: every\n" ++
     "update whose value the IR shows still referenced (in the function, a caller or an `initialize` global),\n" ++
     "with file:line and the fix; with a run report, which flags it confirmed and which never ran. Runs\n" ++
-    "`lake build` first (--no-build skips it); writes .lake/leanprof/static.json (or --out FILE)."),
+    "`lake build` first (--no-build skips it); writes .lake/leanprof/static.json (or --out FILE).\n" ++
+    "--ir-dir DIR scans the C of another build (Lean's own: build/release/stage1/lib/temp), with its\n" ++
+    "sources in --src-dir DIR."),
   ("fix", "[--exe EXE [-- ARGS...]] [--test CMD] [--check-output FILE] [--finding N] [--all] [--dry-run] [--report FILE] [--runs N] [--pairs N] [--no-deps] [--branch NAME] [--allow-overloaded] [--json] | --elab [FILE.lean...] [--report FILE] [--top N] [--rounds N] [--test CMD | --no-test] [--dry-run] [--branch NAME]",
     "Apply the fix `explain` prints for the costliest copy whose cause has a mechanical edit\n" ++
     "(Array.modify for an element of an outer array, HashMap alter/modify/erase for a value read and\n" ++
@@ -223,6 +248,7 @@ def summary : String → String
   | "sample" => "sample a program with samply: CPU per Lean declaration, no probes"
   | "elab" => "compile cost per line and declaration, repeated work, exact heartbeats"
   | "build" => "a real lake build: critical path, parallelism, rebuild cost per module, verified imports"
+  | "build-memory" => "peak memory of each module in a real lake build, and how many jobs fit a memory limit"
   | "compare" => "compare two reports, exit 1 on regressions (for CI)"
   | "measure" => "run a program several times into one summary (for judge / autoresearch)"
   | "measure-pair" => "interleave two prebuilt binaries for paired timing and correctness checks"
@@ -486,6 +512,9 @@ def guardedOutput (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
 structure RunOpts where
   auto : Option String := none
   timeTiny : Bool := false
+  /-- run twice: the second time with the `profile!` scopes the first run
+  found too small to time compiled out (`runRetime`) -/
+  retime : Bool := false
   trace : Option String := none
   json : Option String := none
   keep : Bool := false
@@ -510,6 +539,7 @@ partial def parseRun (opts : RunOpts) : List String → Except String RunOpts
   | "--auto" :: rest => parseRun { opts with auto := some "1" } rest
   | "--auto-all" :: rest => parseRun { opts with auto := some "all" } rest
   | "--time-tiny" :: rest => parseRun { opts with timeTiny := true } rest
+  | "--retime" :: rest => parseRun { opts with retime := true } rest
   | "--trace" :: f :: rest => parseRun { opts with trace := some f } rest
   | "--json" :: f :: rest => parseRun { opts with json := some f } rest
   -- `--out` as in the other commands: where this command's report goes
@@ -887,32 +917,35 @@ def runProvenance (mode exe : String) (opts : RunOpts) (allocs frees : Bool) : I
   let build := Json.mkObj [("mode", Json.str mode), ("auto", match opts.auto with | some a => Json.str a | none => Json.null),
     ("time_tiny", Json.bool opts.timeTiny), ("allocs", Json.bool allocs), ("counters", Json.bool opts.counters),
     ("frees", Json.bool frees), ("core", Json.bool opts.core), ("deps", Json.bool opts.deps),
-    ("all_copies", Json.bool opts.allCopies)]
+    ("all_copies", Json.bool opts.allCopies), ("retime", Json.bool opts.retime)]
   Leanprof.Contract.provenance (← Leanprof.Contract.workload exe opts.args (some (exePath exe))) build
 
-def run (argv : List String) : IO UInt32 := do
-  let opts ← IO.ofExcept (parseRun {} argv)
-  let some exe := opts.exe | throw <| IO.userError (usageFor "run")
-  let coreEnv ← if opts.core then
-      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees opts.retained).toString)]
-    else pure #[]
-  clearReports opts.json
-  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees (coreEnv ++ tinyEnv opts) opts.deps
-    opts.retained
+/-- One build and run of `run`: the report goes to `json`; `extraEnv` is
+added to the build's environment; with `keep`, the instrumented build stays. -/
+def runOnce (exe : String) (opts : RunOpts) (coreEnv : Array (String × Option String)) (json : String)
+    (keep : Bool) (extraEnv : Array (String × Option String) := #[]) : IO UInt32 := do
+  let rc ← buildWithShims exe opts.auto opts.allocs opts.counters opts.frees (coreEnv ++ tinyEnv opts ++ extraEnv)
+    opts.deps opts.retained
   if rc != 0 then return rc
-  -- written where asked (--json/--out), and always as the last report
-  let json := opts.json.getD lastReport.toString
   let prov ← runProvenance "run" exe opts opts.allocs opts.frees
   let runEnv := #[("LEANPROF_TRACE", opts.trace), ("LEANPROF_JSON", some json),
       ("LEANPROF_PROVENANCE", some prov.compress)] ++
     (if opts.retained then #[("LEANPROF_RETAINED", some "1")] else #[]) ++
     (if opts.allCopies then #[("LEANPROF_ALL_COPIES", some "1")] else #[])
-  let rc ← try runInstrumented exe opts runEnv
+  try runInstrumented exe opts runEnv
     finally
-      unless opts.keep do
+      unless keep do
         cleanupInstrumented exe
-  publishReport json
-  return rc
+
+/-- The `profile!` scopes of a report that went light (too small to time:
+`timed_calls` below `calls`), as `name` and `pos`, with their rows. -/
+def lightScopes (report : Json) : Array (String × String × Json) :=
+  ((report.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[]).filterMap fun s =>
+    let name := (s.getObjValAs? String "name").toOption.getD ""
+    let pos := (s.getObjValAs? String "pos").toOption.getD ""
+    let auto := (s.getObjValAs? Bool "auto").toOption.getD false
+    if !auto && !name.isEmpty && !pos.isEmpty && (s.getObjVal? "timed_calls").toOption.isSome then
+      some (name, pos, s) else none
 
 /-! ## compare -/
 
@@ -1001,43 +1034,85 @@ def groupDigits (n : Nat) : String :=
 termination_by n
 decreasing_by omega
 
-/-- What a row of `Regress.Explanation` is, in words. -/
-def whatLabel : String → String
-  | "unfold" => "isDefEq unfolds"
-  | "whnf" => "whnf reduces"
-  | "instance" => "instance tried"
-  | "simp" => "simp lemma rewrote with"
-  | "repeated" => "repeated operation"
-  | "unfolds" => "unfolded (count)"
-  | "kernel" => "kernel unfolded (count)"
-  | "instances" => "instance used (count)"
-  | "simp_used" => "simp lemma used (count)"
-  | "simp_failed" => "simp lemma failed (count)"
-  | "grind_instances" => "grind instantiated (count)"
-  | w => w
+/-- `run --retime`: run once; if `profile!` scopes on pure terms turned out
+too small to time, build again with them compiled out (scripts/leanprof-cc,
+LEANPROF_UNTIMED) and run again. The second report is the result: the
+scopes that called them are timed without their probes. It lists the
+compiled-out scopes under `compiled_out`, with the first run's calls and
+estimated times, and names any scope whose calls differ between the runs
+(a program that does not do the same work each time). -/
+def runRetime (exe : String) (opts : RunOpts) (coreEnv : Array (String × Option String)) : IO UInt32 := do
+  let json := opts.json.getD lastReport.toString
+  let first := (".lake" : FilePath) / "leanprof" / "retime-first.json"
+  IO.FS.createDirAll (first.parent.getD ".")
+  let rc ← runOnce exe opts coreEnv first.toString false
+  if rc != 0 then
+    publishReport first
+    return rc
+  let r1 ← IO.ofExcept (Json.parse (← IO.FS.readFile first))
+  let light := lightScopes r1
+  if light.isEmpty then
+    IO.eprintln "leanprof: no `profile!` scope was too small to time: the report above stands"
+    IO.FS.writeBinFile json (← IO.FS.readBinFile first)
+    publishReport json
+    return rc
+  let list := (".lake" : FilePath) / "leanprof" / "untimed.txt"
+  IO.FS.writeFile list (String.join (light.toList.map fun (n, p, _) => s!"{n}\t{p}\n"))
+  let names := ", ".intercalate (light.toList.map fun (n, p, _) => s!"{n} ({p})")
+  let them := if light.size == 1 then "it" else "them"
+  IO.eprintln s!"leanprof: {light.size} scope{if light.size == 1 then "" else "s"} too small to time: {names}; building and running again with {them} compiled out"
+  let rc ← runOnce exe opts coreEnv json opts.keep #[("LEANPROF_UNTIMED", some (← absPath list).toString)]
+  unless ← (json : FilePath).pathExists do return rc
+  let r2 ← IO.ofExcept (Json.parse (← IO.FS.readFile json))
+  let rows2 := (r2.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[]
+  let key (s : Json) : String :=
+    s!"{(s.getObjValAs? String "name").toOption.getD ""}@{(s.getObjValAs? String "pos").toOption.getD ""}"
+  let calls (s : Json) : Nat := (s.getObjValAs? Nat "calls").toOption.getD 0
+  let mut calls1 : Std.HashMap String Nat := {}
+  for s in (r1.getObjVal? "scopes" >>= Json.getArr?).toOption.getD #[] do
+    calls1 := calls1.insert (key s) (calls1.getD (key s) 0 + calls s)
+  -- a scope that is still there was not compiled out (not a pure term, or
+  -- written differently in the C code): it stays timed, as in the first run
+  let still := light.filter fun (n, p, _) => rows2.any (key · == s!"{n}@{p}")
+  let out := light.filter fun (n, p, _) => !rows2.any (key · == s!"{n}@{p}")
+  let mut calls2 : Std.HashMap String Nat := {}
+  for s in rows2 do calls2 := calls2.insert (key s) (calls2.getD (key s) 0 + calls s)
+  let mut differ : Array String := #[]
+  for (k, c) in calls2.toList do
+    if let some c1 := calls1.get? k then
+      if c1 != c then differ := differ.push s!"{k} ({c1} then {c})"
+  let entry (n p : String) (s : Json) : Json := Json.mkObj [("name", Json.str n), ("pos", Json.str p),
+    ("calls", s.getObjValD "calls"), ("timed_calls", s.getObjValD "timed_calls"),
+    ("total_ns", s.getObjValD "total_ns"), ("self_ns", s.getObjValD "self_ns")]
+  let r2 := r2.setObjVal! "compiled_out" (Json.arr (out.map fun (n, p, s) => entry n p s))
+    |>.setObjVal! "retime" (Json.mkObj [("first_run", Json.str first.toString),
+      ("not_compiled_out", Json.arr (still.map fun (n, p, _) => Json.str s!"{n}@{p}")),
+      ("calls_differ", Json.arr (differ.map Json.str))])
+  IO.FS.writeFile json (r2.compress ++ "\n")
+  publishReport json
+  unless out.isEmpty do
+    IO.eprintln s!"leanprof: second run: the callers of {", ".intercalate (out.toList.map (·.1))} are timed without their probes; their calls (exact) and estimated times are the first run's, in the report's `compiled_out`"
+    for (n, p, s) in out do
+      IO.eprintln s!"  {n} ({p}): {groupDigits (calls s)} calls, about {fmtTime ((s.getObjValAs? Float "total_ns").toOption.getD 0)} in the first run"
+  unless still.isEmpty do
+    IO.eprintln s!"leanprof: not compiled out (not a pure term?), still timed: {", ".intercalate (still.toList.map fun (n, p, _) => s!"{n} ({p})")}"
+  unless differ.isEmpty do
+    IO.eprintln s!"leanprof: warning: calls differ between the two runs, so the counts above are not the same run's: {", ".intercalate differ.toList}"
+  return rc
 
-def fmtKHB (x : Float) : String := s!"{fmt2 (x / 1000)} kHB"
-
-def fmtSigned (f : Float → String) (d : Float) : String :=
-  if d > 0 then s!"+{f d}" else if d < 0 then s!"−{f d.abs}" else "0"
-
-/-- One side of a row: heartbeats (and how many times), or a count. -/
-def rowSide (r : Leanprof.Regress.Row) (v : Option Float) (t : Option Nat) : String :=
-  match v with
-  | none => "not listed"
-  | some x =>
-    if r.isCount then groupDigits x.toUInt64.toNat
-    -- no heartbeats credited on either side: only how often
-    else if r.base.getD 0 == 0 && r.new.getD 0 == 0 && t.isSome then s!"{t.getD 0}×"
-    else s!"{fmtKHB x}{match t with | some t => s!", {t}×" | none => ""}"
-
-def rowChange (r : Leanprof.Regress.Row) : String :=
-  match r.delta? with
-  | none => "?"
-  | some d =>
-    if r.isCount then fmtSigned (fun x => groupDigits x.toUInt64.toNat) d
-    else if d == 0 then s!"{if r.timesDelta > 0 then "+" else "−"}{r.timesDelta.natAbs}×"
-    else fmtSigned fmtKHB d
+def run (argv : List String) : IO UInt32 := do
+  let opts ← IO.ofExcept (parseRun {} argv)
+  let some exe := opts.exe | throw <| IO.userError (usageFor "run")
+  let coreEnv ← if opts.core then
+      pure #[("LEANPROF_CORE_LIB", some (← coreLibDir opts.allocs opts.frees opts.retained).toString)]
+    else pure #[]
+  clearReports opts.json
+  if opts.retime then return ← runRetime exe opts coreEnv
+  -- written where asked (--json/--out), and always as the last report
+  let json := opts.json.getD lastReport.toString
+  let rc ← runOnce exe opts coreEnv json opts.keep
+  publishReport json
+  return rc
 
 /-- The rows to show of an explanation: credited work, then exact counts, `n` of each. -/
 def shownRows (e : Leanprof.Regress.Explanation) (n : Nat) : Array Leanprof.Regress.Row × Nat :=
@@ -1623,7 +1698,74 @@ def sample (argv : List String) : IO UInt32 := do
 
 /-! ## elab: in LeanprofElab.lean -/
 
-def elabCmd (argv : List String) : IO UInt32 := Leanprof.Elab.main argv
+/-! ## elab --since-last: the difference from the previous profile of a file
+
+`elab --since-last FILE` writes its report under `.lake/leanprof/onsave/`
+(unless `--out` names a file), compares it with the one kept from the previous
+`--since-last` profile of the same file (`NAME.base.json`), and writes the
+difference next to it (`NAME.delta.json`, `Leanprof.Delta`), for a person or an
+agent checking what an edit did to compile time. The new report then becomes the
+base, unless `--keep-base` (compare with a fixed base until it is removed) or it
+has errors. -/
+
+/-- Where `--since-last` keeps its reports. -/
+def onSaveDir : System.FilePath := (".lake" : System.FilePath) / "leanprof" / "onsave"
+
+/-- Whether `argv` names its report file with one of `opts`, before a `--`. -/
+def namesOut (opts : List String) (argv : List String) : Option String :=
+  let before := argv.takeWhile (· != "--")
+  match before.findIdx? (opts.contains ·) with
+  | some i => before[i + 1]?
+  | none => none
+
+/-- `NAME.json` as `NAME.SUFFIX.json`. -/
+def sibling (report : String) (suffix : String) : String :=
+  let stem := if report.endsWith ".json" then (report.dropEnd 5).toString else report
+  s!"{stem}.{suffix}.json"
+
+/-- After `report` was written: the difference from its base, written to
+`NAME.delta.json` and summarized; the report becomes the base unless `keepBase`
+or it has errors. -/
+def sinceLast (report : String) (keepBase : Bool) : IO Unit := do
+  unless ← (report : System.FilePath).pathExists do return
+  let nj ← IO.ofExcept (Json.parse (← IO.FS.readFile report))
+  let base := sibling report "base"
+  let delta := sibling report "delta"
+  let bj? ← if ← (base : System.FilePath).pathExists then
+      pure ((Json.parse (← IO.FS.readFile base)).toOption) else pure none
+  let d := match bj? with
+    | some bj => Leanprof.Delta.compute bj nj
+    | none => Leanprof.Delta.first nj
+  IO.FS.writeFile delta d.compress
+  IO.println s!"\nsince the last profile ({delta}):"
+  for l in Leanprof.Delta.summary d do IO.println s!"  {l}"
+  -- no base, or one that cannot be compared (another unit): this run becomes the base
+  let fresh := bj?.isNone || (d.getObjValAs? Bool "comparable").toOption == some false
+  if fresh || (!keepBase && Leanprof.Delta.errors nj == 0) then
+    IO.FS.writeBinFile base (← IO.FS.readBinFile report)
+
+/-- A file name for `name` under `onSaveDir`: its path relative to the project
+(an absolute path under it is made relative), as directories. -/
+def onSaveName (cwd : System.FilePath) (name : String) : String :=
+  let c := cwd.toString ++ "/"
+  let rel := if name.startsWith c then (name.drop c.length).toString
+    else if name.startsWith "./" then (name.drop 2).toString else name
+  let rel := if rel.startsWith "/" then (rel.drop 1).toString else rel
+  (onSaveDir / (rel.replace ".." "__")).toString
+
+def elabCmd (argv : List String) : IO UInt32 := do
+  let o ← IO.ofExcept (Leanprof.Elab.parseOpts {} argv)
+  unless o.sinceLast do return ← Leanprof.Elab.main argv
+  let out ← match namesOut ["--out"] argv, o.files.toList with
+    | some f, _ => pure f
+    | none, [f] => pure s!"{onSaveName (← IO.currentDir) f}.json"
+    | none, _ => throw <| IO.userError "leanprof elab --since-last: give one file (or --out FILE)"
+  let argv := if (namesOut ["--out"] argv).isSome then argv else ["--out", out] ++ argv
+  if let some dir := (out : System.FilePath).parent then IO.FS.createDirAll dir
+  if ← (out : System.FilePath).pathExists then IO.FS.removeFile out
+  let rc ← Leanprof.Elab.main argv
+  if rc == 0 then sinceLast out o.keepBase
+  return rc
 
 /-! ## measure and judge
 
@@ -1886,6 +2028,12 @@ structure PairOpts where
   warmup : Nat := 1
   /-- time only what `Leanprof.bench NAME` reports, not the whole process -/
   scope : Option String := none
+  /-- with `--scope`: repetitions of the region in each run (opt-in; the
+  region must be repeatable) -/
+  repeats : Option Nat := none
+  /-- what a run's time is when it repeats the region: the fastest
+  repetition, or (`median`) their median -/
+  median : Bool := false
   /-- build the base at this git revision (cached) and the candidate in its directory -/
   baseRev : Option String := none
   exe : Option String := none
@@ -1924,20 +2072,30 @@ partial def parsePair (o : PairOpts) : List String → Except String PairOpts
     let some n := x.toNat? | throw "--warmup must be an integer from 0 to 1000"
     unless n ≤ 1000 do throw "--warmup must be an integer from 0 to 1000"
     parsePair {o with warmup := n} rest
+  | "--repeat-stat" :: "fastest" :: rest => parsePair {o with median := false} rest
+  | "--repeat-stat" :: "median" :: rest => parsePair {o with median := true} rest
+  | "--repeat-stat" :: _ => .error "--repeat-stat must be fastest or median"
+  | "--repeat" :: x :: rest => do
+    let some n := x.toNat? | throw "--repeat must be an integer from 1 to 1000"
+    unless n ≥ 1 && n ≤ 1000 do throw "--repeat must be an integer from 1 to 1000"
+    parsePair {o with repeats := some n} rest
   | "--" :: rest => .ok {o with args := rest.toArray}
   | x :: _ => .error s!"unknown or incomplete measure-pair option: {x}"
 
-/-- The total of a `Leanprof.bench` region's lines (`NAME<TAB>NANOSECONDS`) in
-`file`, as written to `$LEANPROF_BENCH_OUT`; `none` when the region never ran. -/
-def benchTotal (file : FilePath) (scope : String) : IO (Option Nat) := do
-  unless ← file.pathExists do return none
-  let mut total : Option Nat := none
+/-- A `Leanprof.bench` region's time per repetition in `file`, as written to
+`$LEANPROF_BENCH_OUT`: lines `NAME<TAB>NANOSECONDS[<TAB>K]` (no `K`: repetition
+0), summed per repetition `K`, in order of `K`; empty when the region never ran. -/
+def benchReps (file : FilePath) (scope : String) : IO (Array Nat) := do
+  unless ← file.pathExists do return #[]
+  let mut sums : Std.HashMap Nat Nat := {}
   for line in (← IO.FS.readFile file).splitOn "\n" do
-    match line.splitOn "\t" with
-    | [name, ns] => if name == scope then
-        if let some v := ns.toNat? then total := some (total.getD 0 + v)
-    | _ => pure ()
-  return total
+    let (name, ns, k) := match line.splitOn "\t" with
+      | [name, ns] => (name, ns.toNat?, some 0)
+      | [name, ns, k] => (name, ns.toNat?, k.toNat?)
+      | _ => ("", none, none)
+    if name == scope then
+      if let (some v, some k) := (ns, k) then sums := sums.insert k (sums.getD k 0 + v)
+  return (sums.toArray.qsort (·.1 < ·.1)).map (·.2)
 
 /-- Settings besides the commit that change what `lake build` makes. -/
 def buildSettingVars : Array String :=
@@ -2032,6 +2190,11 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let binaryHashes ← binaries.mapM fun p => return fnv1a (← IO.FS.readBinFile p)
   let (initialLoad, cpus) ← machineLoad
   let design : Leanprof.Judge.SeqDesign := if o.fixed then .fixed o.runs else { max := o.runs }
+  if o.scope.isNone && o.repeats.isSome then
+    throw <| IO.userError "--repeat needs --scope: without it the whole process is timed"
+  -- repetitions of the region per run: given, or chosen after the warmup
+  -- pair (which runs it once) from the load and the region's time
+  let nrep := if o.scope.isSome then o.repeats.getD 1 else 1
   let bounds := (Leanprof.Judge.seqBounds design).1
   let mut maxLoad := initialLoad
   let mut samples : Array Json := #[]
@@ -2054,6 +2217,7 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let mut stopped := false
   for phase in [:2] do
     let count := if phase == 0 then o.warmup else o.runs
+    let env := env.push ("LEANPROF_BENCH_REPEAT", if o.scope.isSome then some (toString nrep) else none)
     for pair in [:count] do
       if stopped then break
       let mut times : Array Nat := #[0, 0]
@@ -2070,14 +2234,16 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
         let result ← guardedOutput { cmd := binaries[side]!.toString, args := o.args, cwd := some dirs[side]!, env := sideEnv, stdin := .null }
         let elapsed := (← IO.monoNanosNow) - t0
         checkInterrupted
-        let timed ← match o.scope with
-          | none => pure elapsed
+        let (timed, reps) ← match o.scope with
+          | none => pure (elapsed, #[])
           | some s => do
-            let some t ← benchTotal benchFile s
+            let reps ← benchReps benchFile s
+            let some t := if reps.isEmpty then none else
+                if o.median then some (median reps) else reps.foldl (fun m v => some (match m with | some a => Nat.min a v | none => v)) none
               | throw <| IO.userError (s!"{binaries[side]!} did not report scope {s}: wrap the region in " ++
                   s!"`Leanprof.bench \"{s}\" fun _ => ...`, or append `{s}<TAB>NANOSECONDS` lines to $LEANPROF_BENCH_OUT" ++
                   (if result.exitCode != 0 then s!" (it exited with {result.exitCode}: {result.stderr})" else ""))
-            pure (Nat.max t 1)
+            pure (Nat.max t 1, reps)
         if phase == 0 then
           if result.exitCode != 0 then throw <| IO.userError s!"warmup failed for {binaries[side]!}: {result.stderr}"
           continue
@@ -2094,7 +2260,8 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
           ("stdout_hash", Json.str (fnv1a (dropLines o.ignoreLines result.stdout).toUTF8)),
           ("stderr_hash", Json.str (fnv1a result.stderr.toUTF8)),
           ("output_hash", Json.str output), ("output_present", Json.bool present)] ++
-          (if o.scope.isSome then [("process_ns", toJson elapsed)] else []))
+          (if o.scope.isSome then [("process_ns", toJson elapsed)] else []) ++
+          (if reps.size > 1 then [("reps_ns", toJson reps)] else []))
       let load ← loadNow
       maxLoad := match maxLoad, load with
         | some a, some b => some (max a b)
@@ -2116,6 +2283,8 @@ def measurePairCmd (argv : List String) : IO UInt32 := do
   let j := Json.mkObj [("version", toJson (2 : Nat)), ("schema", Leanprof.Contract.schema "measure-pair"), ("leanprof", "measure-pair"),
     ("provenance", prov),
     ("mode", "plain"), ("runs", toJson changes.size), ("warmup", toJson o.warmup),
+    ("repeat", toJson nrep),
+    ("repeat_statistic", Json.str (if nrep > 1 then (if o.median then "median" else "fastest") else "single")),
     ("design", design.json), ("min_change", toJson o.minChange),
     ("scope", match o.scope with | some s => Json.str s | none => Json.null),
     ("builds", builds.getD Json.null),
@@ -3073,6 +3242,7 @@ def dispatchCmd (argv : List String) : IO UInt32 := do
     Leanprof.Fix.runner.set { output := guardedOutput, interrupted := checkInterrupted }
     Leanprof.Build.buildCmd (usageFor "build") rest
   | "__build-shim" :: rest => Leanprof.BuildShim.shimMain rest
+  | "build-memory" :: rest => Leanprof.BuildMem.main rest
   | "explain" :: rest =>
     if let some rc ← explainElabReport rest then return rc
     if rest.contains "--static" then Leanprof.StaticCopies.explainStatic rest else

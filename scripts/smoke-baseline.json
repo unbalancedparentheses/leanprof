@@ -198,6 +198,7 @@
  ],
  "help.commands": [
   "build",
+  "build-memory",
   "compare",
   "doctor",
   "dump",

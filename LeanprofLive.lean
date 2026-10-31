@@ -996,6 +996,22 @@ def tools : Array Json := #[
     [("exit_code", nProp "the command's exit code"), ("report", sProp "the report written (schemas/build.schema.json)"),
      ("elapsed_s", fProp "the build's elapsed time"), ("critical_path_s", fProp "work on the critical path"),
      ("jobs", nProp "processes recorded"), ("html", sProp "the timeline page, when asked for")],
+  tool "build_memory" ("Run `lake build` with every `lean` process measured: each module's peak memory (resident " ++
+    "set; on macOS also the footprint), split into its imports and its own elaboration, which modules ran at the " ++
+    "same time, the most jobs that fit a memory limit, and a per-module budget. Only modules Lake compiles are " ++
+    "measured (clean rebuilds the project's own). decls elaborates the heaviest modules serially and names the " ++
+    "commands during which memory peaked (approximate). The JSON report is saved (default .lake/leanprof/build-memory.json).")
+    [("mem_limit", sProp "memory available to the build, e.g. 8G: flags modules near it and gives the most jobs that fit"),
+     ("max_memory", sProp "budget per module, e.g. 6G: an error when a module's peak is above it"),
+     ("jobs", nProp "Lake's parallel jobs for this build (default: one per CPU)"),
+     ("clean", bProp "remove .lake/build first, so every module of the project is compiled and measured"),
+     ("imports", bProp "measure each module's imports apart (default true)"),
+     ("decls", nProp "elaborate the N heaviest modules serially and report memory per command"),
+     ("targets", aProp "Lake targets to build (default: the default targets)"),
+     ("top", nProp "modules shown (default 20)"), ("out", sProp "where to save the JSON report")] []
+    [("exit_code", nProp "the command's exit code"),
+     ("report", sProp "the report written (schemas/build-memory.schema.json)"),
+     ("over_budget", bProp "modules above max_memory (listed in the text)")],
   tool "measure" "Run an executable several times with probes into one summary, for judge."
     (exeProps ++ [("runs", nProp "runs (default 5)"), ("out", sProp "summary file (default .lake/leanprof/measure.json)"),
       ("core", bProp "also count copies and allocations inside Lean's own libraries")])
@@ -1412,6 +1428,32 @@ def callTool (name : String) (a : Json) : IO Json := do
       (if html.isEmpty then [] else [("html", Json.str html[1]!)])
     if r.rc != 0 then return errorResult name (r.errorJson "build_failed") text fields
     return res text fields
+  | "build_memory" =>
+    let targets := argStrs a "targets"
+    for t in targets do
+      if t.startsWith "-" then toolFail "bad_argument" s!"not a Lake target: {t}"
+    let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/build-memory.json")
+    let size (k : String) : IO (Array String) := do
+      match argStr a k with
+      | some v =>
+        if v.startsWith "-" then toolFail "bad_argument" s!"not a size: {v}"
+        return #[s!"--{k.replace "_" "-"}", v]
+      | none => return #[]
+    let args := #["build-memory", "--out", outFile, "--top", toString ((argNat a "top").getD 20)] ++
+      (← size "mem_limit") ++ (← size "max_memory") ++
+      (match argNat a "jobs" with | some j => #["--jobs", toString j] | none => #[]) ++
+      (match argNat a "decls" with | some n => #["--decls", toString n] | none => #[]) ++
+      (if argBool a "clean" then #["--clean"] else #[]) ++
+      (if (a.getObjVal? "imports" >>= Json.getBool?).toOption == some false then #["--no-imports"] else #[]) ++
+      (if targets.isEmpty then #[] else #["--"] ++ targets)
+    requireProject cwd
+    let r ← runSelf args cwd
+    -- exit code 1 with a budget: modules above it (listed), not a failure to run
+    let overBudget := r.rc == 1 && (argStr a "max_memory").isSome && (r.out.splitOn "memory budget:").length > 1
+    if r.rc != 0 && !overBudget then
+      return errorResult name (r.errorJson "build_failed") s!"{r.out}\n{tailText r.err 15}" [("exit_code", toJson r.rc.toNat)]
+    return res s!"{if overBudget then "OVER BUDGET\n" else ""}{r.out}\n{tailText r.err 15}"
+      [("exit_code", toJson r.rc.toNat), ("report", Json.str outFile), ("over_budget", Json.bool overBudget)]
   | "measure" =>
     let outFile ← projectPath cwd "out" (argStr a "out" |>.getD ".lake/leanprof/measure.json")
     let args ← exeArgs
