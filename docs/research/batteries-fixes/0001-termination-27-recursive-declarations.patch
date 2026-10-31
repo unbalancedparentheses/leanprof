@@ -1,0 +1,314 @@
+From 3309608823b3cace9be98ea9bcea3e9e78703d64 Mon Sep 17 00:00:00 2001
+From: Federico Carrone <mail@fcarrone.com>
+Date: Wed, 28 Oct 2026 13:44:05 -0300
+Subject: [PATCH] termination: 27 recursive declarations
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+state each measure Lean found (`showInferredTerminationBy`) after its declaration
+
+Evidence (elab --project --counts):
+  27 declarations without `termination_by` in 15 files: Lean tries measures until one works, running `decreasing_tactic` for each
+  `decreasing_tactic` ran 193× in 25 files in all
+  their `decreasing_tactic` calls cost 133555.16 kHB (each declaration's own; these do not overlap one another)
+
+leanprof fix --elab --project, checked by leanprof experiment fix-project-1301128570 (try 1): KEEP against 66e469188fe0
+  build      ok
+  guard      PASS: 61 module(s) audited
+  heartbeats 751102.55 kHB -> 655223.03 kHB in the changed modules and their dependents
+- compile heartbeats: 751102.55 kHB -> 655223.03 kHB
+---
+ Batteries/Data/Array/Basic.lean                | 2 ++
+ Batteries/Data/BinaryHeap/Basic.lean           | 2 ++
+ Batteries/Data/BinaryHeap/Lemmas.lean          | 2 ++
+ Batteries/Data/Fin/Basic.lean                  | 1 +
+ Batteries/Data/Fin/Fold.lean                   | 1 +
+ Batteries/Data/List/Basic.lean                 | 1 +
+ Batteries/Data/List/Lemmas.lean                | 2 ++
+ Batteries/Data/Nat/Basic.lean                  | 1 +
+ Batteries/Data/Nat/Bisect.lean                 | 4 ++++
+ Batteries/Data/PairingHeap.lean                | 1 +
+ Batteries/Data/Random/MersenneTwister.lean     | 1 +
+ Batteries/Data/String/Lemmas.lean              | 2 ++
+ Batteries/Data/Vector/Basic.lean               | 2 ++
+ Batteries/Recycling/MonadSatisfying/Array.lean | 2 ++
+ Batteries/Recycling/RBTree/Lemmas.lean         | 3 +++
+ 15 files changed, 27 insertions(+)
+
+diff --git a/Batteries/Data/Array/Basic.lean b/Batteries/Data/Array/Basic.lean
+index 34ebbc3..5a0d3dc 100644
+--- a/Batteries/Data/Array/Basic.lean
++++ b/Batteries/Data/Array/Basic.lean
+@@ -213,6 +213,7 @@ where
+       loop f (← f init as[start]) as (start + 1) stop h_stop (acc.push init)
+     else
+       pure <| acc.push init
++termination_by stop - start
+ 
+ private theorem scanlM_loop_eq_scanlMFast_loop [Monad m]
+     {f : β → α → m β} {init : β} {as : Array α} {h_size : as.SizeFitsUSize}
+@@ -345,6 +346,7 @@ where
+       loop f next as i stop (by omega) (acc.push init)
+     else
+       pure <| acc.push init |>.reverse
++termination_by start
+ 
+ /--
+ Fold a function `f` over the array from the left, returning the array of partial results.
+diff --git a/Batteries/Data/BinaryHeap/Basic.lean b/Batteries/Data/BinaryHeap/Basic.lean
+index 75bda3b..c6cf35a 100644
+--- a/Batteries/Data/BinaryHeap/Basic.lean
++++ b/Batteries/Data/BinaryHeap/Basic.lean
+@@ -76,6 +76,7 @@ def heapifyUp [Ord α] (a : Vector α sz) (i : Fin sz) :
+     if compare a[j] a[i] |>.isLT then
+       heapifyUp (a.swap i j) ⟨j, by get_elem_tactic⟩
+     else a
++termination_by i
+ 
+ /-- `O(1)`. Build a new empty heap. -/
+ @[inline]
+@@ -203,6 +204,7 @@ where
+     | some x =>
+       have := size_pos_of_max h; -- termination hint
+       loop a.popMax (out.push x)
++termination_by a.size
+ 
+ end Batteries.BinaryHeap
+ 
+diff --git a/Batteries/Data/BinaryHeap/Lemmas.lean b/Batteries/Data/BinaryHeap/Lemmas.lean
+index 7974385..ef1a070 100644
+--- a/Batteries/Data/BinaryHeap/Lemmas.lean
++++ b/Batteries/Data/BinaryHeap/Lemmas.lean
+@@ -297,6 +297,7 @@ theorem toSortedArray.loop_perm [Ord α] (heap : BinaryHeap α) (out : Array α)
+     apply List.Perm.append_right
+     apply List.perm_append_singleton _ _ |>.trans
+     exact popMax_perm hpos
++termination_by heap.size
+ 
+ /-- `toSortedArray` produces a permutation of the heap. -/
+ public theorem toSortedArray_perm [Ord α] (heap : BinaryHeap α) :
+@@ -556,6 +557,7 @@ private theorem toSortedArray.loop_sorted [Ord α] [Std.TransOrd α] {heap : Bin
+     intro _ hy
+     rw [Array.mem_push] at hy
+     cases hy <;> simp_all [mem_of_mem_popMax]
++termination_by heap.size
+ 
+ /-- toSortedArray produces a sorted array if the heap is well-formed -/
+ theorem toSortedArray_sorted [Ord α] [Std.TransOrd α] {heap : BinaryHeap α} (hwf : WF heap) :
+diff --git a/Batteries/Data/Fin/Basic.lean b/Batteries/Data/Fin/Basic.lean
+index ae1ad48..2ce7c99 100644
+--- a/Batteries/Data/Fin/Basic.lean
++++ b/Batteries/Data/Fin/Basic.lean
+@@ -79,6 +79,7 @@ This is the dependent version of `Fin.foldlM`. -/
+     else
+       haveI : ⟨i, h⟩ = last n := by ext; simp; omega
+       _root_.cast (congrArg (fun i => m (α i)) this) (pure x)
++termination_by n + 1 - i
+ 
+ /-- Heterogeneous fold over `Fin n` from the left: `foldl 3 f x = f 0 (f 1 (f 2 x))`, where
+ `f 0 : α 0 → α 1`, `f 1 : α 1 → α 2`, etc.
+diff --git a/Batteries/Data/Fin/Fold.lean b/Batteries/Data/Fin/Fold.lean
+index 3a2330c..016122c 100644
+--- a/Batteries/Data/Fin/Fold.lean
++++ b/Batteries/Data/Fin/Fold.lean
+@@ -97,6 +97,7 @@ theorem dfoldlM_loop [Monad m] (f : (i : Fin (n+1)) → α i.castSucc → m (α
+     rw [dfoldlM_loop_lt _ h]
+     congr; funext
+     rw [dfoldlM_loop_eq, dfoldlM_loop_eq]
++termination_by n + 1 - i
+ 
+ theorem dfoldlM_succ [Monad m] (f : (i : Fin (n+1)) → α i.castSucc → m (α i.succ)) (x) :
+     dfoldlM (n+1) α f x = f 0 x >>= (dfoldlM n (α ∘ succ) (f ·.succ ·) .) :=
+diff --git a/Batteries/Data/List/Basic.lean b/Batteries/Data/List/Basic.lean
+index 5d0acb2..528fdd1 100644
+--- a/Batteries/Data/List/Basic.lean
++++ b/Batteries/Data/List/Basic.lean
+@@ -572,6 +572,7 @@ where
+     unfold takeWhile₂TR.go takeWhile₂; split <;> simp
+     rename_i a as b bs; cases R a b <;> simp [go as bs]
+   exact (go as bs [] []).symm
++termination_by as
+ 
+ /--
+ `pwFilter R l` is a maximal sublist of `l` which is `Pairwise R`.
+diff --git a/Batteries/Data/List/Lemmas.lean b/Batteries/Data/List/Lemmas.lean
+index 77864f1..fb52b1c 100644
+--- a/Batteries/Data/List/Lemmas.lean
++++ b/Batteries/Data/List/Lemmas.lean
+@@ -1093,6 +1093,7 @@ theorem dropPrefix?_eq_some_iff [BEq α] {l p s : List α} :
+       · simp at w
+       · simp only [cons_beq_cons, Bool.and_eq_true] at w
+         refine ⟨w.1, a', rfl, w.2⟩
++termination_by l
+ 
+ theorem dropPrefix?_append_of_beq [BEq α] {l₁ l₂ : List α} (p : List α) (h : l₁ == l₂) :
+     dropPrefix? (l₁ ++ p) l₂ = some p := by
+@@ -1178,6 +1179,7 @@ theorem dropInfix?_go_eq_some_iff [BEq α] {i l acc p s : List α} :
+         replace w := length_eq_of_beq w
+         replace h₂ := length_eq_of_beq h₂
+         simp_all
++termination_by l
+ 
+ theorem dropInfix?_eq_some_iff [BEq α] {l i p s : List α} :
+     dropInfix? l i = some (p, s) ↔
+diff --git a/Batteries/Data/Nat/Basic.lean b/Batteries/Data/Nat/Basic.lean
+index 441190f..30ad06b 100644
+--- a/Batteries/Data/Nat/Basic.lean
++++ b/Batteries/Data/Nat/Basic.lean
+@@ -22,6 +22,7 @@ protected def recAuxOn {motive : Nat → Sort _} (t : Nat) (zero : motive 0)
+ @[expose, elab_as_elim]
+ protected def strongRec {motive : Nat → Sort _} (ind : ∀ n, (∀ m, m < n → motive m) → motive n)
+   (t : Nat) : motive t := ind t fun m _ => Nat.strongRec ind m
++termination_by t
+ 
+ /--
+   Strong recursor via a `Nat`-valued measure
+diff --git a/Batteries/Data/Nat/Bisect.lean b/Batteries/Data/Nat/Bisect.lean
+index 8ce81f3..1511478 100644
+--- a/Batteries/Data/Nat/Bisect.lean
++++ b/Batteries/Data/Nat/Bisect.lean
+@@ -83,6 +83,7 @@ theorem bisect_lt_stop {p : Nat → Bool} (h : start < stop) (hstart : p start =
+       · exact avg_lt_right h
+     · exact bisect_lt_stop ..
+   · exact avg_lt_right h
++termination_by (stop, stop - start)
+ 
+ theorem start_le_bisect {p : Nat → Bool} (h : start < stop) (hstart : p start = true)
+     (hstop : p stop = false) : start ≤ bisect h hstart hstop := by
+@@ -100,6 +101,7 @@ theorem start_le_bisect {p : Nat → Bool} (h : start < stop) (hstart : p start
+       · exact Nat.le_of_lt h'
+       · exact start_le_bisect ..
+   · exact le_avg_left (Nat.le_of_lt h)
++termination_by (stop, stop - start)
+ 
+ theorem bisect_true {p : Nat → Bool} (h : start < stop) (hstart : p start = true)
+     (hstop : p stop = false) : p (bisect h hstart hstop) = true := by
+@@ -117,6 +119,7 @@ theorem bisect_true {p : Nat → Bool} (h : start < stop) (hstart : p start = tr
+     apply Nat.le_antisymm
+     · exact Nat.le_of_not_gt h'
+     · exact Nat.le_avg_left (Nat.le_of_lt h)
++termination_by (stop, stop - start)
+ 
+ theorem bisect_add_one_false {p : Nat → Bool} (h : start < stop) (hstart : p start = true)
+     (hstop : p stop = false) : p (bisect h hstart hstop + 1) = false := by
+@@ -138,3 +141,4 @@ theorem bisect_add_one_false {p : Nat → Bool} (h : start < stop) (hstart : p s
+     apply Nat.le_antisymm
+     · exact Nat.succ_le_of_lt h
+     · exact Nat.le_add_one_of_avg_eq_left heq
++termination_by (stop, stop - start)
+diff --git a/Batteries/Data/PairingHeap.lean b/Batteries/Data/PairingHeap.lean
+index 40a923e..d4a7c23 100644
+--- a/Batteries/Data/PairingHeap.lean
++++ b/Batteries/Data/PairingHeap.lean
+@@ -138,6 +138,7 @@ theorem Heap.size_combine (le) (s : Heap α) :
+       size_merge_node, size_combine le s]
+     simp +arith [size]
+   · rfl
++termination_by s
+ 
+ theorem Heap.size_deleteMin {s : Heap α} (h : s.NoSibling) (eq : s.deleteMin le = some (a, s')) :
+     s.size = s'.size + 1 := by
+diff --git a/Batteries/Data/Random/MersenneTwister.lean b/Batteries/Data/Random/MersenneTwister.lean
+index af56490..ad671b3 100644
+--- a/Batteries/Data/Random/MersenneTwister.lean
++++ b/Batteries/Data/Random/MersenneTwister.lean
+@@ -101,6 +101,7 @@ where
+       let v := v.push w
+       let w := cfg.initMult * (w ^^^ (w >>> cfg.wordSize - 2)) + v.size
+       loop w v (by simp only [v, Array.size_push]; omega)
++termination_by cfg.stateSize - v.size
+ 
+ /-- Apply the twisting transformation to the given state. -/
+ @[specialize cfg] protected def State.twist (state : State cfg) : State cfg :=
+diff --git a/Batteries/Data/String/Lemmas.lean b/Batteries/Data/String/Lemmas.lean
+index a26c8a0..17dd08a 100644
+--- a/Batteries/Data/String/Lemmas.lean
++++ b/Batteries/Data/String/Lemmas.lean
+@@ -380,6 +380,7 @@ theorem firstDiffPos_loop_eq (l₁ l₂ r₁ r₂ stop p)
+     obtain ⟨a, as, e₁⟩ := List.exists_cons_of_ne_nil (this h₁)
+     obtain ⟨b, bs, e₂⟩ := List.exists_cons_of_ne_nil (this h₂)
+     exact h _ _ _ _ e₁ e₂
++termination_by r₁
+ 
+ theorem firstDiffPos_eq (a b : String) :
+     firstDiffPos a b = ⟨utf8Len (List.takeWhile₂ (· = ·) a.toList b.toList).1⟩ := by
+@@ -483,6 +484,7 @@ theorem splitAux_of_valid (p l m r acc) :
+         splitAux_of_valid p (l++m++[c]) [] r ((ofList m)::acc)
+     · simpa [List.splitOnPPrepend_cons_eq_if, h, Nat.add_assoc] using
+         splitAux_of_valid p l (m++[c]) r acc
++termination_by r
+ 
+ theorem splitToList_of_valid (s p) : splitToList s p = (List.splitOnP p s.toList).map ofList := by
+   simpa [splitToList] using splitAux_of_valid p [] [] s.toList []
+diff --git a/Batteries/Data/Vector/Basic.lean b/Batteries/Data/Vector/Basic.lean
+index 9731125..002a2fd 100644
+--- a/Batteries/Data/Vector/Basic.lean
++++ b/Batteries/Data/Vector/Basic.lean
+@@ -84,6 +84,7 @@ where
+       loop next (i + 1) (by omega) (acc.push cur)
+     else
+       return acc.push cur |>.cast (by omega)
++termination_by n - i
+ 
+ @[inline]
+ private def scanrMFast [Monad m] (f : α → β → m β) (init : β) (as : Vector α n)
+@@ -129,6 +130,7 @@ where
+       loop next (i - 1) (by omega) (acc.push cur |>.cast (by omega))
+     else
+       return (acc.push cur).reverse.cast (by omega)
++termination_by i
+ 
+ /--
+ Fold a function `f` over the list from the left, returning the vector of partial results.
+diff --git a/Batteries/Recycling/MonadSatisfying/Array.lean b/Batteries/Recycling/MonadSatisfying/Array.lean
+index 803160c..4a2a120 100644
+--- a/Batteries/Recycling/MonadSatisfying/Array.lean
++++ b/Batteries/Recycling/MonadSatisfying/Array.lean
+@@ -33,6 +33,7 @@ theorem SatisfiesM_foldlM [Monad m] [LawfulMonad m] {as : Array α} {init : β}
+       · exact (hf ⟨j, hj⟩ b H).bind fun _ => go hj (by rwa [Nat.succ_add] at h₂)
+     · next hj => exact Nat.le_antisymm h₁ (Nat.ge_of_not_lt hj) ▸ .pure H
+   simp [foldlM]; exact go (Nat.zero_le _) (Nat.le_refl _) h0
++termination_by i
+ 
+ theorem SatisfiesM_mapM [Monad m] [LawfulMonad m] {as : Array α} {f : α → m β}
+     {motive : Nat → Prop} {p : Fin as.size → β → Prop} (h0 : motive 0)
+@@ -128,6 +129,7 @@ theorem SatisfiesM_foldrM [Monad m] [LawfulMonad m]
+         exact (hf ⟨i, hi'⟩ b H).bind fun _ => go _
+   simp [foldrM]; split; {exact go _ h0}
+   · next h => exact .pure (Nat.eq_zero_of_not_pos h ▸ h0)
++termination_by i
+ 
+ theorem SatisfiesM_mapFinIdxM [Monad m] [LawfulMonad m]
+     {as : Array α} {f : (i : Nat) → α → i < as.size → m β} {motive : Nat → Prop}
+diff --git a/Batteries/Recycling/RBTree/Lemmas.lean b/Batteries/Recycling/RBTree/Lemmas.lean
+index 082c98e..797ea33 100644
+--- a/Batteries/Recycling/RBTree/Lemmas.lean
++++ b/Batteries/Recycling/RBTree/Lemmas.lean
+@@ -29,6 +29,7 @@ attribute [simp] fold foldl foldr Any forM foldlM Ordered
+   unfold RBNode.min?; rw [min?.match_1.eq_3]
+   · apply min?_reverse
+   · simpa [reverse_eq_iff]
++termination_by t
+ 
+ @[simp] theorem max?_reverse (t : RBNode α) : t.reverse.max? = t.min? := by
+   rw [← min?_reverse, reverse_reverse]
+@@ -700,6 +701,7 @@ theorem zoom_ins {t : RBNode α} {cmp : α → α → Ordering} :
+     · exact zoom_ins
+     · exact zoom_ins
+     · intro | rfl => rfl
++termination_by t
+ 
+ theorem insertNew_eq_insert (h : zoom (cmp v) t = (nil, path)) :
+     path.insertNew v = (t.insert cmp v).setBlack :=
+@@ -738,6 +740,7 @@ theorem zoom_del {t : RBNode α} :
+       | nil => intro | rfl => rfl
+       | node black .. | node red .. => apply IH
+     · intro | rfl => rfl
++termination_by t
+ 
+ /-- Asserts that `p` holds on all elements to the left of the hole. -/
+ def AllL (p : α → Prop) : Path α → Prop
+-- 
+2.55.0
+
