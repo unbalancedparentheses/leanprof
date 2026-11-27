@@ -19,9 +19,10 @@ changes what a release is made of (the workflow, the install, packaging and
 smoke-test scripts, the extension, `lakefile.lean`, `CHANGELOG.md`), and by
 hand from the Actions tab (**Release > Run workflow**, optionally with a
 version). It builds, installs, tests and packages exactly as for a tag,
-checks that `CHANGELOG.md` has a section for the version, and keeps the
-would-be release (archives, `.vsix`, `SHA256SUMS`, notes) as an artifact,
-with the notes in the run's summary. Look at a green dry run of the commit
+checks that `CHANGELOG.md` has a section for the version, and lists the
+would-be release (archives, `.vsix`, `SHA256SUMS`) and its notes in the
+run's summary. It keeps no artifacts: about 700 MB a run would fill the
+account's artifact storage. Look at a green dry run of the commit
 you are about to tag.
 
 ## Steps
