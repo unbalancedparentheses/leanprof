@@ -7,7 +7,10 @@
 # Everything else is a dry run, which does all of that except creating the
 # release: a push that changes what a release is made of, or a manual run
 # (Actions > Release > Run workflow). The dry run's "would-be release" is
-# kept as an artifact.
+# listed in the run summary. The archives pass between jobs as artifacts,
+# which the publish job deletes once it has them: a run leaves about 700 MB,
+# enough on its own to fill the account's artifact storage, and a full quota
+# blocks every repository's uploads, Pages deploys included.
 name: Release
 on:
   push:
@@ -116,7 +119,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
-          retention-days: 3
+          retention-days: 1
           path: ${{ env.ARCHIVE }}
           if-no-files-found: error
 
@@ -162,7 +165,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: vscode
-          retention-days: 3
+          retention-days: 1
           path: leanprof-*.vsix
           if-no-files-found: error
 
@@ -171,6 +174,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: write # to delete this run's artifacts
     env:
       TAG: ${{ needs.version.outputs.tag }}
     steps:
@@ -217,10 +221,12 @@ jobs:
             echo
             cat notes.md
           } >> "$GITHUB_STEP_SUMMARY"
-          mkdir -p would-be-release && cp dist/* notes.md would-be-release/
-      - uses: actions/upload-artifact@v4
-        if: needs.version.outputs.publish != 'true'
-        with:
-          name: would-be-release-${{ env.TAG }}
-          retention-days: 7
-          path: would-be-release
+      - name: Delete this run's artifacts
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate --jq '.artifacts[].id' |
+            while read -r id; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            done
