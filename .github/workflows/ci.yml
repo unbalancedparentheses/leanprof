@@ -328,6 +328,7 @@ jobs:
         if: runner.os == 'Linux'
         with:
           name: leanprof-html-report
+          retention-days: 3
           path: |
             leanprof-report.html
             diff.html
@@ -538,6 +539,7 @@ jobs:
         if: always()
         with:
           name: bench-results-${{ matrix.os }}
+          retention-days: 3
           path: bench-results.*
 
   # leanprof used from outside on real projects that do not depend on it.
@@ -769,5 +771,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: leanprof-vscode
+          retention-days: 3
           path: editors/vscode/leanprof-*.vsix
           if-no-files-found: error

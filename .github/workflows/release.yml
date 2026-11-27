@@ -116,6 +116,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
+          retention-days: 3
           path: ${{ env.ARCHIVE }}
           if-no-files-found: error
 
@@ -161,6 +162,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: vscode
+          retention-days: 3
           path: leanprof-*.vsix
           if-no-files-found: error
 
@@ -220,4 +222,5 @@ jobs:
         if: needs.version.outputs.publish != 'true'
         with:
           name: would-be-release-${{ env.TAG }}
+          retention-days: 7
           path: would-be-release
